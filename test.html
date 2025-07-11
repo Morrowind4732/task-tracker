@@ -269,7 +269,7 @@ window.addEventListener('DOMContentLoaded', async () => {
           checkedStates[id] = checkbox.checked;
           timestamps[id] = now;
           document.getElementById(`ts_${id}`).textContent = checkbox.checked
-            ? `Last checked: ${now}`
+            ? `${now}`
             : 'Unchecked';
         };
 
@@ -281,7 +281,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         tsSpan.id = `ts_${id}`;
         tsSpan.className = 'timestamp';
         tsSpan.textContent = checkbox.checked
-          ? `Last checked: ${timestamps[id] || "Now"}`
+          ? `${timestamps[id] || "Now"}`
           : 'Unchecked';
 
         div.appendChild(checkbox);
