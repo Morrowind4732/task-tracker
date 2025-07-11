@@ -137,14 +137,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       timestamps = {};
       checkedStates = {};
 
+employeeIds = {}; // clear previous data
 tasks[report.shift].forEach((taskName, i) => {
   const id = `${report.shift}_task${i}`;
   const savedTask = report.tasks.find(t => t.name === taskName);
   if (savedTask) {
     checkedStates[id] = savedTask.checked;
     timestamps[id] = savedTask.time;
+    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line is the new part
   }
 });
+
 
 
       renderTasks(currentShift);
@@ -171,6 +174,31 @@ tasks[report.shift].forEach((taskName, i) => {
     <button onclick="selectShift('PM')">PM</button>
     <button onclick="selectShift('DATA')">DATA</button>
   </div>
+  
+  <!-- Insert this block directly below the AM/PM/DATA buttons -->
+<div class="button-row" id="employeeRow">
+  <label><input type="radio" name="employeeId" value="BG"> BG</label>
+  <label><input type="radio" name="employeeId" value="BJ"> BJ</label>
+  <label><input type="radio" name="employeeId" value="CG"> CG</label>
+  <label><input type="radio" name="employeeId" value="SG"> SG</label>
+</div>
+
+<style>
+#employeeRow {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 15px;
+  font-size: 16px;
+}
+#employeeRow label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+</style>
+
 
   <div id="taskList" class="hidden"></div>
 
@@ -236,8 +264,8 @@ manualDateInput.placeholder = today;
         'Cleaned Young Dog Kennel',
         'Checked Chlorine Gun Old',
         'Cleaned Finished Dog Kennel',
-        'Water Off Young Kennel',
-        'Water Off Old Kennel',
+        'Turned Off Water Young Dog Kennel',
+        'Turned Off Water Finished Dog Kennel',
 		'Cleaned Airing Lots',
         'Clipped Gates'
              ],
@@ -247,6 +275,7 @@ manualDateInput.placeholder = today;
     let currentShift = null;
     let timestamps = {};
     let checkedStates = {};
+	let employeeIds = {};
 
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US');
 
@@ -275,14 +304,17 @@ manualDateInput.placeholder = today;
           const docSnap = await db.collection("reports").doc(docId).get();
           if (docSnap.exists) {
             const report = docSnap.data();
+employeeIds = {}; // clear previous data
 tasks[report.shift].forEach((taskName, i) => {
   const id = `${report.shift}_task${i}`;
   const savedTask = report.tasks.find(t => t.name === taskName);
   if (savedTask) {
     checkedStates[id] = savedTask.checked;
     timestamps[id] = savedTask.time;
+    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line is the new part
   }
 });
+
 
             console.log("Restored saved data for", docId);
           } else {
@@ -343,8 +375,22 @@ document.getElementById('unsaveBtn').classList.remove('hidden');
       });
     }
 
- async function saveReport() {
+async function saveReport() {
   if (!currentShift) return;
+
+  const employeeRadios = document.getElementsByName('employeeId');
+  let selectedEmployee = null;
+  for (let radio of employeeRadios) {
+    if (radio.checked) {
+      selectedEmployee = radio.value;
+      break;
+    }
+  }
+
+  if (!selectedEmployee) {
+    alert("Please select your employee ID before saving.");
+    return;
+  }
 
   const date = new Date().toLocaleDateString('en-US');
   const data = [];
@@ -357,9 +403,9 @@ document.getElementById('unsaveBtn').classList.remove('hidden');
 
     if (checkbox?.checked) {
       const time = timestamps[id] || new Date().toLocaleTimeString();
-      const entry = { name: task, time, checked: true };
+      const entry = { name: task, time, checked: true, employee: selectedEmployee };
       data.push(entry);
-      console.log(`✓ Saving: "${task}" at ${time}`);
+      console.log(`✓ Saving: "${task}" at ${time} by ${selectedEmployee}`);
     }
   });
 
@@ -374,6 +420,7 @@ document.getElementById('unsaveBtn').classList.remove('hidden');
 
   alert("Report saved to Firebase!");
 }
+
 
 async function unsaveChecked() {
   if (!currentShift) return;
@@ -445,15 +492,18 @@ if (datePickerValue) {
     const report = docSnap.data();
     console.log(`Loaded from Firebase [${docId}]:`, report.tasks);
 
-    dataView.innerHTML = `
-      <strong>Date:</strong> ${report.date}<br>
-      <strong>Shift:</strong> ${report.shift}<br>
-      <ul>
-        ${report.tasks.map(t =>
-          `<li>${t.name} - ${t.checked ? t.time : "Not completed"}</li>`
-        ).join('')}
-      </ul>
-    `;
+  dataView.innerHTML = `
+  <strong>Date:</strong> ${report.date}<br>
+  <strong>Shift:</strong> ${report.shift}<br>
+  <ul>
+    ${report.tasks.map(t => {
+      const timeStr = t.checked ? t.time : "Not completed";
+      const emp = t.employee || "Unknown";
+      return `<li>${t.name} - ${timeStr} <em>(by ${emp})</em></li>`;
+    }).join('')}
+  </ul>
+`;
+
   } catch (err) {
     console.error("Error loading report:", err);
     dataView.innerHTML = `<p style="color:red;">Error loading data.</p>`;
@@ -482,14 +532,17 @@ window.addEventListener('DOMContentLoaded', async () => {
       timestamps = {};
       checkedStates = {};
 
+employeeIds = {}; // clear previous data
 tasks[report.shift].forEach((taskName, i) => {
   const id = `${report.shift}_task${i}`;
   const savedTask = report.tasks.find(t => t.name === taskName);
   if (savedTask) {
     checkedStates[id] = savedTask.checked;
     timestamps[id] = savedTask.time;
+    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line is the new part
   }
 });
+
 
 
       renderTasks(currentShift);
