@@ -3,11 +3,115 @@
 <head>
   <meta charset="UTF-8" />
   <title>Shift Task Tracker</title>
-  <script type="module">
-    // Firebase SDK imports
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    .task { margin: 10px 0; }
+    .timestamp { margin-left: 10px; font-size: 0.9em; color: gray; }
+    .hidden { display: none; }
+    .button-row button {
+      margin: 0 5px 10px 0;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+  </style>
 
+  <!-- Firebase App + Firestore -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js">
+window.addEventListener('DOMContentLoaded', async () => {
+  const today = new Date().toLocaleDateString('en-US');
+  const docId = `${today}_AM`;
+
+  try {
+    const docSnap = await db.collection("reports").doc(docId).get();
+
+    if (docSnap.exists) {
+      const report = docSnap.data();
+      currentShift = report.shift;
+      timestamps = {};
+      checkedStates = {};
+
+      report.tasks.forEach((task, i) => {
+        const id = `${currentShift}_task${i}`;
+        checkedStates[id] = task.checked;
+        timestamps[id] = task.time;
+      });
+
+      renderTasks(currentShift);
+      document.getElementById('taskList').classList.remove('hidden');
+      document.getElementById('sendBtn').classList.remove('hidden');
+    }
+  } catch (err) {
+    console.error("Auto-load error:", err);
+  }
+});
+
+</script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
+window.addEventListener('DOMContentLoaded', async () => {
+  const today = new Date().toLocaleDateString('en-US');
+  const docId = `${today}_AM`;
+
+  try {
+    const docSnap = await db.collection("reports").doc(docId).get();
+
+    if (docSnap.exists) {
+      const report = docSnap.data();
+      currentShift = report.shift;
+      timestamps = {};
+      checkedStates = {};
+
+      report.tasks.forEach((task, i) => {
+        const id = `${currentShift}_task${i}`;
+        checkedStates[id] = task.checked;
+        timestamps[id] = task.time;
+      });
+
+      renderTasks(currentShift);
+      document.getElementById('taskList').classList.remove('hidden');
+      document.getElementById('sendBtn').classList.remove('hidden');
+    }
+  } catch (err) {
+    console.error("Auto-load error:", err);
+  }
+});
+
+</script>
+</head>
+<body>
+
+  <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
+
+  <div class="button-row">
+    <button onclick="selectShift('AM')">AM</button>
+    <button onclick="selectShift('PM')">PM</button>
+    <button onclick="selectShift('DATA')">DATA</button>
+  </div>
+
+  <div id="taskList" class="hidden"></div>
+
+  <div id="dataControls" class="hidden">
+    <label for="dateSelect">Date:</label>
+    <select id="dateSelect">
+      <option>No data</option>
+    </select>
+
+    <label for="manualDate">or enter date:</label>
+    <input type="text" id="manualDate" placeholder="7/10/2025" style="width: 120px;">
+
+    <label for="dataShiftSelect">Shift:</label>
+    <select id="dataShiftSelect">
+      <option value="AM">AM</option>
+      <option value="PM">PM</option>
+    </select>
+
+    <button onclick="loadSelectedData()">View Report</button>
+  </div>
+
+  <div id="dataView" class="hidden"></div>
+
+  <button id="sendBtn" class="hidden">Save Report</button>
+
+  <script>
     // ✅ Your Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
@@ -19,12 +123,24 @@
       measurementId: "G-VLW5KLY4FF"
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
 
-    // App logic
     const tasks = {
-      AM: ['Task 1', 'Task 2', 'Task 3'],
+      AM: [
+        'Aired Males',
+        'Aired Females',
+        'Morning Feed',
+        'Medicine',
+        'Checked Chlorine Gun Young Kennel',
+        'Cleaned Young Dog Kennel',
+        'Checked Chlorine Gun Finished Dog Kennel',
+        'Cleaned Finished Dog Kennel',
+        'Turned Off Water Young Dog Kennel',
+        'Turned Off Water Finished Dog Kennel',
+        'Clipped Gates',
+        'Cleaned Airing Lots'
+      ],
       PM: ['Task 4', 'Task 5', 'Task 6']
     };
 
@@ -32,7 +148,9 @@
     let timestamps = {};
     let checkedStates = {};
 
-    function selectShift(mode) {
+    document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US');
+
+    async function selectShift(mode) {
       const taskList = document.getElementById('taskList');
       const dataView = document.getElementById('dataView');
       const dataControls = document.getElementById('dataControls');
@@ -44,12 +162,29 @@
         sendBtn.classList.add('hidden');
         dataControls.classList.remove('hidden');
         dataView.classList.remove('hidden');
-        populateDataOptions();
         dataView.innerHTML = '';
       } else {
         currentShift = mode;
         timestamps = {};
         checkedStates = {};
+        const today = new Date().toLocaleDateString('en-US');
+        const docId = `${today}_${mode}`;
+        try {
+          const docSnap = await db.collection("reports").doc(docId).get();
+          if (docSnap.exists) {
+            const report = docSnap.data();
+            report.tasks.forEach((task, i) => {
+              const id = `${mode}_task${i}`;
+              checkedStates[id] = task.checked;
+              timestamps[id] = task.time;
+            });
+            console.log("Restored saved data for", docId);
+          } else {
+            console.log("No saved data for", docId);
+          }
+        } catch (e) {
+          console.error("Error checking saved report:", e);
+        }
         renderTasks(mode);
         taskList.classList.remove('hidden');
         sendBtn.classList.remove('hidden');
@@ -103,7 +238,7 @@
     async function saveReport() {
       if (!currentShift) return;
 
-      const date = new Date().toLocaleDateString();
+      const date = new Date().toLocaleDateString('en-US');
       const data = [];
 
       tasks[currentShift].forEach((task, i) => {
@@ -114,9 +249,7 @@
       });
 
       const docId = `${date}_${currentShift}`;
-      const reportRef = doc(db, "reports", docId);
-
-      await setDoc(reportRef, {
+      await db.collection("reports").doc(docId).set({
         date,
         shift: currentShift,
         tasks: data
@@ -125,42 +258,26 @@
       alert("Report saved to Firebase!");
     }
 
-    async function populateDataOptions() {
-      const dateSelect = document.getElementById('dateSelect');
-      dateSelect.innerHTML = '';
-
-      const snapshot = await getDocs(collection(db, "reports"));
-      const uniqueDates = new Set();
-
-      snapshot.forEach(doc => {
-        uniqueDates.add(doc.data().date);
-      });
-
-      [...uniqueDates].forEach(date => {
-        const opt = document.createElement('option');
-        opt.value = date;
-        opt.textContent = date;
-        dateSelect.appendChild(opt);
-      });
-    }
-
     async function loadSelectedData() {
-      const date = document.getElementById('dateSelect').value;
+      const manualDate = document.getElementById('manualDate').value.trim();
+      const dropdownDate = document.getElementById('dateSelect').value;
       const shift = document.getElementById('dataShiftSelect').value;
       const dataView = document.getElementById('dataView');
 
-      const q = query(collection(db, "reports"), where("date", "==", date), where("shift", "==", shift));
-      const snapshot = await getDocs(q);
-
+      const date = manualDate || dropdownDate;
+      const docId = `${date}_${shift}`;
       dataView.innerHTML = '';
 
-      if (snapshot.empty) {
-        dataView.innerHTML = '<p>No data found for that date and shift.</p>';
-        return;
-      }
+      try {
+        const docSnap = await db.collection("reports").doc(docId).get();
 
-      snapshot.forEach(doc => {
-        const report = doc.data();
+        if (!docSnap.exists) {
+          dataView.innerHTML = `<p>No data found for ${date} (${shift}).</p>`;
+          console.warn("No document found for ID:", docId);
+          return;
+        }
+
+        const report = docSnap.data();
         dataView.innerHTML = `
           <strong>Date:</strong> ${report.date}<br>
           <strong>Shift:</strong> ${report.shift}<br>
@@ -170,59 +287,45 @@
             ).join('')}
           </ul>
         `;
+        console.log("Loaded report:", report);
+
+      } catch (err) {
+        console.error("Error loading report:", err);
+        dataView.innerHTML = `<p style="color:red;">Error loading data.</p>`;
+      }
+    }
+
+    document.getElementById('sendBtn').addEventListener('click', saveReport);
+  
+window.addEventListener('DOMContentLoaded', async () => {
+  const today = new Date().toLocaleDateString('en-US');
+  const docId = `${today}_AM`;
+
+  try {
+    const docSnap = await db.collection("reports").doc(docId).get();
+
+    if (docSnap.exists) {
+      const report = docSnap.data();
+      currentShift = report.shift;
+      timestamps = {};
+      checkedStates = {};
+
+      report.tasks.forEach((task, i) => {
+        const id = `${currentShift}_task${i}`;
+        checkedStates[id] = task.checked;
+        timestamps[id] = task.time;
       });
+
+      renderTasks(currentShift);
+      document.getElementById('taskList').classList.remove('hidden');
+      document.getElementById('sendBtn').classList.remove('hidden');
     }
+  } catch (err) {
+    console.error("Auto-load error:", err);
+  }
+});
 
-    window.selectShift = selectShift;
-    window.loadSelectedData = loadSelectedData;
-    window.saveReport = saveReport;
-
-    document.addEventListener("DOMContentLoaded", () => {
-      document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
-      document.getElementById('sendBtn').addEventListener('click', saveReport);
-    });
-  </script>
-
-  <style>
-    body { font-family: Arial; padding: 20px; }
-    .task { margin: 10px 0; }
-    .timestamp { margin-left: 10px; font-size: 0.9em; color: gray; }
-    .hidden { display: none; }
-    .button-row button {
-      margin: 0 5px 10px 0;
-      padding: 8px 16px;
-      font-size: 14px;
-    }
-  </style>
-</head>
-<body>
-
-  <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
-
-  <div class="button-row">
-    <button onclick="selectShift('AM')">AM</button>
-    <button onclick="selectShift('PM')">PM</button>
-    <button onclick="selectShift('DATA')">DATA</button>
-  </div>
-
-  <div id="taskList" class="hidden"></div>
-
-  <div id="dataControls" class="hidden">
-    <label for="dateSelect">Date:</label>
-    <select id="dateSelect"></select>
-
-    <label for="dataShiftSelect">Shift:</label>
-    <select id="dataShiftSelect">
-      <option value="AM">AM</option>
-      <option value="PM">PM</option>
-    </select>
-
-    <button onclick="loadSelectedData()">View Report</button>
-  </div>
-
-  <div id="dataView" class="hidden"></div>
-
-  <button id="sendBtn" class="hidden">Save Report</button>
+</script>
 
 </body>
 </html>
