@@ -68,6 +68,17 @@
   max-width: 200px;
 }
 
+.employee-radio {
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: black;
+  font-weight: bold;
+}
+
+.bg-BG { background-color: #b2f0e6; }
+.bg-BJ { background-color: #d1d5ff; }
+.bg-CG { background-color: #f7dcae; }
+.bg-SG { background-color: #e2c2f9; }
 
 
     .button-row button {
@@ -120,6 +131,14 @@ window.addEventListener('DOMContentLoaded', async () => {
   const today = new Date().toLocaleDateString('en-US');
   const docId = `${today}_AM`;
 
+const employeeColors = {
+  BG: '#b2f0e6', // light teal
+  BJ: '#d1d5ff', // soft blue
+  CG: '#f7dcae', // warm beige
+  SG: '#e2c2f9'  // light purple
+};
+
+
   try {
     const docSnap = await db.collection("reports").doc(docId).get();
 
@@ -163,16 +182,18 @@ window.addEventListener('DOMContentLoaded', async () => {
       timestamps = {};
       checkedStates = {};
 
-employeeIds = {}; // clear previous data
+employeeIds = {}; // reset employee data
+
 tasks[report.shift].forEach((taskName, i) => {
   const id = `${report.shift}_task${i}`;
   const savedTask = report.tasks.find(t => t.name === taskName);
   if (savedTask) {
     checkedStates[id] = savedTask.checked;
     timestamps[id] = savedTask.time;
-    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line is the new part
+    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line fixes the highlight
   }
 });
+
 
 console.log(`Loaded tasks for ${docId}:`, report.tasks);
 
@@ -203,13 +224,13 @@ console.log(`Loaded tasks for ${docId}:`, report.tasks);
     <button onclick="selectShift('DATA')">DATA</button>
   </div>
   
-  <!-- Insert this block directly below the AM/PM/DATA buttons -->
 <div class="button-row" id="employeeRow">
-  <label><input type="radio" name="employeeId" value="BG"> BG</label>
-  <label><input type="radio" name="employeeId" value="BJ"> BJ</label>
-  <label><input type="radio" name="employeeId" value="CG"> CG</label>
-  <label><input type="radio" name="employeeId" value="SG"> SG</label>
+  <label class="employee-radio bg-BG"><input type="radio" name="employeeId" value="BG"> BG</label>
+  <label class="employee-radio bg-BJ"><input type="radio" name="employeeId" value="BJ"> BJ</label>
+  <label class="employee-radio bg-CG"><input type="radio" name="employeeId" value="CG"> CG</label>
+  <label class="employee-radio bg-SG"><input type="radio" name="employeeId" value="SG"> SG</label>
 </div>
+
 
 <style>
 #employeeRow {
@@ -317,6 +338,12 @@ function showToast(message) {
   }, 3000);
 }
 
+const employeeColors = {
+  BG: '#b2f0e6', // light teal
+  BJ: '#d1d5ff', // soft blue
+  CG: '#f7dcae', // warm beige
+  SG: '#e2c2f9'  // light purple
+};
 
 
     async function selectShift(mode) {
@@ -345,14 +372,17 @@ function showToast(message) {
     const docSnap = await db.collection("reports").doc(docId).get();
     if (docSnap.exists) {
       const report = docSnap.data();
-      tasks[report.shift].forEach((taskName, i) => {
-        const id = `${report.shift}_task${i}`;
-        const savedTask = report.tasks.find(t => t.name === taskName);
-        if (savedTask) {
-          checkedStates[id] = savedTask.checked;
-          timestamps[id] = savedTask.time;
-        }
-      });
+
+tasks[report.shift].forEach((taskName, i) => {
+  const id = `${report.shift}_task${i}`;
+  const savedTask = report.tasks.find(t => t.name === taskName);
+  if (savedTask) {
+    checkedStates[id] = savedTask.checked;
+    timestamps[id] = savedTask.time;
+    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line fixes the highlight
+  }
+});
+
 console.log(`Loaded tasks for ${docId}:`, report.tasks); // ⬅️ Add this line
     } else {
       console.log("No saved data for", docId);
@@ -376,52 +406,71 @@ console.log(`Loaded tasks for ${docId}:`, report.tasks); // ⬅️ Add this line
   const container = document.getElementById('taskList');
   container.innerHTML = '';
 
-  tasks[shift].forEach((task, i) => {
-    const id = `${shift}_task${i}`;
-    const div = document.createElement('div');
-    div.className = 'task';
+ tasks[shift].forEach((task, i) => {
+  const id = `${shift}_task${i}`;
+  const div = document.createElement('div');
 
-    const checkbox = document.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.id = id;
-    checkbox.checked = checkedStates[id] || false;
+  const isChecked = checkedStates[id] || false;
+  const emp = employeeIds[id] || "Unknown";
+  const bgColor = isChecked ? (employeeColors[emp] || '#e0ffe0') : (i % 2 === 0 ? '#f9f9f9' : '#ffffff');
 
-    // Store the current employee ID (if exists) on the checkbox as a data attribute
-    checkbox.setAttribute("data-employee", employeeIds[id] || "");
+  div.className = 'task';
+  div.style.background = bgColor;
 
-    checkbox.onchange = () => {
-      const now = new Date().toLocaleTimeString();
-      checkedStates[id] = checkbox.checked;
-      timestamps[id] = now;
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.id = id;
+  checkbox.checked = isChecked;
+  if (isChecked) checkbox.setAttribute('data-employee', emp);
 
-      // If the user checked this box, assign their ID to it
-      if (checkbox.checked) {
-        const selectedRadio = document.querySelector('input[name="employeeId"]:checked');
-        const employee = selectedRadio ? selectedRadio.value : "Unknown";
-        checkbox.setAttribute("data-employee", employee);
-      }
 
-      document.getElementById(`ts_${id}`).textContent = checkbox.checked
-        ? `${now}`
-        : 'Unchecked';
-    };
+  checkbox.onchange = () => {
+    const now = new Date().toLocaleTimeString();
+    checkedStates[id] = checkbox.checked;
+    timestamps[id] = now;
+if (checkbox.checked) {
+  const selectedRadio = document.querySelector('input[name="employeeId"]:checked');
+  const emp = selectedRadio ? selectedRadio.value : "Unknown";
+  employeeIds[id] = emp;
+  checkbox.setAttribute('data-employee', emp);  // ✅ Save it to the DOM too
+} else {
+  checkbox.removeAttribute('data-employee');  // Optional cleanup
+}
 
-    const label = document.createElement('label');
-    label.htmlFor = id;
-    label.textContent = task;
+    // Retain previous employee ID if already saved
+    if (checkbox.checked && !employeeIds[id]) {
+      const selectedRadio = document.querySelector('input[name="employeeId"]:checked');
+      employeeIds[id] = selectedRadio ? selectedRadio.value : "Unknown";
+    }
 
-    const tsSpan = document.createElement('span');
-    tsSpan.id = `ts_${id}`;
-    tsSpan.className = 'timestamp';
-    tsSpan.textContent = checkbox.checked
-      ? `${timestamps[id] || "Now"}`
+    document.getElementById(`ts_${id}`).textContent = checkbox.checked
+      ? `${timestamps[id]}`
       : 'Unchecked';
 
-    div.appendChild(checkbox);
-    div.appendChild(label);
-    div.appendChild(tsSpan);
-    container.appendChild(div);
-  });
+    // Update background on toggle
+    div.style.background = checkbox.checked
+      ? (employeeColors[employeeIds[id]] || '#e0ffe0')
+      : (i % 2 === 0 ? '#f9f9f9' : '#ffffff');
+  };
+
+  const label = document.createElement('label');
+  label.htmlFor = id;
+  label.textContent = task;
+
+  const tsSpan = document.createElement('span');
+  tsSpan.id = `ts_${id}`;
+  tsSpan.className = 'timestamp';
+  tsSpan.textContent = isChecked
+    ? `${timestamps[id] || "Now"}`
+    : 'Unchecked';
+
+  div.appendChild(checkbox);
+  div.appendChild(label);
+  div.appendChild(tsSpan);
+
+  container.appendChild(div);
+});
+
 }
 
 
@@ -464,7 +513,8 @@ async function saveReport() {
     const prevEmp = checkbox?.getAttribute('data-employee') || 'Unknown';
 
     if (checkbox?.checked) {
-      const employee = checkbox.getAttribute('data-employee') || selectedEmployee;
+      const employee = employeeIds[id] || selectedEmployee;
+
       updatedTasks.push({ name: task, time, checked: true, employee });
     }
   });
@@ -609,16 +659,22 @@ window.addEventListener('DOMContentLoaded', async () => {
       timestamps = {};
       checkedStates = {};
 
-employeeIds = {}; // clear previous data
+
+
+employeeIds = {}; // reset employee data
+
 tasks[report.shift].forEach((taskName, i) => {
   const id = `${report.shift}_task${i}`;
   const savedTask = report.tasks.find(t => t.name === taskName);
   if (savedTask) {
     checkedStates[id] = savedTask.checked;
     timestamps[id] = savedTask.time;
-    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line is the new part
+    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line fixes the highlight
   }
 });
+
+
+
 
 console.log(`Loaded tasks for ${docId}:`, report.tasks);
 
