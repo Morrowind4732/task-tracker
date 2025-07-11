@@ -86,6 +86,32 @@
       padding: 8px 16px;
       font-size: 14px;
     }
+	
+#dataControls button {
+  margin-top: 10px;
+}
+
+#toast {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: #4CAF50; /* green */
+  color: white;
+  padding: 14px 24px;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  z-index: 9999;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+#toast.show {
+  opacity: 1;
+}
+
+
+
   </style>
 
   <!-- Firebase App + Firestore -->
@@ -148,7 +174,7 @@ tasks[report.shift].forEach((taskName, i) => {
   }
 });
 
-
+console.log(`Loaded tasks for ${docId}:`, report.tasks);
 
       renderTasks(currentShift);
       document.getElementById('taskList').classList.remove('hidden');
@@ -165,6 +191,8 @@ tasks[report.shift].forEach((taskName, i) => {
 </script>
 </head>
 <body>
+<div id="toast"></div>
+
 <div class="container">
 
   <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
@@ -279,6 +307,18 @@ manualDateInput.placeholder = today;
 
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US');
 
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+
+  setTimeout(() => {
+    toast.classList.remove("show");
+  }, 3000);
+}
+
+
+
     async function selectShift(mode) {
       const taskList = document.getElementById('taskList');
       const dataView = document.getElementById('dataView');
@@ -289,91 +329,101 @@ manualDateInput.placeholder = today;
   currentShift = null;
   taskList.classList.add('hidden');
   sendBtn.classList.add('hidden');
-  document.getElementById('unsaveBtn').classList.add('hidden'); // ✅ Hide unsave button
+  document.getElementById('unsaveBtn').classList.add('hidden');
   dataControls.classList.remove('hidden');
   dataView.classList.remove('hidden');
   dataView.innerHTML = '';
-}
- else {
-        currentShift = mode;
-        timestamps = {};
-        checkedStates = {};
-        const today = new Date().toLocaleDateString('en-US');
-        const docId = `${today}_${mode}`;
-        try {
-          const docSnap = await db.collection("reports").doc(docId).get();
-          if (docSnap.exists) {
-            const report = docSnap.data();
-employeeIds = {}; // clear previous data
-tasks[report.shift].forEach((taskName, i) => {
-  const id = `${report.shift}_task${i}`;
-  const savedTask = report.tasks.find(t => t.name === taskName);
-  if (savedTask) {
-    checkedStates[id] = savedTask.checked;
-    timestamps[id] = savedTask.time;
-    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line is the new part
-  }
-});
+  document.getElementById('employeeRow').style.display = 'none'; // ✅ hide radios
+} else {
+  currentShift = mode;
+  timestamps = {};
+  checkedStates = {};
+  const today = new Date().toLocaleDateString('en-US');
+  const docId = `${today}_${mode}`;
 
-
-            console.log("Restored saved data for", docId);
-          } else {
-            console.log("No saved data for", docId);
-          }
-        } catch (e) {
-          console.error("Error checking saved report:", e);
+  try {
+    const docSnap = await db.collection("reports").doc(docId).get();
+    if (docSnap.exists) {
+      const report = docSnap.data();
+      tasks[report.shift].forEach((taskName, i) => {
+        const id = `${report.shift}_task${i}`;
+        const savedTask = report.tasks.find(t => t.name === taskName);
+        if (savedTask) {
+          checkedStates[id] = savedTask.checked;
+          timestamps[id] = savedTask.time;
         }
-        renderTasks(mode);
-        taskList.classList.remove('hidden');
-        sendBtn.classList.remove('hidden');
-document.getElementById('unsaveBtn').classList.remove('hidden');
-
-        dataControls.classList.add('hidden');
-        dataView.classList.add('hidden');
-      }
-    }
-
-    function renderTasks(shift) {
-      const container = document.getElementById('taskList');
-      container.innerHTML = '';
-
-      tasks[shift].forEach((task, i) => {
-        const id = `${shift}_task${i}`;
-        const div = document.createElement('div');
-        div.className = 'task';
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.id = id;
-        checkbox.checked = checkedStates[id] || false;
-
-        checkbox.onchange = () => {
-          const now = new Date().toLocaleTimeString();
-          checkedStates[id] = checkbox.checked;
-          timestamps[id] = now;
-          document.getElementById(`ts_${id}`).textContent = checkbox.checked
-            ? `${now}`
-            : 'Unchecked';
-        };
-
-        const label = document.createElement('label');
-        label.htmlFor = id;
-        label.textContent = task;
-
-        const tsSpan = document.createElement('span');
-        tsSpan.id = `ts_${id}`;
-        tsSpan.className = 'timestamp';
-        tsSpan.textContent = checkbox.checked
-          ? `${timestamps[id] || "Now"}`
-          : 'Unchecked';
-
-        div.appendChild(checkbox);
-        div.appendChild(label);
-        div.appendChild(tsSpan);
-
-        container.appendChild(div);
       });
+console.log(`Loaded tasks for ${docId}:`, report.tasks); // ⬅️ Add this line
+    } else {
+      console.log("No saved data for", docId);
     }
+  } catch (e) {
+    console.error("Error checking saved report:", e);
+  }
+
+  renderTasks(mode);
+  taskList.classList.remove('hidden');
+  sendBtn.classList.remove('hidden');
+  document.getElementById('unsaveBtn').classList.remove('hidden');
+  dataControls.classList.add('hidden');
+  dataView.classList.add('hidden');
+  document.getElementById('employeeRow').style.display = 'flex'; // ✅ show radios
+}
+
+    }
+
+   function renderTasks(shift) {
+  const container = document.getElementById('taskList');
+  container.innerHTML = '';
+
+  tasks[shift].forEach((task, i) => {
+    const id = `${shift}_task${i}`;
+    const div = document.createElement('div');
+    div.className = 'task';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = id;
+    checkbox.checked = checkedStates[id] || false;
+
+    // Store the current employee ID (if exists) on the checkbox as a data attribute
+    checkbox.setAttribute("data-employee", employeeIds[id] || "");
+
+    checkbox.onchange = () => {
+      const now = new Date().toLocaleTimeString();
+      checkedStates[id] = checkbox.checked;
+      timestamps[id] = now;
+
+      // If the user checked this box, assign their ID to it
+      if (checkbox.checked) {
+        const selectedRadio = document.querySelector('input[name="employeeId"]:checked');
+        const employee = selectedRadio ? selectedRadio.value : "Unknown";
+        checkbox.setAttribute("data-employee", employee);
+      }
+
+      document.getElementById(`ts_${id}`).textContent = checkbox.checked
+        ? `${now}`
+        : 'Unchecked';
+    };
+
+    const label = document.createElement('label');
+    label.htmlFor = id;
+    label.textContent = task;
+
+    const tsSpan = document.createElement('span');
+    tsSpan.id = `ts_${id}`;
+    tsSpan.className = 'timestamp';
+    tsSpan.textContent = checkbox.checked
+      ? `${timestamps[id] || "Now"}`
+      : 'Unchecked';
+
+    div.appendChild(checkbox);
+    div.appendChild(label);
+    div.appendChild(tsSpan);
+    container.appendChild(div);
+  });
+}
+
 
 async function saveReport() {
   if (!currentShift) return;
@@ -393,33 +443,52 @@ async function saveReport() {
   }
 
   const date = new Date().toLocaleDateString('en-US');
-  const data = [];
+  const docId = `${date}_${currentShift}`;
 
-  console.log(`--- Saving Report for ${date} (${currentShift}) ---`);
+  let existingTasks = [];
+  try {
+    const docSnap = await db.collection("reports").doc(docId).get();
+    if (docSnap.exists) {
+      existingTasks = docSnap.data().tasks || [];
+    }
+  } catch (err) {
+    console.warn("Error fetching existing tasks:", err);
+  }
+
+  const updatedTasks = [];
 
   tasks[currentShift].forEach((task, i) => {
     const id = `${currentShift}_task${i}`;
     const checkbox = document.getElementById(id);
+    const time = timestamps[id] || '';
+    const prevEmp = checkbox?.getAttribute('data-employee') || 'Unknown';
 
     if (checkbox?.checked) {
-      const time = timestamps[id] || new Date().toLocaleTimeString();
-      const entry = { name: task, time, checked: true, employee: selectedEmployee };
-      data.push(entry);
-      console.log(`✓ Saving: "${task}" at ${time} by ${selectedEmployee}`);
+      const employee = checkbox.getAttribute('data-employee') || selectedEmployee;
+      updatedTasks.push({ name: task, time, checked: true, employee });
     }
   });
 
-  const docId = `${date}_${currentShift}`;
-  console.log(`Writing to Firebase:`, data);
+  // Filter out only the tasks being updated from the existing list
+  const mergedTasks = [
+    ...existingTasks.filter(t => !updatedTasks.some(n => n.name === t.name)),
+    ...updatedTasks
+  ];
 
   await db.collection("reports").doc(docId).set({
     date,
     shift: currentShift,
-    tasks: data
+    tasks: mergedTasks
   });
 
-  alert("Report saved to Firebase!");
+  showToast("✅ Saved!");
+console.log(`Saved data for ${docId}:`, mergedTasks);
+
+  // Refresh checkboxes to reflect everyone’s latest saved state
+  await selectShift(currentShift);
 }
+
+
 
 
 async function unsaveChecked() {
@@ -492,17 +561,25 @@ if (datePickerValue) {
     const report = docSnap.data();
     console.log(`Loaded from Firebase [${docId}]:`, report.tasks);
 
-  dataView.innerHTML = `
+dataView.innerHTML = `
   <strong>Date:</strong> ${report.date}<br>
   <strong>Shift:</strong> ${report.shift}<br>
-  <ul>
-    ${report.tasks.map(t => {
-      const timeStr = t.checked ? t.time : "Not completed";
-      const emp = t.employee || "Unknown";
-      return `<li>${t.name} - ${timeStr} <em>(by ${emp})</em></li>`;
+  <ul style="list-style-type: none; padding: 0;">
+    ${tasks[report.shift].map((taskName, i) => {
+      const saved = report.tasks.find(t => t.name === taskName);
+      const timeStr = saved?.checked ? saved.time : "<strong>Not completed</strong>";
+      const emp = saved?.employee || "Unknown";
+      const bg = i % 2 === 0 ? '#e9f0ff' : '#ffffff';
+      return `<li style="padding: 10px 14px; background: ${bg}; border-bottom: 1px solid #ccc;">
+        ${taskName} - ${timeStr} <em>(by ${emp})</em>
+      </li>`;
     }).join('')}
   </ul>
 `;
+
+
+
+
 
   } catch (err) {
     console.error("Error loading report:", err);
@@ -543,7 +620,7 @@ tasks[report.shift].forEach((taskName, i) => {
   }
 });
 
-
+console.log(`Loaded tasks for ${docId}:`, report.tasks);
 
       renderTasks(currentShift);
       document.getElementById('taskList').classList.remove('hidden');
