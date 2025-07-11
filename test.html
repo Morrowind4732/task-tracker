@@ -1,53 +1,28 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Shift Task Tracker</title>
-  <style>
-    body { font-family: Arial; padding: 20px; }
-    .task { margin: 10px 0; }
-    .timestamp { margin-left: 10px; font-size: 0.9em; color: gray; }
-    .hidden { display: none; }
-    .button-row button {
-      margin: 0 5px 10px 0;
-      padding: 8px 16px;
-      font-size: 14px;
-    }
-  </style>
-</head>
-<body>
+  <script type="module">
+    // Firebase SDK imports
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
- <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
+    // ✅ Your Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+      authDomain: "task-tracker-73b77.firebaseapp.com",
+      projectId: "task-tracker-73b77",
+      storageBucket: "task-tracker-73b77.firebasestorage.app",
+      messagingSenderId: "795274673000",
+      appId: "1:795274673000:web:0ea07130e45c72384134dd",
+      measurementId: "G-VLW5KLY4FF"
+    };
 
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
 
-  <div class="button-row">
-    <button onclick="selectShift('AM')">AM</button>
-    <button onclick="selectShift('PM')">PM</button>
-    <button onclick="selectShift('DATA')">DATA</button>
-  </div>
-
-  <div id="taskList" class="hidden"></div>
-
-  <div id="dataControls" class="hidden">
-    <label for="dateSelect">Date:</label>
-    <select id="dateSelect"></select>
-
-    <label for="dataShiftSelect">Shift:</label>
-    <select id="dataShiftSelect">
-      <option value="AM">AM</option>
-      <option value="PM">PM</option>
-    </select>
-
-    <button onclick="loadSelectedData()">View Report</button>
-  </div>
-
-  <div id="dataView" class="hidden"></div>
-
-  <button id="sendBtn" class="hidden">Save Report</button>
-
-  <script>
-  document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
-
+    // App logic
     const tasks = {
       AM: ['Task 1', 'Task 2', 'Task 3'],
       PM: ['Task 4', 'Task 5', 'Task 6']
@@ -125,7 +100,7 @@
       });
     }
 
-    function saveReport() {
+    async function saveReport() {
       if (!currentShift) return;
 
       const date = new Date().toLocaleDateString();
@@ -138,26 +113,30 @@
         data.push({ name: task, time, checked });
       });
 
-      const report = { date, shift: currentShift, tasks: data };
+      const docId = `${date}_${currentShift}`;
+      const reportRef = doc(db, "reports", docId);
 
-      const allReports = JSON.parse(localStorage.getItem('taskReports') || '[]');
+      await setDoc(reportRef, {
+        date,
+        shift: currentShift,
+        tasks: data
+      });
 
-      // Remove old report for same date & shift (so latest saves clean)
-      const filtered = allReports.filter(r => !(r.date === date && r.shift === currentShift));
-      filtered.push(report);
-
-      localStorage.setItem('taskReports', JSON.stringify(filtered));
-      alert('Report saved!');
+      alert("Report saved to Firebase!");
     }
 
-    function populateDataOptions() {
+    async function populateDataOptions() {
       const dateSelect = document.getElementById('dateSelect');
       dateSelect.innerHTML = '';
 
-      const reports = JSON.parse(localStorage.getItem('taskReports') || '[]');
-      const uniqueDates = [...new Set(reports.map(r => r.date))];
+      const snapshot = await getDocs(collection(db, "reports"));
+      const uniqueDates = new Set();
 
-      uniqueDates.forEach(date => {
+      snapshot.forEach(doc => {
+        uniqueDates.add(doc.data().date);
+      });
+
+      [...uniqueDates].forEach(date => {
         const opt = document.createElement('option');
         opt.value = date;
         opt.textContent = date;
@@ -165,33 +144,85 @@
       });
     }
 
-    function loadSelectedData() {
+    async function loadSelectedData() {
       const date = document.getElementById('dateSelect').value;
       const shift = document.getElementById('dataShiftSelect').value;
       const dataView = document.getElementById('dataView');
-      const reports = JSON.parse(localStorage.getItem('taskReports') || '[]');
-      const match = reports.find(r => r.date === date && r.shift === shift);
+
+      const q = query(collection(db, "reports"), where("date", "==", date), where("shift", "==", shift));
+      const snapshot = await getDocs(q);
 
       dataView.innerHTML = '';
 
-      if (!match) {
+      if (snapshot.empty) {
         dataView.innerHTML = '<p>No data found for that date and shift.</p>';
         return;
       }
 
-      dataView.innerHTML = `
-        <strong>Date:</strong> ${match.date}<br>
-        <strong>Shift:</strong> ${match.shift}<br>
-        <ul>
-          ${match.tasks.map(t =>
-            `<li>${t.name} - ${t.checked ? t.time : "Not completed"}</li>`
-          ).join('')}
-        </ul>
-      `;
+      snapshot.forEach(doc => {
+        const report = doc.data();
+        dataView.innerHTML = `
+          <strong>Date:</strong> ${report.date}<br>
+          <strong>Shift:</strong> ${report.shift}<br>
+          <ul>
+            ${report.tasks.map(t =>
+              `<li>${t.name} - ${t.checked ? t.time : "Not completed"}</li>`
+            ).join('')}
+          </ul>
+        `;
+      });
     }
 
-    document.getElementById('sendBtn').addEventListener('click', saveReport);
+    window.selectShift = selectShift;
+    window.loadSelectedData = loadSelectedData;
+    window.saveReport = saveReport;
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
+      document.getElementById('sendBtn').addEventListener('click', saveReport);
+    });
   </script>
+
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    .task { margin: 10px 0; }
+    .timestamp { margin-left: 10px; font-size: 0.9em; color: gray; }
+    .hidden { display: none; }
+    .button-row button {
+      margin: 0 5px 10px 0;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+  <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
+
+  <div class="button-row">
+    <button onclick="selectShift('AM')">AM</button>
+    <button onclick="selectShift('PM')">PM</button>
+    <button onclick="selectShift('DATA')">DATA</button>
+  </div>
+
+  <div id="taskList" class="hidden"></div>
+
+  <div id="dataControls" class="hidden">
+    <label for="dateSelect">Date:</label>
+    <select id="dateSelect"></select>
+
+    <label for="dataShiftSelect">Shift:</label>
+    <select id="dataShiftSelect">
+      <option value="AM">AM</option>
+      <option value="PM">PM</option>
+    </select>
+
+    <button onclick="loadSelectedData()">View Report</button>
+  </div>
+
+  <div id="dataView" class="hidden"></div>
+
+  <button id="sendBtn" class="hidden">Save Report</button>
 
 </body>
 </html>
