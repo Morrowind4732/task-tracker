@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Shift Task Tracker</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    .task { margin: 10px 0; }
+    .timestamp { margin-left: 10px; font-size: 0.9em; color: gray; }
+    .hidden { display: none; }
+    .button-row button {
+      margin: 0 5px 10px 0;
+      padding: 8px 16px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+ <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
+
+
+  <div class="button-row">
+    <button onclick="selectShift('AM')">AM</button>
+    <button onclick="selectShift('PM')">PM</button>
+    <button onclick="selectShift('DATA')">DATA</button>
+  </div>
+
+  <div id="taskList" class="hidden"></div>
+
+  <div id="dataControls" class="hidden">
+    <label for="dateSelect">Date:</label>
+    <select id="dateSelect"></select>
+
+    <label for="dataShiftSelect">Shift:</label>
+    <select id="dataShiftSelect">
+      <option value="AM">AM</option>
+      <option value="PM">PM</option>
+    </select>
+
+    <button onclick="loadSelectedData()">View Report</button>
+  </div>
+
+  <div id="dataView" class="hidden"></div>
+
+  <button id="sendBtn" class="hidden">Save Report</button>
+
+  <script>
+  document.getElementById('currentDate').textContent = new Date().toLocaleDateString();
+
+    const tasks = {
+      AM: ['Task 1', 'Task 2', 'Task 3'],
+      PM: ['Task 4', 'Task 5', 'Task 6']
+    };
+
+    let currentShift = null;
+    let timestamps = {};
+    let checkedStates = {};
+
+    function selectShift(mode) {
+      const taskList = document.getElementById('taskList');
+      const dataView = document.getElementById('dataView');
+      const dataControls = document.getElementById('dataControls');
+      const sendBtn = document.getElementById('sendBtn');
+
+      if (mode === 'DATA') {
+        currentShift = null;
+        taskList.classList.add('hidden');
+        sendBtn.classList.add('hidden');
+        dataControls.classList.remove('hidden');
+        dataView.classList.remove('hidden');
+        populateDataOptions();
+        dataView.innerHTML = '';
+      } else {
+        currentShift = mode;
+        timestamps = {};
+        checkedStates = {};
+        renderTasks(mode);
+        taskList.classList.remove('hidden');
+        sendBtn.classList.remove('hidden');
+        dataControls.classList.add('hidden');
+        dataView.classList.add('hidden');
+      }
+    }
+
+    function renderTasks(shift) {
+      const container = document.getElementById('taskList');
+      container.innerHTML = '';
+
+      tasks[shift].forEach((task, i) => {
+        const id = `${shift}_task${i}`;
+        const div = document.createElement('div');
+        div.className = 'task';
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = id;
+        checkbox.checked = checkedStates[id] || false;
+
+        checkbox.onchange = () => {
+          const now = new Date().toLocaleTimeString();
+          checkedStates[id] = checkbox.checked;
+          timestamps[id] = now;
+          document.getElementById(`ts_${id}`).textContent = checkbox.checked
+            ? `Last checked: ${now}`
+            : 'Unchecked';
+        };
+
+        const label = document.createElement('label');
+        label.htmlFor = id;
+        label.textContent = task;
+
+        const tsSpan = document.createElement('span');
+        tsSpan.id = `ts_${id}`;
+        tsSpan.className = 'timestamp';
+        tsSpan.textContent = checkbox.checked
+          ? `Last checked: ${timestamps[id] || "Now"}`
+          : 'Unchecked';
+
+        div.appendChild(checkbox);
+        div.appendChild(label);
+        div.appendChild(tsSpan);
+
+        container.appendChild(div);
+      });
+    }
+
+    function saveReport() {
+      if (!currentShift) return;
+
+      const date = new Date().toLocaleDateString();
+      const data = [];
+
+      tasks[currentShift].forEach((task, i) => {
+        const id = `${currentShift}_task${i}`;
+        const time = timestamps[id] || "Never";
+        const checked = checkedStates[id] || false;
+        data.push({ name: task, time, checked });
+      });
+
+      const report = { date, shift: currentShift, tasks: data };
+
+      const allReports = JSON.parse(localStorage.getItem('taskReports') || '[]');
+
+      // Remove old report for same date & shift (so latest saves clean)
+      const filtered = allReports.filter(r => !(r.date === date && r.shift === currentShift));
+      filtered.push(report);
+
+      localStorage.setItem('taskReports', JSON.stringify(filtered));
+      alert('Report saved!');
+    }
+
+    function populateDataOptions() {
+      const dateSelect = document.getElementById('dateSelect');
+      dateSelect.innerHTML = '';
+
+      const reports = JSON.parse(localStorage.getItem('taskReports') || '[]');
+      const uniqueDates = [...new Set(reports.map(r => r.date))];
+
+      uniqueDates.forEach(date => {
+        const opt = document.createElement('option');
+        opt.value = date;
+        opt.textContent = date;
+        dateSelect.appendChild(opt);
+      });
+    }
+
+    function loadSelectedData() {
+      const date = document.getElementById('dateSelect').value;
+      const shift = document.getElementById('dataShiftSelect').value;
+      const dataView = document.getElementById('dataView');
+      const reports = JSON.parse(localStorage.getItem('taskReports') || '[]');
+      const match = reports.find(r => r.date === date && r.shift === shift);
+
+      dataView.innerHTML = '';
+
+      if (!match) {
+        dataView.innerHTML = '<p>No data found for that date and shift.</p>';
+        return;
+      }
+
+      dataView.innerHTML = `
+        <strong>Date:</strong> ${match.date}<br>
+        <strong>Shift:</strong> ${match.shift}<br>
+        <ul>
+          ${match.tasks.map(t =>
+            `<li>${t.name} - ${t.checked ? t.time : "Not completed"}</li>`
+          ).join('')}
+        </ul>
+      `;
+    }
+
+    document.getElementById('sendBtn').addEventListener('click', saveReport);
+  </script>
+
+</body>
+</html>
