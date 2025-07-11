@@ -1,9 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8" />
   <title>Shift Task Tracker</title>
   <style>
+    .container {
+      max-width: 600px;
+      margin: auto;
+    }
+
+    body {
+      font-family: Arial;
+      padding: 20px;
+      font-size: 16px;
+    }
+
+    .task {
+      margin: 15px 0;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .task input[type="checkbox"] {
+      width: 24px;
+      height: 24px;
+      margin-right: 10px;
+    }
+
+    .task label {
+      flex-grow: 1;
+      margin-right: 10px;
+    }
+
+    .timestamp {
+      margin-left: auto;
+      font-size: 0.9em;
+      color: gray;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .button-row button {
+      margin: 0 5px 10px 0;
+      padding: 12px 20px;
+      font-size: 16px;
+      width: 100%;
+      max-width: 200px;
+    }
     body { font-family: Arial; padding: 20px; }
     .task { margin: 10px 0; }
     .timestamp { margin-left: 10px; font-size: 0.9em; color: gray; }
@@ -78,6 +125,7 @@ window.addEventListener('DOMContentLoaded', async () => {
 </script>
 </head>
 <body>
+<div class="container">
 
   <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
 
@@ -327,5 +375,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
 </script>
 
+</div>
 </body>
 </html>
