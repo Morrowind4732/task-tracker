@@ -169,44 +169,10 @@ const employeeColors = {
 
 </script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js">
-window.addEventListener('DOMContentLoaded', async () => {
-  const today = new Date().toLocaleDateString('en-US');
-  const docId = `${today}_AM`;
-
-  try {
-    const docSnap = await db.collection("reports").doc(docId).get();
-
-    if (docSnap.exists) {
-      const report = docSnap.data();
-      currentShift = report.shift;
-      timestamps = {};
-      checkedStates = {};
-
-employeeIds = {}; // reset employee data
-
-tasks[report.shift].forEach((taskName, i) => {
-  const id = `${report.shift}_task${i}`;
-  const savedTask = report.tasks.find(t => t.name === taskName);
-  if (savedTask) {
-    checkedStates[id] = savedTask.checked;
-    timestamps[id] = savedTask.time;
-    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line fixes the highlight
-  }
-});
 
 
-console.log(`Loaded tasks for ${docId}:`, report.tasks);
 
-      renderTasks(currentShift);
-      document.getElementById('taskList').classList.remove('hidden');
-      document.getElementById('sendBtn').classList.remove('hidden');
-	  document.getElementById('unsaveBtn').classList.remove('hidden');
 
-    }
-  } catch (err) {
-    console.error("Auto-load error:", err);
-  }
-});
 
 
 </script>
@@ -325,6 +291,8 @@ manualDateInput.placeholder = today;
     let timestamps = {};
     let checkedStates = {};
 	let employeeIds = {};
+let unsubscribeListener = null;
+
 
     document.getElementById('currentDate').textContent = new Date().toLocaleDateString('en-US');
 
@@ -368,28 +336,33 @@ const employeeColors = {
   const today = new Date().toLocaleDateString('en-US');
   const docId = `${today}_${mode}`;
 
-  try {
-    const docSnap = await db.collection("reports").doc(docId).get();
-    if (docSnap.exists) {
-      const report = docSnap.data();
+ if (unsubscribeListener) unsubscribeListener(); // cleanup any previous listener
 
-tasks[report.shift].forEach((taskName, i) => {
-  const id = `${report.shift}_task${i}`;
-  const savedTask = report.tasks.find(t => t.name === taskName);
-  if (savedTask) {
-    checkedStates[id] = savedTask.checked;
-    timestamps[id] = savedTask.time;
-    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line fixes the highlight
+unsubscribeListener = db.collection("reports").doc(docId).onSnapshot((docSnap) => {
+  if (!docSnap.exists) {
+    console.log("No saved data for", docId);
+    return;
   }
-});
 
-console.log(`Loaded tasks for ${docId}:`, report.tasks); // ⬅️ Add this line
-    } else {
-      console.log("No saved data for", docId);
+  const report = docSnap.data();
+  currentShift = report.shift;
+  timestamps = {};
+  checkedStates = {};
+  employeeIds = {};
+
+  tasks[report.shift].forEach((taskName, i) => {
+    const id = `${report.shift}_task${i}`;
+    const savedTask = report.tasks.find(t => t.name === taskName);
+    if (savedTask) {
+      checkedStates[id] = savedTask.checked;
+      timestamps[id] = savedTask.time;
+      employeeIds[id] = savedTask.employee || "Unknown";
     }
-  } catch (e) {
-    console.error("Error checking saved report:", e);
-  }
+  });
+
+  console.log(`Live update: Loaded tasks for ${docId}:`, report.tasks);
+  renderTasks(currentShift);
+});
 
   renderTasks(mode);
   taskList.classList.remove('hidden');
@@ -646,47 +619,11 @@ document.getElementById('manualDatePicker').addEventListener('change', () => {
 });
 
   
-window.addEventListener('DOMContentLoaded', async () => {
-  const today = new Date().toLocaleDateString('en-US');
-  const docId = `${today}_AM`;
+window.addEventListener('DOMContentLoaded', () => {
+const currentHour = new Date().getHours();
+const shiftToLoad = currentHour < 12 ? 'AM' : 'PM';
+selectShift(shiftToLoad);
 
-  try {
-    const docSnap = await db.collection("reports").doc(docId).get();
-
-    if (docSnap.exists) {
-      const report = docSnap.data();
-      currentShift = report.shift;
-      timestamps = {};
-      checkedStates = {};
-
-
-
-employeeIds = {}; // reset employee data
-
-tasks[report.shift].forEach((taskName, i) => {
-  const id = `${report.shift}_task${i}`;
-  const savedTask = report.tasks.find(t => t.name === taskName);
-  if (savedTask) {
-    checkedStates[id] = savedTask.checked;
-    timestamps[id] = savedTask.time;
-    employeeIds[id] = savedTask.employee || "Unknown"; // ✅ this line fixes the highlight
-  }
-});
-
-
-
-
-console.log(`Loaded tasks for ${docId}:`, report.tasks);
-
-      renderTasks(currentShift);
-      document.getElementById('taskList').classList.remove('hidden');
-      document.getElementById('sendBtn').classList.remove('hidden');
-	  document.getElementById('unsaveBtn').classList.remove('hidden');
-
-    }
-  } catch (err) {
-    console.error("Auto-load error:", err);
-  }
 });
 
 </script>
