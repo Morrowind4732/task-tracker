@@ -424,6 +424,8 @@ if (checkbox.checked) {
     div.style.background = checkbox.checked
       ? (employeeColors[employeeIds[id]] || '#e0ffe0')
       : (i % 2 === 0 ? '#f9f9f9' : '#ffffff');
+	  saveSingleTask(id); // auto-save this task
+
   };
 
   const label = document.createElement('label');
@@ -510,6 +512,60 @@ console.log(`Saved data for ${docId}:`, mergedTasks);
   // Refresh checkboxes to reflect everyone’s latest saved state
   await selectShift(currentShift);
 }
+
+
+async function saveSingleTask(taskId) {
+  if (!currentShift) return;
+
+  const employeeRadios = document.getElementsByName('employeeId');
+  let selectedEmployee = null;
+  for (let radio of employeeRadios) {
+    if (radio.checked) {
+      selectedEmployee = radio.value;
+      break;
+    }
+  }
+
+  if (!selectedEmployee) {
+    alert("Please select your employee ID before updating.");
+    return;
+  }
+
+  const date = new Date().toLocaleDateString('en-US');
+  const docId = `${date}_${currentShift}`;
+  const index = parseInt(taskId.split('_task')[1]);
+  const taskName = tasks[currentShift][index];
+
+  const checkbox = document.getElementById(taskId);
+  const time = timestamps[taskId] || new Date().toLocaleTimeString();
+  const employee = employeeIds[taskId] || selectedEmployee;
+
+  try {
+    const docRef = db.collection("reports").doc(docId);
+    const docSnap = await docRef.get();
+    let taskList = [];
+
+    if (docSnap.exists) {
+      const existing = docSnap.data().tasks || [];
+      taskList = existing.filter(t => t.name !== taskName);
+    }
+
+    if (checkbox.checked) {
+      taskList.push({ name: taskName, time, checked: true, employee });
+    }
+
+    await docRef.set({
+      date,
+      shift: currentShift,
+      tasks: taskList
+    });
+
+    console.log(`Auto-saved task ${taskName}`);
+  } catch (err) {
+    console.error("Auto-save failed:", err);
+  }
+}
+
 
 
 
