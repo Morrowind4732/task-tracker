@@ -679,6 +679,19 @@ window.addEventListener('DOMContentLoaded', () => {
 const currentHour = new Date().getHours();
 const shiftToLoad = currentHour < 12 ? 'AM' : 'PM';
 selectShift(shiftToLoad);
+// Restore saved employee ID
+const savedId = localStorage.getItem('lastEmployeeId');
+if (savedId) {
+  const savedRadio = document.querySelector(`input[name="employeeId"][value="${savedId}"]`);
+  if (savedRadio) savedRadio.checked = true;
+}
+
+// Save new selection on change
+document.querySelectorAll('input[name="employeeId"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    localStorage.setItem('lastEmployeeId', radio.value);
+  });
+});
 
 });
 
