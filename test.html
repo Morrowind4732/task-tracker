@@ -170,6 +170,8 @@ input:checked + .slider:before {
 }
 
 
+
+
   </style>
 
   <!-- Firebase App + Firestore -->
@@ -259,6 +261,19 @@ const employeeColors = {
   <label class="employee-radio bg-SG"><input type="radio" name="employeeId" value="SG"> SG</label>
 </div>
 
+<div id="dogWarnings" style="margin: 10px 0; display: none;">
+  <div style="margin-bottom: 8px;">
+    <div style="color: green; font-weight: bold;">⚠️ Medicine Notes:</div>
+    <div id="medicineWarning" style="white-space: pre-line; color: green;"></div>
+  </div>
+  <div>
+    <div style="color: red; font-weight: bold;">🔥 In Heat:</div>
+    <div id="heatWarning" style="white-space: pre-line; color: red;"></div>
+  </div>
+</div>
+
+
+
 
 <style>
 #employeeRow {
@@ -311,6 +326,24 @@ const employeeColors = {
 
 </div>
 
+<div id="dogInfoSection" class="hidden">
+  <h3>Dog Info</h3>
+
+  <div style="margin-bottom: 20px;">
+    <h4>Medicine</h4>
+    <textarea id="medicineNotes" style="width: 100%; height: 100px;"></textarea>
+    <button class="styled-button" onclick="saveDogNote('medicine')">Save Medicine Note</button>
+  </div>
+
+  <div>
+    <h4>Girls in Heat</h4>
+    <textarea id="heatNotes" style="width: 100%; height: 100px;"></textarea>
+    <button class="styled-button" onclick="saveDogNote('heat')">Save Heat Note</button>
+  </div>
+
+  <button class="styled-button" style="margin-top: 20px;" onclick="returnToTasks()">Return to Tasks</button>
+</div>
+
 
 
   <div id="dataView" class="hidden"></div>
@@ -320,7 +353,8 @@ const employeeColors = {
   <button id="sendBtn" class="hidden">Save Report</button>
   <button id="unsaveBtn" class="hidden">Unsave Checked</button>
   <button id="goToDataBtn" class="styled-button" onclick="goToData()">DATA</button> <!-- ✅ New button -->
-  
+  <button id="goToDogInfoBtn" class="styled-button" onclick="goToDogInfo()">Dog Info</button>
+
 </div>
 
 
@@ -362,12 +396,14 @@ manualDateInput.placeholder = today;
         'Cleaned Young Dog Kennel',
         'Checked Chlorine Gun Old',
         'Cleaned Finished Dog Kennel',
+        'Trough Young Dogs',
+        'Trough Old Dogs',
         'Turned Off Water Young Dog Kennel',
         'Turned Off Water Finished Dog Kennel',
 		'Cleaned Airing Lots',
         'Clipped Gates'
              ],
-      PM: ['Medicine', 'Fed Dogs', 'Aired Males (Old)', 'Aired Females (Old)', 'Aired Males (Young)', 'Aired Females (Young)', 'Cleaned Airing Yards', 'Clip/Dog Check (Old)', 'Clip/Dog Check (Young)', 'Water Hose Check (Old)', 'Water Hose Check (Young)', 'Water Off Check (Old)', 'Water Off Check (Young)', 'Trailer Holes Empty/Clean', 'Washed Bowls', 'Clipped Gates']
+      PM: ['Medicine', 'Fed Dogs', 'Aired Males (Old)', 'Aired Females (Old)', 'Aired Males (Young)', 'Aired Females (Young)', 'Cleaned Airing Yards', 'Clip/Dog Check (Old)', 'Clip/Dog Check (Young)', 'Water Hose Check (Old)', 'Water Hose Check (Young)', 'Water Off Check (Old)', 'Water Off Check (Young)', 'Trailer Holes Empty/Clean', 'Washed Bowls','Ducks In Freezer', 'Charging Devices','Gas Check', 'Clipped Gates']
     };
 
     let currentShift = null;
@@ -415,6 +451,8 @@ const employeeColors = {
   dataView.innerHTML = '';
   document.getElementById('employeeRow').style.display = 'none'; // ✅ hide radios
 } else {
+loadDogWarnings();
+
 shiftToggleRow.style.display = 'block';
   currentShift = mode;
   timestamps = {};
@@ -542,13 +580,91 @@ function goToData() {
 
 function returnToTasks() {
   document.getElementById('goToDataBtn').classList.remove('hidden');
-  document.getElementById('returnToTasksBtn').classList.add('hidden');
+  document.getElementById('goToDogInfoBtn').classList.remove('hidden');
+  document.getElementById('dogInfoSection').classList.add('hidden'); // 👈 HIDE Dog Info
+  document.getElementById('dataControls').classList.add('hidden');   // 👈 HIDE Data Controls
+  document.getElementById('dataView').classList.add('hidden');       // 👈 HIDE Data View
 
-  // Load the shift based on the toggle position
+  document.getElementById('taskList').classList.remove('hidden');
+  document.getElementById('sendBtn').classList.remove('hidden');
+  document.getElementById('unsaveBtn').classList.remove('hidden');
+  document.getElementById('employeeRow').style.display = 'flex';
+  document.getElementById('shiftToggleRow').style.display = 'block';
+
+  // Restore current shift based on toggle
   const shift = document.getElementById('shiftToggle').checked ? 'PM' : 'AM';
   selectShift(shift);
 }
 
+
+
+function goToDogInfo() {
+  document.getElementById('goToDataBtn').classList.add('hidden');
+  document.getElementById('goToDogInfoBtn').classList.add('hidden');
+  document.getElementById('dogInfoSection').classList.remove('hidden');
+  document.getElementById('taskList').classList.add('hidden');
+  document.getElementById('dataControls').classList.add('hidden');
+  document.getElementById('dataView').classList.add('hidden'); // ✅ hide viewed report
+  document.getElementById('sendBtn').classList.add('hidden');
+  document.getElementById('unsaveBtn').classList.add('hidden');
+
+  loadDogNotes(); // Load existing notes
+}
+
+
+async function saveDogNote(type) {
+  const value = document.getElementById(`${type}Notes`).value;
+  const docRef = db.collection("dogInfo").doc("current");
+
+  await docRef.set({ [type]: value }, { merge: true });
+  showToast("Saved!");
+}
+
+async function loadDogNotes() {
+  const docRef = db.collection("dogInfo").doc("current");
+  const doc = await docRef.get();
+
+  if (doc.exists) {
+    const data = doc.data();
+    document.getElementById("medicineNotes").value = data.medicine || '';
+    document.getElementById("heatNotes").value = data.heat || '';
+  }
+}
+
+async function loadDogWarnings() {
+  const warningBox = document.getElementById('dogWarnings');
+  const medDiv = document.getElementById('medicineWarning');
+  const heatDiv = document.getElementById('heatWarning');
+
+  try {
+    const doc = await db.collection("dogInfo").doc("current").get();
+
+    if (doc.exists) {
+      const data = doc.data();
+      const meds = data.medicine || '';
+      const heat = data.heat || '';
+
+medDiv.innerHTML = (meds || '')
+  .split('\n')
+  .map(line => `<div style="color: green;">${line}</div>`)
+  .join('');
+
+heatDiv.innerHTML = (heat || '')
+  .split('\n')
+  .map(line => `<div style="color: red;">${line}</div>`)
+  .join('');
+
+
+
+      warningBox.style.display = (meds || heat) ? 'block' : 'none';
+    } else {
+      warningBox.style.display = 'none';
+    }
+  } catch (err) {
+    console.error("Error loading dog warnings:", err);
+    warningBox.style.display = 'none';
+  }
+}
 
 
 async function saveReport() {
@@ -786,6 +902,9 @@ document.getElementById('manualDatePicker').addEventListener('change', () => {
 window.addEventListener('DOMContentLoaded', () => {
 const currentHour = new Date().getHours();
 const shiftToLoad = currentHour < 12 ? 'AM' : 'PM';
+document.getElementById('shiftToggle').checked = (shiftToLoad === 'PM'); // ✅ Set slider position
+
+
 selectShift(shiftToLoad);
 // Restore saved employee ID
 const savedId = localStorage.getItem('lastEmployeeId');
