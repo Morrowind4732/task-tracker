@@ -18,7 +18,7 @@ body {
   background-repeat: no-repeat;
   background-position: center top; /* Start from center top */
   background-size: 300px auto;
-  background-attachment: scroll;
+  background-attachment: fixed;
   background-position: calc(50% + 100px) 0px; /* 👈 Move 100px to the right from center */
 }
 
@@ -240,8 +240,9 @@ const employeeColors = {
 
 <div class="container">
 
-  <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
-
+<h2 id="headerTitle" style="background-color: white; padding: 10px; border-radius: 8px; display: inline-block;">
+  Shift Task Tracker - <span id="currentDate"></span>
+</h2>
 
 
   
