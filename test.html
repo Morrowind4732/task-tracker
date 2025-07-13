@@ -61,12 +61,13 @@
 }
 
 .styled-button {
-  margin: 0 5px 10px 0;
-  padding: 12px 20px;
-  font-size: 16px;
-  width: 100%;
-  max-width: 200px;
+  margin: 0 5px 10px 0 !important;
+  padding: 12px 20px !important;
+  font-size: 16px !important;
+  width: 100% !important;
+  max-width: 200px !important;
 }
+
 
 .employee-radio {
   padding: 8px 12px;
@@ -121,6 +122,52 @@
   opacity: 1;
 }
 
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 28px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0;
+  right: 0; bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 34px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 20px;
+  width: 20px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #4CAF50;
+}
+
+input:checked + .slider:before {
+  transform: translateX(32px);
+}
+
+#sendBtn, #unsaveBtn {
+  display: none !important;
+}
 
 
   </style>
@@ -184,14 +231,28 @@ const employeeColors = {
 
   <h2 id="headerTitle">Shift Task Tracker - <span id="currentDate"></span></h2>
 
-  <div class="button-row">
-    <button onclick="selectShift('AM')">AM</button>
-    <button onclick="selectShift('PM')">PM</button>
-    <button onclick="selectShift('DATA')">DATA</button>
-  </div>
+
+
   
+  
+<div id="shiftToggleRow">
+  <div class="button-row" style="justify-content: center; align-items: center; margin-bottom: 10px;">
+    <span style="margin-right: 12px; font-weight: bold; font-size: 16px;">AM</span>
+    <label class="switch">
+      <input type="checkbox" id="shiftToggle">
+      <span class="slider round"></span>
+    </label>
+    <span style="margin-left: 12px; font-weight: bold; font-size: 16px;">PM</span>
+  </div>
+</div>
+
+
+
+
+
 <div class="button-row" id="employeeRow">
   <span style="font-weight: bold; align-self: center;">Employee:</span>
+
   <label class="employee-radio bg-BG"><input type="radio" name="employeeId" value="BG"> BG</label>
   <label class="employee-radio bg-BJ"><input type="radio" name="employeeId" value="BJ"> BJ</label>
   <label class="employee-radio bg-CG"><input type="radio" name="employeeId" value="CG"> CG</label>
@@ -219,28 +280,48 @@ const employeeColors = {
   <div id="taskList" class="hidden"></div>
 
 <div id="dataControls" class="hidden">
-  <label for="dataShiftSelect">Shift:</label>
-  <select id="dataShiftSelect">
-    <option value="AM">AM</option>
-    <option value="PM">PM</option>
-  </select>
+  <div style="margin-bottom: 12px;">
+    <label style="margin-right: 10px;">Shift:</label>
+    <div id="dataShiftToggleWrapper" style="display: inline-flex; align-items: center; margin-bottom: 10px;">
+      <span style="margin-right: 8px; font-weight: bold;">AM</span>
+      <label class="switch">
+        <input type="checkbox" id="dataShiftToggle">
+        <span class="slider round"></span>
+      </label>
+      <span style="margin-left: 8px; font-weight: bold;">PM</span>
+    </div>
 
-  <label for="manualDatePicker">Select Date:</label>
-  <input type="date" id="manualDatePicker" style="width: 160px;">
+    <div style="margin-top: 5px;">
+      <label for="manualDatePicker">Select Date:</label>
+      <input type="date" id="manualDatePicker" style="width: 160px;">
+    </div>
 
-  <label for="manualDate">or enter date:</label>
-  <input type="text" id="manualDate" style="width: 120px;">
+    <label for="manualDate" style="display: none;">or enter date:</label>
+    <input type="text" id="manualDate" style="width: 120px; display: none;">
+  </div>
 
 
+<div style="display: flex; gap: 10px; margin: 10px 0;">
   <button class="styled-button" onclick="loadSelectedData()">View Report</button>
+  <button id="returnToTasksBtn" class="styled-button hidden" onclick="returnToTasks()">Return to Tasks</button>
+</div>
+
+
 
 </div>
 
 
+
   <div id="dataView" class="hidden"></div>
 
+<!-- Place this inside your bottom .button-row -->
+<div class="button-row" style="justify-content: center;">
   <button id="sendBtn" class="hidden">Save Report</button>
   <button id="unsaveBtn" class="hidden">Unsave Checked</button>
+  <button id="goToDataBtn" class="styled-button" onclick="goToData()">DATA</button> <!-- ✅ New button -->
+  
+</div>
+
 
 
   <script>
@@ -258,10 +339,10 @@ const employeeColors = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ⬇️ Set calendar default to today
 window.addEventListener('DOMContentLoaded', () => {
-  const today = new Date().toISOString().split('T')[0]; // yyyy-mm-dd
-  document.getElementById('manualDatePicker').value = today;
+  const today = new Date();
+  const localISO = today.toLocaleDateString('sv-SE'); // "yyyy-mm-dd" format using Swedish locale
+  document.getElementById('manualDatePicker').value = localISO;
 });
 
 // Set today's date as the placeholder for the manual date input
@@ -320,8 +401,10 @@ const employeeColors = {
       const dataView = document.getElementById('dataView');
       const dataControls = document.getElementById('dataControls');
       const sendBtn = document.getElementById('sendBtn');
+		const shiftToggleRow = document.getElementById('shiftToggleRow');
 
       if (mode === 'DATA') {
+	  shiftToggleRow.style.display = 'none';
   currentShift = null;
   taskList.classList.add('hidden');
   sendBtn.classList.add('hidden');
@@ -331,6 +414,7 @@ const employeeColors = {
   dataView.innerHTML = '';
   document.getElementById('employeeRow').style.display = 'none'; // ✅ hide radios
 } else {
+shiftToggleRow.style.display = 'block';
   currentShift = mode;
   timestamps = {};
   checkedStates = {};
@@ -448,6 +532,22 @@ if (checkbox.checked) {
 });
 
 }
+
+function goToData() {
+  document.getElementById('goToDataBtn').classList.add('hidden');
+  document.getElementById('returnToTasksBtn').classList.remove('hidden');
+  selectShift('DATA');
+}
+
+function returnToTasks() {
+  document.getElementById('goToDataBtn').classList.remove('hidden');
+  document.getElementById('returnToTasksBtn').classList.add('hidden');
+
+  // Load the shift based on the toggle position
+  const shift = document.getElementById('shiftToggle').checked ? 'PM' : 'AM';
+  selectShift(shift);
+}
+
 
 
 async function saveReport() {
@@ -612,7 +712,8 @@ async function unsaveChecked() {
 async function loadSelectedData() {
   const datePickerValue = document.getElementById('manualDatePicker').value;
   const manualDateValue = document.getElementById('manualDate').value.trim();
-  const shift = document.getElementById('dataShiftSelect').value;
+  const shift = document.getElementById('dataShiftToggle').checked ? 'PM' : 'AM';
+
   const dataView = document.getElementById('dataView');
 
   const dateToUse = datePickerValue || manualDateValue;
@@ -667,6 +768,11 @@ dataView.innerHTML = `
   }
 }
 
+document.getElementById('shiftToggle').addEventListener('change', function() {
+  const shift = this.checked ? 'PM' : 'AM';
+  selectShift(shift);
+  document.getElementById('dataToggleBtn').textContent = 'DATA';
+});
 
 
     document.getElementById('sendBtn').addEventListener('click', saveReport);
@@ -695,6 +801,12 @@ document.querySelectorAll('input[name="employeeId"]').forEach(radio => {
 });
 
 });
+
+document.getElementById('shiftToggle').addEventListener('change', function() {
+  const shift = this.checked ? 'PM' : 'AM';
+  selectShift(shift);
+});
+
 
 </script>
 
