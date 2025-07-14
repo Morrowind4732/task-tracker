@@ -10,6 +10,17 @@
       margin: auto;
     }
 
+
+.removeReminder {
+  font-size: 16px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.removeReminder:hover {
+  background-color: #fdd;
+}
+
+
 body {
   font-family: Arial;
   padding: 20px;
@@ -390,11 +401,13 @@ const employeeColors = {
 
 
 <div id="reminderBox" style="margin-top: 10px; display: none;">
-  <div style="font-weight: bold; margin-bottom: 4px;">
-    📌 <span style="color: #c026d3;">Reminders:</span>
+  <div style="font-weight: bold; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+    📌 <span style="color: #7e22ce;">Reminders:</span>
+    <button id="addReminderBtn" title="Add Reminder" style="font-size: 18px; padding: 2px 6px; cursor: pointer; background: none; border: none; color: #7e22ce; font-weight: bold;">➕Add</button>
   </div>
   <div id="reminderList" style="white-space: pre-line;"></div>
 </div>
+
 
 
   <div id="dataView" class="hidden"></div>
@@ -430,6 +443,8 @@ window.addEventListener('DOMContentLoaded', () => {
   const localISO = today.toLocaleDateString('sv-SE'); // "yyyy-mm-dd" format using Swedish locale
   document.getElementById('manualDatePicker').value = localISO;
 });
+
+
 
 // Set today's date as the placeholder for the manual date input
 const manualDateInput = document.getElementById('manualDate');
@@ -717,7 +732,11 @@ async function loadDogWarnings() {
 
       if (reminders.length > 0) {
 reminderList.innerHTML = reminders.map((text, i) =>
-  `<div class="task"><input type="checkbox" id="reminder_${i}" class="reminderCheckbox"><label for="reminder_${i}">${text}</label></div>`
+  `<div class="task" data-index="${i}">
+    <input type="checkbox" id="reminder_${i}" class="reminderCheckbox">
+    <label for="reminder_${i}">${text}</label>
+    <button class="removeReminder" data-index="${i}" style="margin-left: 10px; background: none; border: none; color: red; font-weight: bold; cursor: pointer;">✖</button>
+  </div>`
 ).join('');
 
 
@@ -739,6 +758,54 @@ reminderList.innerHTML = reminders.map((text, i) =>
     reminderBox.style.display = 'none';
   }
 }
+
+document.getElementById("addReminderBtn").addEventListener("click", async () => {
+  const newReminder = prompt("Enter new reminder:");
+  if (!newReminder) return;
+
+  const docRef = db.collection("dogInfo").doc("current");
+  const doc = await docRef.get();
+
+  if (!doc.exists) return;
+
+  let reminders = doc.data().reminders || [];
+  reminders.push(newReminder.trim());
+
+  await docRef.set({ reminders }, { merge: true });
+
+  showToast("Reminder added!");
+  loadDogWarnings(); // Refresh to show new entry
+});
+
+
+document.addEventListener('click', async (e) => {
+  if (e.target.classList.contains('removeReminder')) {
+    const i = parseInt(e.target.dataset.index);
+    const checkbox = document.getElementById(`reminder_${i}`);
+    
+    if (!checkbox.checked) {
+      alert("Check the reminder first to confirm deletion.");
+      return;
+    }
+
+    // Load current reminders
+    const docRef = db.collection("dogInfo").doc("current");
+    const doc = await docRef.get();
+    if (!doc.exists) return;
+
+    let reminders = doc.data().reminders || [];
+
+    // Remove by index
+    reminders.splice(i, 1);
+
+    // Save new list
+    await docRef.set({ reminders }, { merge: true });
+
+    showToast("Reminder removed");
+    loadDogWarnings(); // Refresh the view
+  }
+});
+
 
 function toggleMorningFeeds() {
   const content = document.getElementById("morningFeeds");
