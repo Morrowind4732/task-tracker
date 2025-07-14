@@ -18,7 +18,7 @@ body {
   background-repeat: no-repeat;
   background-position: center top; /* Start from center top */
   background-size: 300px auto;
-  background-attachment: scroll;
+  background-attachment: fixed;
   background-position: calc(50% + 100px) 0px; /* 👈 Move 100px to the right from center */
 }
 
@@ -241,7 +241,7 @@ const employeeColors = {
 <div class="container">
 
 <h2 id="headerTitle" style="background-color: white; padding: 10px; border-radius: 8px; display: inline-block;">
-   <span id="currentDate"></span>
+ <span id="currentDate"></span>
 </h2>
 
 
@@ -271,6 +271,16 @@ const employeeColors = {
   <label class="employee-radio bg-SG"><input type="radio" name="employeeId" value="SG"> SG</label>
 </div>
 
+<div>
+  <button id="toggleMorningBtn" onclick="toggleMorningFeeds()" style="margin-top: 10px; font-weight: bold;">
+    ➕ Show Morning Feeds
+  </button>
+  <div id="morningFeeds" style="display: none; margin-top: 8px;">
+    <div style="color: #333; font-weight: bold;">🍽️ Morning Feeds:</div>
+    <div id="morningWarning" style="white-space: pre-line; color: #333;"></div>
+  </div>
+</div>
+
 <div id="dogWarnings" style="margin: 10px 0; display: none;">
   <div style="margin-bottom: 8px;">
     <div style="color: green; font-weight: bold;">⚠️ Medicine Notes:</div>
@@ -281,6 +291,12 @@ const employeeColors = {
     <div id="heatWarning" style="white-space: pre-line; color: red;"></div>
   </div>
 </div>
+
+
+
+
+
+
 
 
 
@@ -338,6 +354,8 @@ const employeeColors = {
 
 <div id="dogInfoSection" class="hidden">
   <h3>Dog Info</h3>
+  
+<button class="styled-button" style="margin-bottom: 20px;" onclick="returnToTasks()">Return to Tasks</button>
 
   <div style="margin-bottom: 20px;">
     <h4>Medicine</h4>
@@ -350,10 +368,33 @@ const employeeColors = {
     <textarea id="heatNotes" style="width: 100%; height: 100px;"></textarea>
     <button class="styled-button" onclick="saveDogNote('heat')">Save Heat Note</button>
   </div>
+  
+  <div style="margin-top: 20px;">
+  <h4>Morning Feeds</h4>
+  <textarea id="morningNotes" style="width: 100%; height: 100px;"></textarea>
+  <button class="styled-button" onclick="saveDogNote('morning')">Save Morning Feed Note</button>
+</div>
+
+<div style="margin-top: 20px;">
+  <h4>Reminders</h4>
+ <textarea id="remindersNotes" style="width: 100%; height: 100px;"></textarea>
+<button class="styled-button" onclick="saveDogNote('reminders')">Save Reminders</button>
+</div>
+
+
 
   <button class="styled-button" style="margin-top: 20px;" onclick="returnToTasks()">Return to Tasks</button>
 </div>
 
+
+
+
+<div id="reminderBox" style="margin-top: 10px; display: none;">
+  <div style="font-weight: bold; margin-bottom: 4px;">
+    📌 <span style="color: #c026d3;">Reminders:</span>
+  </div>
+  <div id="reminderList" style="white-space: pre-line;"></div>
+</div>
 
 
   <div id="dataView" class="hidden"></div>
@@ -623,12 +664,20 @@ function goToDogInfo() {
 
 
 async function saveDogNote(type) {
-  const value = document.getElementById(`${type}Notes`).value;
-  const docRef = db.collection("dogInfo").doc("current");
+  let value = document.getElementById(`${type}Notes`).value;
 
-  await docRef.set({ [type]: value }, { merge: true });
+  // Save reminders as array
+  if (type === "reminders") {
+    value = value.split('\n').map(line => line.trim()).filter(line => line);
+  }
+
+  const docRef = db.collection("dogInfo").doc("current");
+  console.log("Saving", type, value);
+await docRef.set({ [type]: value }, { merge: true });
+
   showToast("Saved!");
 }
+
 
 async function loadDogNotes() {
   const docRef = db.collection("dogInfo").doc("current");
@@ -638,6 +687,9 @@ async function loadDogNotes() {
     const data = doc.data();
     document.getElementById("medicineNotes").value = data.medicine || '';
     document.getElementById("heatNotes").value = data.heat || '';
+	document.getElementById("morningNotes").value = data.morning || '';
+	document.getElementById("remindersNotes").value = (data.reminders || []).join('\n');
+
   }
 }
 
@@ -645,6 +697,9 @@ async function loadDogWarnings() {
   const warningBox = document.getElementById('dogWarnings');
   const medDiv = document.getElementById('medicineWarning');
   const heatDiv = document.getElementById('heatWarning');
+  const morningDiv = document.getElementById('morningWarning');
+  const reminderBox = document.getElementById('reminderBox');
+  const reminderList = document.getElementById('reminderList');
 
   try {
     const doc = await db.collection("dogInfo").doc("current").get();
@@ -653,28 +708,51 @@ async function loadDogWarnings() {
       const data = doc.data();
       const meds = data.medicine || '';
       const heat = data.heat || '';
+      const morning = data.morning || '';
+      const reminders = data.reminders || [];
 
-medDiv.innerHTML = (meds || '')
-  .split('\n')
-  .map(line => `<div style="color: green;">${line}</div>`)
-  .join('');
+      medDiv.innerHTML = meds.split('\n').map(line => `<div style="color: green;">${line}</div>`).join('');
+      heatDiv.innerHTML = heat.split('\n').map(line => `<div style="color: red;">${line}</div>`).join('');
+      morningDiv.innerHTML = morning.split('\n').map(line => `<div>${line}</div>`).join('');
 
-heatDiv.innerHTML = (heat || '')
-  .split('\n')
-  .map(line => `<div style="color: red;">${line}</div>`)
-  .join('');
-
+      if (reminders.length > 0) {
+reminderList.innerHTML = reminders.map((text, i) =>
+  `<div class="task"><input type="checkbox" id="reminder_${i}" class="reminderCheckbox"><label for="reminder_${i}">${text}</label></div>`
+).join('');
 
 
-      warningBox.style.display = (meds || heat) ? 'block' : 'none';
+
+
+        reminderBox.style.display = 'block';
+      } else {
+        reminderBox.style.display = 'none';
+      }
+
+      warningBox.style.display = (meds || heat || morning) ? 'block' : 'none';
     } else {
       warningBox.style.display = 'none';
+      reminderBox.style.display = 'none';
     }
   } catch (err) {
     console.error("Error loading dog warnings:", err);
     warningBox.style.display = 'none';
+    reminderBox.style.display = 'none';
   }
 }
+
+function toggleMorningFeeds() {
+  const content = document.getElementById("morningFeeds");
+  const button = document.getElementById("toggleMorningBtn");
+
+  if (content.style.display === "none") {
+    content.style.display = "block";
+    button.textContent = "➖ Hide Morning Feeds";
+  } else {
+    content.style.display = "none";
+    button.textContent = "➕ Show Morning Feeds";
+  }
+}
+
 
 
 async function saveReport() {
