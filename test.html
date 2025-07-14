@@ -828,6 +828,10 @@ function toggleMorningFeeds() {
   }
 }
 
+function showReminderInput() {
+  const reminder = prompt("Enter new reminder:");
+  if (reminder) saveDogNote('reminders', reminder);
+}
 
 
 async function saveReport() {
