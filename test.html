@@ -248,6 +248,18 @@ const employeeColors = {
 <body>
 <div id="toast"></div>
 
+  <div id="topReminderAdd" onclick="showReminderInput()" 
+       style="position: fixed; top: 10px; left: 10px; z-index: 1000; 
+              background-color: #228B22; color: white; 
+              padding: 6px 12px; border-radius: 6px; 
+              cursor: pointer; font-weight: bold; 
+              box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
+    + Add Reminder
+  </div>
+
+
+
+
 
 <div class="container">
 
@@ -283,13 +295,19 @@ const employeeColors = {
 </div>
 
 <div>
-  <button id="toggleMorningBtn" onclick="toggleMorningFeeds()" style="margin-top: 10px; font-weight: bold;">
-    ➕ Show Morning Feeds
-  </button>
+<div id="toggleMorningBtn" onclick="toggleMorningFeeds()" 
+     style="margin-top: 10px; background-color: #228B22; color: white; 
+            padding: 6px 12px; border-radius: 6px; 
+            cursor: pointer; font-weight: bold; 
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2); display: inline-block;">
+  ➕ Show Morning Feeds
+</div>
+
+
   <div id="morningFeeds" style="display: none; margin-top: 8px;">
     <div style="color: #333; font-weight: bold;">🍽️ Morning Feeds:</div>
-    <div id="morningWarning" style="white-space: pre-line; color: #333;"></div>
-  </div>
+ <div id="morningWarning" style="white-space: pre-line; color: #333; font-size: 18px;"></div>
+ </div>
 </div>
 
 <div id="dogWarnings" style="margin: 10px 0; display: none;">
@@ -328,14 +346,8 @@ const employeeColors = {
 }
 </style>
 
-<div id="topReminderAdd" onclick="showReminderInput()" 
-     style="position: fixed; top: 10px; left: 10px; z-index: 1000; 
-            background-color: #9333ea; color: white; 
-            padding: 6px 12px; border-radius: 6px; 
-            cursor: pointer; font-weight: bold; 
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
-  ➕ Add Reminder
-</div>
+
+
 
   <div id="taskList" class="hidden"></div>
 
@@ -686,20 +698,37 @@ function goToDogInfo() {
 }
 
 
-async function saveDogNote(type) {
-  let value = document.getElementById(`${type}Notes`).value;
+async function saveDogNote(type, newReminder = null) {
+  const docRef = db.collection("dogInfo").doc("current");
+  let value;
 
-  // Save reminders as array
   if (type === "reminders") {
-    value = value.split('\n').map(line => line.trim()).filter(line => line);
+    const doc = await docRef.get();
+    const currentReminders = doc.exists && Array.isArray(doc.data().reminders)
+      ? doc.data().reminders
+      : [];
+
+    if (newReminder) {
+      // Append mode
+      value = [...currentReminders, newReminder.trim()];
+    } else {
+      // Get from textarea
+      value = document.getElementById(`${type}Notes`).value
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line);
+    }
+  } else {
+    value = document.getElementById(`${type}Notes`).value;
   }
 
-  const docRef = db.collection("dogInfo").doc("current");
   console.log("Saving", type, value);
-await docRef.set({ [type]: value }, { merge: true });
+  await docRef.set({ [type]: value }, { merge: true });
 
   showToast("Saved!");
+  loadDogWarnings(); // So the UI updates after saving
 }
+
 
 
 async function loadDogNotes() {
