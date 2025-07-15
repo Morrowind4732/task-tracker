@@ -264,6 +264,33 @@ const employeeColors = {
 </div>
 
 
+<div id="scheduleTestBtn" onclick="showTestForm()" 
+     style="margin-bottom: 20px;
+            background-color: #7e22ce; color: white;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer; font-weight: bold;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            display: inline-block;
+            font-size: 14px;">
+  📅 Schedule Test Sign Up
+</div>
+
+<div id="testListBox" style="display: none; margin-top: 20px;">
+  <h3>Tests & Trials</h3>
+  <ul id="testList" style="list-style-type: none; padding: 0;"></ul>
+</div>
+
+
+
+<div id="testFormModal" style="display: none; padding: 20px; border: 1px solid #ccc; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); max-width: 400px;">
+  <h3>Schedule a Test</h3>
+  <input type="text" id="testName" placeholder="Test Name" style="width: 100%; margin-bottom: 8px;"><br>
+  <input type="date" id="testDate" style="width: 100%; margin-bottom: 8px;"><br>
+  <input type="time" id="testTime" value="20:00" style="width: 100%; margin-bottom: 8px;">
+  <button onclick="saveTestSignup()">Save</button>
+  <button onclick="closeTestForm()">Cancel</button>
+</div>
 
 
 
@@ -467,9 +494,32 @@ const db = firebase.firestore();
 
 window.addEventListener('DOMContentLoaded', () => {
   const today = new Date();
-  const localISO = today.toLocaleDateString('sv-SE'); // "yyyy-mm-dd" format using Swedish locale
-  document.getElementById('manualDatePicker').value = localISO;
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+
+  const formattedDate = `${yyyy}-${mm}-${dd}`; // Works with <input type="date">
+  document.getElementById('manualDatePicker').value = formattedDate;
+
+  loadTestSignups(); // ✅ Your tests & trials section
 });
+
+
+function formatDisplayDate(dateStr) {
+  const dt = new Date(dateStr);
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const yy = String(dt.getFullYear()).slice(-2); // Just last 2 digits
+  return `${mm}/${dd}/${yy}`;
+}
+
+function formatDisplayTime(timeStr) {
+  const [hour, minute] = timeStr.split(":");
+  const dt = new Date();
+  dt.setHours(hour, minute);
+  return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
 
 
 
@@ -870,6 +920,72 @@ function toggleMorningFeeds() {
 function showReminderInput() {
   const reminder = prompt("Enter new reminder:");
   if (reminder) saveDogNote('reminders', reminder);
+}
+
+function showTestForm() {
+  document.getElementById('testFormModal').style.display = 'block';
+}
+function closeTestForm() {
+  document.getElementById('testFormModal').style.display = 'none';
+}
+
+async function saveTestSignup() {
+  const name = document.getElementById('testName').value.trim();
+  const date = document.getElementById('testDate').value;
+  const time = document.getElementById('testTime').value;
+
+  if (!name || !date || !time) {
+    alert("Please fill out all fields.");
+    return;
+  }
+
+  await db.collection("testSignups").add({ name, date, time });
+  closeTestForm();
+  loadTestSignups();
+  showToast("Test scheduled!");
+}
+
+async function loadTestSignups() {
+  const snapshot = await db.collection("testSignups").get();
+  const list = document.getElementById("testList");
+  const box = document.getElementById("testListBox");
+
+  if (snapshot.empty) {
+    box.style.display = "none";
+    return;
+  }
+
+  list.innerHTML = '';
+  snapshot.forEach(doc => {
+    const { name, date, time } = doc.data();
+    const id = doc.id;
+
+    const link = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(name)}&dates=${formatGoogleCalTime(date, time)}/${formatGoogleCalTime(date, time, 1)}&location=${encodeURIComponent(name)}&details=${encodeURIComponent("Scheduled test")}`;
+
+list.innerHTML += `
+  <li style="margin-bottom: 10px;">
+    <a href="${link}" target="_blank" style="margin-right: 10px;">
+      ${name} @ ${formatDisplayDate(date)} ${formatDisplayTime(time)}
+    </a>
+    <button onclick="deleteTest('${id}')" style="color: red; background: none; border: none; font-weight: bold;">✖</button>
+  </li>`;
+
+  });
+
+  box.style.display = "block";
+}
+
+// Helper for Google Calendar date formatting
+function formatGoogleCalTime(dateStr, timeStr, addHour = 0) {
+  const dt = new Date(`${dateStr}T${timeStr}`);
+  if (addHour) dt.setHours(dt.getHours() + addHour);
+  return dt.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+}
+
+async function deleteTest(id) {
+  await db.collection("testSignups").doc(id).delete();
+  loadTestSignups();
+  showToast("Test removed.");
 }
 
 
