@@ -668,6 +668,8 @@ if (checkbox.checked) {
 function goToData() {
   document.getElementById('goToDataBtn').classList.add('hidden');
   document.getElementById('returnToTasksBtn').classList.remove('hidden');
+  document.getElementById('reminderBox').style.display = 'none';
+
   selectShift('DATA');
 }
 
@@ -700,6 +702,7 @@ function goToDogInfo() {
   document.getElementById('dataView').classList.add('hidden'); // ✅ hide viewed report
   document.getElementById('sendBtn').classList.add('hidden');
   document.getElementById('unsaveBtn').classList.add('hidden');
+document.getElementById('reminderBox').style.display = 'none';
 
   loadDogNotes(); // Load existing notes
 }
