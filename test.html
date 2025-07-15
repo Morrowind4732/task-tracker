@@ -506,12 +506,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
 
 function formatDisplayDate(dateStr) {
-  const dt = new Date(dateStr);
-  const mm = String(dt.getMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getDate()).padStart(2, '0');
-  const yy = String(dt.getFullYear()).slice(-2); // Just last 2 digits
-  return `${mm}/${dd}/${yy}`;
+  const [yyyy, mm, dd] = dateStr.split('-');
+  return `${mm}/${dd}/${yyyy.slice(-2)}`; // MM/DD/YY
 }
+
 
 function formatDisplayTime(timeStr) {
   const [hour, minute] = timeStr.split(":");
@@ -962,13 +960,19 @@ async function loadTestSignups() {
 
     const link = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(name)}&dates=${formatGoogleCalTime(date, time)}/${formatGoogleCalTime(date, time, 1)}&location=${encodeURIComponent(name)}&details=${encodeURIComponent("Scheduled test")}`;
 
+const displayDate = formatDisplayDate(date); // e.g., "07/25/25"
+const alarmLabel = `${name} @ ${displayDate}`;
+const alarmIntent = `intent:android.intent.action.SET_ALARM#Intent;scheme=alarm;S.hour=19;S.minutes=0;S.message=${encodeURIComponent(alarmLabel)};end`;
+
 list.innerHTML += `
   <li style="margin-bottom: 10px;">
     <a href="${link}" target="_blank" style="margin-right: 10px;">
-      ${name} @ ${formatDisplayDate(date)} ${formatDisplayTime(time)}
+      ${name} @ ${displayDate} ${formatDisplayTime(time)}
     </a>
-    <button onclick="deleteTest('${id}')" style="color: red; background: none; border: none; font-weight: bold;">✖</button>
+    <a href="${alarmIntent}" title="Set Android Alarm" style="margin-left: 8px; text-decoration: none;">⏰</a>
+    <button onclick="deleteTest('${id}')" style="color: red; background: none; border: none; font-weight: bold; margin-left: 8px;">✖</button>
   </li>`;
+
 
   });
 
