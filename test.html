@@ -21,16 +21,19 @@
 }
 
 
+
+html {
+  background-image: url('retriever-outline.png');
+  background-repeat: no-repeat;
+  background-position: calc(50% + 100px) 0px;
+  background-size: 300px auto;
+  background-attachment: fixed;
+}
+
 body {
   font-family: Arial;
   padding: 20px;
   font-size: 16px;
-  background-image: url('retriever-outline.png');
-  background-repeat: no-repeat;
-  background-position: center top; /* Start from center top */
-  background-size: 300px auto;
-  background-attachment: fixed;
-  background-position: calc(50% + 100px) 0px; /* 👈 Move 100px to the right from center */
 }
 
 
@@ -248,14 +251,18 @@ const employeeColors = {
 <body>
 <div id="toast"></div>
 
-  <div id="topReminderAdd" onclick="showReminderInput()" 
-       style="position: fixed; top: 10px; left: 10px; z-index: 1000; 
-              background-color: #228B22; color: white; 
-              padding: 6px 12px; border-radius: 6px; 
-              cursor: pointer; font-weight: bold; 
-              box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
-    + Add Reminder
-  </div>
+<div id="topReminderAdd" onclick="showReminderInput()" 
+     style="margin-bottom: 20px;
+            background-color: #228B22; color: white;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer; font-weight: bold;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            display: inline-block;
+            font-size: 14px;">
+  + Add Reminder
+</div>
+
 
 
 
