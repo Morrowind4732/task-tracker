@@ -251,6 +251,13 @@ const employeeColors = {
 <body>
 <div id="toast"></div>
 
+
+<div id="windToggle" onclick="toggleWindInfo()" style="cursor: pointer; font-size: 18px; margin-bottom: 10px;">
+  🧭 Wind: Loading...
+</div>
+<div id="wind-info" style="display: none; margin-top: 8px;"></div>
+
+
 <div id="topReminderAdd" onclick="showReminderInput()" 
      style="margin-bottom: 20px;
             background-color: #228B22; color: white;
@@ -518,6 +525,17 @@ function formatDisplayTime(timeStr) {
   return dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+function toggleWindInfo() {
+  const box = document.getElementById("wind-info");
+  const toggle = document.getElementById("windToggle");
+
+  const isHidden = box.style.display === "none";
+  box.style.display = isHidden ? "block" : "none";
+
+  if (!isHidden) {
+    updateWindSummary(); // restore collapsed view text
+  }
+}
 
 
 
@@ -960,19 +978,13 @@ async function loadTestSignups() {
 
     const link = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(name)}&dates=${formatGoogleCalTime(date, time)}/${formatGoogleCalTime(date, time, 1)}&location=${encodeURIComponent(name)}&details=${encodeURIComponent("Scheduled test")}`;
 
-const displayDate = formatDisplayDate(date); // e.g., "07/25/25"
-const alarmLabel = `${name} @ ${displayDate}`;
-const alarmIntent = `intent:android.intent.action.SET_ALARM#Intent;scheme=alarm;S.hour=19;S.minutes=0;S.message=${encodeURIComponent(alarmLabel)};end`;
-
 list.innerHTML += `
   <li style="margin-bottom: 10px;">
     <a href="${link}" target="_blank" style="margin-right: 10px;">
-      ${name} @ ${displayDate} ${formatDisplayTime(time)}
+      ${name} @ ${formatDisplayDate(date)} ${formatDisplayTime(time)}
     </a>
-    <a href="${alarmIntent}" title="Set Android Alarm" style="margin-left: 8px; text-decoration: none;">⏰</a>
-    <button onclick="deleteTest('${id}')" style="color: red; background: none; border: none; font-weight: bold; margin-left: 8px;">✖</button>
+    <button onclick="deleteTest('${id}')" style="color: red; background: none; border: none; font-weight: bold;">✖</button>
   </li>`;
-
 
   });
 
@@ -991,6 +1003,92 @@ async function deleteTest(id) {
   loadTestSignups();
   showToast("Test removed.");
 }
+
+function degreesToCardinal(degree) {
+      const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const index = Math.round(degree / 45) % 8;
+      return directions[index];
+    }
+	
+function updateWindSummary() {
+  fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&current_weather=true&hourly=winddirection&timezone=auto')
+    .then(response => response.json())
+    .then(data => {
+      const now = new Date();
+      const hours = data.hourly.time;
+      const directions = data.hourly.winddirection;
+
+      const getDir = deg => {
+        const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        return dirs[Math.round(deg / 45) % 8];
+      };
+
+      const summary = [];
+
+      // Add current wind direction
+      const current = data.current_weather.winddirection;
+      summary.push(getDir(current));
+
+      // Get next 3 hours
+      let count = 0;
+      for (let i = 0; i < hours.length && count < 3; i++) {
+        const t = new Date(hours[i]);
+        const diff = (t - now) / (1000 * 60 * 60);
+        if (diff >= 1 && diff <= 4) {
+          summary.push(getDir(directions[i]));
+          count++;
+        }
+      }
+
+      document.getElementById("windToggle").textContent = `🧭 Wind: ${summary.join(" → ")}`;
+    })
+    .catch(err => {
+      document.getElementById("windToggle").textContent = "🧭 Wind: N/A";
+      console.error("Wind summary error:", err);
+    });
+}
+
+
+
+fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&current_weather=true&hourly=winddirection,windspeed&timezone=auto')
+  .then(response => response.json())
+  .then(data => {
+    const currentWindDir = data.current_weather.winddirection;
+    const currentWindSpeedKph = data.current_weather.windspeed;
+    const currentWindSpeedMph = (currentWindSpeedKph * 0.621371).toFixed(1);
+
+    const now = new Date();
+    const hours = data.hourly.time;
+    const directions = data.hourly.winddirection;
+    const speeds = data.hourly.windspeed;
+
+    const getDirectionLabel = deg => {
+      const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW', 'N'];
+      return dirs[Math.round(deg / 45) % 8];
+    };
+
+    let html = `<strong>Wind Now:</strong> ${getDirectionLabel(currentWindDir)} (${currentWindDir}°) at ${currentWindSpeedMph} mph<br><br>`;
+
+    let count = 0;
+    for (let i = 0; i < hours.length; i++) {
+      const forecastTime = new Date(hours[i]);
+      const diffHours = (forecastTime - now) / (1000 * 60 * 60);
+
+      if (diffHours >= 1 && count < 8) {
+        const labelTime = forecastTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const direction = directions[i];
+        const dirLabel = getDirectionLabel(direction);
+        const speedMph = (speeds[i] * 0.621371).toFixed(1);
+        html += `${labelTime}: ${dirLabel} (${direction}°) at ${speedMph} mph<br>`;
+        count++;
+      }
+    }
+
+    document.getElementById('wind-info').innerHTML = html;
+  })
+  .catch(error => console.error('Error fetching wind data:', error));
+
+
 
 
 async function saveReport() {
@@ -1229,7 +1327,7 @@ window.addEventListener('DOMContentLoaded', () => {
 const currentHour = new Date().getHours();
 const shiftToLoad = currentHour < 12 ? 'AM' : 'PM';
 document.getElementById('shiftToggle').checked = (shiftToLoad === 'PM'); // ✅ Set slider position
-
+updateWindSummary();
 
 selectShift(shiftToLoad);
 // Restore saved employee ID
