@@ -252,10 +252,23 @@ const employeeColors = {
 <div id="toast"></div>
 
 
-<div id="windToggle" onclick="toggleWindInfo()" style="cursor: pointer; font-size: 18px; margin-bottom: 10px;">
+
+<div id="windToggle" onclick="toggleWindInfo()" 
+     style="cursor: pointer; font-size: 18px; margin-bottom: 10px; white-space: normal; word-break: break-word;
+            background-color: white; padding: 8px 12px; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+            width: fit-content;">
   🧭 Wind: Loading...
 </div>
-<div id="wind-info" style="display: none; margin-top: 8px;"></div>
+
+
+
+<div id="wind-info" 
+     style="display: none; margin-top: 8px; background: white; padding: 12px 16px; border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15); line-height: 1.6; font-size: 14px; width: fit-content;">
+</div>
+
+
+
 
 
 <div id="topReminderAdd" onclick="showReminderInput()" 
