@@ -299,6 +299,18 @@ const employeeColors = {
   📅 Schedule Test Sign Up
 </div>
 
+
+<div id="testFormModal" style="display: none; padding: 20px; border: 1px solid #ccc; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); max-width: 400px;">
+  <h3>Schedule a Test</h3>
+  <input type="text" id="testName" placeholder="Test Name" style="width: 100%; margin-bottom: 8px;"><br>
+  <input type="date" id="testDate" style="width: 100%; margin-bottom: 8px;"><br>
+  <input type="time" id="testTime" value="20:00" style="width: 100%; margin-bottom: 8px;">
+  <button onclick="saveTestSignup()">Save</button>
+  <button onclick="closeTestForm()">Cancel</button>
+</div>
+
+
+
 <div id="toggleMorningBtn" onclick="toggleMorningFeeds()" 
      style="margin-bottom: 20px; background-color: #7e22ce; color: white; 
             padding: 6px 12px; border-radius: 6px; 
@@ -331,16 +343,6 @@ const employeeColors = {
   <ul id="testList" style="list-style-type: none; padding: 0;"></ul>
 </div>
 
-
-
-<div id="testFormModal" style="display: none; padding: 20px; border: 1px solid #ccc; background: white; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); max-width: 400px;">
-  <h3>Schedule a Test</h3>
-  <input type="text" id="testName" placeholder="Test Name" style="width: 100%; margin-bottom: 8px;"><br>
-  <input type="date" id="testDate" style="width: 100%; margin-bottom: 8px;"><br>
-  <input type="time" id="testTime" value="20:00" style="width: 100%; margin-bottom: 8px;">
-  <button onclick="saveTestSignup()">Save</button>
-  <button onclick="closeTestForm()">Cancel</button>
-</div>
 
 
 
@@ -942,10 +944,10 @@ function toggleMorningFeeds() {
 
   if (content.style.display === "none") {
     content.style.display = "block";
-    button.textContent = "- Hide Morning Feeds";
+    button.textContent = "➖ Hide Morning Feeds";
   } else {
     content.style.display = "none";
-    button.textContent = "+ Show Morning Feeds";
+    button.textContent = "➕ Show Morning Feeds";
   }
 }
 
@@ -955,11 +957,11 @@ function showReminderInput() {
 }
 
 function showTestForm() {
-  document.getElementById('testFormModal').style.display = 'block';
+  const modal = document.getElementById('testFormModal');
+  const isVisible = modal.style.display === 'block';
+  modal.style.display = isVisible ? 'none' : 'block';
 }
-function closeTestForm() {
-  document.getElementById('testFormModal').style.display = 'none';
-}
+
 
 async function saveTestSignup() {
   const name = document.getElementById('testName').value.trim();
