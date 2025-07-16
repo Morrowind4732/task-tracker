@@ -299,7 +299,32 @@ const employeeColors = {
   📅 Schedule Test Sign Up
 </div>
 
+<div>
+<div id="toggleMorningBtn" onclick="toggleMorningFeeds()" 
+     style="margin-top: 10px; background-color: #228B22; color: white; 
+            padding: 6px 12px; border-radius: 6px; 
+            cursor: pointer; font-weight: bold; 
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2); display: inline-block;">
+  ➕ Show Morning Feeds
+</div>
 
+
+  <div id="morningFeeds" style="display: none; margin-top: 8px;">
+    <div style="color: #333; font-weight: bold;">🍽️ Morning Feeds:</div>
+ <div id="morningWarning" style="white-space: pre-line; color: #333; font-size: 18px;"></div>
+ </div>
+</div>
+
+<div id="dogWarnings" style="margin: 10px 0; display: none;">
+  <div style="margin-bottom: 8px;">
+    <div style="color: green; font-weight: bold;">⚠️ Medicine Notes:</div>
+    <div id="medicineWarning" style="white-space: pre-line; color: green;"></div>
+  </div>
+  <div>
+    <div style="color: red; font-weight: bold;">🔥 In Heat:</div>
+    <div id="heatWarning" style="white-space: pre-line; color: red;"></div>
+  </div>
+</div>
 
 <div id="testListBox" style="display: none; margin-top: 20px;">
   <h3>Tests & Trials</h3>
@@ -351,32 +376,7 @@ const employeeColors = {
   <label class="employee-radio bg-SG"><input type="radio" name="employeeId" value="SG"> SG</label>
 </div>
 
-<div>
-<div id="toggleMorningBtn" onclick="toggleMorningFeeds()" 
-     style="margin-top: 10px; background-color: #228B22; color: white; 
-            padding: 6px 12px; border-radius: 6px; 
-            cursor: pointer; font-weight: bold; 
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2); display: inline-block;">
-  ➕ Show Morning Feeds
-</div>
 
-
-  <div id="morningFeeds" style="display: none; margin-top: 8px;">
-    <div style="color: #333; font-weight: bold;">🍽️ Morning Feeds:</div>
- <div id="morningWarning" style="white-space: pre-line; color: #333; font-size: 18px;"></div>
- </div>
-</div>
-
-<div id="dogWarnings" style="margin: 10px 0; display: none;">
-  <div style="margin-bottom: 8px;">
-    <div style="color: green; font-weight: bold;">⚠️ Medicine Notes:</div>
-    <div id="medicineWarning" style="white-space: pre-line; color: green;"></div>
-  </div>
-  <div>
-    <div style="color: red; font-weight: bold;">🔥 In Heat:</div>
-    <div id="heatWarning" style="white-space: pre-line; color: red;"></div>
-  </div>
-</div>
 
 
 
