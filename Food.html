@@ -9,34 +9,55 @@
       max-width: 600px;
       margin: auto;
     }
+
+    h2 {
+      margin-top: 20px;
+    }
+
     .box {
       border: 1px solid #ccc;
       padding: 10px;
       margin: 10px 0;
       border-radius: 8px;
     }
+
     textarea {
       width: 100%;
       height: 60px;
       resize: vertical;
     }
+
+    .cup-section {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      margin-top: 10px;
+    }
+
+    .cup-section textarea {
+      height: 80px;
+    }
+
     .radio-group {
       display: flex;
       flex-direction: column;
       margin-bottom: 10px;
     }
+
     .buttons-group {
       display: flex;
       flex-direction: column;
       gap: 6px;
       margin-bottom: 10px;
     }
+
     button {
       padding: 6px 10px;
       font-weight: bold;
       border-radius: 4px;
       cursor: pointer;
     }
+
     #saveBtn {
       background-color: green;
       color: white;
@@ -95,95 +116,92 @@
     <button id="saveBtn" onclick="saveToFirebase()">💾 Save</button>
   </div>
 
+  <!-- Firebase setup (placeholder) -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script>
     const firebaseConfig = {
       apiKey: "YOUR_API_KEY",
       authDomain: "YOUR_AUTH_DOMAIN",
-      projectId: "YOUR_PROJECT_ID"
+      databaseURL: "YOUR_DB_URL",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_BUCKET",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
     };
 
     firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
+    const db = firebase.database();
 
-    function saveToFirebase() {
-      const groupData = {
-        oldMales: document.getElementById('oldMales').value,
-        oldFemales: document.getElementById('oldFemales').value,
-        youngMales: document.getElementById('youngMales').value,
-        youngFemales: document.getElementById('youngFemales').value
-      };
+    const groupTextareas = {
+      oldMales: document.getElementById('oldMales'),
+      oldFemales: document.getElementById('oldFemales'),
+      youngMales: document.getElementById('youngMales'),
+      youngFemales: document.getElementById('youngFemales')
+    };
 
-      const cupData = {
-        cup2: document.getElementById('cup2').value,
-        cup3: document.getElementById('cup3').value,
-        cup4: document.getElementById('cup4').value
-      };
+    const dogList = document.getElementById('dogList');
+    const cup2 = document.getElementById('cup2');
+    const cup3 = document.getElementById('cup3');
+    const cup4 = document.getElementById('cup4');
 
-      db.collection("dogFood").doc("groups").set(groupData);
-      db.collection("dogFood").doc("cups").set(cupData);
-
-      alert("Saved!");
-    }
-
-    function loadDogGroup(groupName) {
-      db.collection("dogFood").doc("groups").get().then(doc => {
-        if (doc.exists) {
-          const data = doc.data();
-          const dogs = (data[groupName] || "").split("\n").map(d => d.trim()).filter(d => d);
-          document.getElementById("dogList").value = dogs.join("\n");
-        }
-      });
-    }
-
-    document.querySelectorAll("input[name='group']").forEach(radio => {
-      radio.addEventListener('change', (e) => {
-        loadDogGroup(e.target.value);
+    document.querySelectorAll('input[name="group"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        const selected = radio.value;
+        dogList.value = groupTextareas[selected].value.trim();
       });
     });
 
-    function assignCup(cup) {
-      const selected = document.getElementById("dogList").value.split("\n")[0];
-      if (!selected) return;
+    function assignCup(size) {
+      const lines = dogList.value.split('\n').filter(line => line.trim());
+      const name = lines.shift();
+      if (!name) return;
 
-      document.getElementById(`cup${cup}`).value += selected + "\n";
-      const lines = document.getElementById("dogList").value.split("\n").filter(l => l !== selected);
-      document.getElementById("dogList").value = lines.join("\n");
+      if (size === 2) cup2.value += name + '\n';
+      else if (size === 3) cup3.value += name + '\n';
+      else if (size === 4) cup4.value += name + '\n';
+
+      dogList.value = lines.join('\n');
+      const selected = document.querySelector('input[name="group"]:checked')?.value;
+      if (selected) groupTextareas[selected].value = dogList.value;
     }
 
     function moveBack() {
-      [2, 3, 4].forEach(cup => {
-        const box = document.getElementById(`cup${cup}`);
-        const lines = box.value.split("\n").filter(Boolean);
-        if (lines.length > 0) {
-          const name = lines.pop();
-          document.getElementById("dogList").value += name + "\n";
-          box.value = lines.join("\n");
+      const selected = document.querySelector('input[name="group"]:checked')?.value;
+      if (!selected) return;
+
+      const groupBox = groupTextareas[selected];
+      let removed = '';
+
+      [cup2, cup3, cup4].forEach(cup => {
+        const lines = cup.value.split('\n').filter(l => l.trim());
+        if (lines.length) {
+          removed = lines.pop();
+          cup.value = lines.join('\n');
         }
       });
+
+      if (removed) {
+        groupBox.value += (groupBox.value.trim() ? '\n' : '') + removed;
+        dogList.value = groupBox.value;
+      }
     }
 
-    window.onload = () => {
-      db.collection("dogFood").doc("groups").get().then(doc => {
-        if (doc.exists) {
-          const data = doc.data();
-          document.getElementById("oldMales").value = data.oldMales || "";
-          document.getElementById("oldFemales").value = data.oldFemales || "";
-          document.getElementById("youngMales").value = data.youngMales || "";
-          document.getElementById("youngFemales").value = data.youngFemales || "";
-        }
-      });
+    function saveToFirebase() {
+      const data = {
+        oldMales: groupTextareas.oldMales.value.trim(),
+        oldFemales: groupTextareas.oldFemales.value.trim(),
+        youngMales: groupTextareas.youngMales.value.trim(),
+        youngFemales: groupTextareas.youngFemales.value.trim(),
+        cup2: cup2.value.trim(),
+        cup3: cup3.value.trim(),
+        cup4: cup4.value.trim()
+      };
 
-      db.collection("dogFood").doc("cups").get().then(doc => {
-        if (doc.exists) {
-          const data = doc.data();
-          document.getElementById("cup2").value = data.cup2 || "";
-          document.getElementById("cup3").value = data.cup3 || "";
-          document.getElementById("cup4").value = data.cup4 || "";
-        }
-      });
-    };
+      const date = new Date().toISOString().split('T')[0];
+      db.ref('dogFood/' + date).set(data);
+      alert('Saved to Firebase!');
+    }
   </script>
 </body>
 </html>
