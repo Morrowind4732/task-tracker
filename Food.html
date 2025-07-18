@@ -1,178 +1,207 @@
-
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Dog Food Assignment</title>
+  <title>Dog Food Tracker</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
-      padding: 20px;
-    }
-    .section-title {
-      font-weight: bold;
-      margin-bottom: 8px;
-    }
-    .entry-boxes, .distribution-section {
-      display: flex;
-      gap: 20px;
-      margin-bottom: 30px;
-    }
-    .box {
-      flex: 1;
-      border: 1px solid #ccc;
+      font-family: sans-serif;
       padding: 10px;
-      border-radius: 8px;
-      min-height: 200px;
+      max-width: 600px;
+      margin: auto;
     }
-    .box ul {
-      list-style-type: none;
-      padding-left: 0;
-    }
-    .box li {
-      padding: 4px;
-      cursor: pointer;
-    }
-    .buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
+
+    h2 {
       margin-top: 20px;
     }
+
+    .box {
+      border: 1px solid #ccc;
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 8px;
+    }
+
+    textarea {
+      width: 100%;
+      height: 60px;
+      resize: vertical;
+    }
+
+    .cup-section {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      margin-top: 10px;
+    }
+
+    .cup-section textarea {
+      height: 80px;
+    }
+
+    .radio-group {
+      display: flex;
+      flex-direction: column;
+      margin-bottom: 10px;
+    }
+
+    .buttons-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+
     button {
-      padding: 6px 12px;
+      padding: 6px 10px;
+      font-weight: bold;
+      border-radius: 4px;
       cursor: pointer;
     }
-    .radio-group {
-      margin-bottom: 10px;
+
+    #saveBtn {
+      background-color: green;
+      color: white;
+      border: none;
+      width: 100%;
+      margin-top: 15px;
     }
   </style>
 </head>
 <body>
+  <h1>Dog Food Tracker</h1>
 
-<h2>Dog Food Tracker</h2>
+  <div class="box">
+    <h2>Dog Groups</h2>
+    <label>Old Males</label>
+    <textarea id="oldMales"></textarea>
 
-<div class="entry-boxes">
-  <div class="box">
-    <div class="section-title">Old Males</div>
-    <textarea id="oldMales" rows="5" style="width: 100%;"></textarea>
-  </div>
-  <div class="box">
-    <div class="section-title">Old Females</div>
-    <textarea id="oldFemales" rows="5" style="width: 100%;"></textarea>
-  </div>
-  <div class="box">
-    <div class="section-title">Young Males</div>
-    <textarea id="youngMales" rows="5" style="width: 100%;"></textarea>
-  </div>
-  <div class="box">
-    <div class="section-title">Young Females</div>
-    <textarea id="youngFemales" rows="5" style="width: 100%;"></textarea>
-  </div>
-</div>
+    <label>Old Females</label>
+    <textarea id="oldFemales"></textarea>
 
-<hr>
+    <label>Young Males</label>
+    <textarea id="youngMales"></textarea>
 
-<h3>Assign Dogs to Cup Sizes</h3>
-<div class="distribution-section">
-  <div class="box" style="flex: 2;">
+    <label>Young Females</label>
+    <textarea id="youngFemales"></textarea>
+  </div>
+
+  <div class="box">
+    <h2>Assign Dogs to Cup Sizes</h2>
+
     <div class="radio-group">
-      <label><input type="radio" name="dogType" value="oldMales"> Old Males</label>
-      <label><input type="radio" name="dogType" value="oldFemales"> Old Females</label>
-      <label><input type="radio" name="dogType" value="youngMales"> Young Males</label>
-      <label><input type="radio" name="dogType" value="youngFemales"> Young Females</label>
+      <label><input type="radio" name="group" value="oldMales"> Old Males</label>
+      <label><input type="radio" name="group" value="oldFemales"> Old Females</label>
+      <label><input type="radio" name="group" value="youngMales"> Young Males</label>
+      <label><input type="radio" name="group" value="youngFemales"> Young Females</label>
     </div>
-    <ul id="dogList"></ul>
+
+    <textarea id="dogList" readonly></textarea>
+
+    <div class="buttons-group">
+      <button onclick="assignCup(2)">2</button>
+      <button onclick="assignCup(3)">3</button>
+      <button onclick="assignCup(4)">4</button>
+      <button onclick="moveBack()">←</button>
+    </div>
+
+    <label>2 Cups</label>
+    <textarea id="cup2"></textarea>
+
+    <label>3 Cups</label>
+    <textarea id="cup3"></textarea>
+
+    <label>4 Cups</label>
+    <textarea id="cup4"></textarea>
+
+    <button id="saveBtn" onclick="saveToFirebase()">💾 Save</button>
   </div>
 
-  <div class="buttons">
-    <button onclick="assignToCup(2)">2</button>
-    <button onclick="assignToCup(3)">3</button>
-    <button onclick="assignToCup(4)">4</button>
-    <button onclick="moveBack()">&lt;</button>
-  </div>
+  <!-- Firebase setup (placeholder) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_AUTH_DOMAIN",
+      databaseURL: "YOUR_DB_URL",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_BUCKET",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
 
-  <div class="box">
-    <div class="section-title">2 Cups</div>
-    <ul id="cup2"></ul>
-  </div>
-  <div class="box">
-    <div class="section-title">3 Cups</div>
-    <ul id="cup3"></ul>
-  </div>
-  <div class="box">
-    <div class="section-title">4 Cups</div>
-    <ul id="cup4"></ul>
-  </div>
-</div>
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
 
-<script>
-  let selectedDog = null;
+    const groupTextareas = {
+      oldMales: document.getElementById('oldMales'),
+      oldFemales: document.getElementById('oldFemales'),
+      youngMales: document.getElementById('youngMales'),
+      youngFemales: document.getElementById('youngFemales')
+    };
 
-  document.querySelectorAll('input[name="dogType"]').forEach(radio => {
-    radio.addEventListener('change', () => {
-      const type = radio.value;
-      const lines = document.getElementById(type).value.split('\n').map(d => d.trim()).filter(Boolean);
-      const list = document.getElementById('dogList');
-      list.innerHTML = '';
-      lines.forEach(dog => {
-        const li = document.createElement('li');
-        li.textContent = dog;
-        li.onclick = () => {
-          selectedDog = li.textContent;
-          document.querySelectorAll('#dogList li').forEach(item => item.style.background = '');
-          li.style.background = '#def';
-        };
-        list.appendChild(li);
+    const dogList = document.getElementById('dogList');
+    const cup2 = document.getElementById('cup2');
+    const cup3 = document.getElementById('cup3');
+    const cup4 = document.getElementById('cup4');
+
+    document.querySelectorAll('input[name="group"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        const selected = radio.value;
+        dogList.value = groupTextareas[selected].value.trim();
       });
     });
-  });
 
-  function assignToCup(cup) {
-    if (!selectedDog) return;
-    const list = document.getElementById(`cup${cup}`);
-    const li = document.createElement('li');
-    li.textContent = selectedDog;
-    li.onclick = () => {
-      selectedDog = li.textContent;
-      document.querySelectorAll(`#cup${cup} li`).forEach(item => item.style.background = '');
-      li.style.background = '#def';
-    };
-    list.appendChild(li);
-    removeSelectedFromList();
-  }
+    function assignCup(size) {
+      const lines = dogList.value.split('\n').filter(line => line.trim());
+      const name = lines.shift();
+      if (!name) return;
 
-  function moveBack() {
-    if (!selectedDog) return;
-    const dogList = document.getElementById('dogList');
-    const li = document.createElement('li');
-    li.textContent = selectedDog;
-    li.onclick = () => {
-      selectedDog = li.textContent;
-      document.querySelectorAll('#dogList li').forEach(item => item.style.background = '');
-      li.style.background = '#def';
-    };
-    dogList.appendChild(li);
-    removeSelectedFromAllCups();
-  }
+      if (size === 2) cup2.value += name + '\n';
+      else if (size === 3) cup3.value += name + '\n';
+      else if (size === 4) cup4.value += name + '\n';
 
-  function removeSelectedFromList() {
-    const dogList = document.getElementById('dogList');
-    dogList.querySelectorAll('li').forEach(li => {
-      if (li.textContent === selectedDog) li.remove();
-    });
-  }
+      dogList.value = lines.join('\n');
+      const selected = document.querySelector('input[name="group"]:checked')?.value;
+      if (selected) groupTextareas[selected].value = dogList.value;
+    }
 
-  function removeSelectedFromAllCups() {
-    [2, 3, 4].forEach(cup => {
-      const list = document.getElementById(`cup${cup}`);
-      list.querySelectorAll('li').forEach(li => {
-        if (li.textContent === selectedDog) li.remove();
+    function moveBack() {
+      const selected = document.querySelector('input[name="group"]:checked')?.value;
+      if (!selected) return;
+
+      const groupBox = groupTextareas[selected];
+      let removed = '';
+
+      [cup2, cup3, cup4].forEach(cup => {
+        const lines = cup.value.split('\n').filter(l => l.trim());
+        if (lines.length) {
+          removed = lines.pop();
+          cup.value = lines.join('\n');
+        }
       });
-    });
-  }
-</script>
 
+      if (removed) {
+        groupBox.value += (groupBox.value.trim() ? '\n' : '') + removed;
+        dogList.value = groupBox.value;
+      }
+    }
+
+    function saveToFirebase() {
+      const data = {
+        oldMales: groupTextareas.oldMales.value.trim(),
+        oldFemales: groupTextareas.oldFemales.value.trim(),
+        youngMales: groupTextareas.youngMales.value.trim(),
+        youngFemales: groupTextareas.youngFemales.value.trim(),
+        cup2: cup2.value.trim(),
+        cup3: cup3.value.trim(),
+        cup4: cup4.value.trim()
+      };
+
+      const date = new Date().toISOString().split('T')[0];
+      db.ref('dogFood/' + date).set(data);
+      alert('Saved to Firebase!');
+    }
+  </script>
 </body>
 </html>
