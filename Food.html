@@ -57,6 +57,26 @@
     .custom-listbox .selected {
       background-color: #ccf;
     }
+	
+#toast {
+  visibility: hidden;
+  min-width: 180px;
+  background-color: green;
+  color: white;
+  text-align: center;
+  border-radius: 5px;
+  padding: 10px;
+  position: fixed;
+  z-index: 1000;
+  left: 50%;
+  top: 20px;  /* 👈 change this line */
+  transform: translateX(-50%);
+  font-size: 16px;
+  opacity: 0;
+  transition: opacity 0.5s ease-in-out;
+}
+
+
   </style>
 </head>
 <body>
@@ -96,9 +116,10 @@
         <button onclick="unassignDog()" class="cup-btn">←</button>
       </div>
       <div class="column">
-        <label>2 Cups</label><select id="cup2" size="8"></select>
-        <label>3 Cups</label><select id="cup3" size="8"></select>
-        <label>4 Cups</label><select id="cup4" size="8"></select>
+       <label>2 Cups</label><div id="cup2" class="custom-listbox"></div>
+<label>3 Cups</label><div id="cup3" class="custom-listbox"></div>
+<label>4 Cups</label><div id="cup4" class="custom-listbox"></div>
+
       </div>
     </div>
   </div>
@@ -130,69 +151,120 @@
       radio.addEventListener('change', loadDogGroupEditor)
     );
 
-    function saveDogGroups() {
-      const selected = document.querySelector('input[name="editGroup"]:checked').value;
-      const currentGroupData = document.getElementById('editGroupBox').value.split('\n').map(x => x.trim()).filter(Boolean);
-      return db.collection('dogFood').doc('dogGroups').get().then(doc => {
-        const existing = doc.exists ? doc.data() : {};
-        const updated = {
-          ...existing,
-          [selected]: currentGroupData,
-          cup2: getCupListValues('cup2'),
-          cup3: getCupListValues('cup3'),
-          cup4: getCupListValues('cup4'),
-        };
-        return db.collection('dogFood').doc('dogGroups').set(updated).then(() => updated);
-      });
-    }
+  function saveDogGroups() {
+  const editGroup = document.querySelector('input[name="editGroup"]:checked')?.value;
+  const cupGroup = document.querySelector('input[name="group"]:checked')?.value;
+
+  const currentGroupData = document.getElementById('editGroupBox').value
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean);
+
+  return db.collection('dogFood').doc('dogGroups').get().then(doc => {
+    const existing = doc.exists ? doc.data() : {};
+
+    const updated = {
+      ...existing,
+      [editGroup]: currentGroupData,
+      [cupGroup + '_cup2']: getCupListValues('cup2'),
+      [cupGroup + '_cup3']: getCupListValues('cup3'),
+      [cupGroup + '_cup4']: getCupListValues('cup4'),
+    };
+
+    return db.collection('dogFood').doc('dogGroups').set(updated).then(() => {
+      showToast();
+      return updated;
+    });
+  });
+}
+
 
     function getDogGroupData() {
       return db.collection("dogFood").doc("dogGroups").get().then(doc => doc.exists ? doc.data() : {});
     }
 
-    function loadCupAssignments(data) {
-      ['cup2', 'cup3', 'cup4'].forEach(cup => {
-        const cupBox = document.getElementById(cup);
-        cupBox.innerHTML = '';
-        (data[cup] || []).forEach(name => {
-          const option = document.createElement('option');
-          option.value = option.text = name;
-          cupBox.appendChild(option);
-        });
-      });
-    }
+function loadCupAssignments(data) {
+  const selected = document.querySelector('input[name="group"]:checked')?.value;
+  if (!selected) return;
+
+  ['cup2', 'cup3', 'cup4'].forEach(cup => {
+    const cupBox = document.getElementById(cup);
+    cupBox.innerHTML = '';
+    const groupKey = `${selected}_${cup}`;
+    const groupCupData = data[groupKey] || [];
+
+    groupCupData.forEach(name => {
+      const div = document.createElement('div');
+      div.textContent = name;
+      div.onclick = () => {
+        document.querySelectorAll(`#${cup} div`).forEach(d => d.classList.remove('selected'));
+        div.classList.add('selected');
+        cupBox.dataset.selected = name;
+      };
+      cupBox.appendChild(div);
+    });
+  });
+}
+
+
+
+function showToast(msg = "Saved ✅") {
+  const toast = document.getElementById("toast");
+  toast.textContent = msg;
+  toast.style.visibility = "visible";
+  toast.style.opacity = "1";
+
+  setTimeout(() => {
+    toast.style.opacity = "0";
+    setTimeout(() => {
+      toast.style.visibility = "hidden";
+    }, 500);
+  }, 1500);
+}
+
 
     async function autoSaveAndRefresh() {
-      await saveDogGroups();
-      loadCupAssignments(await getDogGroupData());
-      loadDogList();
+await saveDogGroups();
+loadDogList(); // does both: unassigned + group cup filtering
+
     }
 
-    function loadDogList() {
-      const selected = document.querySelector('input[name="group"]:checked').value;
-      db.collection('dogFood').doc('dogGroups').get().then(doc => {
-        if (!doc.exists) return;
-        const data = doc.data();
-        let raw = data[selected] || [];
-        if (!Array.isArray(raw)) raw = String(raw).split('\n');
-        const groupDogs = raw.map(name => name.trim()).filter(Boolean);
-        const assigned = new Set([...(data.cup2 || []), ...(data.cup3 || []), ...(data.cup4 || [])]);
-        const unassignedDogs = groupDogs.filter(name => !assigned.has(name));
+  function loadDogList() {
+  const selected = document.querySelector('input[name="group"]:checked')?.value;
+  if (!selected) return;
 
-        const box = document.getElementById('dogListBox');
-        box.innerHTML = '';
-        unassignedDogs.forEach(name => {
-          const div = document.createElement('div');
-          div.textContent = name;
-          div.onclick = () => {
-            document.querySelectorAll('#dogListBox div').forEach(d => d.classList.remove('selected'));
-            div.classList.add('selected');
-            box.dataset.selected = name;
-          };
-          box.appendChild(div);
-        });
-      });
-    }
+  db.collection('dogFood').doc('dogGroups').get().then(doc => {
+    if (!doc.exists) return;
+    const data = doc.data();
+
+    const groupDogs = Array.isArray(data[selected]) ? data[selected] : [];
+    const assigned = new Set([
+      ...(data[`${selected}_cup2`] || []),
+      ...(data[`${selected}_cup3`] || []),
+      ...(data[`${selected}_cup4`] || [])
+    ]);
+
+    // Populate unassigned dog list
+    const unassignedDogs = groupDogs.filter(name => !assigned.has(name));
+    const box = document.getElementById('dogListBox');
+    box.innerHTML = '';
+    unassignedDogs.forEach(name => {
+      const div = document.createElement('div');
+      div.textContent = name;
+      div.onclick = () => {
+        document.querySelectorAll('#dogListBox div').forEach(d => d.classList.remove('selected'));
+        div.classList.add('selected');
+        box.dataset.selected = name;
+      };
+      box.appendChild(div);
+    });
+
+    // Also populate cup assignments
+    loadCupAssignments(data);
+  });
+}
+
+
 
     function assignCup(cup) {
       const box = document.getElementById('dogListBox');
@@ -201,60 +273,74 @@
 
       [2, 3, 4].forEach(c => {
         const list = document.getElementById('cup' + c);
-        Array.from(list.options).forEach(opt => {
-          if (opt.value === name) list.remove(opt.index);
-        });
+		Array.from(list.children).forEach(child => {
+		  if (child.textContent === name) child.remove();
+		});
+
       });
 
       const cupBox = document.getElementById('cup' + cup);
-      const option = document.createElement('option');
-      option.value = option.text = name;
-      cupBox.appendChild(option);
+      const div = document.createElement('div');
+		div.textContent = name;
+		div.onclick = () => {
+		  document.querySelectorAll(`#cup${cup} div`).forEach(d => d.classList.remove('selected'));
+		  div.classList.add('selected');
+		  cupBox.dataset.selected = name;
+		};
+		cupBox.appendChild(div);
+
 
       delete box.dataset.selected;
       document.querySelectorAll('#dogListBox div').forEach(d => {
         if (d.textContent === name) d.remove();
       });
+showToast();
 
       autoSaveAndRefresh();
     }
 
     function unassignDog() {
-      let name = null, foundCup = null;
-      [2, 3, 4].forEach(c => {
-        const cupList = document.getElementById('cup' + c);
-        const selected = cupList.options[cupList.selectedIndex];
-        if (selected && !name) {
-          name = selected.value;
-          foundCup = cupList;
-        }
-      });
-      if (!name || !foundCup) return alert("Select a name from a cup list.");
+  let name = null, selectedDiv = null, foundCup = null;
 
-      foundCup.remove(foundCup.selectedIndex);
-
-      const dogList = document.getElementById('dogListBox');
-      const div = document.createElement('div');
-      div.textContent = name;
-      div.onclick = () => {
-        document.querySelectorAll('#dogListBox div').forEach(d => d.classList.remove('selected'));
-        div.classList.add('selected');
-        dogList.dataset.selected = name;
-      };
-      dogList.appendChild(div);
-
-      autoSaveAndRefresh();
+  [2, 3, 4].forEach(c => {
+    const cupList = document.getElementById('cup' + c);
+    const selected = cupList.querySelector('.selected');
+    if (selected && !name) {
+      name = selected.textContent;
+      selectedDiv = selected;
+      foundCup = cupList;
     }
+  });
+
+  if (!name || !foundCup || !selectedDiv) return alert("Select a name from a cup list.");
+
+  selectedDiv.remove();
+
+  const dogList = document.getElementById('dogListBox');
+  const div = document.createElement('div');
+  div.textContent = name;
+  div.onclick = () => {
+    document.querySelectorAll('#dogListBox div').forEach(d => d.classList.remove('selected'));
+    div.classList.add('selected');
+    dogList.dataset.selected = name;
+  };
+  dogList.appendChild(div);
+
+  showToast();
+  autoSaveAndRefresh();
+}
+
 
     function getCupListValues(id) {
-      return Array.from(document.getElementById(id).options).map(opt => opt.value);
+      return Array.from(document.getElementById(id).children).map(div => div.textContent);
+
     }
 
     document.addEventListener('DOMContentLoaded', () => {
       db.collection("dogFood").doc("dogGroups").get().then(doc => {
         if (doc.exists) {
           const data = doc.data();
-          loadCupAssignments(data);
+          
           const currentGroup = document.querySelector('input[name="editGroup"]:checked')?.value;
           const groupEditorBox = document.getElementById('editGroupBox');
           if (currentGroup && groupEditorBox && data[currentGroup]) {
@@ -270,5 +356,7 @@
       radio.addEventListener('change', loadDogList)
     );
   </script>
+  <div id="toast">Saved ✅</div>
+
 </body>
 </html>
