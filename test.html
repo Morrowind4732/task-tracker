@@ -335,20 +335,21 @@ const employeeColors = {
 </div>
 
 
-  <div style="display: flex; gap: 20px; margin-top: 10px;">
-    <div>
-      <strong>2 Cups</strong>
-      <ul id="cup2List" style="padding-left: 20px;"></ul>
-    </div>
-    <div>
-      <strong>3 Cups</strong>
-      <ul id="cup3List" style="padding-left: 20px;"></ul>
-    </div>
-    <div>
-      <strong>4 Cups</strong>
-      <ul id="cup4List" style="padding-left: 20px;"></ul>
-    </div>
+ <div style="display: flex; gap: 20px; margin-top: 10px;">
+  <div>
+    <strong id="cup2Header">2 Cups</strong>
+    <ul id="cup2List" style="padding-left: 20px;"></ul>
   </div>
+  <div>
+    <strong id="cup3Header">3 Cups</strong>
+    <ul id="cup3List" style="padding-left: 20px;"></ul>
+  </div>
+  <div>
+    <strong id="cup4Header">4 Cups</strong>
+    <ul id="cup4List" style="padding-left: 20px;"></ul>
+  </div>
+</div>
+
 </div>
 
 
@@ -980,9 +981,17 @@ async function loadCupExceptions() {
   if (!doc.exists) return;
 
   const data = doc.data();
+
+  // Count totals across all groups
+  let totalCup2 = 0, totalCup3 = 0, totalCup4 = 0;
+
   const cup2List = document.getElementById('cup2List');
   const cup3List = document.getElementById('cup3List');
   const cup4List = document.getElementById('cup4List');
+
+  const cup2Header = document.getElementById('cup2Header');
+  const cup3Header = document.getElementById('cup3Header');
+  const cup4Header = document.getElementById('cup4Header');
 
   cup2List.innerHTML = '';
   cup3List.innerHTML = '';
@@ -997,11 +1006,16 @@ async function loadCupExceptions() {
     const group = match[1];
     const cup = parseInt(match[2]);
 
+    // Tally totals
+    if (cup === 2) totalCup2 += names.length;
+    if (cup === 3) totalCup3 += names.length;
+    if (cup === 4) totalCup4 += names.length;
+
     const isMaleGroup = group.includes('Males');
     const isFemaleGroup = group.includes('Females');
 
+    // Filter exceptions
     let shouldInclude = false;
-
     if (cup === 2) {
       shouldInclude = names.length > 0;
     } else if (cup === 3 && isMaleGroup) {
@@ -1015,14 +1029,19 @@ async function loadCupExceptions() {
         const li = document.createElement('li');
         li.textContent = name;
 
-
         if (cup === 2) cup2List.appendChild(li);
         if (cup === 3) cup3List.appendChild(li);
         if (cup === 4) cup4List.appendChild(li);
       });
     }
   }
+
+  // Update headers with totals
+  cup2Header.textContent = `2 Cups (${totalCup2})`;
+  cup3Header.textContent = `3 Cups (${totalCup3})`;
+  cup4Header.textContent = `4 Cups (${totalCup4})`;
 }
+
 
 
 
