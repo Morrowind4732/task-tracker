@@ -80,7 +80,22 @@
   </style>
 </head>
 <body>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
   <h2>Dog Food Tracker</h2>
+  <button onclick="location.href='https://morrowind4732.github.io/task-tracker/test.html'" style="padding: 8px 12px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">
+    Return to Tasks
+  </button>
+</div>
+
+  <div class="section">
+  <h3>Cup Totals</h3>
+  <div class="flex-row">
+    <div class="column"><strong>2 Cups:</strong> <span id="count2">0</span></div>
+    <div class="column"><strong>3 Cups:</strong> <span id="count3">0</span></div>
+    <div class="column"><strong>4 Cups:</strong> <span id="count4">0</span></div>
+  </div>
+</div>
+
   <div class="section">
     <h3>Dog Groups</h3>
     <div class="flex-row">
@@ -150,6 +165,28 @@
     document.querySelectorAll('input[name="editGroup"]').forEach(radio =>
       radio.addEventListener('change', loadDogGroupEditor)
     );
+
+function updateCupCounts() {
+  db.collection('dogFood').doc('dogGroups').get().then(doc => {
+    if (!doc.exists) return;
+
+    const data = doc.data();
+    let count2 = 0, count3 = 0, count4 = 0;
+
+    const groupKeys = ['oldMales', 'oldFemales', 'youngMales', 'youngFemales'];
+    for (const group of groupKeys) {
+      count2 += (data[`${group}_cup2`] || []).length;
+      count3 += (data[`${group}_cup3`] || []).length;
+      count4 += (data[`${group}_cup4`] || []).length;
+    }
+
+    document.getElementById('count2').textContent = count2;
+    document.getElementById('count3').textContent = count3;
+    document.getElementById('count4').textContent = count4;
+  }).catch(console.error);
+}
+
+
 
   function saveDogGroups() {
   const editGroup = document.querySelector('input[name="editGroup"]:checked')?.value;
@@ -225,7 +262,9 @@ function showToast(msg = "Saved ✅") {
 
     async function autoSaveAndRefresh() {
 await saveDogGroups();
-loadDogList(); // does both: unassigned + group cup filtering
+loadDogList();
+updateCupCounts();
+ // does both: unassigned + group cup filtering
 
     }
 
@@ -295,8 +334,8 @@ loadDogList(); // does both: unassigned + group cup filtering
         if (d.textContent === name) d.remove();
       });
 showToast();
-
-      autoSaveAndRefresh();
+autoSaveAndRefresh();
+updateCupCounts();
     }
 
     function unassignDog() {
@@ -327,7 +366,8 @@ showToast();
   dogList.appendChild(div);
 
   showToast();
-  autoSaveAndRefresh();
+autoSaveAndRefresh();
+updateCupCounts();
 }
 
 
@@ -348,6 +388,8 @@ showToast();
             groupEditorBox.value = lines.join('\n');
           }
           loadDogList();
+updateCupCounts();
+
         }
       }).catch(console.error);
     });
