@@ -1158,13 +1158,18 @@ function toggleWeatherInfo() {
   box.style.display = isHidden ? "block" : "none";
 
   if (isHidden) {
-    getWeatherPreview("https://api.weather.gov/gridpoints/MEG/74,66/forecast/hourly");
-
-  } else {
-    getWeatherPreview("https://api.weather.gov/gridpoints/MEG/74,66/forecast/hourly");
-
+    fetch('https://api.weather.gov/points/36.0345,-89.3856')
+      .then(res => res.json())
+      .then(data => {
+        const hourlyUrl = data.properties.forecastHourly;
+        getWeatherPreview(hourlyUrl);
+      })
+      .catch(err => {
+        console.error('Error getting forecastHourly URL:', err);
+      });
   }
 }
+
 
 function updateWeatherDetails() {
   fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&hourly=temperature_2m,weathercode,precipitation_probability&timezone=auto&temperature_unit=fahrenheit')
