@@ -139,6 +139,56 @@
     </div>
   </div>
 
+<div class="section">
+  <h3>Assign Dogs to Truck/Trailer</h3>
+  <div class="flex-row">
+    <!-- Radio group for selecting which group to edit -->
+    <div class="column">
+      <label><input type="radio" name="truckGroup" value="oldMales" checked> Old Males</label><br/>
+      <label><input type="radio" name="truckGroup" value="oldFemales"> Old Females</label><br/>
+      <label><input type="radio" name="truckGroup" value="youngMales"> Young Males</label><br/>
+      <label><input type="radio" name="truckGroup" value="youngFemales"> Young Females</label>
+    </div>
+
+    <!-- Unassigned dogs -->
+    <div class="column">
+      <label>Unassigned</label>
+      <div id="truckUnassignedList" class="custom-listbox"></div>
+    </div>
+
+    <!-- Buttons to assign -->
+    <div class="column">
+      <button onclick="assignTruck('scott')" class="cup-btn">Scott</button>
+      <button onclick="assignTruck('cody')" class="cup-btn">Cody</button>
+      <button onclick="assignTruck('brian')" class="cup-btn">Brian</button>
+      <button onclick="unassignTruck()" class="cup-btn">←</button>
+    </div>
+
+    <!-- 6 Listboxes -->
+    <div class="column">
+      <label>Scott's Boys</label>
+      <div id="scott_boys" class="custom-listbox"></div>
+      <label>Scott's Girls</label>
+      <div id="scott_girls" class="custom-listbox"></div>
+    </div>
+
+    <div class="column">
+      <label>Cody's Boys</label>
+      <div id="cody_boys" class="custom-listbox"></div>
+      <label>Cody's Girls</label>
+      <div id="cody_girls" class="custom-listbox"></div>
+    </div>
+
+    <div class="column">
+      <label>Brian's Boys</label>
+      <div id="brian_boys" class="custom-listbox"></div>
+      <label>Brian's Girls</label>
+      <div id="brian_girls" class="custom-listbox"></div>
+    </div>
+  </div>
+</div>
+
+
   <script>
     const firebaseConfig = {
       apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
@@ -337,6 +387,67 @@ showToast();
 autoSaveAndRefresh();
 updateCupCounts();
     }
+	
+	
+	function loadTruckList() {
+  const selectedGroup = document.querySelector('input[name="truckGroup"]:checked')?.value;
+  if (!selectedGroup) return;
+
+  db.collection('dogFood').doc('dogGroups').get().then(async doc => {
+    if (!doc.exists) return;
+    const data = doc.data();
+    const groupDogs = Array.isArray(data[selectedGroup]) ? data[selectedGroup] : [];
+
+    // Load assignments from Firebase
+    const assignDoc = await db.collection('dogFood').doc('dogAssignments').get();
+    const assignments = assignDoc.exists ? assignDoc.data() : {};
+
+    const assigned = new Set([
+      ...(assignments.scott_boys || []),
+      ...(assignments.scott_girls || []),
+      ...(assignments.cody_boys || []),
+      ...(assignments.cody_girls || []),
+      ...(assignments.brian_boys || []),
+      ...(assignments.brian_girls || [])
+    ]);
+
+    // Show unassigned names
+    const unassigned = groupDogs.filter(name => !assigned.has(name));
+    const listBox = document.getElementById('truckUnassignedList');
+    listBox.innerHTML = '';
+
+    unassigned.forEach(name => {
+      const div = document.createElement('div');
+      div.textContent = name;
+      div.onclick = () => {
+        document.querySelectorAll('#truckUnassignedList div').forEach(d => d.classList.remove('selected'));
+        div.classList.add('selected');
+        listBox.dataset.selected = name;
+      };
+      listBox.appendChild(div);
+    });
+
+    // Load the 6 list boxes
+    ['scott', 'cody', 'brian'].forEach(person => {
+      ['boys', 'girls'].forEach(type => {
+        const id = `${person}_${type}`;
+        const box = document.getElementById(id);
+        box.innerHTML = '';
+        (assignments[id] || []).forEach(name => {
+          const div = document.createElement('div');
+          div.textContent = name;
+          div.onclick = () => {
+            document.querySelectorAll(`#${id} div`).forEach(d => d.classList.remove('selected'));
+            div.classList.add('selected');
+            box.dataset.selected = name;
+          };
+          box.appendChild(div);
+        });
+      });
+    });
+  });
+}
+
 
     function unassignDog() {
   let name = null, selectedDiv = null, foundCup = null;
@@ -370,6 +481,92 @@ autoSaveAndRefresh();
 updateCupCounts();
 }
 
+function saveTruckAssignments() {
+  const updates = {};
+
+  ['scott', 'cody', 'brian'].forEach(person => {
+    ['boys', 'girls'].forEach(type => {
+      const id = `${person}_${type}`;
+      updates[id] = Array.from(document.getElementById(id).children).map(div => div.textContent);
+    });
+  });
+
+  db.collection('dogFood').doc('dogAssignments').set(updates).then(() => {
+    showToast("Saved Assignments ✅");
+  });
+}
+
+
+function assignTruck(handler) {
+  const box = document.getElementById('truckUnassignedList');
+  const name = box.dataset.selected;
+  if (!name) return;
+
+  // Determine gender from selected group
+  const selectedGroup = document.querySelector('input[name="truckGroup"]:checked')?.value;
+  if (!selectedGroup) return;
+
+  const isMale = selectedGroup.includes('Males');
+  const genderKey = isMale ? 'boys' : 'girls';
+  const listId = `${handler}_${genderKey}`;
+  const listBox = document.getElementById(listId);
+
+  // Remove from unassigned
+  delete box.dataset.selected;
+  document.querySelectorAll('#truckUnassignedList div').forEach(d => {
+    if (d.textContent === name) d.remove();
+  });
+
+  // Add to handler list
+  const div = document.createElement('div');
+  div.textContent = name;
+  div.onclick = () => {
+    document.querySelectorAll(`#${listId} div`).forEach(d => d.classList.remove('selected'));
+    div.classList.add('selected');
+    listBox.dataset.selected = name;
+  };
+  listBox.appendChild(div);
+
+  saveTruckAssignments();
+}
+
+
+function unassignTruck() {
+  let name = null, selectedDiv = null, foundListId = null;
+
+  ['scott', 'cody', 'brian'].forEach(person => {
+    ['boys', 'girls'].forEach(type => {
+      const id = `${person}_${type}`;
+      const box = document.getElementById(id);
+      const selected = box.querySelector('.selected');
+      if (selected && !name) {
+        name = selected.textContent;
+        selectedDiv = selected;
+        foundListId = id;
+      }
+    });
+  });
+
+  if (!name || !selectedDiv || !foundListId) {
+    alert("Select a dog from one of the handler boxes.");
+    return;
+  }
+
+  selectedDiv.remove();
+
+  const listBox = document.getElementById('truckUnassignedList');
+  const div = document.createElement('div');
+  div.textContent = name;
+  div.onclick = () => {
+    document.querySelectorAll('#truckUnassignedList div').forEach(d => d.classList.remove('selected'));
+    div.classList.add('selected');
+    listBox.dataset.selected = name;
+  };
+  listBox.appendChild(div);
+
+  saveTruckAssignments();
+}
+
 
     function getCupListValues(id) {
       return Array.from(document.getElementById(id).children).map(div => div.textContent);
@@ -388,6 +585,8 @@ updateCupCounts();
             groupEditorBox.value = lines.join('\n');
           }
           loadDogList();
+		  loadTruckList();
+
 updateCupCounts();
 
         }
@@ -397,6 +596,11 @@ updateCupCounts();
     document.querySelectorAll('input[name="group"]').forEach(radio =>
       radio.addEventListener('change', loadDogList)
     );
+	
+	document.querySelectorAll('input[name="truckGroup"]').forEach(radio =>
+  radio.addEventListener('change', loadTruckList)
+);
+
   </script>
   <div id="toast">Saved ✅</div>
 
