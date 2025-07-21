@@ -269,6 +269,24 @@ const employeeColors = {
             box-shadow: 0 2px 6px rgba(0,0,0,0.15); line-height: 1.6; font-size: 14px; width: fit-content;">
 </div>
 
+<div id="weatherToggle" onclick="toggleWeatherInfo()"
+     style="cursor: pointer; font-size: 18px; margin-bottom: 10px;
+            background-color: white; padding: 8px 12px; border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.1); width: fit-content;">
+  ☀️ Temp: Loading...
+</div>
+
+<div id="weather-info" 
+     style="display: none; margin-top: 8px; background: white;
+            padding: 12px 16px; border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15); line-height: 1.6;
+            font-size: 14px; width: fit-content;">
+</div>
+
+
+
+
+
 
 
 
@@ -887,61 +905,64 @@ async function loadDogNotes() {
   }
 }
 
-async function loadDogWarnings() {
-  const warningBox = document.getElementById('dogWarnings');
-  const medDiv = document.getElementById('medicineWarning');
-  const heatDiv = document.getElementById('heatWarning');
-  const morningDiv = document.getElementById('morningWarning');
-  const morningHeader = document.getElementById('morningHeader');
+function updateWeatherSummary() {
+  fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&hourly=temperature_2m,weathercode,precipitation_probability&timezone=auto&temperature_unit=fahrenheit')
+    .then(response => response.json())
+    .then(data => {
+      console.log("Weather codes preview:", data.hourly.weathercode.slice(0, 10));
+      console.log("Chance of precipitation preview:", data.hourly.precipitation_probability.slice(0, 10));
 
-  const reminderBox = document.getElementById('reminderBox');
-  const reminderList = document.getElementById('reminderList');
+      const now = new Date();
+      const hours = data.hourly.time;
+      const temps = data.hourly.temperature_2m;
+      const codes = data.hourly.weathercode;
+      const precipChances = data.hourly.precipitation_probability;
 
-  try {
-    const doc = await db.collection("dogInfo").doc("current").get();
+      const getIcon = (code, chance) => {
+        // If it's rain/snow/storm but low chance, suppress icon
+        const rainSnowCodes = [51, 53, 55, 61, 63, 65, 66, 67, 71, 73, 75, 80, 81, 82, 85, 86, 95, 96, 99];
+        if (rainSnowCodes.includes(code) && chance < 80) {
+          code = 2; // fallback to "partly cloudy" for low chance
+        }
 
-    if (doc.exists) {
-      const data = doc.data();
-      const meds = data.medicine || '';
-      const heat = data.heat || '';
-      const morning = data.morning || '';
-      const reminders = data.reminders || [];
+        if ([0, 1].includes(code)) return '☀️';
+        if ([2].includes(code)) return '🌤️';
+        if ([3].includes(code)) return '☁️';
+        if ([45, 48].includes(code)) return '🌫️';
+        if ([51, 53, 55].includes(code)) return '🌦️';
+        if ([61, 63, 65, 80, 81, 82].includes(code)) return '🌧️';
+        if ([66, 67, 71, 73, 75, 85, 86].includes(code)) return '🌨️';
+        if ([95, 96, 99].includes(code)) return '⛈️';
+        return '❓';
+      };
 
-      medDiv.innerHTML = meds.split('\n').map(line => `<div style="color: green;">${line}</div>`).join('');
-      heatDiv.innerHTML = heat.split('\n').map(line => `<div style="color: red;">${line}</div>`).join('');
-      morningDiv.innerHTML = morning.split('\n').map(line => `<div>${line}</div>`).join('');
-	  const count = morning.split('\n').filter(line => line.trim()).length;
-morningHeader.textContent = `🍽️ Morning Feeds: (${count})`;
-
-
-      if (reminders.length > 0) {
-reminderList.innerHTML = reminders.map((text, i) =>
-  `<div class="task" data-index="${i}">
-    <input type="checkbox" id="reminder_${i}" class="reminderCheckbox">
-    <label for="reminder_${i}">${text}</label>
-    <button class="removeReminder" data-index="${i}" style="margin-left: 10px; background: none; border: none; color: red; font-weight: bold; cursor: pointer;">✖</button>
-  </div>`
-).join('');
-
-
-
-
-        reminderBox.style.display = 'block';
-      } else {
-        reminderBox.style.display = 'none';
+      // Preview block (next 4 hours)
+      let preview = [];
+      let count = 0;
+      for (let i = 0; i < hours.length && count < 4; i++) {
+        const t = new Date(hours[i]);
+        const diff = (t - now) / (1000 * 60 * 60);
+        if (diff >= 0 && diff <= 4) {
+          const icon = getIcon(codes[i], precipChances[i]);
+          const temp = Math.round(temps[i]);
+          preview.push(`${icon} ${temp}°`);
+          count++;
+        }
       }
 
-      warningBox.style.display = (meds || heat || morning) ? 'block' : 'none';
-    } else {
-      warningBox.style.display = 'none';
-      reminderBox.style.display = 'none';
-    }
-  } catch (err) {
-    console.error("Error loading dog warnings:", err);
-    warningBox.style.display = 'none';
-    reminderBox.style.display = 'none';
-  }
+      const currentIcon = getIcon(codes[0], precipChances[0]);
+      document.getElementById("weatherToggle").innerHTML = `${currentIcon} Temp:&nbsp;&nbsp;${preview.join("     ")}`;
+    })
+    .catch(err => {
+      document.getElementById("weatherToggle").textContent = "🌡️ Temp: N/A";
+      console.error("Weather summary error:", err);
+    });
 }
+
+
+
+
+
 
 document.getElementById("addReminderBtn").addEventListener("click", async () => {
   const newReminder = prompt("Enter new reminder:");
@@ -1131,6 +1152,74 @@ async function saveTestSignup() {
   showToast("Test scheduled!");
 }
 
+function toggleWeatherInfo() {
+  const box = document.getElementById("weather-info");
+  const isHidden = box.style.display === "none";
+  box.style.display = isHidden ? "block" : "none";
+
+  if (isHidden) {
+    getWeatherPreview("https://api.weather.gov/gridpoints/MEG/74,66/forecast/hourly");
+
+  } else {
+    getWeatherPreview("https://api.weather.gov/gridpoints/MEG/74,66/forecast/hourly");
+
+  }
+}
+
+function updateWeatherDetails() {
+  fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&hourly=temperature_2m,weathercode,precipitation_probability&timezone=auto&temperature_unit=fahrenheit')
+    .then(response => response.json())
+    .then(data => {
+      const now = new Date();
+      const times = data.hourly.time;
+      const temps = data.hourly.temperature_2m;
+      const codes = data.hourly.weathercode;
+      const precip = data.hourly.precipitation_probability;
+
+      const getWeatherIcon = (code, chance) => {
+        const rainSnowCodes = [51, 53, 55, 61, 63, 65, 66, 67, 71, 73, 75, 77, 80, 81, 82, 85, 86, 95, 96, 99];
+        if (rainSnowCodes.includes(code) && chance < 80) code = 2; // fallback to partly cloudy
+
+        if ([0].includes(code)) return "☀️";
+        if ([1, 2].includes(code)) return "🌤️";
+        if ([3].includes(code)) return "☁️";
+        if ([45, 48].includes(code)) return "🌫️";
+        if ([51, 53, 55].includes(code)) return "🌦️";
+        if ([61, 63, 65].includes(code)) return "🌧️";
+        if ([66, 67].includes(code)) return "🌧️❄️";
+        if ([71, 73, 75, 77].includes(code)) return "🌨️";
+        if ([80, 81, 82].includes(code)) return "🌧️";
+        if ([85, 86].includes(code)) return "🌨️";
+        if ([95, 96, 99].includes(code)) return "⛈️";
+        return "🌡️";
+      };
+
+      let html = "<strong>Next 8 Hours:</strong><br><br>";
+      let count = 0;
+
+      for (let i = 0; i < times.length && count < 8; i++) {
+        const forecastTime = new Date(times[i]);
+        const diff = (forecastTime - now) / (1000 * 60 * 60);
+
+        if (diff >= 1 && diff <= 12) {
+          const timeStr = forecastTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const temp = Math.round(temps[i]);
+          const icon = getWeatherIcon(codes[i], precip[i]);
+          html += `${timeStr}: ${icon} ${temp}°F<br>`;
+          count++;
+        }
+      }
+
+      document.getElementById("weather-info").innerHTML = html;
+    })
+    .catch(error => {
+      document.getElementById("weather-info").innerHTML = "Error loading weather details.";
+      console.error("Weather detail error:", error);
+    });
+}
+
+
+
 async function loadTestSignups() {
   const snapshot = await db.collection("testSignups").get();
   const list = document.getElementById("testList");
@@ -1197,7 +1286,7 @@ function updateWindSummary() {
 
       // Add current wind direction
       const current = data.current_weather.winddirection;
-      summary.push(getDir(current));
+      summary.push(current);
 
       // Get next 3 hours
       let count = 0;
@@ -1205,18 +1294,71 @@ function updateWindSummary() {
         const t = new Date(hours[i]);
         const diff = (t - now) / (1000 * 60 * 60);
         if (diff >= 1 && diff <= 4) {
-          summary.push(getDir(directions[i]));
+          summary.push(directions[i]);
           count++;
         }
       }
 
-      document.getElementById("windToggle").textContent = `🧭 Wind: ${summary.join(" → ")}`;
+      const arrowHTML = summary.map(deg => {
+        const arrow = `<span style="display:inline-block; transform: rotate(${(deg + 180) % 360}deg); font-size: 20px;">↑</span>`;
+        return `${arrow} ${getDir(deg)}`;
+      }).join('&nbsp;&nbsp;&nbsp;&nbsp;'); // 8 spaces
+
+      document.getElementById("windToggle").innerHTML = `🧭 Wind:&nbsp;&nbsp;&nbsp;${arrowHTML}`;
     })
     .catch(err => {
-      document.getElementById("windToggle").textContent = "🧭 Wind: N/A";
+      document.getElementById("windToggle").textContent = "🧭 Wind:   N/A";
       console.error("Wind summary error:", err);
     });
 }
+
+
+fetch('https://api.weather.gov/points/36.0345,-89.3856')
+  .then(res => res.json())
+  .then(data => {
+    const hourlyUrl = data.properties.forecastHourly;
+    getWeatherPreview(hourlyUrl);
+  })
+  .catch(err => console.error('Error getting forecastHourly URL:', err));
+
+function getWeatherPreview(url) {
+  fetch(url)
+    .then(res => res.json())
+    .then(data => {
+      const periods = data.properties.periods;
+      const preview = periods.slice(0, 4);      // first 4 hours
+      const extended = periods.slice(0, 8);     // full 8 hour block
+
+      const iconMap = desc => {
+        desc = desc.toLowerCase();
+        const hasChance = desc.includes("chance");
+
+        if (!hasChance && (desc.includes("rain") || desc.includes("showers"))) return "🌧️";
+        if (!hasChance && desc.includes("snow")) return "❄️";
+        if (!hasChance && desc.includes("storm")) return "⛈️";
+        if (desc.includes("cloud")) return "⛅";
+        return "☀️"; // default
+      };
+
+      const previewHTML = preview.map(p => {
+        return `${iconMap(p.shortForecast)} ${p.temperature}°`;
+      }).join(' &nbsp;&nbsp; ');
+
+      document.getElementById("weatherToggle").innerHTML = `☀️ Temp:&nbsp;&nbsp;${previewHTML}`;
+
+      // Detailed 8 hour block
+      let fullHTML = `<strong>Next 8 Hours:</strong><br><br>`;
+      extended.forEach(p => {
+        const time = new Date(p.startTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const emoji = iconMap(p.shortForecast);
+        fullHTML += `${time}: ${emoji} ${p.temperature}°F<br>`;
+      });
+
+      document.getElementById("weather-info").innerHTML = fullHTML;
+    })
+    .catch(err => console.error("Weather.gov forecast error:", err));
+}
+
 
 
 
@@ -1237,7 +1379,10 @@ fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.385
       return dirs[Math.round(deg / 45) % 8];
     };
 
-    let html = `<strong>Wind Now:</strong> ${getDirectionLabel(currentWindDir)} (${currentWindDir}°) at ${currentWindSpeedMph} mph<br><br>`;
+    let html = `<strong>Wind Now:</strong> 
+  <span style="display:inline-block; transform: rotate(${(currentWindDir + 180) % 360}deg); font-size: 16px;">↑</span> 
+  ${getDirectionLabel(currentWindDir)} (${currentWindDir}°) at ${currentWindSpeedMph} mph<br><br>`;
+
 
     let count = 0;
     for (let i = 0; i < hours.length; i++) {
@@ -1249,7 +1394,12 @@ fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.385
         const direction = directions[i];
         const dirLabel = getDirectionLabel(direction);
         const speedMph = (speeds[i] * 0.621371).toFixed(1);
-        html += `${labelTime}: ${dirLabel} (${direction}°) at ${speedMph} mph<br>`;
+        html += `
+  ${labelTime}: 
+  <span style="display:inline-block; transform: rotate(${(direction + 180) % 360}deg); font-size: 16px;">↑</span> 
+  ${dirLabel} (${direction}°) at ${speedMph} mph<br>
+`;
+
         count++;
       }
     }
@@ -1484,7 +1634,61 @@ function populateTruckCupCounts() {
 }
 
 
+async function loadDogWarnings() {
+  const warningBox = document.getElementById('dogWarnings');
+  const medDiv = document.getElementById('medicineWarning');
+  const heatDiv = document.getElementById('heatWarning');
+  const morningDiv = document.getElementById('morningWarning');
+  const morningHeader = document.getElementById('morningHeader');
 
+  const reminderBox = document.getElementById('reminderBox');
+  const reminderList = document.getElementById('reminderList');
+
+  try {
+    const doc = await db.collection("dogInfo").doc("current").get();
+
+    if (doc.exists) {
+      const data = doc.data();
+      const meds = data.medicine || '';
+      const heat = data.heat || '';
+      const morning = data.morning || '';
+      const reminders = data.reminders || [];
+
+      medDiv.innerHTML = meds.split('\n').map(line => `<div style="color: green;">${line}</div>`).join('');
+      heatDiv.innerHTML = heat.split('\n').map(line => `<div style="color: red;">${line}</div>`).join('');
+      morningDiv.innerHTML = morning.split('\n').map(line => `<div>${line}</div>`).join('');
+	  const count = morning.split('\n').filter(line => line.trim()).length;
+morningHeader.textContent = `🍽️ Morning Feeds: (${count})`;
+
+
+      if (reminders.length > 0) {
+reminderList.innerHTML = reminders.map((text, i) =>
+  `<div class="task" data-index="${i}">
+    <input type="checkbox" id="reminder_${i}" class="reminderCheckbox">
+    <label for="reminder_${i}">${text}</label>
+    <button class="removeReminder" data-index="${i}" style="margin-left: 10px; background: none; border: none; color: red; font-weight: bold; cursor: pointer;">✖</button>
+  </div>`
+).join('');
+
+
+
+
+        reminderBox.style.display = 'block';
+      } else {
+        reminderBox.style.display = 'none';
+      }
+
+      warningBox.style.display = (meds || heat || morning) ? 'block' : 'none';
+    } else {
+      warningBox.style.display = 'none';
+      reminderBox.style.display = 'none';
+    }
+  } catch (err) {
+    console.error("Error loading dog warnings:", err);
+    warningBox.style.display = 'none';
+    reminderBox.style.display = 'none';
+  }
+}
 
 
 async function loadSelectedData() {
@@ -1565,6 +1769,7 @@ const currentHour = new Date().getHours();
 const shiftToLoad = currentHour < 12 ? 'AM' : 'PM';
 document.getElementById('shiftToggle').checked = (shiftToLoad === 'PM'); // ✅ Set slider position
 updateWindSummary();
+
 
 selectShift(shiftToLoad);
 // Restore saved employee ID
