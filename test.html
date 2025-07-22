@@ -1275,47 +1275,61 @@ function degreesToCardinal(degree) {
     }
 	
 function updateWindSummary() {
-  fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&current_weather=true&hourly=winddirection&timezone=auto')
+  fetch('https://api.open-meteo.com/v1/forecast?latitude=36.0345&longitude=-89.3856&current_weather=true&hourly=winddirection,windspeed&timezone=auto')
     .then(response => response.json())
     .then(data => {
       const now = new Date();
-      const hours = data.hourly.time;
+      const times = data.hourly.time;
       const directions = data.hourly.winddirection;
+      const speeds = data.hourly.windspeed;
 
       const getDir = deg => {
         const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
         return dirs[Math.round(deg / 45) % 8];
       };
 
-      const summary = [];
+      const arrow = deg => `<span style="display:inline-block; transform: rotate(${(deg + 180) % 360}deg); font-size: 18px;">↑</span>`;
 
-      // Add current wind direction
-      const current = data.current_weather.winddirection;
-      summary.push(current);
+      // Wind Now
+      const currentDeg = data.current_weather.winddirection;
+      const currentSpd = data.current_weather.windspeed;
+      let html = `<strong>Wind Now:</strong> ${arrow(currentDeg)} ${getDir(currentDeg)} (${currentDeg}°) at ${currentSpd.toFixed(1)} mph<br><br>`;
 
-      // Get next 3 hours
+      let previewDegs = [];
+
       let count = 0;
-      for (let i = 0; i < hours.length && count < 3; i++) {
-        const t = new Date(hours[i]);
-        const diff = (t - now) / (1000 * 60 * 60);
-        if (diff >= 1 && diff <= 4) {
-          summary.push(directions[i]);
+      for (let i = 0; i < times.length && count < 8; i++) {
+        let forecastTime = new Date(times[i]);
+        forecastTime.setHours(forecastTime.getHours() - 1); // ⬅️ Manually correct timezone offset
+
+        const diff = (forecastTime - now) / (1000 * 60 * 60); // hour diff
+
+        if (diff >= 0 && diff <= 8) {
+          const timeStr = forecastTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const deg = directions[i];
+          const spd = speeds[i];
+          html += `${timeStr}: ${arrow(deg)} ${getDir(deg)} (${deg}°) at ${spd.toFixed(1)} mph<br>`;
+          previewDegs.push(deg);
           count++;
         }
       }
 
-      const arrowHTML = summary.map(deg => {
-        const arrow = `<span style="display:inline-block; transform: rotate(${(deg + 180) % 360}deg); font-size: 20px;">↑</span>`;
-        return `${arrow} ${getDir(deg)}`;
-      }).join('&nbsp;&nbsp;&nbsp;&nbsp;'); // 8 spaces
+      const previewHTML = [currentDeg, ...previewDegs.slice(0, 3)].map(deg =>
+        `${arrow(deg)} ${getDir(deg)}`
+      ).join('&nbsp;&nbsp;&nbsp;&nbsp;');
 
-      document.getElementById("windToggle").innerHTML = `🧭 Wind:&nbsp;&nbsp;&nbsp;${arrowHTML}`;
+      document.getElementById("wind-info").innerHTML = html;
+      document.getElementById("windToggle").innerHTML = `🧭 Wind:&nbsp;&nbsp;&nbsp;${previewHTML}`;
     })
     .catch(err => {
-      document.getElementById("windToggle").textContent = "🧭 Wind:   N/A";
+      document.getElementById("windToggle").textContent = "🧭 Wind: N/A";
       console.error("Wind summary error:", err);
     });
 }
+
+
+
+
 
 
 fetch('https://api.weather.gov/points/36.0345,-89.3856')
@@ -1352,12 +1366,15 @@ function getWeatherPreview(url) {
       document.getElementById("weatherToggle").innerHTML = `☀️ Temp:&nbsp;&nbsp;${previewHTML}`;
 
       // Detailed 8 hour block
-      let fullHTML = `<strong>Next 8 Hours:</strong><br><br>`;
-      extended.forEach(p => {
-        const time = new Date(p.startTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-        const emoji = iconMap(p.shortForecast);
-        fullHTML += `${time}: ${emoji} ${p.temperature}°F<br>`;
-      });
+let fullHTML = `<strong>Temp Now:</strong> ${iconMap(periods[0].shortForecast)} ${periods[0].temperature}°F<br><br>`;
+for (let i = 1; i < extended.length; i++) {
+  const p = extended[i];
+  const time = new Date(p.startTime).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const emoji = iconMap(p.shortForecast);
+  fullHTML += `${time}: ${emoji} ${p.temperature}°F<br>`;
+}
+
+
 
       document.getElementById("weather-info").innerHTML = fullHTML;
     })
