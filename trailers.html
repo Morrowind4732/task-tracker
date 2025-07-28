@@ -1,130 +1,93 @@
+
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Trailer Dog Assignments</title>
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+  <meta charset="UTF-8">
+  <title>Trailer Assignments</title>
   <style>
     body {
-      font-family: sans-serif;
-      padding: 20px;
+      font-family: Arial, sans-serif;
+      margin: 20px;
     }
-    .kennel-side {
-      margin-bottom: 20px;
+    .trailer-section {
+      margin-bottom: 30px;
     }
-    .kennel-boxes {
+    .kennel-grid {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
+      justify-content: center;
+      margin-bottom: 15px;
     }
-    .kennel-boxes input {
-      width: 100px;
-      padding: 6px;
-      font-size: 14px;
+    .kennel-grid input {
+      width: 60px;
+      height: 30px;
+      margin: 5px;
+      text-align: center;
     }
-    .radio-group {
-      margin-bottom: 20px;
+    .half-row {
+      display: flex;
+      justify-content: center;
+      margin: 10px 0;
+    }
+    .half-row input {
+      width: 60px;
+      height: 30px;
+      margin: 5px;
+    }
+    .top-row, .bottom-row {
+      display: flex;
+      justify-content: center;
+    }
+    .top-row input, .bottom-row input {
+      width: 60px;
+      height: 30px;
+      margin: 5px;
+    }
+    .top-row .spacer {
+      width: 70px;
+      height: 30px;
+      margin: 5px;
     }
   </style>
 </head>
 <body>
 
-  <h2>Trailer Dog Assignments</h2>
+<h2>Select Driver:</h2>
+<label><input type="radio" name="driver" value="brian"> Brian</label>
+<label><input type="radio" name="driver" value="cody"> Cody</label>
+<label><input type="radio" name="driver" value="scott" checked> Scott</label>
 
-  <div class="radio-group">
-    <label><input type="radio" name="driver" value="brian" checked> Brian</label>
-    <label><input type="radio" name="driver" value="cody"> Cody</label>
-    <label><input type="radio" name="driver" value="scott"> Scott</label>
+<div id="boysSide" class="trailer-section">
+  <h3>Boys Side</h3>
+  <div class="bottom-row">
+    <input><input><input><input><input><input>
   </div>
-
-  <div class="kennel-side">
-    <h3>Boys Side</h3>
-    <div id="boysSide" class="kennel-boxes"></div>
+  <div class="half-row">
+    <input><input>
   </div>
-
-  <div class="kennel-side">
-    <h3>Girls Side</h3>
-    <div id="girlsSide" class="kennel-boxes"></div>
+  <div class="top-row">
+    <input><input>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <input><input>
   </div>
+</div>
 
-  <button onclick="saveKennels()">Save</button>
+<div id="girlsSide" class="trailer-section">
+  <h3>Girls Side</h3>
+  <div class="bottom-row">
+    <input><input><input><input><input><input>
+  </div>
+  <div class="half-row">
+    <input><input>
+  </div>
+  <div class="top-row">
+    <input><input>
+    <div class="spacer"></div>
+    <div class="spacer"></div>
+    <input><input>
+  </div>
+</div>
 
-  <script>
-    const firebaseConfig = {
-      apiKey: "YOUR_API_KEY",
-      authDomain: "YOUR_AUTH_DOMAIN",
-      projectId: "YOUR_PROJECT_ID",
-      storageBucket: "YOUR_STORAGE_BUCKET",
-      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-      appId: "YOUR_APP_ID"
-    };
-
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-
-    const counts = {
-      brian: 10,
-      cody: 6,
-      scott: 12
-    };
-
-    function createBoxes(driver) {
-      const count = counts[driver];
-      const boys = document.getElementById("boysSide");
-      const girls = document.getElementById("girlsSide");
-      boys.innerHTML = "";
-      girls.innerHTML = "";
-      for (let i = 0; i < count; i++) {
-        boys.innerHTML += `<input type="text" id="boy_${i}" />`;
-        girls.innerHTML += `<input type="text" id="girl_${i}" />`;
-      }
-    }
-
-    function getSelectedDriver() {
-      return document.querySelector('input[name="driver"]:checked').value;
-    }
-
-    function saveKennels() {
-      const driver = getSelectedDriver();
-      const count = counts[driver];
-      const data = { boys: [], girls: [] };
-      for (let i = 0; i < count; i++) {
-        data.boys.push(document.getElementById(`boy_${i}`).value);
-        data.girls.push(document.getElementById(`girl_${i}`).value);
-      }
-      const today = new Date().toISOString().split('T')[0];
-      db.collection("trailers").doc(`${today}_${driver}`).set(data)
-        .then(() => alert("Saved!"))
-        .catch(err => console.error("Save error:", err));
-    }
-
-    function loadKennels() {
-      const driver = getSelectedDriver();
-      createBoxes(driver);
-      const today = new Date().toISOString().split('T')[0];
-      db.collection("trailers").doc(`${today}_${driver}`).get()
-        .then(doc => {
-          if (doc.exists) {
-            const data = doc.data();
-            data.boys.forEach((val, i) => {
-              const input = document.getElementById(`boy_${i}`);
-              if (input) input.value = val;
-            });
-            data.girls.forEach((val, i) => {
-              const input = document.getElementById(`girl_${i}`);
-              if (input) input.value = val;
-            });
-          }
-        });
-    }
-
-    document.querySelectorAll('input[name="driver"]').forEach(radio => {
-      radio.addEventListener("change", loadKennels);
-    });
-
-    window.onload = loadKennels;
-  </script>
 </body>
 </html>
