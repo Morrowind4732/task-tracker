@@ -2,92 +2,72 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Trailer Assignments</title>
+  <title>Trailer Layout</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
+    .section-title {
+      font-weight: bold;
+      font-size: 20px;
+      margin-top: 20px;
     }
-    .trailer-section {
-      margin-bottom: 30px;
-    }
-    .kennel-grid {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      margin-bottom: 15px;
-    }
-    .kennel-grid input {
-      width: 60px;
-      height: 30px;
-      margin: 5px;
-      text-align: center;
-    }
-    .half-row {
+    .kennel-row {
       display: flex;
       justify-content: center;
-      margin: 10px 0;
+      margin: 5px 0;
     }
-    .half-row input {
+    .kennel-box {
       width: 60px;
-      height: 30px;
-      margin: 5px;
+      height: 40px;
+      margin: 3px;
     }
-    .top-row, .bottom-row {
-      display: flex;
-      justify-content: center;
-    }
-    .top-row input, .bottom-row input {
-      width: 60px;
-      height: 30px;
-      margin: 5px;
-    }
-    .top-row .spacer {
-      width: 70px;
-      height: 30px;
-      margin: 5px;
+    .gap {
+      width: 66px;
+      margin: 3px;
     }
   </style>
 </head>
 <body>
+  <div class="section-title">Boys Side</div>
+  <div class="kennel-row">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <div class="gap"></div>
+    <div class="gap"></div>
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+  </div>
+  <div class="kennel-row">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+  </div>
+  <div class="kennel-row">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+  </div>
 
-<h2>Select Driver:</h2>
-<label><input type="radio" name="driver" value="brian"> Brian</label>
-<label><input type="radio" name="driver" value="cody"> Cody</label>
-<label><input type="radio" name="driver" value="scott" checked> Scott</label>
-
-<div id="boysSide" class="trailer-section">
-  <h3>Boys Side</h3>
-  <div class="bottom-row">
-    <input><input><input><input><input><input>
+  <div class="section-title">Girls Side</div>
+  <div class="kennel-row">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
   </div>
-  <div class="half-row">
-    <input><input>
+  <div class="kennel-row">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
   </div>
-  <div class="top-row">
-    <input><input>
-    <div class="spacer"></div>
-    <div class="spacer"></div>
-    <input><input>
+  <div class="kennel-row">
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
+    <div class="gap"></div>
+    <div class="gap"></div>
+    <input class="kennel-box" type="text">
+    <input class="kennel-box" type="text">
   </div>
-</div>
-
-<div id="girlsSide" class="trailer-section">
-  <h3>Girls Side</h3>
-  <div class="bottom-row">
-    <input><input><input><input><input><input>
-  </div>
-  <div class="half-row">
-    <input><input>
-  </div>
-  <div class="top-row">
-    <input><input>
-    <div class="spacer"></div>
-    <div class="spacer"></div>
-    <input><input>
-  </div>
-</div>
-
 </body>
 </html>
