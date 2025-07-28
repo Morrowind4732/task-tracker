@@ -1,65 +1,84 @@
+
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Trailer Kennels</title>
+  <title>Trailer Layout</title>
   <style>
     body {
       font-family: Arial, sans-serif;
-      padding: 20px;
+      margin: 20px;
+      text-align: center;
     }
-    .section-title {
-      font-size: 1.5em;
-      margin-top: 40px;
-      margin-bottom: 10px;
+    h2 {
+      text-align: left;
     }
-    .kennel-row {
+    .side-section {
+      margin-bottom: 60px;
+      position: relative;
+      display: inline-block;
+    }
+    .main-rows {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .row {
       display: flex;
       justify-content: center;
-      margin-bottom: 10px;
+      margin: 5px 0;
     }
-    .kennel-row.halfway {
-      justify-content: flex-end;
-      padding-right: 50px;
+    .halfway-row {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 10px;
     }
-    .kennel-row.halfway.girls {
-      justify-content: flex-start;
-      padding-left: 50px;
+    .halfway-row.right {
+      right: -120px;
     }
-    .kennel {
+    .halfway-row.left {
+      left: -120px;
+    }
+    input {
       width: 60px;
       height: 40px;
-      margin: 5px;
     }
   </style>
 </head>
 <body>
-  <div class="section-title">Boys Side</div>
-  <div class="kennel-row">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-  </div>
-  <div class="kennel-row">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-  </div>
-  <div class="kennel-row halfway">
-    <input class="kennel" type="text"><input class="kennel" type="text">
+
+  <h2>Boys Side</h2>
+  <div class="side-section">
+    <div class="main-rows">
+      <div class="row">
+        <input><input><input><input>
+      </div>
+      <div class="row">
+        <input><input><input><input><input><input>
+      </div>
+    </div>
+    <div class="halfway-row right">
+      <input><input>
+    </div>
   </div>
 
-  <div class="section-title">Girls Side</div>
-  <div class="kennel-row halfway girls">
-    <input class="kennel" type="text"><input class="kennel" type="text">
+  <h2>Girls Side</h2>
+  <div class="side-section">
+    <div class="main-rows">
+      <div class="row">
+        <input><input><input><input>
+      </div>
+      <div class="row">
+        <input><input><input><input><input><input>
+      </div>
+    </div>
+    <div class="halfway-row left">
+      <input><input>
+    </div>
   </div>
-  <div class="kennel-row">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-  </div>
-  <div class="kennel-row">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-    <input class="kennel" type="text"><input class="kennel" type="text">
-  </div>
+
 </body>
 </html>
