@@ -1,3 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Truck Kennel Layouts</title>
+<style>
+  :root { --box-h: 64px; --gap: 12px; }
+  body { font-family: system-ui, sans-serif; margin: 24px; }
+  .controls { display:flex; gap:22px; margin:0 0 12px; flex-wrap:wrap; }
+  .controls label { display:flex; align-items:center; gap:6px; cursor:pointer; }
+
+  .panel { display:none; }
+  .panel.active { display:block; }
+
+  .grid { display:grid; gap:var(--gap); grid-auto-rows:var(--box-h); }
+  .box { height:var(--box-h); }
+  .box input{
+    width:100%; height:100%;
+    padding:10px; box-sizing:border-box;
+    border:1px solid #bbb; border-radius:6px; font-size:16px;
+  }
+  .half { transform: translateY(calc(var(--box-h)/2)); z-index:2; }
+</style>
+</head>
+<body>
+
+<!-- Top controls -->
+<div class="controls" id="truck-controls">
+  <strong>Truck:</strong>
+  <label><input type="radio" name="truck" value="scott" checked> Scott’s</label>
+  <label><input type="radio" name="truck" value="brian"> Brian’s</label>
+  <label><input type="radio" name="truck" value="cody"> Cody’s</label>
+</div>
+<div class="controls" id="sex-controls">
+  <strong>Side:</strong>
+  <label><input type="radio" name="sex" value="male" checked> Males</label>
+  <label><input type="radio" name="sex" value="female"> Females</label>
+</div>
+
+<!-- ===== SCOTT ===== -->
+<div class="panel active" data-truck="scott" data-sex="male">
+  <div class="grid" style="grid-template-columns:repeat(8,1fr);">
+    <!-- Row 1: N N I I N N H H -->
+    <div class="box"      style="grid-column:1;grid-row:1;"><input aria-label="Scott Male R1C1"></div>
+    <div class="box"      style="grid-column:2;grid-row:1;"><input aria-label="Scott Male R1C2"></div>
+    <!-- C3 I -->
+    <!-- C4 I -->
+    <div class="box"      style="grid-column:5;grid-row:1;"><input aria-label="Scott Male R1C5"></div>
+    <div class="box"      style="grid-column:6;grid-row:1;"><input aria-label="Scott Male R1C6"></div>
+    <div class="box half" style="grid-column:7;grid-row:1;"><input aria-label="Scott Male R1C7 (H)"></div>
+    <div class="box half" style="grid-column:8;grid-row:1;"><input aria-label="Scott Male R1C8 (H)"></div>
+    <!-- Row 2: N N N N N N -->
+    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Scott Male R2C1"></div>
+    <div class="box" style="grid-column:2;grid-row:2;"><input aria-label="Scott Male R2C2"></div>
+    <div class="box" style="grid-column:3;grid-row:2;"><input aria-label="Scott Male R2C3"></div>
+    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Scott Male R2C4"></div>
+    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Scott Male R2C5"></div>
+    <div class="box" style="grid-column:6;grid-row:2;"><input aria-label="Scott Male R2C6"></div>
+    <!-- C7, C8 empty -->
+  </div>
+</div>
+
+<div class="panel" data-truck="scott" data-sex="female">
+  <div class="grid" style="grid-template-columns:repeat(8,1fr);">
+    <!-- Row 1: H H N N I I N N -->
+    <div class="box half" style="grid-column:1;grid-row:1;"><input aria-label="Scott Female R1C1 (H)"></div>
+    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Scott Female R1C2 (H)"></div>
+    <div class="box"      style="grid-column:3;grid-row:1;"><input aria-label="Scott Female R1C3"></div>
+    <div class="box"      style="grid-column:4;grid-row:1;"><input aria-label="Scott Female R1C4"></div>
+    <!-- C5 I, C6 I -->
+    <div class="box"      style="grid-column:7;grid-row:1;"><input aria-label="Scott Female R1C7"></div>
+    <div class="box"      style="grid-column:8;grid-row:1;"><input aria-label="Scott Female R1C8"></div>
+
+    <!-- Row 2: S S N N N N N N -->
+    <!-- C1 S -->
+    <!-- C2 S -->
+    <div class="box" style="grid-column:3;grid-row:2;"><input aria-label="Scott Female R2C3"></div>
+    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Scott Female R2C4"></div>
+    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Scott Female R2C5"></div>
+    <div class="box" style="grid-column:6;grid-row:2;"><input aria-label="Scott Female R2C6"></div>
+    <div class="box" style="grid-column:7;grid-row:2;"><input aria-label="Scott Female R2C7"></div>
+    <div class="box" style="grid-column:8;grid-row:2;"><input aria-label="Scott Female R2C8"></div>
+  </div>
+</div>
+
 <!-- ===== BRIAN ===== -->
 <div class="panel" data-truck="brian" data-sex="male">
   <div class="grid" style="grid-template-columns:repeat(5,1fr);">
@@ -32,3 +117,73 @@
     <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Brian Female R2C5"></div>
   </div>
 </div>
+
+
+<!-- ===== CODY ===== -->
+<!-- Cody Male (unchanged; 9 columns) -->
+<div class="panel" data-truck="cody" data-sex="male">
+  <div class="grid" style="grid-template-columns:repeat(9,1fr);">
+    <!-- Row 1: N H H N I H H H I -->
+    <div class="box"      style="grid-column:1;grid-row:1;"><input aria-label="Cody Male R1C1"></div>
+    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Cody Male R1C2 (H)"></div>
+    <div class="box half" style="grid-column:3;grid-row:1;"><input aria-label="Cody Male R1C3 (H)"></div>
+    <div class="box"      style="grid-column:4;grid-row:1;"><input aria-label="Cody Male R1C4"></div>
+    <!-- C5 I -->
+    <div class="box half" style="grid-column:6;grid-row:1;"><input aria-label="Cody Male R1C6 (H)"></div>
+    <div class="box half" style="grid-column:7;grid-row:1;"><input aria-label="Cody Male R1C7 (H)"></div>
+    <div class="box half" style="grid-column:8;grid-row:1;"><input aria-label="Cody Male R1C8 (H)"></div>
+    <!-- C9 I -->
+    <!-- Row 2: N S S N N S S S N -->
+    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Cody Male R2C1"></div>
+    <!-- C2 S, C3 S -->
+    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Cody Male R2C4"></div>
+    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Cody Male R2C5"></div>
+    <!-- C6 S, C7 S, C8 S -->
+    <div class="box" style="grid-column:9;grid-row:2;"><input aria-label="Cody Male R2C9"></div>
+  </div>
+</div>
+
+<!-- Cody Female -->
+<div class="panel" data-truck="cody" data-sex="female">
+  <div class="grid" style="grid-template-columns:repeat(9,1fr);">
+    <!-- Row 1: S H H H S N H H N -->
+    <!-- C1 S -->
+    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Cody Female R1C2 (H)"></div>
+    <div class="box half" style="grid-column:3;grid-row:1;"><input aria-label="Cody Female R1C3 (H)"></div>
+    <div class="box half" style="grid-column:4;grid-row:1;"><input aria-label="Cody Female R1C4 (H)"></div>
+    <!-- C5 S -->
+    <div class="box"      style="grid-column:6;grid-row:1;"><input aria-label="Cody Female R1C6"></div>
+    <div class="box half" style="grid-column:7;grid-row:1;"><input aria-label="Cody Female R1C7 (H)"></div>
+    <div class="box half" style="grid-column:8;grid-row:1;"><input aria-label="Cody Female R1C8 (H)"></div>
+    <div class="box"      style="grid-column:9;grid-row:1;"><input aria-label="Cody Female R1C9"></div>
+
+    <!-- Row 2: N S S S N N S S N -->
+    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Cody Female R2C1"></div>
+    <!-- C2 S, C3 S, C4 S -->
+    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Cody Female R2C5"></div>
+    <div class="box" style="grid-column:6;grid-row:2;"><input aria-label="Cody Female R2C6"></div>
+    <!-- C7 S, C8 S -->
+    <div class="box" style="grid-column:9;grid-row:2;"><input aria-label="Cody Female R2C9"></div>
+  </div>
+</div>
+
+<script>
+  const panels = Array.from(document.querySelectorAll('.panel'));
+  const truckRadios = document.querySelectorAll('input[name="truck"]');
+  const sexRadios   = document.querySelectorAll('input[name="sex"]');
+
+  function refresh() {
+    const truck = document.querySelector('input[name="truck"]:checked').value;
+    const sex   = document.querySelector('input[name="sex"]:checked').value;
+    panels.forEach(p => {
+      p.classList.toggle('active',
+        p.dataset.truck === truck && p.dataset.sex === sex);
+    });
+  }
+  truckRadios.forEach(r => r.addEventListener('change', refresh));
+  sexRadios.forEach(r => r.addEventListener('change', refresh));
+  refresh();
+</script>
+
+</body>
+</html>
