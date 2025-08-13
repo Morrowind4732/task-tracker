@@ -194,19 +194,22 @@ function buildLayout(){
 
   const slots = () => Array.from(layout.querySelectorAll('.slot'));
   function setGhost(text,x,y){ ghost.textContent=text; ghost.style.transform=`translate(${x-offsetX}px,${y-offsetY}px)`; }
-  function nearestOverlappingSlot(){
-    const r = ghost.getBoundingClientRect();
-    const cx = r.left + r.width/2, cy = r.top + r.height/2;
-    let best=null, bestDist=Infinity;
-    for(const s of slots()){
-      const b = s.getBoundingClientRect();
-      if (cx<b.left||cx>b.right||cy<b.top||cy>b.bottom) continue;
-      if (s.children.length>0) continue;
-      const dist = Math.hypot(cx-(b.left+b.right)/2, cy-(b.top+b.bottom)/2);
-      if (dist<bestDist){ best=s; bestDist=dist; }
-    }
-    return best;
+  function nearestOverlappingSlot() {
+  const r = ghost.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bestDist = Infinity;
+  for (const s of slots()) {
+    const b = s.getBoundingClientRect();
+    if (cx < b.left || cx > b.right || cy < b.top || cy > b.bottom) continue;
+    // Allow slots with chips now (for swapping)
+    const dist = Math.hypot(cx - (b.left + b.right) / 2, cy - (b.top + b.bottom) / 2);
+    if (dist < bestDist) { best = s; bestDist = dist; }
   }
+  return best;
+}
+
+  
+  
   function startDrag(chip,x,y){
     dragging=chip;
     const r = chip.getBoundingClientRect();
@@ -220,16 +223,26 @@ function endDrag() {
   const oldParent = dragging.parentElement;
 
   if (target) {
+    const existingChip = target.querySelector('.chip:not(.drag-ghost)');
+
+    if (existingChip && oldParent.classList.contains('slot')) {
+      // Swap if both from slots
+      oldParent.appendChild(existingChip);
+      updateQRMapping(oldParent.dataset.slot, existingChip.dataset.name).catch(console.error);
+    } else if (existingChip) {
+      // Move existing chip back to dock if coming from dock
+      dock.appendChild(existingChip);
+      updateQRMapping(target.dataset.slot, null).catch(console.error);
+    }
+
     target.appendChild(dragging);
     updateQRMapping(target.dataset.slot, dragging.dataset.name).catch(console.error);
 
-    // Clear old slot if it was different
     if (oldParent.classList.contains('slot') && oldParent !== target) {
       updateQRMapping(oldParent.dataset.slot, null).catch(console.error);
     }
   } else {
     dock.appendChild(dragging);
-    // Clear old slot mapping if coming from one
     if (oldParent.classList.contains('slot')) {
       updateQRMapping(oldParent.dataset.slot, null).catch(console.error);
     }
@@ -238,6 +251,7 @@ function endDrag() {
   ghost.style.transform = 'translate(-9999px,-9999px)';
   dragging = null;
 }
+
 
 
   layout.addEventListener('click', e => {
@@ -284,15 +298,18 @@ async function updateQRMapping(slotId, dogName) {
   const { truck, sex } = getSelection();
   const layoutDocId = docIdForSelection();
 
-  // update trailerLayouts
-  const ref = db.collection('trailerLayouts').doc(truck)
-                .collection('slots').doc(slotId);
+  // update trailerLayouts (compat syntax)
+  const ref = db
+    .collection("trailerLayouts")
+    .doc(`${truck}-${sex}`)
+    .collection("slots")
+    .doc(slotId);
 
   let dogId = null;
   if (dogName) {
     try {
-      const profileSnap = await db.collection('dogProfiles')
-        .where('name', '==', dogName)
+      const profileSnap = await db.collection("dogProfiles")
+        .where("name", "==", dogName)
         .limit(1)
         .get();
       if (!profileSnap.empty) {
@@ -312,8 +329,9 @@ async function updateQRMapping(slotId, dogName) {
   // ALSO update layouts doc so loadState() sees it right away
   const current = getCurrentState();
   current.slotData[slotId] = dogName || null;
-  await db.collection('layouts').doc(layoutDocId).set(current);
+  await db.collection("layouts").doc(layoutDocId).set(current);
 }
+
 
 
 
