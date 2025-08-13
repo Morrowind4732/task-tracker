@@ -213,13 +213,32 @@ function buildLayout(){
     offsetX=x-r.left; offsetY=y-r.top;
     setGhost(chip.textContent,x,y);
   }
-  function endDrag(){
-    if(!dragging) return;
-    const target = nearestOverlappingSlot();
-    if(target){ target.appendChild(dragging); updateQRMapping(target.dataset.slot, dragging.dataset.name).catch(console.error);} else { dock.appendChild(dragging); }
-    ghost.style.transform='translate(-9999px,-9999px)';
-    dragging=null;
+  
+function endDrag() {
+  if (!dragging) return;
+  const target = nearestOverlappingSlot();
+  const oldParent = dragging.parentElement;
+
+  if (target) {
+    target.appendChild(dragging);
+    updateQRMapping(target.dataset.slot, dragging.dataset.name).catch(console.error);
+
+    // Clear old slot if it was different
+    if (oldParent.classList.contains('slot') && oldParent !== target) {
+      updateQRMapping(oldParent.dataset.slot, null).catch(console.error);
+    }
+  } else {
+    dock.appendChild(dragging);
+    // Clear old slot mapping if coming from one
+    if (oldParent.classList.contains('slot')) {
+      updateQRMapping(oldParent.dataset.slot, null).catch(console.error);
+    }
   }
+
+  ghost.style.transform = 'translate(-9999px,-9999px)';
+  dragging = null;
+}
+
 
   layout.addEventListener('click', e => {
     const chip = e.target.closest('.chip');
