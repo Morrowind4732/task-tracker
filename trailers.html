@@ -2,188 +2,311 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Truck Kennel Layouts</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Truck Layouts + Drag Chips</title>
 <style>
   :root { --box-h: 64px; --gap: 12px; }
-  body { font-family: system-ui, sans-serif; margin: 24px; }
-  .controls { display:flex; gap:22px; margin:0 0 12px; flex-wrap:wrap; }
-  .controls label { display:flex; align-items:center; gap:6px; cursor:pointer; }
-
-  .panel { display:none; }
-  .panel.active { display:block; }
-
-  .grid { display:grid; gap:var(--gap); grid-auto-rows:var(--box-h); }
-  .box { height:var(--box-h); }
-  .box input{
-    width:100%; height:100%;
-    padding:10px; box-sizing:border-box;
-    border:1px solid #bbb; border-radius:6px; font-size:16px;
+  body { font-family: system-ui, sans-serif; margin: 16px; }
+  .row { display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; }
+  .controls { display:flex; gap:24px; margin-bottom:12px; flex-wrap:wrap; }
+  .controls label { margin-right:12px; cursor:pointer; }
+  textarea{ flex:1; min-width:260px; padding:10px; font-size:16px; min-height:80px; }
+  button{ padding:10px 14px; font-size:16px; cursor:pointer; }
+  .dock {
+    display:flex; gap:8px; flex-wrap:wrap;
+    padding:8px; border:1px solid #ddd; border-radius:8px; margin-bottom:12px;
+    min-height:44px;
   }
-  .half { transform: translateY(calc(var(--box-h)/2)); z-index:2; }
+  .chip {
+    user-select:none;
+    padding:8px 10px; border:1px solid #bbb; border-radius:999px;
+    background:#f7f7f7; font-size:16px; touch-action:none;
+  }
+  .grid { display:grid; grid-auto-rows:var(--box-h); gap:var(--gap); }
+  .slot {
+    position:relative; height:var(--box-h);
+    border:1px dashed #bbb; border-radius:6px; background:#fff;
+    display:flex; align-items:center; justify-content:center;
+    color:#888; font-size:14px;
+  }
+  .half { transform:translateY(calc(var(--box-h)/2)); z-index:1; }
+  .slot .chip { position:static; margin:0; border-radius:6px; width:100%; text-align:center; background:#fff; }
+  .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,.15); }
+  .hint { font-size:12px; color:#666; margin-bottom:8px; }
 </style>
 </head>
 <body>
 
-<!-- Top controls -->
-<div class="controls" id="truck-controls">
-  <strong>Truck:</strong>
-  <label><input type="radio" name="truck" value="scott" checked> Scott’s</label>
-  <label><input type="radio" name="truck" value="brian"> Brian’s</label>
-  <label><input type="radio" name="truck" value="cody"> Cody’s</label>
-</div>
-<div class="controls" id="sex-controls">
-  <strong>Side:</strong>
-  <label><input type="radio" name="sex" value="male" checked> Males</label>
-  <label><input type="radio" name="sex" value="female"> Females</label>
-</div>
-
-<!-- ===== SCOTT ===== -->
-<div class="panel active" data-truck="scott" data-sex="male">
-  <div class="grid" style="grid-template-columns:repeat(8,1fr);">
-    <!-- Row 1: N N I I N N H H -->
-    <div class="box"      style="grid-column:1;grid-row:1;"><input aria-label="Scott Male R1C1"></div>
-    <div class="box"      style="grid-column:2;grid-row:1;"><input aria-label="Scott Male R1C2"></div>
-    <!-- C3 I -->
-    <!-- C4 I -->
-    <div class="box"      style="grid-column:5;grid-row:1;"><input aria-label="Scott Male R1C5"></div>
-    <div class="box"      style="grid-column:6;grid-row:1;"><input aria-label="Scott Male R1C6"></div>
-    <div class="box half" style="grid-column:7;grid-row:1;"><input aria-label="Scott Male R1C7 (H)"></div>
-    <div class="box half" style="grid-column:8;grid-row:1;"><input aria-label="Scott Male R1C8 (H)"></div>
-    <!-- Row 2: N N N N N N -->
-    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Scott Male R2C1"></div>
-    <div class="box" style="grid-column:2;grid-row:2;"><input aria-label="Scott Male R2C2"></div>
-    <div class="box" style="grid-column:3;grid-row:2;"><input aria-label="Scott Male R2C3"></div>
-    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Scott Male R2C4"></div>
-    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Scott Male R2C5"></div>
-    <div class="box" style="grid-column:6;grid-row:2;"><input aria-label="Scott Male R2C6"></div>
-    <!-- C7, C8 empty -->
+<div class="controls">
+  <div>
+    <strong>Truck:</strong>
+    <label><input type="radio" name="truck" value="scott" checked> Scott’s</label>
+    <label><input type="radio" name="truck" value="brian"> Brian’s</label>
+    <label><input type="radio" name="truck" value="cody"> Cody’s</label>
+  </div>
+  <div>
+    <strong>Side:</strong>
+    <label><input type="radio" name="sex" value="male" checked> Males</label>
+    <label><input type="radio" name="sex" value="female"> Females</label>
   </div>
 </div>
 
-<div class="panel" data-truck="scott" data-sex="female">
-  <div class="grid" style="grid-template-columns:repeat(8,1fr);">
-    <!-- Row 1: H H N N I I N N -->
-    <div class="box half" style="grid-column:1;grid-row:1;"><input aria-label="Scott Female R1C1 (H)"></div>
-    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Scott Female R1C2 (H)"></div>
-    <div class="box"      style="grid-column:3;grid-row:1;"><input aria-label="Scott Female R1C3"></div>
-    <div class="box"      style="grid-column:4;grid-row:1;"><input aria-label="Scott Female R1C4"></div>
-    <!-- C5 I, C6 I -->
-    <div class="box"      style="grid-column:7;grid-row:1;"><input aria-label="Scott Female R1C7"></div>
-    <div class="box"      style="grid-column:8;grid-row:1;"><input aria-label="Scott Female R1C8"></div>
+<div class="hint">Paste names (commas, semicolons, spaces, newlines, or “/n” all work). Click Add or press Ctrl+Enter.</div>
 
-    <!-- Row 2: S S N N N N N N -->
-    <!-- C1 S -->
-    <!-- C2 S -->
-    <div class="box" style="grid-column:3;grid-row:2;"><input aria-label="Scott Female R2C3"></div>
-    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Scott Female R2C4"></div>
-    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Scott Female R2C5"></div>
-    <div class="box" style="grid-column:6;grid-row:2;"><input aria-label="Scott Female R2C6"></div>
-    <div class="box" style="grid-column:7;grid-row:2;"><input aria-label="Scott Female R2C7"></div>
-    <div class="box" style="grid-column:8;grid-row:2;"><input aria-label="Scott Female R2C8"></div>
-  </div>
+<div class="row">
+  <textarea id="nameInput" placeholder="e.g.&#10;Judge&#10;Duke&#10;Bella&#10;&#10;or: Judge, Duke, Bella&#10;or: Judge; Duke; Bella"></textarea>
+  <button id="addBtn">Add</button>
 </div>
 
-<!-- ===== BRIAN ===== -->
-<div class="panel" data-truck="brian" data-sex="male">
-  <div class="grid" style="grid-template-columns:repeat(5,1fr);">
-    <!-- Row 1: N N H H N -->
-    <div class="box"      style="grid-column:1;grid-row:1;"><input aria-label="Brian Male R1C1"></div>
-    <div class="box"      style="grid-column:2;grid-row:1;"><input aria-label="Brian Male R1C2"></div>
-    <div class="box half" style="grid-column:3;grid-row:1;"><input aria-label="Brian Male R1C3 (H)"></div>
-    <div class="box half" style="grid-column:4;grid-row:1;"><input aria-label="Brian Male R1C4 (H)"></div>
-    <div class="box"      style="grid-column:5;grid-row:1;"><input aria-label="Brian Male R1C5"></div>
+<div class="dock" id="dock"></div>
 
-    <!-- Row 2: N N S S N -->
-    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Brian Male R2C1"></div>
-    <div class="box" style="grid-column:2;grid-row:2;"><input aria-label="Brian Male R2C2"></div>
-    <!-- C3 S, C4 S -->
-    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Brian Male R2C5"></div>
-  </div>
+<!-- Layout area (rebuilt when radios change) -->
+<div class="grid" id="layout"></div>
+
+<div class="chip drag-ghost" id="ghost"></div>
+
+<!-- Save / Clear -->
+<div style="margin-top:16px;">
+  <button id="saveBtn">💾 Save</button>
+  <button id="clearBtn" style="margin-left:8px;">🗑️ Clear</button>
 </div>
 
-<div class="panel" data-truck="brian" data-sex="female">
-  <div class="grid" style="grid-template-columns:repeat(5,1fr);">
-    <!-- Row 1: N H H N N -->
-    <div class="box"      style="grid-column:1;grid-row:1;"><input aria-label="Brian Female R1C1"></div>
-    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Brian Female R1C2 (H)"></div>
-    <div class="box half" style="grid-column:3;grid-row:1;"><input aria-label="Brian Female R1C3 (H)"></div>
-    <div class="box"      style="grid-column:4;grid-row:1;"><input aria-label="Brian Female R1C4"></div>
-    <div class="box"      style="grid-column:5;grid-row:1;"><input aria-label="Brian Female R1C5"></div>
-
-    <!-- Row 2: N S S N N -->
-    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Brian Female R2C1"></div>
-    <!-- C2 S, C3 S -->
-    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Brian Female R2C4"></div>
-    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Brian Female R2C5"></div>
-  </div>
-</div>
-
-
-<!-- ===== CODY ===== -->
-<!-- Cody Male (unchanged; 9 columns) -->
-<div class="panel" data-truck="cody" data-sex="male">
-  <div class="grid" style="grid-template-columns:repeat(9,1fr);">
-    <!-- Row 1: N H H N I H H H I -->
-    <div class="box"      style="grid-column:1;grid-row:1;"><input aria-label="Cody Male R1C1"></div>
-    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Cody Male R1C2 (H)"></div>
-    <div class="box half" style="grid-column:3;grid-row:1;"><input aria-label="Cody Male R1C3 (H)"></div>
-    <div class="box"      style="grid-column:4;grid-row:1;"><input aria-label="Cody Male R1C4"></div>
-    <!-- C5 I -->
-    <div class="box half" style="grid-column:6;grid-row:1;"><input aria-label="Cody Male R1C6 (H)"></div>
-    <div class="box half" style="grid-column:7;grid-row:1;"><input aria-label="Cody Male R1C7 (H)"></div>
-    <div class="box half" style="grid-column:8;grid-row:1;"><input aria-label="Cody Male R1C8 (H)"></div>
-    <!-- C9 I -->
-    <!-- Row 2: N S S N N S S S N -->
-    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Cody Male R2C1"></div>
-    <!-- C2 S, C3 S -->
-    <div class="box" style="grid-column:4;grid-row:2;"><input aria-label="Cody Male R2C4"></div>
-    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Cody Male R2C5"></div>
-    <!-- C6 S, C7 S, C8 S -->
-    <div class="box" style="grid-column:9;grid-row:2;"><input aria-label="Cody Male R2C9"></div>
-  </div>
-</div>
-
-<!-- Cody Female -->
-<div class="panel" data-truck="cody" data-sex="female">
-  <div class="grid" style="grid-template-columns:repeat(9,1fr);">
-    <!-- Row 1: S H H H S N H H N -->
-    <!-- C1 S -->
-    <div class="box half" style="grid-column:2;grid-row:1;"><input aria-label="Cody Female R1C2 (H)"></div>
-    <div class="box half" style="grid-column:3;grid-row:1;"><input aria-label="Cody Female R1C3 (H)"></div>
-    <div class="box half" style="grid-column:4;grid-row:1;"><input aria-label="Cody Female R1C4 (H)"></div>
-    <!-- C5 S -->
-    <div class="box"      style="grid-column:6;grid-row:1;"><input aria-label="Cody Female R1C6"></div>
-    <div class="box half" style="grid-column:7;grid-row:1;"><input aria-label="Cody Female R1C7 (H)"></div>
-    <div class="box half" style="grid-column:8;grid-row:1;"><input aria-label="Cody Female R1C8 (H)"></div>
-    <div class="box"      style="grid-column:9;grid-row:1;"><input aria-label="Cody Female R1C9"></div>
-
-    <!-- Row 2: N S S S N N S S N -->
-    <div class="box" style="grid-column:1;grid-row:2;"><input aria-label="Cody Female R2C1"></div>
-    <!-- C2 S, C3 S, C4 S -->
-    <div class="box" style="grid-column:5;grid-row:2;"><input aria-label="Cody Female R2C5"></div>
-    <div class="box" style="grid-column:6;grid-row:2;"><input aria-label="Cody Female R2C6"></div>
-    <!-- C7 S, C8 S -->
-    <div class="box" style="grid-column:9;grid-row:2;"><input aria-label="Cody Female R2C9"></div>
-  </div>
-</div>
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
 <script>
-  const panels = Array.from(document.querySelectorAll('.panel'));
-  const truckRadios = document.querySelectorAll('input[name="truck"]');
-  const sexRadios   = document.querySelectorAll('input[name="sex"]');
+// ---------- Firebase ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+  authDomain: "task-tracker-73b77.firebaseapp.com",
+  projectId: "task-tracker-73b77",
+  storageBucket: "task-tracker-73b77.firebasestorage.app",
+  messagingSenderId: "795274673000",
+  appId: "1:795274673000:web:0ea07130e45c72384134dd",
+  measurementId: "G-VLW5KLY4FF"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
-  function refresh() {
-    const truck = document.querySelector('input[name="truck"]:checked').value;
-    const sex   = document.querySelector('input[name="sex"]:checked').value;
-    panels.forEach(p => {
-      p.classList.toggle('active',
-        p.dataset.truck === truck && p.dataset.sex === sex);
-    });
+// ---------- Layout definitions ----------
+const LAYOUTS = {
+  scott: {
+    male:   { cols: 8, r1: ['N','N','I','I','N','N','H','H'], r2: ['N','N','N','N','N','N','I','I'] },
+    female: { cols: 8, r1: ['H','H','N','N','I','I','N','N'], r2: ['S','S','N','N','N','N','N','N'] }
+  },
+  brian: {
+    male:   { cols: 5, r1: ['N','N','H','H','N'],             r2: ['N','N','S','S','N']             },
+    female: { cols: 5, r1: ['N','H','H','N','N'],             r2: ['N','S','S','N','N']             }
+  },
+  cody: {
+    male:   { cols: 9, r1: ['N','H','H','N','I','H','H','H','I'], r2: ['N','S','S','N','N','S','S','S','N'] },
+    female: { cols: 9, r1: ['S','H','H','H','S','N','H','H','N'], r2: ['N','S','S','S','N','N','S','S','N'] }
   }
-  truckRadios.forEach(r => r.addEventListener('change', refresh));
-  sexRadios.forEach(r => r.addEventListener('change', refresh));
-  refresh();
-</script>
+};
 
+// ---------- Helpers for selection & doc ids ----------
+const truckRadios = document.querySelectorAll('input[name="truck"]');
+const sexRadios   = document.querySelectorAll('input[name="sex"]');
+const dock   = document.getElementById('dock');
+const layout = document.getElementById('layout');
+
+function getSelection(){
+  const truck = document.querySelector('input[name="truck"]:checked').value;
+  const sex   = document.querySelector('input[name="sex"]:checked').value;
+  return { truck, sex };
+}
+function docIdForSelection(){
+  const {truck, sex} = getSelection();
+  return `${truck}_${sex}_latest`;
+}
+
+// ---------- Build layout grid ----------
+function buildLayout(){
+  const {truck, sex} = getSelection();
+  const def = LAYOUTS[truck][sex];
+  layout.style.gridTemplateColumns = `repeat(${def.cols}, 1fr)`;
+  layout.innerHTML = ''; // clear
+
+  // r1
+  def.r1.forEach((cell, idx) => {
+    if (cell === 'N' || cell === 'H') {
+      const slot = document.createElement('div');
+      slot.className = 'slot' + (cell === 'H' ? ' half' : '');
+      slot.dataset.slot = `${truck[0].toUpperCase()}_${sex[0].toUpperCase()}_R1C${idx+1}${cell==='H'?'H':''}`;
+      slot.style.gridColumn = (idx+1);
+      slot.style.gridRow = 1;
+      layout.appendChild(slot);
+    }
+  });
+  // r2
+  def.r2.forEach((cell, idx) => {
+    if (cell === 'N') {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      slot.dataset.slot = `${truck[0].toUpperCase()}_${sex[0].toUpperCase()}_R2C${idx+1}`;
+      slot.style.gridColumn = (idx+1);
+      slot.style.gridRow = 2;
+      layout.appendChild(slot);
+    }
+    // 'S' or 'I' -> no slot
+  });
+}
+
+// ---------- Chips & drag (same behavior) ----------
+(function(){
+  const ghost = document.getElementById('ghost');
+  const input = document.getElementById('nameInput');
+  const addBtn= document.getElementById('addBtn');
+
+  const currentNames = () =>
+    new Set([...document.querySelectorAll('.chip:not(.drag-ghost)')]
+      .map(c => (c.dataset.name || c.textContent || '').trim().toLowerCase())
+      .filter(Boolean));
+
+  function parseNames(text){
+    return text.split(/(?:,|;|\/n|\s)+/g).map(s => s.trim()).filter(Boolean);
+  }
+
+  function makeChip(name){
+    if (currentNames().has(name.toLowerCase())) return;
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = name;
+    chip.dataset.name = name;
+    dock.appendChild(chip);
+  }
+  window.makeChip = makeChip; // used by loadState()
+
+  function addChipsFromInput(){
+    const raw = input.value.trim();
+    if (!raw) return;
+    parseNames(raw).forEach(makeChip);
+    input.value = '';
+    input.focus();
+  }
+  addBtn.addEventListener('click', addChipsFromInput);
+  input.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); addChipsFromInput(); }
+  });
+
+  let dragging=null, offsetX=0, offsetY=0;
+
+  const slots = () => Array.from(layout.querySelectorAll('.slot'));
+  function setGhost(text,x,y){ ghost.textContent=text; ghost.style.transform=`translate(${x-offsetX}px,${y-offsetY}px)`; }
+  function nearestOverlappingSlot(){
+    const r = ghost.getBoundingClientRect();
+    const cx = r.left + r.width/2, cy = r.top + r.height/2;
+    let best=null, bestDist=Infinity;
+    for(const s of slots()){
+      const b = s.getBoundingClientRect();
+      if (cx<b.left||cx>b.right||cy<b.top||cy>b.bottom) continue;
+      if (s.children.length>0) continue;
+      const dist = Math.hypot(cx-(b.left+b.right)/2, cy-(b.top+b.bottom)/2);
+      if (dist<bestDist){ best=s; bestDist=dist; }
+    }
+    return best;
+  }
+  function startDrag(chip,x,y){
+    dragging=chip;
+    const r = chip.getBoundingClientRect();
+    offsetX=x-r.left; offsetY=y-r.top;
+    setGhost(chip.textContent,x,y);
+  }
+  function endDrag(){
+    if(!dragging) return;
+    const target = nearestOverlappingSlot();
+    if(target){ target.appendChild(dragging); } else { dock.appendChild(dragging); }
+    ghost.style.transform='translate(-9999px,-9999px)';
+    dragging=null;
+  }
+  layout.addEventListener('click', e => {
+    const chip = e.target.closest('.chip');
+    if (chip && chip.parentElement.classList.contains('slot')) dock.appendChild(chip);
+  });
+  document.addEventListener('pointerdown', e=>{
+    const chip = e.target.closest('.chip'); if(!chip) return;
+    e.preventDefault(); chip.setPointerCapture?.(e.pointerId);
+    startDrag(chip, e.clientX, e.clientY);
+  });
+  document.addEventListener('pointermove', e=>{ if(dragging) setGhost(dragging.textContent, e.clientX, e.clientY); });
+  document.addEventListener('pointerup',   ()=> endDrag());
+})();
+
+// ---------- Save / Load / Clear (per selection) ----------
+function getCurrentState(){
+  const allChips = [...document.querySelectorAll('.chip:not(.drag-ghost)')];
+  const dockNames = allChips.filter(c => c.parentElement.id === 'dock').map(c => c.dataset.name);
+  const slotData = {};
+  document.querySelectorAll('.slot').forEach(slot=>{
+    const chip = slot.querySelector('.chip:not(.drag-ghost)');
+    slotData[slot.dataset.slot] = chip ? chip.dataset.name : null;
+  });
+  const masterNames = [...new Set([...dockNames, ...Object.values(slotData).filter(Boolean)])];
+  return { dockNames, slotData, masterNames };
+}
+
+async function saveState(){
+  try {
+    await db.collection('layouts').doc(docIdForSelection()).set(getCurrentState());
+    alert('Layout saved!');
+  } catch(err){
+    console.error('Error saving state:', err);
+    alert('Failed to save.');
+  }
+}
+
+async function loadState(){
+  try{
+    const snap = await db.collection('layouts').doc(docIdForSelection()).get();
+    // clear chips and slots first
+    document.querySelectorAll('.chip:not(.drag-ghost)').forEach(c=>c.remove());
+    document.querySelectorAll('.slot').forEach(s=>s.innerHTML='');
+
+    if (!snap.exists) return;
+    const data = snap.data() || {};
+    const slotData = data.slotData || {};
+    const dockNames = Array.isArray(data.dockNames) ? data.dockNames : [];
+    const master = Array.isArray(data.masterNames) ? data.masterNames : [];
+    const namesInSlots = Object.values(slotData).filter(Boolean);
+    const allNames = [...new Set([ ...master, ...dockNames, ...namesInSlots ])];
+
+    // chips in dock
+    allNames.forEach(n => window.makeChip(n));
+    // move into slots
+    for (const [slotId, name] of Object.entries(slotData)) {
+      if (!name) continue;
+      const slot = document.querySelector(`.slot[data-slot="${slotId}"]`);
+      if (!slot) continue;
+      const chip = [...document.querySelectorAll('.chip:not(.drag-ghost)')].find(c=>c.dataset.name===name);
+      if (chip) slot.appendChild(chip);
+    }
+  } catch(err){
+    console.error('Error loading state:', err);
+  }
+}
+
+async function clearState(){
+  if (!confirm("Clear this truck/side layout?")) return;
+  try { await db.collection('layouts').doc(docIdForSelection()).delete(); } catch(e){ console.warn(e); }
+  document.querySelectorAll('.chip:not(.drag-ghost)').forEach(c=>c.remove());
+  document.querySelectorAll('.slot').forEach(s=>s.innerHTML='');
+}
+
+// ---------- Switcher ----------
+function refreshSelection(){
+  buildLayout();     // rebuild slots for current radios
+  loadState();       // load that selection from Firestore (if any)
+}
+truckRadios.forEach(r => r.addEventListener('change', refreshSelection));
+sexRadios.forEach(r   => r.addEventListener('change', refreshSelection));
+
+// ---------- Hooks ----------
+document.getElementById('saveBtn').addEventListener('click', saveState);
+document.getElementById('clearBtn').addEventListener('click', clearState);
+
+// Initial
+window.addEventListener('DOMContentLoaded', refreshSelection);
+</script>
 </body>
 </html>
