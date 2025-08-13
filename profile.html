@@ -1,13 +1,46 @@
 <!doctype html>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Kennel</title>
-<div id="card" style="font-family:system-ui;margin:16px">Loading…</div>
+
+<style>
+  body { font-family: system-ui, sans-serif; margin:16px; }
+  .card { max-width: 720px; margin:auto; border:1px solid #ddd; border-radius:12px; padding:16px; }
+  .hero { display:grid; grid-template-columns:160px 1fr; gap:16px; align-items:center }
+  .hero img { width:160px; height:160px; object-fit:cover; border-radius:12px; border:1px solid #ccc }
+  .badges { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px }
+
+  /* --- Rating stars (0.5 step) --- */
+  .rate-group { display:grid; grid-template-columns: 120px 1fr; gap:12px; align-items:center; margin:8px 0; }
+  .stars { position:relative; display:inline-block; font-size:28px; line-height:1; }
+  .stars .bg, .stars .fg { color:#ddd; }
+  .stars .fg { color:#ffb400; position:absolute; inset:0; width:0%; overflow:hidden; white-space:nowrap; pointer-events:none; }
+  .stars button {
+    position:absolute; top:0; bottom:0; width:10%;
+    background:transparent; border:0; padding:0; margin:0; cursor:pointer; appearance:none;
+  }
+  /* clickable 10 zones (0.5 each) */
+  .stars button:nth-child(3) { left:0% }   .stars button:nth-child(4) { left:10% }
+  .stars button:nth-child(5) { left:20% }  .stars button:nth-child(6) { left:30% }
+  .stars button:nth-child(7) { left:40% }  .stars button:nth-child(8) { left:50% }
+  .stars button:nth-child(9) { left:60% }  .stars button:nth-child(10){ left:70% }
+  .stars button:nth-child(11){ left:80% }  .stars button:nth-child(12){ left:90% }
+
+  textarea { width:100%; min-height:96px; padding:10px; font-size:16px; box-sizing:border-box;
+             border:1px solid #bbb; border-radius:8px; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .muted { color:#666; font-size:12px; }
+  .actions { display:flex; gap:8px; margin-top:12px; }
+  button.save { padding:10px 14px; font-size:16px; border-radius:8px; cursor:pointer; }
+</style>
+
+<div id="card" class="card">Loading…</div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
-  import { getFirestore, doc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-  // --- YOUR CONFIG (from trailers.html) ---
+  // --- Firebase config (yours) ---
   const firebaseConfig = {
     apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
     authDomain: "task-tracker-73b77.firebaseapp.com",
@@ -17,67 +50,171 @@
     appId: "1:795274673000:web:0ea07130e45c72384134dd",
     measurementId: "G-VLW5KLY4FF"
   };
-
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
 
-  const cardEl  = document.getElementById('card');
+  // --- Helpers ---
   const params  = new URL(location.href).searchParams;
   const trailer = params.get('trailer');   // e.g. scott
   const slotId  = params.get('slot');      // e.g. S_M_R1C1
 
+  const cardEl = document.getElementById('card');
+
+  function nameToId(name){
+    return (name || '').toLowerCase().trim()
+      .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
+      .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
+  }
+  function todayLocalYMD(){
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`; // local date (not UTC)
+  }
+
+  // Stars UI: builds a 0–5 control with 0.5 steps
+  function makeStars(initial=0){
+    const wrap = document.createElement('div');
+    wrap.className = 'stars';
+    const bg = document.createElement('div'); bg.className='bg'; bg.textContent='★★★★★';
+    const fg = document.createElement('div'); fg.className='fg'; fg.textContent='★★★★★';
+    wrap.append(bg, fg);
+    // 10 clickable areas (0.5 each)
+    for (let i=1;i<=10;i++){
+      const btn = document.createElement('button');
+      btn.type='button';
+      btn.title = (i/2).toFixed(1);
+      btn.addEventListener('click', ()=> setValue(i/2));
+      wrap.appendChild(btn);
+    }
+    function setValue(v){
+      wrap.value = v;
+      fg.style.width = `${(v/5)*100}%`;
+    }
+    setValue(initial);
+    return wrap;
+  }
+
+  // Renders ratings block and wires save/load
+  async function renderRatings(dogId, dogName){
+    const date = todayLocalYMD();
+    const ratingRef = doc(db, 'ratings', dogId, 'days', date);
+
+    // Build UI
+    const ratingsUI = document.createElement('div');
+    ratingsUI.innerHTML = `
+      <hr style="margin:16px 0">
+      <h3 style="margin:0 0 8px">Daily Rating</h3>
+      <div class="rate-group"><div>Marks</div><div id="marksSlot"></div></div>
+      <div class="rate-group"><div>Blinds</div><div id="blindsSlot"></div></div>
+      <div class="rate-group"><div>Behavior</div><div id="behaviorSlot"></div></div>
+      <div style="margin-top:8px">
+        <label for="notes"><strong>Notes</strong></label>
+        <textarea id="notes" placeholder="Additional comments about today’s performance..."></textarea>
+      </div>
+      <div class="actions">
+        <button class="save" id="saveBtn">💾 Save for Today</button>
+        <span class="muted" id="status"></span>
+      </div>
+    `;
+
+    // Insert star controls
+    const marksStars = makeStars(0);
+    const blindsStars = makeStars(0);
+    const behaviorStars = makeStars(0);
+    ratingsUI.querySelector('#marksSlot').appendChild(marksStars);
+    ratingsUI.querySelector('#blindsSlot').appendChild(blindsStars);
+    ratingsUI.querySelector('#behaviorSlot').appendChild(behaviorStars);
+
+    cardEl.appendChild(ratingsUI);
+
+    // Load existing (today)
+    try {
+      const snap = await getDoc(ratingRef);
+      if (snap.exists()){
+        const r = snap.data();
+        marksStars.value = r.marks ?? 0; marksStars.querySelector('.fg').style.width = `${(marksStars.value/5)*100}%`;
+        blindsStars.value = r.blinds ?? 0; blindsStars.querySelector('.fg').style.width = `${(blindsStars.value/5)*100}%`;
+        behaviorStars.value = r.behavior ?? 0; behaviorStars.querySelector('.fg').style.width = `${(behaviorStars.value/5)*100}%`;
+        ratingsUI.querySelector('#notes').value = r.notes ?? '';
+      }
+    } catch(e){ console.warn('Load rating failed:', e); }
+
+    // Save handler
+    ratingsUI.querySelector('#saveBtn').addEventListener('click', async ()=>{
+      const status = ratingsUI.querySelector('#status');
+      status.textContent = 'Saving…';
+      const payload = {
+        dogId,
+        dogName,
+        date,
+        marks: Number(marksStars.value || 0),
+        blinds: Number(blindsStars.value || 0),
+        behavior: Number(behaviorStars.value || 0),
+        notes: ratingsUI.querySelector('#notes').value || '',
+        savedAt: serverTimestamp(),
+        trailer: trailer || null,
+        slotId: slotId || null
+      };
+      try {
+        await setDoc(ratingRef, payload, { merge:true });
+        status.textContent = 'Saved ✔';
+        setTimeout(()=> status.textContent = '', 1500);
+      } catch(e){
+        console.error(e);
+        status.textContent = 'Save failed';
+      }
+    });
+  }
+
+  // --- Main flow: read slot → get dogId/name → render card + ratings ---
   if (!trailer || !slotId) {
     cardEl.textContent = "Missing trailer or slot in URL.";
     throw new Error("Missing params");
   }
 
-  function renderSimple(dogName) {
-    document.title = `${dogName || 'Unassigned'} – ${slotId}`;
-    cardEl.innerHTML = `
-      <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:12px;padding:16px">
-        <h1 style="margin:0 0 8px">${dogName || 'Unassigned'}</h1>
-        <div style="color:#666">Trailer: ${trailer} · Slot: ${slotId}</div>
-      </div>`;
-  }
-
-  function renderProfile(p) {
-    document.title = `${p.name || 'Profile'} – ${slotId}`;
-    cardEl.innerHTML = `
-      <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:12px;padding:16px">
-        <div style="display:grid;grid-template-columns:160px 1fr;gap:16px;align-items:center">
-          <img src="${p.photo||''}" alt="" style="width:160px;height:160px;object-fit:cover;border-radius:12px;border:1px solid #ccc">
-          <div>
-            <h1 style="margin:0 0 4px">${p.name || 'Unnamed'}</h1>
-            <div>${[p.breed,(p.age!=null?`${p.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
-            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-              ${(p.tags||[]).map(t=>`<span style="border:1px solid #bbb;border-radius:999px;padding:4px 8px;font-size:12px">${t}</span>`).join('')}
-            </div>
-          </div>
-        </div>
-        <hr style="margin:16px 0">
-        <h3 style="margin:0 0 6px">Notes</h3>
-        <p>${(p.notes||'').replace(/\n/g,'<br>')}</p>
-        <div style="margin-top:12px;font-size:12px;color:#666">Trailer: ${trailer} · Slot: ${slotId}</div>
-      </div>`;
-  }
-
-  // Live updates to slot
   const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
   onSnapshot(slotRef, async (snap) => {
-    try {
-      if (!snap.exists()) { renderSimple(null); return; }
-      const data = snap.data();
-      // If we have a dogId, load the full profile. Otherwise show the name only.
-      if (data.dogId) {
-        const profSnap = await getDoc(doc(db, "profiles", data.dogId));
-        if (profSnap.exists()) renderProfile(profSnap.data());
-        else renderSimple(data.dogName || '(profile not found)');
-      } else {
-        renderSimple(data.dogName || null);
-      }
-    } catch (e) {
-      cardEl.textContent = `Error: ${e.message}`;
-      console.error(e);
+    if (!snap.exists()) {
+      cardEl.innerHTML = `<h2>Unassigned</h2><div class="muted">Trailer: ${trailer} · Slot: ${slotId}</div>`;
+      return;
+    }
+    const slotData = snap.data();
+    const dogName = slotData.dogName || '';
+    const dogId = slotData.dogId || nameToId(dogName);
+
+    // If you also keep full profile docs, try to load them:
+    let p = null;
+    if (dogId) {
+      const profSnap = await getDoc(doc(db, "profiles", dogId));
+      if (profSnap.exists()) p = profSnap.data();
+    }
+
+    // Render header/profile
+    const nameForTitle = (p?.name || dogName || 'Unassigned');
+    document.title = `${nameForTitle} – ${slotId}`;
+    cardEl.innerHTML = `
+      <div class="hero">
+        <img src="${p?.photo || ''}" alt="">
+        <div>
+          <h1 style="margin:0 0 4px">${nameForTitle}</h1>
+          <div>${[p?.breed, (p?.age!=null ? `${p.age} yrs` : null)].filter(Boolean).join(' · ')}</div>
+          <div class="badges">${(p?.tags||[]).map(t=>`<span style="border:1px solid #bbb;border-radius:999px;padding:4px 8px;font-size:12px">${t}</span>`).join('')}</div>
+          <div class="muted" style="margin-top:6px">Trailer: ${trailer} · Slot: ${slotId}</div>
+        </div>
+      </div>
+    `;
+
+    // Ratings block
+    if (dogId) {
+      renderRatings(dogId, nameForTitle);
+    } else {
+      const warn = document.createElement('div');
+      warn.className = 'muted';
+      warn.style.marginTop = '12px';
+      warn.textContent = 'No dog ID available to store ratings.';
+      cardEl.appendChild(warn);
     }
   }, (err) => {
     cardEl.textContent = `Error loading slot: ${err.message}`;
