@@ -1,0 +1,53 @@
+<!doctype html><meta charset="utf-8"><title>Kennel</title>
+<div id="card">Loading…</div>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+const app = initializeApp({ /* your config */ });
+const db  = getFirestore(app);
+
+const params   = new URL(location.href).searchParams;
+const trailer  = params.get('trailer');   // e.g. 'brian'
+const slotId   = params.get('slot');      // e.g. 'R1C1'
+const cardEl   = document.getElementById('card');
+
+if (!trailer || !slotId) {
+  cardEl.textContent = "Missing trailer or slot."; throw 0;
+}
+
+const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
+const slotSnap = await getDoc(slotRef);
+if (!slotSnap.exists() || !slotSnap.data().dogId) {
+  cardEl.textContent = `Unassigned (${trailer} ${slotId})`; 
+  throw 0;
+}
+
+const { dogId } = slotSnap.data();
+const dogRef = doc(db, "profiles", dogId);
+const dogSnap = await getDoc(dogRef);
+if (!dogSnap.exists()) {
+  cardEl.textContent = `Profile not found for dogId ${dogId}`;
+  throw 0;
+}
+
+const p = dogSnap.data();
+document.title = p.name ? `${p.name} – Kennel ${slotId}` : `Kennel ${slotId}`;
+cardEl.innerHTML = `
+  <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:12px;padding:16px;font-family:system-ui">
+    <div style="display:grid;grid-template-columns:160px 1fr;gap:16px;align-items:center">
+      <img src="${p.photo||''}" style="width:160px;height:160px;object-fit:cover;border-radius:12px;border:1px solid #ccc">
+      <div>
+        <h1 style="margin:0 0 4px">${p.name||'Unnamed'}</h1>
+        <div>${[p.breed,(p.age!=null?`${p.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          ${(p.tags||[]).map(t=>`<span style="border:1px solid #bbb;border-radius:999px;padding:4px 8px;font-size:12px">${t}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+    <hr style="margin:16px 0">
+    <h3 style="margin:0 0 6px">Notes</h3>
+    <p>${(p.notes||'').replace(/\n/g,'<br>')}</p>
+    <div style="margin-top:12px;font-size:12px;color:#666">Trailer: ${trailer} · Slot: ${slotId}</div>
+  </div>`;
+</script>
