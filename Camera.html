@@ -20,34 +20,88 @@
   const video = document.getElementById('preview');
   const out = document.getElementById('out');
   const startBtn = document.getElementById('start');
-  const stopBtn = document.getElementById('stop');
+  const stopBtn  = document.getElementById('stop');
 
   const reader = new BrowserQRCodeReader();
-  let controls; // to stop later
+  let controls = null;
+  let redirected = false;
 
-  async function start() {
-    out.textContent = '—';
-    // prefer back camera on phones
-    const constraints = { video: { facingMode: { ideal: 'environment' } } };
-    controls = await reader.decodeFromConstraints(constraints, video, (result, err) => {
-      if (result) {
-        out.textContent = result.getText();
-        // optionally stop after first scan:
-        // controls.stop(); 
-      }
-      // ignore scanning errors; they’re normal while searching
-    });
+  function toUrl(text) {
+    try { return new URL(text).href; } catch {}
+    // handle bare domains like example.com
+    try { return new URL("https://" + text).href; } catch {}
+    return null;
   }
 
-  function stop() { controls?.stop(); }
+  async function start(scanOnce = false) {
+    // prefer back camera; iOS needs a user gesture on first run
+    const constraints = { video: { facingMode: { ideal: 'environment' } } };
+    out.textContent = 'Scanning...';
 
-  startBtn.onclick = start;
-  stopBtn.onclick = stop;
+    // decode with callback; stop after first hit
+    controls = await reader.decodeFromConstraints(constraints, video, (result, err) => {
+      if (redirected || !result) return;
+      const text = result.getText();
+      out.textContent = text;
 
-  // Optional: auto-start on user tap anywhere (helps iOS which prefers a gesture)
-  document.addEventListener('click', () => { if (!controls) start(); }, { once: true });
+      const url = toUrl(text);
+      if (url) {
+        redirected = true;
+        // mark we’ve successfully started before (for future auto-starts)
+        localStorage.setItem('qrCamApproved', '1');
+        // stop camera before navigating
+        controls?.stop();
+        // small delay to let camera stop cleanly on mobile
+        setTimeout(() => { location.href = url; }, 50);
+      }
+      // ignore non-URL payloads; keep scanning
+    });
 
-  // Clean up if the tab is hidden
-  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
+    // if we got here without throwing, we successfully started
+    localStorage.setItem('qrCamApproved', '1');
+  }
+
+  function stop() {
+    controls?.stop();
+    controls = null;
+    out.textContent = '—';
+  }
+
+  startBtn.onclick = () => start();
+  stopBtn.onclick  = stop;
+
+  // --- Auto-start logic ---
+  (async () => {
+    // If browser exposes Permissions API for camera and it's granted, start silently.
+    let canAuto = false;
+    try {
+      if ('permissions' in navigator) {
+        const status = await navigator.permissions.query({ name: 'camera' });
+        canAuto = (status.state === 'granted');
+        // re-start automatically if permission transitions to granted
+        status.onchange = () => {
+          if (status.state === 'granted' && !controls) start().catch(()=>{});
+        };
+      }
+    } catch { /* Safari may not support this; ignore */ }
+
+    // Fallback: if we’ve successfully started once before (our own flag), try auto-start.
+    if (!canAuto && localStorage.getItem('qrCamApproved') === '1') canAuto = true;
+
+    if (canAuto && document.visibilityState === 'visible') {
+      start().catch(() => { /* if it fails, user can press Start */ });
+    }
+
+    // If tab becomes visible later (e.g., after permission prompt), try again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !controls && (canAuto || localStorage.getItem('qrCamApproved') === '1')) {
+        start().catch(()=>{});
+      }
+    });
+  })();
+
+  // Safety: stop stream when leaving page
+  window.addEventListener('pagehide', stop);
+  window.addEventListener('beforeunload', stop);
 </script>
 </html>
