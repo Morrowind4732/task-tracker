@@ -281,13 +281,14 @@ async function saveState(){
 }
 
 async function updateQRMapping(slotId, dogName) {
-  const { truck } = getSelection();
+  const { truck, sex } = getSelection();
+  const layoutDocId = docIdForSelection();
+
+  // update trailerLayouts
   const ref = db.collection('trailerLayouts').doc(truck)
                 .collection('slots').doc(slotId);
 
   let dogId = null;
-
-  // If a dog name is provided, find its profile to get the ID
   if (dogName) {
     try {
       const profileSnap = await db.collection('dogProfiles')
@@ -302,11 +303,16 @@ async function updateQRMapping(slotId, dogName) {
     }
   }
 
-  return ref.set({
+  await ref.set({
     dogName: dogName || null,
     dogId: dogId || null,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
+
+  // ALSO update layouts doc so loadState() sees it right away
+  const current = getCurrentState();
+  current.slotData[slotId] = dogName || null;
+  await db.collection('layouts').doc(layoutDocId).set(current);
 }
 
 
