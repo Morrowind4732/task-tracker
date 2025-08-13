@@ -96,18 +96,31 @@
   }
 
   function attachStarHandlers() {
-    document.querySelectorAll('.stars').forEach(starRow => {
-      starRow.addEventListener('click', e => {
-        const star = e.target.closest('.star-svg');
-        if (!star) return;
-        const value = Number(star.dataset.value);
-        const field = starRow.dataset.field;
-        ratingState[field] = (ratingState[field] === value - 0.5) ? value : value - 0.5; // toggle half/full
-        if (ratingState[field] < value) ratingState[field] = value; 
-        renderProfileCard(currentDog.profile, trailer, slotId);
-      });
+  document.querySelectorAll('.stars').forEach(starRow => {
+    starRow.addEventListener('click', e => {
+      const star = e.target.closest('.star-svg');
+      if (!star) return;
+
+      const value = Number(star.dataset.value);
+      const field = starRow.dataset.field;
+      const current = ratingState[field] || 0;
+
+      if (current >= value) {
+        // full → empty
+        ratingState[field] = 0;
+      } else if (current >= value - 0.5) {
+        // half → full
+        ratingState[field] = value;
+      } else {
+        // empty → half
+        ratingState[field] = value - 0.5;
+      }
+
+      renderProfileCard(currentDog.profile, trailer, slotId);
     });
-  }
+  });
+}
+
 
   async function loadTodayIfExists() {
     if (!currentDog.id) return;
@@ -188,3 +201,4 @@
     renderProfileCard(profileData, trailer, slotId);
   });
 </script>
+
