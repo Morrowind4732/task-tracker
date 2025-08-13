@@ -15,34 +15,8 @@
   .ratings { display:grid; grid-template-columns: 1fr; gap:12px; }
   .rating-row { display:flex; align-items:center; gap:12px; }
   .label { width: 110px; font-weight: 600; }
-
-  /* Half-star system */
   .stars { display:inline-flex; gap:8px; }
-  .star {
-    position: relative;
-    font-size: 34px;
-    line-height: 1;
-    cursor: pointer;
-    user-select: none;
-    padding: 6px;
-    color: #ccc;
-  }
-  .star::before { content: '★'; }
-  .star .fill {
-    position: absolute;
-    left: 6px; top: 6px;
-    width: 0%; height: calc(1em + 0px);
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .star .fill::before {
-    content: '★';
-    color: #f39c12;
-    position: absolute;
-    left: 0; top: 0;
-  }
-  .star:active { transform: scale(0.96); }
-
+  .star-svg { width: 40px; height: 40px; cursor: pointer; }
   textarea { width: 100%; min-height: 96px; box-sizing: border-box; padding: 10px; font-size: 16px; border:1px solid #bbb; border-radius:8px; }
   .actions { display:flex; gap:10px; margin-top:12px; }
   .btn {
@@ -76,13 +50,16 @@
   const trailer = params.get('trailer');
   const slotId  = params.get('slot');
   const cardEl  = document.getElementById('card');
+  const CAMERA_URL = "https://morrowind4732.github.io/task-tracker/Camera.html";
 
   if (!trailer || !slotId) {
     cardEl.textContent = "Missing trailer or slot in URL.";
     throw new Error("Missing params");
   }
 
-  const CAMERA_URL = "https://morrowind4732.github.io/task-tracker/Camera.html";
+  const ratingState = { marks: 0, blinds: 0, behavior: 0, notes: "" };
+  let currentDog = { id: null, name: null };
+
   function nameToId(name){
     return String(name||"").toLowerCase().trim()
       .replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '')
@@ -93,62 +70,79 @@
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
 
-  const ratingState = { marks: 0, blinds: 0, behavior: 0, notes: "" };
-  let currentDog = { id: null, name: null };
-
-  function renderStars(fieldName, currentValue) {
+  function renderStars(name, current) {
     let html = `<div class="rating-row">
-      <div class="label">${fieldName[0].toUpperCase()+fieldName.slice(1)}</div>
-      <div class="stars" data-field="${fieldName}">`;
+      <div class="label">${name[0].toUpperCase()+name.slice(1)}</div>
+      <div class="stars" data-field="${name}">`;
+
     for (let i = 1; i <= 5; i++) {
-      let pct = 0;
-      if (currentValue >= i) pct = 100;
-      else if (currentValue >= i - 0.5) pct = 50;
-      html += `<span class="star" data-index="${i}">
-                 <span class="fill" style="width:${pct}%"></span>
-               </span>`;
+      const fillPercent = (current >= i) ? 100 : (current >= i - 0.5 ? 50 : 0);
+      html += `
+        <svg class="star-svg" viewBox="0 0 24 24" data-value="${i}">
+          <defs>
+            <linearGradient id="grad-${name}-${i}" x1="0" x2="1" y1="0" y2="0">
+              <stop offset="${fillPercent}%" stop-color="#f39c12"/>
+              <stop offset="${fillPercent}%" stop-color="#ccc"/>
+            </linearGradient>
+          </defs>
+          <path fill="url(#grad-${name}-${i})" stroke="#999" stroke-width="1"
+            d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.834 
+               1.516 8.26L12 18.896l-7.452 4.504 
+               1.516-8.26L.0 9.306l8.332-1.151z"/>
+        </svg>`;
     }
     html += `</div></div>`;
     return html;
   }
 
-  function paintStarsRow(starRowEl, value) {
-    starRowEl.querySelectorAll('.star').forEach(starEl => {
-      const i = Number(starEl.dataset.index);
-      let pct = 0;
-      if (value >= i) pct = 100;
-      else if (value >= i - 0.5) pct = 50;
-      starEl.querySelector('.fill').style.width = pct + '%';
-    });
-  }
-
   function attachStarHandlers() {
     document.querySelectorAll('.stars').forEach(starRow => {
       starRow.addEventListener('click', e => {
-        const star = e.target.closest('.star');
+        const star = e.target.closest('.star-svg');
         if (!star) return;
-        const rect = star.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
-        const isLeftHalf = clickX < rect.width / 2;
+        const value = Number(star.dataset.value);
         const field = starRow.dataset.field;
-        const idx = Number(star.dataset.index);
-        const val = isLeftHalf ? (idx - 0.5) : idx;
-        ratingState[field] = val;
-        paintStarsRow(starRow, val);
-      }, { passive: true });
+        ratingState[field] = (ratingState[field] === value - 0.5) ? value : value - 0.5; // toggle half/full
+        if (ratingState[field] < value) ratingState[field] = value; 
+        renderProfileCard(currentDog.profile, trailer, slotId);
+      });
     });
   }
 
+  async function loadTodayIfExists() {
+    if (!currentDog.id) return;
+    const date = todayLocalYYYYMMDD();
+    const ref = doc(db, "ratings", currentDog.id, "days", date);
+    const snap = await getDoc(ref);
+    if (snap.exists()) Object.assign(ratingState, snap.data());
+  }
+
+  async function saveAndGoCamera() {
+    if (!currentDog.id) currentDog.id = nameToId(currentDog.name || "");
+    const status = document.getElementById('saveStatus');
+    status.textContent = "Saving…";
+    const date = todayLocalYYYYMMDD();
+    const ref  = doc(db, "ratings", currentDog.id, "days", date);
+    const payload = { ...ratingState, dogId: currentDog.id, dogName: currentDog.name || null, trailer, slotId, date, updatedAt: serverTimestamp() };
+    try {
+      await setDoc(ref, payload, { merge: true });
+      status.textContent = "Saved. Redirecting to camera…";
+      setTimeout(() => location.href = CAMERA_URL, 120);
+    } catch (e) {
+      console.error(e);
+      status.textContent = "Failed to save.";
+    }
+  }
+
   function renderProfileCard(profile, trailer, slotId) {
-    const p = profile || {};
-    document.title = p.name ? `${p.name} – ${slotId}` : `Kennel ${slotId}`;
+    currentDog.profile = profile;
     cardEl.innerHTML = `
       <div class="hero">
-        <img src="${p.photo||''}" alt="">
+        <img src="${profile?.photo||''}" alt="">
         <div>
-          <h1 style="margin:0 0 4px">${p.name || (currentDog.name || 'Unassigned')}</h1>
-          <div>${[p.breed,(p.age!=null?`${p.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
-          <div class="badges">${(p.tags||[]).map(t=>`<span class="badge">${t}</span>`).join('')}</div>
+          <h1 style="margin:0 0 4px">${profile?.name || currentDog.name || 'Unassigned'}</h1>
+          <div>${[profile?.breed, (profile?.age!=null?`${profile.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
+          <div class="badges">${(profile?.tags||[]).map(t=>`<span class="badge">${t}</span>`).join('')}</div>
           <div class="muted">Trailer: ${trailer} · Slot: ${slotId}</div>
         </div>
       </div>
@@ -164,7 +158,7 @@
 
       <div class="section">
         <h3>Notes</h3>
-        <textarea id="notesBox" placeholder="Additional comments about today’s performance..."></textarea>
+        <textarea id="notesBox" placeholder="Additional comments...">${ratingState.notes||''}</textarea>
       </div>
 
       <div class="actions">
@@ -174,61 +168,14 @@
       <div class="muted" id="saveStatus"></div>
     `;
     attachStarHandlers();
-    const notesBox = document.getElementById('notesBox');
-    notesBox.value = ratingState.notes || '';
-    notesBox.addEventListener('input', () => ratingState.notes = notesBox.value);
+    document.getElementById('notesBox').addEventListener('input', e => ratingState.notes = e.target.value);
     document.getElementById('saveBtn').onclick = saveAndGoCamera;
-  }
-
-  async function loadTodayIfExists() {
-    if (!currentDog.id) return;
-    const date = todayLocalYYYYMMDD();
-    const ref = doc(db, "ratings", currentDog.id, "days", date);
-    const snap = await getDoc(ref);
-    if (snap.exists()) {
-      const r = snap.data();
-      ratingState.marks    = Number(r.marks || 0);
-      ratingState.blinds   = Number(r.blinds || 0);
-      ratingState.behavior = Number(r.behavior || 0);
-      ratingState.notes    = String(r.notes || "");
-    } else {
-      ratingState.marks = ratingState.blinds = ratingState.behavior = 0;
-      ratingState.notes = "";
-    }
-  }
-
-  async function saveAndGoCamera() {
-    if (!currentDog.id) currentDog.id = nameToId(currentDog.name || "");
-    const status = document.getElementById('saveStatus');
-    status.textContent = "Saving…";
-    const date = todayLocalYYYYMMDD();
-    const ref  = doc(db, "ratings", currentDog.id, "days", date);
-    const payload = {
-      dogId: currentDog.id,
-      dogName: currentDog.name || null,
-      trailer, slotId, date,
-      marks: ratingState.marks || 0,
-      blinds: ratingState.blinds || 0,
-      behavior: ratingState.behavior || 0,
-      notes: ratingState.notes || "",
-      updatedAt: serverTimestamp()
-    };
-    try {
-      await setDoc(ref, payload, { merge: true });
-      status.textContent = "Saved. Redirecting to camera…";
-      setTimeout(() => location.href = CAMERA_URL, 120);
-    } catch (e) {
-      console.error(e);
-      status.textContent = "Failed to save. Check connection and try again.";
-    }
   }
 
   const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
   onSnapshot(slotRef, async (snap) => {
     let profileData = null;
-    if (!snap.exists()) {
-      currentDog = { id: null, name: null };
-    } else {
+    if (snap.exists()) {
       const data = snap.data();
       currentDog.name = data.dogName || null;
       currentDog.id   = data.dogId || (data.dogName ? nameToId(data.dogName) : null);
@@ -239,12 +186,5 @@
     }
     await loadTodayIfExists();
     renderProfileCard(profileData, trailer, slotId);
-    document.querySelectorAll('.stars').forEach(row => {
-      const field = row.dataset.field;
-      paintStarsRow(row, Number(ratingState[field] || 0));
-    });
-  }, (err) => {
-    cardEl.textContent = `Error loading slot: ${err.message}`;
-    console.error(err);
   });
 </script>
