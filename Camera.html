@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<title>QR Scanner</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; }
+  video { width: 100%; max-width: 480px; border-radius: 12px; }
+  #result { margin-top: 12px; font-size: 16px; }
+  button { margin-top: 8px; }
+</style>
+
+<video id="preview" playsinline></video>
+<div id="result">Result: <span id="out">—</span></div>
+<button id="start">Start</button>
+<button id="stop">Stop</button>
+
+<script type="module">
+  import { BrowserQRCodeReader } from "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm";
+
+  const video = document.getElementById('preview');
+  const out = document.getElementById('out');
+  const startBtn = document.getElementById('start');
+  const stopBtn = document.getElementById('stop');
+
+  const reader = new BrowserQRCodeReader();
+  let controls; // to stop later
+
+  async function start() {
+    out.textContent = '—';
+    // prefer back camera on phones
+    const constraints = { video: { facingMode: { ideal: 'environment' } } };
+    controls = await reader.decodeFromConstraints(constraints, video, (result, err) => {
+      if (result) {
+        out.textContent = result.getText();
+        // optionally stop after first scan:
+        // controls.stop(); 
+      }
+      // ignore scanning errors; they’re normal while searching
+    });
+  }
+
+  function stop() { controls?.stop(); }
+
+  startBtn.onclick = start;
+  stopBtn.onclick = stop;
+
+  // Optional: auto-start on user tap anywhere (helps iOS which prefers a gesture)
+  document.addEventListener('click', () => { if (!controls) start(); }, { once: true });
+
+  // Clean up if the tab is hidden
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
+</script>
+</html>
