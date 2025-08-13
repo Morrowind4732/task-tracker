@@ -261,16 +261,35 @@ async function saveState(){
   }
 }
 
-function updateQRMapping(slotId, dogName) {
-  const { truck } = getSelection(); // from your existing helper
+async function updateQRMapping(slotId, dogName) {
+  const { truck } = getSelection();
   const ref = db.collection('trailerLayouts').doc(truck)
                 .collection('slots').doc(slotId);
 
+  let dogId = null;
+
+  // If a dog name is provided, find its profile to get the ID
+  if (dogName) {
+    try {
+      const profileSnap = await db.collection('dogProfiles')
+        .where('name', '==', dogName)
+        .limit(1)
+        .get();
+      if (!profileSnap.empty) {
+        dogId = profileSnap.docs[0].id;
+      }
+    } catch (err) {
+      console.error(`Error fetching dogId for ${dogName}:`, err);
+    }
+  }
+
   return ref.set({
-    dogName,
+    dogName: dogName || null,
+    dogId: dogId || null,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 }
+
 
 
 async function loadState(){
