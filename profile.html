@@ -15,17 +15,34 @@
   .ratings { display:grid; grid-template-columns: 1fr; gap:12px; }
   .rating-row { display:flex; align-items:center; gap:12px; }
   .label { width: 110px; font-weight: 600; }
+
+  /* Half-star system */
   .stars { display:inline-flex; gap:8px; }
   .star {
-    font-size: 34px;           /* bigger, thumb-friendly */
+    position: relative;
+    font-size: 34px;
     line-height: 1;
     cursor: pointer;
     user-select: none;
-    padding: 6px;              /* bigger tap target */
-    border-radius: 8px;
+    padding: 6px;
+    color: #ccc;
   }
-  .star.filled { color: #f39c12; }
+  .star::before { content: '★'; }
+  .star .fill {
+    position: absolute;
+    left: 6px; top: 6px;
+    width: 0%; height: calc(1em + 0px);
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .star .fill::before {
+    content: '★';
+    color: #f39c12;
+    position: absolute;
+    left: 0; top: 0;
+  }
   .star:active { transform: scale(0.96); }
+
   textarea { width: 100%; min-height: 96px; box-sizing: border-box; padding: 10px; font-size: 16px; border:1px solid #bbb; border-radius:8px; }
   .actions { display:flex; gap:10px; margin-top:12px; }
   .btn {
@@ -42,7 +59,6 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import { getFirestore, doc, getDoc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-  // --- Firebase config (yours) ---
   const firebaseConfig = {
     apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
     authDomain: "task-tracker-73b77.firebaseapp.com",
@@ -56,10 +72,9 @@
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
 
-  // --- URL params (QR) ---
   const params  = new URL(location.href).searchParams;
-  const trailer = params.get('trailer');   // e.g. 'scott'
-  const slotId  = params.get('slot');      // e.g. 'S_M_R1C1'
+  const trailer = params.get('trailer');
+  const slotId  = params.get('slot');
   const cardEl  = document.getElementById('card');
 
   if (!trailer || !slotId) {
@@ -67,7 +82,6 @@
     throw new Error("Missing params");
   }
 
-  // Helpers
   const CAMERA_URL = "https://morrowind4732.github.io/task-tracker/Camera.html";
   function nameToId(name){
     return String(name||"").toLowerCase().trim()
@@ -76,27 +90,36 @@
   }
   function todayLocalYYYYMMDD() {
     const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth()+1).padStart(2,'0');
-    const day = String(d.getDate()).padStart(2,'0');
-    return `${y}-${m}-${day}`;
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
 
-  // UI state for ratings
   const ratingState = { marks: 0, blinds: 0, behavior: 0, notes: "" };
   let currentDog = { id: null, name: null };
 
-  function renderStars(name, current) {
-    // name in {marks|blinds|behavior}
+  function renderStars(fieldName, currentValue) {
     let html = `<div class="rating-row">
-      <div class="label">${name[0].toUpperCase()+name.slice(1)}</div>
-      <div class="stars" data-field="${name}">`;
-    for (let i=1; i<=5; i++) {
-      const filled = i <= current ? 'filled' : '';
-      html += `<span class="star ${filled}" data-value="${i}" aria-label="${name} ${i} of 5">★</span>`;
+      <div class="label">${fieldName[0].toUpperCase()+fieldName.slice(1)}</div>
+      <div class="stars" data-field="${fieldName}">`;
+    for (let i = 1; i <= 5; i++) {
+      let pct = 0;
+      if (currentValue >= i) pct = 100;
+      else if (currentValue >= i - 0.5) pct = 50;
+      html += `<span class="star" data-index="${i}">
+                 <span class="fill" style="width:${pct}%"></span>
+               </span>`;
     }
     html += `</div></div>`;
     return html;
+  }
+
+  function paintStarsRow(starRowEl, value) {
+    starRowEl.querySelectorAll('.star').forEach(starEl => {
+      const i = Number(starEl.dataset.index);
+      let pct = 0;
+      if (value >= i) pct = 100;
+      else if (value >= i - 0.5) pct = 50;
+      starEl.querySelector('.fill').style.width = pct + '%';
+    });
   }
 
   function attachStarHandlers() {
@@ -104,13 +127,14 @@
       starRow.addEventListener('click', e => {
         const star = e.target.closest('.star');
         if (!star) return;
-        const value = Number(star.dataset.value);
+        const rect = star.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const isLeftHalf = clickX < rect.width / 2;
         const field = starRow.dataset.field;
-        ratingState[field] = value;
-        // Repaint stars in this row
-        starRow.querySelectorAll('.star').forEach(s => {
-          s.classList.toggle('filled', Number(s.dataset.value) <= value);
-        });
+        const idx = Number(star.dataset.index);
+        const val = isLeftHalf ? (idx - 0.5) : idx;
+        ratingState[field] = val;
+        paintStarsRow(starRow, val);
       }, { passive: true });
     });
   }
@@ -150,11 +174,9 @@
       <div class="muted" id="saveStatus"></div>
     `;
     attachStarHandlers();
-    // Hook notes
     const notesBox = document.getElementById('notesBox');
     notesBox.value = ratingState.notes || '';
     notesBox.addEventListener('input', () => ratingState.notes = notesBox.value);
-    // Buttons
     document.getElementById('saveBtn').onclick = saveAndGoCamera;
   }
 
@@ -176,13 +198,9 @@
   }
 
   async function saveAndGoCamera() {
-    if (!currentDog.id) {
-      // derive from name if missing
-      currentDog.id = nameToId(currentDog.name || "");
-    }
+    if (!currentDog.id) currentDog.id = nameToId(currentDog.name || "");
     const status = document.getElementById('saveStatus');
     status.textContent = "Saving…";
-
     const date = todayLocalYYYYMMDD();
     const ref  = doc(db, "ratings", currentDog.id, "days", date);
     const payload = {
@@ -197,7 +215,6 @@
     };
     try {
       await setDoc(ref, payload, { merge: true });
-      // small delay so the UI can paint "Saved"
       status.textContent = "Saved. Redirecting to camera…";
       setTimeout(() => location.href = CAMERA_URL, 120);
     } catch (e) {
@@ -206,7 +223,6 @@
     }
   }
 
-  // --- Resolve dog from QR slot, then render ---
   const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
   onSnapshot(slotRef, async (snap) => {
     let profileData = null;
@@ -216,22 +232,16 @@
       const data = snap.data();
       currentDog.name = data.dogName || null;
       currentDog.id   = data.dogId || (data.dogName ? nameToId(data.dogName) : null);
-
-      // If we have a profile doc, load it for the header card
       if (currentDog.id) {
         const profSnap = await getDoc(doc(db, "profiles", currentDog.id));
         if (profSnap.exists()) profileData = profSnap.data();
       }
     }
-    await loadTodayIfExists();      // prefill today’s values if present
+    await loadTodayIfExists();
     renderProfileCard(profileData, trailer, slotId);
-    // Repaint stars to reflect any loaded values
     document.querySelectorAll('.stars').forEach(row => {
       const field = row.dataset.field;
-      const val = Number(ratingState[field] || 0);
-      row.querySelectorAll('.star').forEach(s => {
-        s.classList.toggle('filled', Number(s.dataset.value) <= val);
-      });
+      paintStarsRow(row, Number(ratingState[field] || 0));
     });
   }, (err) => {
     cardEl.textContent = `Error loading slot: ${err.message}`;
