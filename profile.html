@@ -1,53 +1,86 @@
-<!doctype html><meta charset="utf-8"><title>Kennel</title>
-<div id="card">Loading…</div>
+<!doctype html>
+<meta charset="utf-8" />
+<title>Kennel</title>
+<div id="card" style="font-family:system-ui;margin:16px">Loading…</div>
+
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
-import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+  import { getFirestore, doc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
-const app = initializeApp({ /* your config */ });
-const db  = getFirestore(app);
+  // --- YOUR CONFIG (from trailers.html) ---
+  const firebaseConfig = {
+    apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+    authDomain: "task-tracker-73b77.firebaseapp.com",
+    projectId: "task-tracker-73b77",
+    storageBucket: "task-tracker-73b77.firebasestorage.app",
+    messagingSenderId: "795274673000",
+    appId: "1:795274673000:web:0ea07130e45c72384134dd",
+    measurementId: "G-VLW5KLY4FF"
+  };
 
-const params   = new URL(location.href).searchParams;
-const trailer  = params.get('trailer');   // e.g. 'brian'
-const slotId   = params.get('slot');      // e.g. 'R1C1'
-const cardEl   = document.getElementById('card');
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
 
-if (!trailer || !slotId) {
-  cardEl.textContent = "Missing trailer or slot."; throw 0;
-}
+  const cardEl  = document.getElementById('card');
+  const params  = new URL(location.href).searchParams;
+  const trailer = params.get('trailer');   // e.g. scott
+  const slotId  = params.get('slot');      // e.g. S_M_R1C1
 
-const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
-const slotSnap = await getDoc(slotRef);
-if (!slotSnap.exists() || !slotSnap.data().dogId) {
-  cardEl.textContent = `Unassigned (${trailer} ${slotId})`; 
-  throw 0;
-}
+  if (!trailer || !slotId) {
+    cardEl.textContent = "Missing trailer or slot in URL.";
+    throw new Error("Missing params");
+  }
 
-const { dogId } = slotSnap.data();
-const dogRef = doc(db, "profiles", dogId);
-const dogSnap = await getDoc(dogRef);
-if (!dogSnap.exists()) {
-  cardEl.textContent = `Profile not found for dogId ${dogId}`;
-  throw 0;
-}
+  function renderSimple(dogName) {
+    document.title = `${dogName || 'Unassigned'} – ${slotId}`;
+    cardEl.innerHTML = `
+      <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:12px;padding:16px">
+        <h1 style="margin:0 0 8px">${dogName || 'Unassigned'}</h1>
+        <div style="color:#666">Trailer: ${trailer} · Slot: ${slotId}</div>
+      </div>`;
+  }
 
-const p = dogSnap.data();
-document.title = p.name ? `${p.name} – Kennel ${slotId}` : `Kennel ${slotId}`;
-cardEl.innerHTML = `
-  <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:12px;padding:16px;font-family:system-ui">
-    <div style="display:grid;grid-template-columns:160px 1fr;gap:16px;align-items:center">
-      <img src="${p.photo||''}" style="width:160px;height:160px;object-fit:cover;border-radius:12px;border:1px solid #ccc">
-      <div>
-        <h1 style="margin:0 0 4px">${p.name||'Unnamed'}</h1>
-        <div>${[p.breed,(p.age!=null?`${p.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
-        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
-          ${(p.tags||[]).map(t=>`<span style="border:1px solid #bbb;border-radius:999px;padding:4px 8px;font-size:12px">${t}</span>`).join('')}
+  function renderProfile(p) {
+    document.title = `${p.name || 'Profile'} – ${slotId}`;
+    cardEl.innerHTML = `
+      <div style="max-width:720px;margin:auto;border:1px solid #ddd;border-radius:12px;padding:16px">
+        <div style="display:grid;grid-template-columns:160px 1fr;gap:16px;align-items:center">
+          <img src="${p.photo||''}" alt="" style="width:160px;height:160px;object-fit:cover;border-radius:12px;border:1px solid #ccc">
+          <div>
+            <h1 style="margin:0 0 4px">${p.name || 'Unnamed'}</h1>
+            <div>${[p.breed,(p.age!=null?`${p.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
+            <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+              ${(p.tags||[]).map(t=>`<span style="border:1px solid #bbb;border-radius:999px;padding:4px 8px;font-size:12px">${t}</span>`).join('')}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
-    <hr style="margin:16px 0">
-    <h3 style="margin:0 0 6px">Notes</h3>
-    <p>${(p.notes||'').replace(/\n/g,'<br>')}</p>
-    <div style="margin-top:12px;font-size:12px;color:#666">Trailer: ${trailer} · Slot: ${slotId}</div>
-  </div>`;
+        <hr style="margin:16px 0">
+        <h3 style="margin:0 0 6px">Notes</h3>
+        <p>${(p.notes||'').replace(/\n/g,'<br>')}</p>
+        <div style="margin-top:12px;font-size:12px;color:#666">Trailer: ${trailer} · Slot: ${slotId}</div>
+      </div>`;
+  }
+
+  // Live updates to slot
+  const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
+  onSnapshot(slotRef, async (snap) => {
+    try {
+      if (!snap.exists()) { renderSimple(null); return; }
+      const data = snap.data();
+      // If we have a dogId, load the full profile. Otherwise show the name only.
+      if (data.dogId) {
+        const profSnap = await getDoc(doc(db, "profiles", data.dogId));
+        if (profSnap.exists()) renderProfile(profSnap.data());
+        else renderSimple(data.dogName || '(profile not found)');
+      } else {
+        renderSimple(data.dogName || null);
+      }
+    } catch (e) {
+      cardEl.textContent = `Error: ${e.message}`;
+      console.error(e);
+    }
+  }, (err) => {
+    cardEl.textContent = `Error loading slot: ${err.message}`;
+    console.error(err);
+  });
 </script>
