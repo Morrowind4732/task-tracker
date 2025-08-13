@@ -51,12 +51,25 @@
 
   const params  = new URL(location.href).searchParams;
   const trailer = params.get('trailer');
-  const slotId  = params.get('slot');
+  let   slotId  = params.get('slot');
+  let   sex     = params.get('sex'); // NEW: explicit param support
+
+  // Parse sex from slotId if missing
+  if (!sex && slotId) {
+    const parts = slotId.split('_');
+    if (parts.length >= 3) {
+      // example: S_M_R1C1
+      sex = (parts[1].toLowerCase() === 'm') ? 'male' :
+            (parts[1].toLowerCase() === 'f') ? 'female' : null;
+      slotId = parts.slice(2).join('_');
+    }
+  }
+
   const cardEl  = document.getElementById('card');
   const CAMERA_URL = "https://morrowind4732.github.io/task-tracker/Camera.html";
 
-  if (!trailer || !slotId) {
-    cardEl.textContent = "Missing trailer or slot in URL.";
+  if (!trailer || !slotId || !sex) {
+    cardEl.textContent = "Missing trailer, sex, or slot in URL.";
     throw new Error("Missing params");
   }
 
@@ -135,7 +148,16 @@
     status.textContent = "Saving…";
     const date = todayLocalYYYYMMDD();
     const ref  = doc(db, "ratings", currentDog.id, "days", date);
-    const payload = { ...ratingState, dogId: currentDog.id, dogName: currentDog.name || null, trailer, slotId, date, updatedAt: serverTimestamp() };
+    const payload = { 
+      ...ratingState, 
+      dogId: currentDog.id, 
+      dogName: currentDog.name || null, 
+      trailer, 
+      sex, 
+      slotId, 
+      date, 
+      updatedAt: serverTimestamp() 
+    };
     try {
       await setDoc(ref, payload, { merge: true });
       status.textContent = "Saved. Redirecting to camera…";
@@ -155,7 +177,7 @@
           <h1 style="margin:0 0 4px">${profile?.name || currentDog.name || 'Unassigned'}</h1>
           <div>${[profile?.breed, (profile?.age!=null?`${profile.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
           <div class="badges">${(profile?.tags||[]).map(t=>`<span class="badge">${t}</span>`).join('')}</div>
-          <div class="muted">Trailer: ${trailer} · Slot: ${slotId}</div>
+          <div class="muted">Trailer: ${trailer} · Sex: ${sex} · Slot: ${slotId}</div>
         </div>
       </div>
 
@@ -291,7 +313,7 @@
   });
 
   // Always fresh dog for slot
-  const slotRef = doc(db, "trailerLayouts", trailer, "slots", slotId);
+  const slotRef = doc(db, "trailerLayouts", `${trailer}-${sex}`, "slots", slotId);
   onSnapshot(slotRef, async (snap) => {
     let profileData = null;
     currentDog = { id: null, name: null, profile: null };
