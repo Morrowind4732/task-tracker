@@ -216,13 +216,18 @@ function buildLayout(){
   function endDrag(){
     if(!dragging) return;
     const target = nearestOverlappingSlot();
-    if(target){ target.appendChild(dragging); } else { dock.appendChild(dragging); }
+    if(target){ target.appendChild(dragging); updateQRMapping(target.dataset.slot, dragging.dataset.name).catch(console.error);} else { dock.appendChild(dragging); }
     ghost.style.transform='translate(-9999px,-9999px)';
     dragging=null;
   }
+
   layout.addEventListener('click', e => {
     const chip = e.target.closest('.chip');
-    if (chip && chip.parentElement.classList.contains('slot')) dock.appendChild(chip);
+if (chip && chip.parentElement.classList.contains('slot')) {
+    const slotId = chip.parentElement.dataset.slot;
+    updateQRMapping(slotId, null).catch(console.error);
+    dock.appendChild(chip);
+  }
   });
   document.addEventListener('pointerdown', e=>{
     const chip = e.target.closest('.chip'); if(!chip) return;
@@ -255,6 +260,18 @@ async function saveState(){
     alert('Failed to save.');
   }
 }
+
+function updateQRMapping(slotId, dogName) {
+  const { truck } = getSelection(); // from your existing helper
+  const ref = db.collection('trailerLayouts').doc(truck)
+                .collection('slots').doc(slotId);
+
+  return ref.set({
+    dogName,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+}
+
 
 async function loadState(){
   try{
