@@ -15,20 +15,34 @@
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
-  /* Marks header + list */
-  .marks-head,
-  .mark-item {
-    display:grid;
-    grid-template-columns: 120px 1fr repeat(6, 120px) 48px; /* label | slider | 6 options | delete */
-    gap:10px; align-items:center;
-  }
+  /* Header row */
   .marks-head {
+    display:grid;
+    grid-template-columns: 100px 1fr repeat(6, 80px) 40px;
+    gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
-  .head-center, .opt-cell { text-align:center; }
+  .head-center { text-align:center; }
+
+  /* Mark rows */
+  .mark-item {
+    display:grid;
+    grid-template-columns: 100px 1fr repeat(6, 80px) 40px; /* label | slider | 6 opts | delete */
+    gap:6px; align-items:center;
+  }
   .mark-label { font-weight:600; }
+  .opt-cell { text-align:center; }
+  .slider-wrap { grid-column: 2 / 3; }
   input[type="range"] { width:100%; }
-  .marks-list { display:flex; flex-direction:column; gap:8px; }
+
+  /* Mobile tweaks */
+  @media (max-width: 768px) {
+    .marks-head { display:none; }
+    .mark-item { grid-template-columns: repeat(3, 1fr); grid-auto-rows: auto; }
+    .mark-label { grid-column: 1 / -1; }
+    .opt-cell { text-align:left; }
+    .slider-wrap { grid-column: 1 / -1; order: 99; }
+  }
 
   /* Board / chips */
   .dock { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px dashed #cfcfcf; border-radius:10px; min-height:46px; }
@@ -36,10 +50,7 @@
   .column { border:1px solid var(--border); border-radius:10px; min-height:140px; padding:8px; display:flex; flex-direction:column; gap:8px; background:#fff; }
   .column-title { font-weight:600; font-size:13px; color:#444; margin-bottom:6px; }
 
-  .chip {
-    user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px;
-    background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab;
-  }
+  .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
 </style>
@@ -48,17 +59,15 @@
   <h1>Setups – Marks</h1>
   <div class="muted" id="ctx">Loading…</div>
 
-  <!-- MARKS container (self-contained so we can add Blinds later similarly) -->
   <div class="section" id="marksContainer">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
       <strong>Marks</strong>
       <button class="btn primary" id="addMarkBtn">+ Add</button>
     </div>
 
-    <!-- Header row for options -->
     <div class="marks-head">
       <div></div>
-      <div class="head-center">Distance (0–400 by 25)</div>
+      <div class="head-center">Distance</div>
       <div class="head-center">hand tossed</div>
       <div class="head-center">short check down</div>
       <div class="head-center">punch bird</div>
@@ -77,7 +86,7 @@
   </div>
 
   <div class="section">
-    <strong>Board (5 columns – multiple chips per column)</strong>
+    <strong>Board</strong>
     <div class="board" id="board">
       <div class="column" data-col="col1"><div class="column-title">Column 1</div></div>
       <div class="column" data-col="col2"><div class="column-title">Column 2</div></div>
@@ -89,7 +98,7 @@
 
   <div class="chip drag-ghost" id="ghost"></div>
 
-  <!-- Firebase (compat to match your other pages) -->
+  <!-- Firebase (compat) -->
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
@@ -107,25 +116,22 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ---------- Params ----------
+// ---------- Params / doc ----------
 const params = new URL(location.href).searchParams;
 const trainer = params.get('trainer') || 'default';
 document.getElementById('ctx').textContent = `Trainer: ${trainer}`;
-
-// ---------- Firestore doc ----------
-/**
- * setups/{trainer}/configs/marks (document)
- * {
- *   items: [{id, dist, options}], // options: {handTossed, shortCheckDown, punchBird, noOff, walkUp, waterMark}
- *   columns: { col1:[ids], col2:[ids], col3:[ids], col4:[ids], col5:[ids], dock:[ids] }
- * }
- */
 const docRef = db.collection('setups').doc(trainer).collection('configs').doc('marks');
 
+// ---------- State ----------
 let state = {
   items: [], // [{id, dist, options}]
   columns: { col1: [], col2: [], col3: [], col4: [], col5: [], dock: [] }
 };
+
+// ---------- DOM refs (needed for DnD + rendering) ----------
+const dock  = document.getElementById('dock');
+const board = document.getElementById('board');
+const ghost = document.getElementById('ghost');
 
 // ---------- Helpers ----------
 const OPTION_KEYS = [
@@ -137,15 +143,10 @@ const OPTION_KEYS = [
   { key:'waterMark',      label:'water mark' },
 ];
 
-const marksList = document.getElementById('marksList');
-const dock = document.getElementById('dock');
-const board = document.getElementById('board');
-const ghost = document.getElementById('ghost');
-
 function byId(id){ return state.items.find(i => i.id === id); }
 function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
 function makeId(){ return 'm_' + Math.random().toString(36).slice(2,9); }
-function clampToStep(value){ return Math.max(0, Math.min(400, Math.round(value/25)*25)); }
+function clampToStep(v){ return Math.max(0, Math.min(400, Math.round(v/25)*25)); }
 
 function markTextFrom(id){
   const item = byId(id);
@@ -154,31 +155,19 @@ function markTextFrom(id){
   const dist = item?.dist ?? 0;
   return `MARK ${number} ${dist}`;
 }
-
 function optionsSummary(id){
   const item = byId(id);
   if (!item || !item.options) return '';
-  const on = OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label);
-  return on.join(', ');
+  return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
 }
-
 function ensureAllIdsPlaced() {
   const placed = new Set([
     ...state.columns.dock,
-    ...state.columns.col1,
-    ...state.columns.col2,
-    ...state.columns.col3,
-    ...state.columns.col4,
-    ...state.columns.col5
+    ...state.columns.col1, ...state.columns.col2, ...state.columns.col3, ...state.columns.col4, ...state.columns.col5
   ]);
-  for (const it of state.items) {
-    if (!placed.has(it.id)) state.columns.dock.push(it.id);
-  }
-  for (const key of Object.keys(state.columns)) {
-    state.columns[key] = state.columns[key].filter(id => byId(id));
-  }
+  for (const it of state.items) if (!placed.has(it.id)) state.columns.dock.push(it.id);
+  for (const k of Object.keys(state.columns)) state.columns[k] = state.columns[k].filter(id => byId(id));
 }
-
 async function save() {
   ensureAllIdsPlaced();
   await docRef.set({
@@ -190,9 +179,11 @@ async function save() {
 
 // ---------- UI builders ----------
 function renderMarksList() {
+  const marksList = document.getElementById('marksList');
   marksList.innerHTML = '';
+
   state.items.forEach((item) => {
-    // default options for older docs
+    // defaults for older docs
     item.options = Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
       noOff:false, walkUp:false, waterMark:false
@@ -202,27 +193,29 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
+    // Label
     const label = document.createElement('div');
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
 
+    // Slider (col 2 on desktop; drops below on mobile via CSS)
+    const sliderWrap = document.createElement('div');
+    sliderWrap.className = 'slider-wrap';
     const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = 0; slider.max = 400; slider.step = 25;
+    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
     slider.value = item.dist;
     slider.addEventListener('input', () => {
       item.dist = clampToStep(Number(slider.value));
       label.textContent = markTextFrom(item.id);
-      // Update chip text + tooltip
       document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
         c.textContent = markTextFrom(item.id);
-        const sum = optionsSummary(item.id);
-        c.title = sum ? sum : '';
+        const sum = optionsSummary(item.id); c.title = sum || '';
       });
     });
     slider.addEventListener('change', save);
+    sliderWrap.appendChild(slider);
 
-    // Option checkbox cells (6)
+    // Option checkboxes
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
@@ -231,42 +224,39 @@ function renderMarksList() {
       cb.checked = !!item.options[key];
       cb.addEventListener('change', async () => {
         item.options[key] = cb.checked;
-        // update chip tooltip
         document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
-          const sum = optionsSummary(item.id);
-          c.title = sum ? sum : '';
+          const sum = optionsSummary(item.id); c.title = sum || '';
         });
         await save();
       });
-      // Accessible label via title attribute
       cb.title = optLabel;
       cell.appendChild(cb);
       return cell;
     });
 
+    // Delete
     const del = document.createElement('button');
     del.className = 'btn';
     del.textContent = '✖';
     del.title = 'Remove mark';
     del.addEventListener('click', async () => {
       state.items = state.items.filter(x => x.id !== item.id);
-      for (const k of Object.keys(state.columns)) {
-        state.columns[k] = state.columns[k].filter(id => id !== item.id);
-      }
+      for (const k of Object.keys(state.columns)) state.columns[k] = state.columns[k].filter(id => id !== item.id);
       renderAll();
       await save();
     });
 
-    row.appendChild(label);
-    row.appendChild(slider);
-    optCells.forEach(c => row.appendChild(c));
-    row.appendChild(del);
+    // Append in fixed order
+    row.appendChild(label);        // col 1
+    row.appendChild(sliderWrap);   // col 2
+    optCells.forEach(c => row.appendChild(c)); // cols 3-8
+    row.appendChild(del);          // last col
+
     marksList.appendChild(row);
   });
 
-  // Refresh displayed MARK # sequence after any removals
-  const labels = marksList.querySelectorAll('.mark-label');
-  labels.forEach((el, idx) => {
+  // Refresh MARK # after deletions
+  marksList.querySelectorAll('.mark-label').forEach((el, idx) => {
     const id = state.items[idx]?.id;
     if (id) el.textContent = markTextFrom(id);
   });
@@ -285,11 +275,9 @@ function makeChip(id) {
 function renderColumnsAndDock() {
   document.querySelectorAll('.column').forEach(col => {
     const title = col.querySelector('.column-title');
-    col.innerHTML = '';
-    col.appendChild(title);
+    col.innerHTML = ''; col.appendChild(title);
   });
   dock.innerHTML = '';
-
   state.columns.dock.forEach(id => dock.appendChild(makeChip(id)));
   ['col1','col2','col3','col4','col5'].forEach(key => {
     const col = document.querySelector(`.column[data-col="${key}"]`);
@@ -305,8 +293,7 @@ function renderAll(){
 // ---------- Drag & drop (chips) ----------
 let dragging=null, offsetX=0, offsetY=0;
 function setGhost(text,x,y){ ghost.textContent=text; ghost.style.transform=`translate(${x-offsetX}px,${y-offsetY}px)`; }
-
-function containers() { return [ ...document.querySelectorAll('.column'), dock ]; }
+function containers(){ return [ ...document.querySelectorAll('.column'), dock ]; }
 function nearestDropContainer(x, y) {
   let best=null, bestDist=Infinity;
   for (const t of containers()) {
@@ -343,9 +330,7 @@ document.addEventListener('pointerup', async e => {
   const oldParent = dragging.parentElement;
 
   if (t) {
-    for (const k of Object.keys(state.columns)) {
-      state.columns[k] = state.columns[k].filter(x => x !== id);
-    }
+    for (const k of Object.keys(state.columns)) state.columns[k] = state.columns[k].filter(x => x !== id);
     const key = t === dock ? 'dock' : t.dataset.col;
     state.columns[key].push(id);
     t.appendChild(dragging);
@@ -363,10 +348,7 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   state.items.push({
     id,
     dist: 0,
-    options: {
-      handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false
-    }
+    options: { handTossed:false, shortCheckDown:false, punchBird:false, noOff:false, walkUp:false, waterMark:false }
   });
   state.columns.dock.push(id);
   renderAll();
@@ -377,7 +359,7 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
 docRef.onSnapshot(snap => {
   if (snap.exists) {
     const data = snap.data() || {};
-    state.items   = Array.isArray(data.items) ? data.items.map(it => ({
+    state.items = Array.isArray(data.items) ? data.items.map(it => ({
       id: it.id,
       dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
       options: Object.assign({
@@ -392,7 +374,6 @@ docRef.onSnapshot(snap => {
     ensureAllIdsPlaced();
     renderAll();
   } else {
-    // initialize document lazily
     save().catch(console.error);
   }
 });
