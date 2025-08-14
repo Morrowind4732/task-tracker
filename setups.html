@@ -59,7 +59,8 @@
   }
 
   /* Board / chips */
-  .board-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .board-head { display:flex; gap:8px; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  .board-controls { display:flex; gap:8px; align-items:center; }
   .dock { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px dashed #cfcfcf; border-radius:10px; min-height:46px; }
   .board { display:grid; gap:var(--gap); margin-top:12px; } /* columns set via JS */
   .column { border:1px solid var(--border); border-radius:10px; min-height:140px; padding:8px; display:flex; flex-direction:column; gap:8px; background:#fff; }
@@ -99,7 +100,9 @@
   <div class="section">
     <div class="board-head">
       <strong>Board</strong>
-      <div>
+      <div class="board-controls">
+        <label>Day: <input type="date" id="dayPicker"></label>
+        <button class="btn ghost" id="todayBtn">Today</button>
         <button class="btn ghost" id="addColumnBtn">+ Add Column</button>
       </div>
     </div>
@@ -129,14 +132,41 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ---------- Params / doc ----------
+// ---------- Params ----------
 const params = new URL(location.href).searchParams;
 const trainer = params.get('trainer') || 'default';
 document.getElementById('ctx').textContent = `Trainer: ${trainer}`;
-const docRef = db.collection('setups').doc(trainer).collection('configs').doc('marks');
+
+// ---------- Daily docs ----------
+function ymd(d) {
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+const dayPicker = document.getElementById('dayPicker');
+const todayBtn  = document.getElementById('todayBtn');
+const localToday = new Date();
+dayPicker.value = ymd(localToday);
+todayBtn.addEventListener('click', () => { dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
+
+// dynamic docRef based on date
+let currentDateKey = dayPicker.value;
+let docRef = () => db.collection('setups').doc(trainer).collection('days').doc(currentDateKey).collection('configs').doc('marks');
 
 // ---------- State (dynamic columns) ----------
+// VALID SHAPE: { items:[{id,dist,options}], columns:{ dock:[ids], cols:[ {items:[ids]}, ... ] } }
 let state = { items: [], columns: { dock: [], cols: [] } };
+
+// ---------- Snapshot control ----------
+let unsub = null;                // active listener
+let suppressSnapshots = false;   // ignore Firestore snapshots during local writes
+
+async function switchDay(key) {
+  currentDateKey = key;
+  if (unsub) { try { unsub(); } catch(e){} unsub = null; }
+  state = { items: [], columns: { dock: [], cols: [] } };
+  renderAll();
+  unsub = docRef().onSnapshot(handleSnapshot);
+}
 
 // ---------- DOM refs ----------
 const dock  = document.getElementById('dock');
@@ -171,47 +201,81 @@ function optionsSummary(id){
   if (!item || !item.options) return '';
   return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
 }
+
+function collectColItems() {
+  const out = [];
+  (state.columns.cols || []).forEach(c => (c?.items || []).forEach(id => out.push(id)));
+  return out;
+}
 function removeIdFromAll(id){
   state.columns.dock = state.columns.dock.filter(x => x !== id);
-  state.columns.cols = state.columns.cols.map(arr => arr.filter(x => x !== id));
+  state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(x => x !== id) }));
 }
 function ensureAllIdsPlaced() {
-  const placed = new Set([ ...state.columns.dock, ...state.columns.cols.flat() ]);
+  const placed = new Set([ ...state.columns.dock, ...collectColItems() ]);
   for (const it of state.items) if (!placed.has(it.id)) state.columns.dock.push(it.id);
   state.columns.dock = state.columns.dock.filter(id => byId(id));
-  state.columns.cols = state.columns.cols.map(arr => arr.filter(id => byId(id)));
+  state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
 }
-function compactColumnsKeepAtLeastN(n=2) {
-  while (state.columns.cols.length > n && state.columns.cols[state.columns.cols.length-1].length === 0) {
+
+// NEW: only add columns up to a minimum; never remove
+function ensureMinColumns(n=2) {
+  while (state.columns.cols.length < n) state.columns.cols.push({ items: [] });
+}
+
+// NEW: used only when migrating legacy shapes (optional tidy)
+function pruneTrailingEmptyColumns() {
+  while (state.columns.cols.length > 0 && (state.columns.cols[state.columns.cols.length-1].items || []).length === 0) {
     state.columns.cols.pop();
   }
-  while (state.columns.cols.length < n) state.columns.cols.push([]);
 }
+
 function migrateLegacyColumns(columns) {
-  if (!columns) return { dock: [], cols: [], migrated:false, legacyKeys:[] };
-  if (Array.isArray(columns.cols)) {
+  if (!columns) return { dock: [], cols: [{items:[]},{items:[]}], migrated: true, legacyKeys: [] };
+
+  // Already in good shape?
+  if (Array.isArray(columns.cols) && columns.cols.every(el => el && typeof el === 'object' && Array.isArray(el.items))) {
     return {
       dock: Array.isArray(columns.dock) ? columns.dock.slice() : [],
-      cols: columns.cols.map(a => Array.isArray(a)? a.slice():[]),
-      migrated:false,
-      legacyKeys:[]
+      cols: columns.cols.map(c => ({ items: Array.isArray(c.items) ? c.items.slice() : [] })),
+      migrated: false,
+      legacyKeys: []
     };
   }
+
+  // Array-of-arrays -> convert to array of maps
+  if (Array.isArray(columns.cols) && columns.cols.every(el => Array.isArray(el))) {
+    return {
+      dock: Array.isArray(columns.dock) ? columns.dock.slice() : [],
+      cols: columns.cols.map(arr => ({ items: arr.slice() })),
+      migrated: true,
+      legacyKeys: []
+    };
+  }
+
+  // Legacy col1..colN -> convert
   const legacyKeys = Object.keys(columns).filter(k => k.startsWith('col')).sort((a,b) => {
     const ai = parseInt(a.replace('col',''))||0, bi = parseInt(b.replace('col',''))||0;
     return ai - bi;
   });
-  const cols = legacyKeys.map(k => Array.isArray(columns[k]) ? columns[k].slice() : []);
-  const dock = Array.isArray(columns.dock) ? columns.dock.slice() : [];
-  return { dock, cols, migrated:true, legacyKeys };
+  if (legacyKeys.length) {
+    const cols = legacyKeys.map(k => ({ items: Array.isArray(columns[k]) ? columns[k].slice() : [] }));
+    const dock = Array.isArray(columns.dock) ? columns.dock.slice() : [];
+    return { dock, cols, migrated: true, legacyKeys };
+  }
+
+  // Fallback
+  return { dock: Array.isArray(columns.dock) ? columns.dock.slice() : [], cols: [{items:[]},{items:[]}], migrated: true, legacyKeys: [] };
 }
 
 async function save() {
   ensureAllIdsPlaced();
-  await docRef.set({
+  await docRef().set({
     items: state.items,
     columns: { dock: state.columns.dock, cols: state.columns.cols },
-    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    dateKey: currentDateKey,
+    trainer
   }, { merge: true });
 }
 
@@ -289,10 +353,10 @@ function renderMarksList() {
       state.items = state.items.filter(x => x.id !== item.id);
       removeIdFromAll(item.id);
       renderAll();
-      await save();
+      suppressSnapshots = true;
+      await save().finally(()=>{ suppressSnapshots=false; });
     });
 
-    // Append in fixed order
     row.appendChild(label);
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
@@ -326,11 +390,10 @@ function renderColumnsAndDock() {
 
   // Columns
   board.innerHTML = '';
-  // Set EXACT number of equal-width columns based on count
   const count = Math.max(1, state.columns.cols.length);
   board.style.gridTemplateColumns = `repeat(${count}, minmax(0, 1fr))`;
 
-  state.columns.cols.forEach((arr, i) => {
+  state.columns.cols.forEach((colData, i) => {
     const col = document.createElement('div');
     col.className = 'column';
     col.dataset.colindex = String(i);
@@ -346,17 +409,20 @@ function renderColumnsAndDock() {
     remBtn.textContent = 'Remove';
     remBtn.title = 'Remove this column';
     remBtn.addEventListener('click', async () => {
-      state.columns.dock.push(...state.columns.cols[i]);
+      // optimistic
+      state.columns.dock.push(...(state.columns.cols[i].items || []));
       state.columns.cols.splice(i, 1);
-      compactColumnsKeepAtLeastN(2);
+      ensureMinColumns(2);
       renderColumnsAndDock();
-      await save();
+
+      suppressSnapshots = true;
+      await save().finally(()=>{ suppressSnapshots=false; });
     });
 
     title.append(tText, remBtn);
     col.appendChild(title);
 
-    arr.forEach(id => col.appendChild(makeChip(id)));
+    (colData.items || []).forEach(id => col.appendChild(makeChip(id)));
     board.appendChild(col);
   });
 }
@@ -367,65 +433,119 @@ function renderAll(){
 }
 
 // ---------- Drag & drop (chips) ----------
-let dragging=null, offsetX=0, offsetY=0;
-function setGhost(text,x,y){ ghost.textContent=text; ghost.style.transform=`translate(${x-offsetX}px,${y-offsetY}px)`; }
-function containers(){ return [ ...document.querySelectorAll('.column'), dock ]; }
+let dragging = null, offsetX = 0, offsetY = 0, activePointerId = null;
+
+function setGhost(text, x, y) {
+  ghost.textContent = text;
+  ghost.style.transform = `translate(${x - offsetX}px, ${y - offsetY}px)`;
+}
+function containers() { return [ ...document.querySelectorAll('.column'), dock ]; }
 function nearestDropContainer(x, y) {
-  let best=null, bestDist=Infinity;
+  let best = null, bestDist = Infinity;
   for (const t of containers()) {
     const r = t.getBoundingClientRect();
     if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
-    const cx=(r.left+r.right)/2, cy=(r.top+r.bottom)/2;
-    const d=Math.hypot(x-cx, y-cy);
-    if (d<bestDist){ best=t; bestDist=d; }
+    const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
+    const d = Math.hypot(x - cx, y - cy);
+    if (d < bestDist) { best = t; bestDist = d; }
   }
   return best;
 }
-function highlight(el,on){ el.classList.toggle('drop-hint', !!on); }
+function highlight(el, on) { el.classList.toggle('drop-hint', !!on); }
+function clearHighlights() { containers().forEach(c => highlight(c, false)); }
+function hideGhost() { ghost.style.transform = 'translate(-9999px,-9999px)'; ghost.textContent = ''; }
+function endDragCleanup() {
+  clearHighlights();
+  hideGhost();
+  dragging = null;
+  activePointerId = null;
+  document.body.style.cursor = '';
+}
 
 document.addEventListener('pointerdown', e => {
-  const chip = e.target.closest('.chip'); if(!chip) return;
-  e.preventDefault(); chip.setPointerCapture?.(e.pointerId);
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+
+  e.preventDefault();
+  activePointerId = e.pointerId;
+  chip.setPointerCapture?.(activePointerId);
+
   dragging = chip;
   const r = chip.getBoundingClientRect();
-  offsetX = e.clientX - r.left; offsetY = e.clientY - r.top;
+  offsetX = e.clientX - r.left;
+  offsetY = e.clientY - r.top;
+
   setGhost(chip.textContent, e.clientX, e.clientY);
+  document.body.style.cursor = 'grabbing';
 });
+
 document.addEventListener('pointermove', e => {
-  if (!dragging) return;
+  if (!dragging || e.pointerId !== activePointerId) return;
+
   setGhost(dragging.textContent, e.clientX, e.clientY);
-  containers().forEach(c => highlight(c,false));
+  clearHighlights();
   const t = nearestDropContainer(e.clientX, e.clientY);
-  if (t) highlight(t,true);
+  if (t) highlight(t, true);
 });
+
 document.addEventListener('pointerup', async e => {
-  if (!dragging) return;
-  containers().forEach(c => highlight(c,false));
+  if (!dragging || e.pointerId !== activePointerId) return;
+
+  dragging.releasePointerCapture?.(activePointerId);
+
+  clearHighlights();
   const id = dragging.dataset.id;
   const t = nearestDropContainer(e.clientX, e.clientY);
   const oldParent = dragging.parentElement;
 
-  if (t) {
-    removeIdFromAll(id);
-    if (t === dock) {
+  if (!t) {
+    oldParent.appendChild(dragging);
+    endDragCleanup();
+    return;
+  }
+
+  // Optimistic local update
+  removeIdFromAll(id);
+  if (t === dock) {
+    state.columns.dock.push(id);
+    dock.appendChild(dragging);
+  } else {
+    const idx = Number(t.dataset.colindex);
+    if (!Number.isNaN(idx) && state.columns.cols[idx]) {
+      (state.columns.cols[idx].items ||= []).push(id);
+      t.appendChild(dragging);
+    } else {
       state.columns.dock.push(id);
       dock.appendChild(dragging);
-    } else {
-      const idx = Number(t.dataset.colindex);
-      if (!Number.isNaN(idx) && state.columns.cols[idx]) {
-        state.columns.cols[idx].push(id);
-        t.appendChild(dragging);
-      } else {
-        state.columns.dock.push(id);
-        dock.appendChild(dragging);
-      }
     }
-    await save();
-  } else {
-    oldParent.appendChild(dragging);
   }
-  ghost.style.transform = 'translate(-9999px,-9999px)';
+
+  hideGhost();
   dragging = null;
+  activePointerId = null;
+  document.body.style.cursor = '';
+
+  suppressSnapshots = true;
+  try { await save(); }
+  catch (err) {
+    console.error('Save failed after drop:', err);
+    // Revert UI if save fails
+    removeIdFromAll(id);
+    if (oldParent === dock) state.columns.dock.push(id);
+    else {
+      const idxOld = Number(oldParent.dataset.colindex);
+      if (!Number.isNaN(idxOld) && state.columns.cols[idxOld]) (state.columns.cols[idxOld].items ||= []).push(id);
+      else state.columns.dock.push(id);
+    }
+    renderColumnsAndDock();
+  }
+  finally { suppressSnapshots = false; }
+});
+
+document.addEventListener('pointercancel', () => {
+  if (!dragging) return;
+  dragging.releasePointerCapture?.(activePointerId);
+  endDragCleanup();
 });
 
 // ---------- Add mark ----------
@@ -438,22 +558,33 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   });
   state.columns.dock.push(id);
   renderAll();
-  await save();
+  suppressSnapshots = true;
+  await save().finally(()=>{ suppressSnapshots=false; });
 });
 
 // ---------- Add column ----------
 document.getElementById('addColumnBtn').addEventListener('click', async () => {
-  state.columns.cols.push([]);
-  renderColumnsAndDock();
-  await save();
+  state.columns.cols.push({ items: [] });   // add and persist first
+  suppressSnapshots = true;
+  try { await save(); }
+  finally {
+    suppressSnapshots = false;
+    renderColumnsAndDock();                 // then render
+  }
 });
 
-// ---------- Load (live) with back-compat + init (2 columns if new) ----------
-docRef.onSnapshot(async snap => {
+// ---------- Day switching ----------
+dayPicker.addEventListener('change', () => switchDay(dayPicker.value));
+
+// ---------- Snapshot handler ----------
+async function handleSnapshot(snap) {
+  if (suppressSnapshots) return;
+
   if (!snap.exists) {
-    state = { items: [], columns: { dock: [], cols: [[], []] } }; // exactly 2 to start
+    state = { items: [], columns: { dock: [], cols: [{items:[]},{items:[]}] } };
     renderAll();
-    await save().catch(console.error);
+    suppressSnapshots = true;
+    await save().finally(()=>{ suppressSnapshots=false; });
     return;
   }
 
@@ -469,24 +600,34 @@ docRef.onSnapshot(async snap => {
     }, it.options || {})
   })) : [];
 
-  // Columns (migrate legacy; enforce 2 default)
+  // Columns (migrate legacy / invalid shapes)
   const mig = migrateLegacyColumns(data.columns);
   state.columns = { dock: mig.dock, cols: mig.cols };
-  compactColumnsKeepAtLeastN(2);
+
+  // Only tidy on migration; otherwise never remove user's empty columns
+  if (mig.migrated) {
+    pruneTrailingEmptyColumns();
+  }
+  ensureMinColumns(2);
   ensureAllIdsPlaced();
   renderAll();
 
-  // If we migrated, write back once and hard-delete legacy keys so they don't resurrect
+  // If we migrated, write back once and hard-delete legacy keys
   if (mig.migrated) {
     try {
-      await docRef.set({ columns: { dock: state.columns.dock, cols: state.columns.cols } }, { merge: true });
-      const del = firebase.firestore.FieldValue.delete();
-      const deletes = {};
-      (mig.legacyKeys || []).forEach(k => { deletes[`columns.${k}`] = del; });
-      if (Object.keys(deletes).length) await docRef.set(deletes, { merge: true });
+      await docRef().set({ columns: { dock: state.columns.dock, cols: state.columns.cols } }, { merge: true });
+      if (mig.legacyKeys && mig.legacyKeys.length) {
+        const del = firebase.firestore.FieldValue.delete();
+        const deletes = {};
+        mig.legacyKeys.forEach(k => { deletes[`columns.${k}`] = del; });
+        await docRef().set(deletes, { merge: true });
+      }
     } catch (e) { console.error(e); }
   }
-});
+}
+
+// ---------- Kick things off ----------
+switchDay(currentDateKey);
 </script>
 </body>
 </html>
