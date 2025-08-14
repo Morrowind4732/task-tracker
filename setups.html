@@ -25,14 +25,16 @@
   .head-center { text-align:center; }
 
   /* Mark rows */
-.mark-item {
-  background: #fafafa;       /* subtle background */
+  .mark-item {
+    display:grid;
+    grid-template-columns: 100px 1fr repeat(6, 80px) 40px; /* label | slider | 6 opts | delete */
+    gap:6px; align-items:center;
+	  background: #fafafa;       /* subtle background */
   padding: 8px 10px;         /* inner spacing */
   border: 1px solid #ddd;    /* light border */
   border-radius: 8px;        /* rounded corners */
   margin-bottom: 12px;       /* space between marks */
-}
-
+  }
   .mark-label { font-weight:600; }
   .opt-cell { text-align:center; }
   .slider-wrap { grid-column: 2 / 3; }
