@@ -49,26 +49,27 @@
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
 
-  const params  = new URL(location.href).searchParams;
-  const trailer = params.get('trailer');
-  let   slotId  = params.get('slot');
-  let   sex     = params.get('sex'); // NEW: explicit param support
+// Get params
+const params  = new URL(location.href).searchParams;
+const trailer = params.get('trailer'); // "scott", "cody", etc.
+const sex     = params.get('sex');     // "male" or "female"
+const slotNum = params.get('slot');    // e.g. "R1C1"
 
-  // Parse sex from slotId if missing
-  if (!sex && slotId) {
-    const parts = slotId.split('_');
-    if (parts.length >= 3) {
-      // example: S_M_R1C1
-      sex = (parts[1].toLowerCase() === 'm') ? 'male' :
-            (parts[1].toLowerCase() === 'f') ? 'female' : null;
-      slotId = parts.slice(2).join('_');
-    }
-  }
+// Build collection name like "scott-male"
+const trailerCollection = `${trailer}-${sex}`;
+
+// Build slot ID like "S_M_R1C1" or "C_F_R1C1"
+const trailerPrefix = trailer.charAt(0).toUpperCase(); // S or C
+const sexPrefix = sex.charAt(0).toUpperCase();         // M or F
+const slotId = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
+
+// Use the parsed values to get the slot doc
+const slotRef = doc(db, "trailerLayouts", trailerCollection, "slots", slotId);
 
   const cardEl  = document.getElementById('card');
   const CAMERA_URL = "https://morrowind4732.github.io/task-tracker/Camera.html";
 
-  if (!trailer || !slotId || !sex) {
+  if (!trailer || !sex || !slotId) {
     cardEl.textContent = "Missing trailer, sex, or slot in URL.";
     throw new Error("Missing params");
   }
@@ -90,7 +91,6 @@
     let html = `<div class="rating-row">
       <div class="label">${name[0].toUpperCase()+name.slice(1)}</div>
       <div class="stars" data-field="${name}">`;
-
     for (let i = 1; i <= 5; i++) {
       const fillPercent = (current >= i) ? 100 : (current >= i - 0.5 ? 50 : 0);
       html += `
@@ -116,11 +116,9 @@
       starRow.addEventListener('click', e => {
         const star = e.target.closest('.star-svg');
         if (!star) return;
-
         const value = Number(star.dataset.value);
         const field = starRow.dataset.field;
         const current = ratingState[field] || 0;
-
         if (current >= value) {
           ratingState[field] = 0;
         } else if (current >= value - 0.5) {
@@ -128,7 +126,6 @@
         } else {
           ratingState[field] = value - 0.5;
         }
-
         renderProfileCard(currentDog.profile, trailer, slotId);
       });
     });
@@ -148,16 +145,7 @@
     status.textContent = "Saving…";
     const date = todayLocalYYYYMMDD();
     const ref  = doc(db, "ratings", currentDog.id, "days", date);
-    const payload = { 
-      ...ratingState, 
-      dogId: currentDog.id, 
-      dogName: currentDog.name || null, 
-      trailer, 
-      sex, 
-      slotId, 
-      date, 
-      updatedAt: serverTimestamp() 
-    };
+    const payload = { ...ratingState, dogId: currentDog.id, dogName: currentDog.name || null, trailer, sex, slotId, date, updatedAt: serverTimestamp() };
     try {
       await setDoc(ref, payload, { merge: true });
       status.textContent = "Saved. Redirecting to camera…";
@@ -180,55 +168,35 @@
           <div class="muted">Trailer: ${trailer} · Sex: ${sex} · Slot: ${slotId}</div>
         </div>
       </div>
-
-      <div class="section">
-        <h3>Ratings (today)</h3>
-        <div class="ratings">
-          ${renderStars('marks',    ratingState.marks)}
-          ${renderStars('blinds',   ratingState.blinds)}
-          ${renderStars('behavior', ratingState.behavior)}
-        </div>
-      </div>
-
-      <div class="section">
-        <h3>Notes</h3>
-        <textarea id="notesBox" placeholder="Additional comments...">${ratingState.notes||''}</textarea>
-      </div>
-
+      <div class="section"><h3>Ratings (today)</h3><div class="ratings">
+        ${renderStars('marks',    ratingState.marks)}
+        ${renderStars('blinds',   ratingState.blinds)}
+        ${renderStars('behavior', ratingState.behavior)}
+      </div></div>
+      <div class="section"><h3>Notes</h3><textarea id="notesBox" placeholder="Additional comments...">${ratingState.notes||''}</textarea></div>
       <div class="actions">
         <button class="btn primary" id="saveBtn">💾 Save & Camera</button>
         <a class="btn" id="cameraBtn" href="${CAMERA_URL}">📷 Camera (no save)</a>
       </div>
       <div class="muted" id="saveStatus"></div>
-
-      <!-- Ratings Graphs Card -->
-      <div class="card" style="margin-top:20px;">
-        <h3>Ratings Overview</h3>
-        <div>
-          <label><input type="radio" name="graphRange" value="weekly" checked> Weekly</label>
-          <label><input type="radio" name="graphRange" value="monthly"> Monthly</label>
-        </div>
+      <div class="card" style="margin-top:20px;"><h3>Ratings Overview</h3>
+        <div><label><input type="radio" name="graphRange" value="weekly" checked> Weekly</label>
+        <label><input type="radio" name="graphRange" value="monthly"> Monthly</label></div>
         <canvas id="marksChart" height="150"></canvas>
         <canvas id="blindsChart" height="150"></canvas>
         <canvas id="behaviorChart" height="150"></canvas>
       </div>
-
-      <!-- Report Lookup Card -->
-      <div class="card" style="margin-top:20px;">
-        <h3>View Past Report</h3>
-        <input type="date" id="reportDate" />
-        <button class="btn" id="loadReportBtn">Load</button>
+      <div class="card" style="margin-top:20px;"><h3>View Past Report</h3>
+        <input type="date" id="reportDate" /><button class="btn" id="loadReportBtn">Load</button>
         <div id="reportResult" style="margin-top:10px; font-size:14px; color:#333;"></div>
-      </div>
-    `;
+      </div>`;
     attachStarHandlers();
     document.getElementById('notesBox').addEventListener('input', e => ratingState.notes = e.target.value);
     document.getElementById('saveBtn').onclick = saveAndGoCamera;
   }
 
-  // Chart + Report logic
+  // Chart logic remains the same...
   let marksChart, blindsChart, behaviorChart;
-
   async function fetchRatingsData(daysBack) {
     if (!currentDog.id) return [];
     const today = new Date();
@@ -246,39 +214,19 @@
     }
     return results;
   }
-
   function renderCharts(data) {
     const labels = data.map(d => d.date);
     const marksData = data.map(d => d.marks || 0);
     const blindsData = data.map(d => d.blinds || 0);
     const behaviorData = data.map(d => d.behavior || 0);
-
-    const commonOptions = {
-      responsive: true,
-      scales: { y: { min: 0, max: 5, ticks: { stepSize: 0.5 } } }
-    };
-
+    const commonOptions = { responsive: true, scales: { y: { min: 0, max: 5, ticks: { stepSize: 0.5 } } } };
     if (marksChart) marksChart.destroy();
     if (blindsChart) blindsChart.destroy();
     if (behaviorChart) behaviorChart.destroy();
-
-    marksChart = new Chart(document.getElementById('marksChart'), {
-      type: 'line',
-      data: { labels, datasets: [{ label: 'Marks', data: marksData, borderColor: '#f39c12', fill: false }] },
-      options: commonOptions
-    });
-    blindsChart = new Chart(document.getElementById('blindsChart'), {
-      type: 'line',
-      data: { labels, datasets: [{ label: 'Blinds', data: blindsData, borderColor: '#3498db', fill: false }] },
-      options: commonOptions
-    });
-    behaviorChart = new Chart(document.getElementById('behaviorChart'), {
-      type: 'line',
-      data: { labels, datasets: [{ label: 'Behavior', data: behaviorData, borderColor: '#2ecc71', fill: false }] },
-      options: commonOptions
-    });
+    marksChart = new Chart(document.getElementById('marksChart'), { type: 'line', data: { labels, datasets: [{ label: 'Marks', data: marksData, borderColor: '#f39c12', fill: false }] }, options: commonOptions });
+    blindsChart = new Chart(document.getElementById('blindsChart'), { type: 'line', data: { labels, datasets: [{ label: 'Blinds', data: blindsData, borderColor: '#3498db', fill: false }] }, options: commonOptions });
+    behaviorChart = new Chart(document.getElementById('behaviorChart'), { type: 'line', data: { labels, datasets: [{ label: 'Behavior', data: behaviorData, borderColor: '#2ecc71', fill: false }] }, options: commonOptions });
   }
-
   async function updateCharts(range) {
     const daysBack = range === 'weekly' ? 7 : new Date().getDate();
     const data = await fetchRatingsData(daysBack);
@@ -293,43 +241,30 @@
       const resultDiv = document.getElementById('reportResult');
       if (snap.exists()) {
         const data = snap.data();
-        resultDiv.innerHTML = `
-          <strong>${date}</strong><br>
-          Marks: ${data.marks || 0}<br>
-          Blinds: ${data.blinds || 0}<br>
-          Behavior: ${data.behavior || 0}<br>
-          Notes: ${data.notes || ''}
-        `;
+        resultDiv.innerHTML = `<strong>${date}</strong><br>Marks: ${data.marks || 0}<br>Blinds: ${data.blinds || 0}<br>Behavior: ${data.behavior || 0}<br>Notes: ${data.notes || ''}`;
       } else {
         resultDiv.textContent = "No data found for that date.";
       }
     }
   });
+  document.addEventListener('change', e => { if (e.target.name === 'graphRange') updateCharts(e.target.value); });
 
-  document.addEventListener('change', e => {
-    if (e.target.name === 'graphRange') {
-      updateCharts(e.target.value);
-    }
-  });
+  // THIS is the only change: reading from trailerLayouts/{trailer}-{sex}/slots/{slotId}
 
-  // Always fresh dog for slot
-  const slotRef = doc(db, "trailerLayouts", `${trailer}-${sex}`, "slots", slotId);
   onSnapshot(slotRef, async (snap) => {
     let profileData = null;
     currentDog = { id: null, name: null, profile: null };
     if (snap.exists()) {
       const data = snap.data();
       currentDog.name = data.dogName || null;
-      currentDog.id   = data.dogId || (data.dogName ? nameToId(data.dogName) : null);
-      if (currentDog.id) {
+      if (currentDog.name) {
+        currentDog.id = nameToId(currentDog.name);
         const profSnap = await getDoc(doc(db, "profiles", currentDog.id));
         if (profSnap.exists()) profileData = profSnap.data();
       }
     }
     await loadTodayIfExists();
     renderProfileCard(profileData, trailer, slotId);
-    if (currentDog.id) {
-      updateCharts('weekly');
-    }
+    if (currentDog.id) updateCharts('weekly');
   });
 </script>
