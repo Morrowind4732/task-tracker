@@ -6,39 +6,46 @@
 <title>Setups – Marks</title>
 <style>
   :root { --gap: 12px; --chip-bg:#f7f7f7; --border:#ddd; }
-  body { font-family: system-ui, sans-serif; margin: 16px; }
+  body { font-family: system-ui, sans-serif; margin: 16px; background:#f5f5f5; }
   h1 { margin: 0 0 8px; }
   .muted { color:#666; font-size:12px; margin-top:2px; }
 
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:8px; cursor:pointer; }
   .btn.primary { background:#0b74ff; border-color:#0b74ff; color:#fff; }
+  .btn.ghost { background:#fff; border-color:#ccc; }
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
   /* Header row */
   .marks-head {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(6, 80px) 40px;
+    grid-template-columns: 100px 1fr repeat(6, 80px) 72px;
     gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
   .head-center { text-align:center; }
 
-  /* Mark rows */
+  /* Mark rows as cards */
   .mark-item {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(6, 80px) 40px; /* label | slider | 6 opts | delete */
+    grid-template-columns: 100px 1fr repeat(6, 80px) 72px; /* label | slider | 6 opts | remove */
     gap:6px; align-items:center;
-	  background: #fafafa;       /* subtle background */
-  padding: 8px 10px;         /* inner spacing */
-  border: 1px solid #ddd;    /* light border */
-  border-radius: 8px;        /* rounded corners */
-  margin-bottom: 20px;       /* space between marks */
+
+    background:#fafafa;
+    padding:10px;
+    border:1px solid #ddd;
+    border-radius:10px;
+    margin-bottom:12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
-  .mark-label { font-weight:600; }
+  .mark-label { font-weight:700; }
   .opt-cell { text-align:center; }
   .slider-wrap { grid-column: 2 / 3; }
   input[type="range"] { width:100%; }
+
+  /* Per-checkbox labels: hidden on desktop, shown on mobile */
+  .opt { display:flex; align-items:center; gap:8px; justify-content:center; }
+  .opt span { display:none; font-size:13px; color:#333; }
 
   /* Mobile tweaks */
   @media (max-width: 768px) {
@@ -46,29 +53,22 @@
     .mark-item { grid-template-columns: repeat(3, 1fr); grid-auto-rows: auto; }
     .mark-label { grid-column: 1 / -1; }
     .opt-cell { text-align:left; }
+    .opt { justify-content:flex-start; }
+    .opt span { display:inline; }      /* show label text on phones */
     .slider-wrap { grid-column: 1 / -1; order: 99; }
   }
 
   /* Board / chips */
+  .board-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
   .dock { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px dashed #cfcfcf; border-radius:10px; min-height:46px; }
-  .board { display:grid; grid-template-columns: repeat(5, 1fr); gap:var(--gap); margin-top:12px; }
+  .board { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:var(--gap); margin-top:12px; }
   .column { border:1px solid var(--border); border-radius:10px; min-height:140px; padding:8px; display:flex; flex-direction:column; gap:8px; background:#fff; }
-  .column-title { font-weight:600; font-size:13px; color:#444; margin-bottom:6px; }
+  .column-title { font-weight:600; font-size:13px; color:#444; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .column-title .title { pointer-events:none; }
 
   .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
-  .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,.15); background:#fff; }
+  .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
-  
-  /* Show per-checkbox text on mobile, hide on desktop */
-.opt { display:flex; align-items:center; gap:8px; justify-content:center; }
-.opt span { display:none; font-size:13px; color:#333; }
-
-@media (max-width: 768px) {
-  .opt { justify-content:flex-start; }
-  .opt span { display:inline; }     /* show text on phones */
-  .opt-cell { text-align:left; }    /* left align cells */
-}
-
 </style>
 </head>
 <body>
@@ -90,26 +90,23 @@
       <div class="head-center">no off</div>
       <div class="head-center">walk up</div>
       <div class="head-center">water mark</div>
-      <div></div>
+      <div class="head-center">Remove</div>
     </div>
 
     <div class="marks-list" id="marksList"></div>
   </div>
 
   <div class="section">
+    <div class="board-head">
+      <strong>Board</strong>
+      <div>
+        <button class="btn ghost" id="addColumnBtn">+ Add Column</button>
+      </div>
+    </div>
     <strong>Dock</strong>
     <div class="dock" id="dock"></div>
-  </div>
 
-  <div class="section">
-    <strong>Board</strong>
-    <div class="board" id="board">
-      <div class="column" data-col="col1"><div class="column-title">Column 1</div></div>
-      <div class="column" data-col="col2"><div class="column-title">Column 2</div></div>
-      <div class="column" data-col="col3"><div class="column-title">Column 3</div></div>
-      <div class="column" data-col="col4"><div class="column-title">Column 4</div></div>
-      <div class="column" data-col="col5"><div class="column-title">Column 5</div></div>
-    </div>
+    <div class="board" id="board"><!-- dynamic columns --></div>
   </div>
 
   <div class="chip drag-ghost" id="ghost"></div>
@@ -138,13 +135,18 @@ const trainer = params.get('trainer') || 'default';
 document.getElementById('ctx').textContent = `Trainer: ${trainer}`;
 const docRef = db.collection('setups').doc(trainer).collection('configs').doc('marks');
 
-// ---------- State ----------
+// ---------- State (dynamic columns) ----------
+/**
+ * Firestore schema (new):
+ * columns: { dock: [ids], cols: [ [ids], [ids], ... ] }
+ * Back-compat: if snapshot has col1..colN, we migrate to cols[] in that order and delete legacy keys.
+ */
 let state = {
-  items: [], // [{id, dist, options}]
-  columns: { col1: [], col2: [], col3: [], col4: [], col5: [], dock: [] }
+  items: [],
+  columns: { dock: [], cols: [] }
 };
 
-// ---------- DOM refs (needed for DnD + rendering) ----------
+// ---------- DOM refs ----------
 const dock  = document.getElementById('dock');
 const board = document.getElementById('board');
 const ghost = document.getElementById('ghost');
@@ -164,6 +166,7 @@ function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
 function makeId(){ return 'm_' + Math.random().toString(36).slice(2,9); }
 function clampToStep(v){ return Math.max(0, Math.min(400, Math.round(v/25)*25)); }
 
+// Label text format: "#1 - 400 yards"
 function markTextFrom(id){
   const item = byId(id);
   const idx = indexOfId(id);
@@ -171,30 +174,62 @@ function markTextFrom(id){
   const dist = item?.dist ?? 0;
   return `#${number} - ${dist} yards`;
 }
-
 function optionsSummary(id){
   const item = byId(id);
   if (!item || !item.options) return '';
   return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
 }
-function ensureAllIdsPlaced() {
-  const placed = new Set([
-    ...state.columns.dock,
-    ...state.columns.col1, ...state.columns.col2, ...state.columns.col3, ...state.columns.col4, ...state.columns.col5
-  ]);
-  for (const it of state.items) if (!placed.has(it.id)) state.columns.dock.push(it.id);
-  for (const k of Object.keys(state.columns)) state.columns[k] = state.columns[k].filter(id => byId(id));
+function removeIdFromAll(id){
+  state.columns.dock = state.columns.dock.filter(x => x !== id);
+  state.columns.cols = state.columns.cols.map(arr => arr.filter(x => x !== id));
 }
+function ensureAllIdsPlaced() {
+  const placed = new Set([ ...state.columns.dock, ...state.columns.cols.flat() ]);
+  for (const it of state.items) if (!placed.has(it.id)) state.columns.dock.push(it.id);
+  state.columns.dock = state.columns.dock.filter(id => byId(id));
+  state.columns.cols = state.columns.cols.map(arr => arr.filter(id => byId(id)));
+}
+function compactColumnsKeepAtLeastN(n=2) {
+  // drop empty columns at the END only
+  while (state.columns.cols.length > n && state.columns.cols[state.columns.cols.length-1].length === 0) {
+    state.columns.cols.pop();
+  }
+  // ensure minimum count
+  while (state.columns.cols.length < n) state.columns.cols.push([]);
+}
+function migrateLegacyColumns(columns) {
+  if (!columns) return { dock: [], cols: [], migrated:false, legacyKeys:[] };
+
+  // Already in new shape?
+  if (Array.isArray(columns.cols)) {
+    return {
+      dock: Array.isArray(columns.dock) ? columns.dock.slice() : [],
+      cols: columns.cols.map(a => Array.isArray(a)? a.slice():[]),
+      migrated:false,
+      legacyKeys:[]
+    };
+  }
+
+  // Legacy -> cols[]
+  const legacyKeys = Object.keys(columns).filter(k => k.startsWith('col')).sort((a,b) => {
+    const ai = parseInt(a.replace('col',''))||0, bi = parseInt(b.replace('col',''))||0;
+    return ai - bi;
+  });
+  const cols = legacyKeys.map(k => Array.isArray(columns[k]) ? columns[k].slice() : []);
+  const dock = Array.isArray(columns.dock) ? columns.dock.slice() : [];
+  return { dock, cols, migrated:true, legacyKeys };
+}
+
 async function save() {
   ensureAllIdsPlaced();
   await docRef.set({
     items: state.items,
-    columns: state.columns,
+    columns: { dock: state.columns.dock, cols: state.columns.cols },
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 }
 
-// ---------- UI builders ----------
+// ---------- UI: Marks ----------
 function renderMarksList() {
   const marksList = document.getElementById('marksList');
   marksList.innerHTML = '';
@@ -219,8 +254,7 @@ function renderMarksList() {
     const sliderWrap = document.createElement('div');
     sliderWrap.className = 'slider-wrap';
     const slider = document.createElement('input');
-    slider.type = 'range';
-    slider.min = 0; slider.max = 400; slider.step = 25;
+    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
     slider.value = item.dist;
     slider.addEventListener('input', () => {
       item.dist = clampToStep(Number(slider.value));
@@ -233,18 +267,18 @@ function renderMarksList() {
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Option checkboxes (each with mobile-visible text)
+    // Option checkboxes (with mobile-visible text)
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
 
       const lab = document.createElement('label');
-      lab.className = 'opt'; // CSS: flex, gap; shows <span> on mobile
+      lab.className = 'opt';
 
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = !!item.options[key];
-      cb.title = optLabel; // desktop tooltip
+      cb.title = optLabel;
       cb.addEventListener('change', async () => {
         item.options[key] = cb.checked;
         document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
@@ -254,28 +288,26 @@ function renderMarksList() {
       });
 
       const txt = document.createElement('span');
-      txt.textContent = optLabel; // hidden on desktop, shown on mobile via CSS
+      txt.textContent = optLabel;
 
       lab.append(cb, txt);
       cell.appendChild(lab);
       return cell;
     });
 
-    // Delete button (last col)
+    // Delete mark
     const del = document.createElement('button');
     del.className = 'btn';
-    del.textContent = '✖';
+    del.textContent = 'Remove';
     del.title = 'Remove mark';
     del.addEventListener('click', async () => {
       state.items = state.items.filter(x => x.id !== item.id);
-      for (const k of Object.keys(state.columns)) {
-        state.columns[k] = state.columns[k].filter(id => id !== item.id);
-      }
+      removeIdFromAll(item.id);
       renderAll();
       await save();
     });
 
-    // Append in fixed order for grid structure
+    // Append in fixed order
     row.appendChild(label);        // col 1
     row.appendChild(sliderWrap);   // col 2
     optCells.forEach(c => row.appendChild(c)); // cols 3-8
@@ -284,14 +316,14 @@ function renderMarksList() {
     marksList.appendChild(row);
   });
 
-  // Refresh displayed MARK # sequence after any removals/reorders
+  // Refresh numbering after deletions
   marksList.querySelectorAll('.mark-label').forEach((el, idx) => {
     const id = state.items[idx]?.id;
     if (id) el.textContent = markTextFrom(id);
   });
 }
 
-
+// ---------- UI: Chips / Columns ----------
 function makeChip(id) {
   const chip = document.createElement('div');
   chip.className = 'chip';
@@ -303,15 +335,41 @@ function makeChip(id) {
 }
 
 function renderColumnsAndDock() {
-  document.querySelectorAll('.column').forEach(col => {
-    const title = col.querySelector('.column-title');
-    col.innerHTML = ''; col.appendChild(title);
-  });
+  // Dock
   dock.innerHTML = '';
   state.columns.dock.forEach(id => dock.appendChild(makeChip(id)));
-  ['col1','col2','col3','col4','col5'].forEach(key => {
-    const col = document.querySelector(`.column[data-col="${key}"]`);
-    state.columns[key].forEach(id => col.appendChild(makeChip(id)));
+
+  // Columns
+  board.innerHTML = '';
+  state.columns.cols.forEach((arr, i) => {
+    const col = document.createElement('div');
+    col.className = 'column';
+    col.dataset.colindex = String(i);
+
+    const title = document.createElement('div');
+    title.className = 'column-title';
+    const tText = document.createElement('span');
+    tText.className = 'title';
+    tText.textContent = `Column ${i + 1}`;
+
+    const remBtn = document.createElement('button');
+    remBtn.className = 'btn';
+    remBtn.textContent = 'Remove';
+    remBtn.title = 'Remove this column';
+    remBtn.addEventListener('click', async () => {
+      // move chips back to dock, remove column, keep at least 2, then save
+      state.columns.dock.push(...state.columns.cols[i]);
+      state.columns.cols.splice(i, 1);
+      compactColumnsKeepAtLeastN(2);
+      renderColumnsAndDock();
+      await save();
+    });
+
+    title.append(tText, remBtn);
+    col.appendChild(title);
+
+    arr.forEach(id => col.appendChild(makeChip(id)));
+    board.appendChild(col);
   });
 }
 
@@ -360,10 +418,23 @@ document.addEventListener('pointerup', async e => {
   const oldParent = dragging.parentElement;
 
   if (t) {
-    for (const k of Object.keys(state.columns)) state.columns[k] = state.columns[k].filter(x => x !== id);
-    const key = t === dock ? 'dock' : t.dataset.col;
-    state.columns[key].push(id);
-    t.appendChild(dragging);
+    // remove from all
+    removeIdFromAll(id);
+
+    if (t === dock) {
+      state.columns.dock.push(id);
+      dock.appendChild(dragging);
+    } else {
+      const idx = Number(t.dataset.colindex);
+      if (!Number.isNaN(idx) && state.columns.cols[idx]) {
+        state.columns.cols[idx].push(id);
+        t.appendChild(dragging);
+      } else {
+        // fallback to dock if something is odd
+        state.columns.dock.push(id);
+        dock.appendChild(dragging);
+      }
+    }
     await save();
   } else {
     oldParent.appendChild(dragging);
@@ -385,26 +456,51 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   await save();
 });
 
-// ---------- Load (live) ----------
-docRef.onSnapshot(snap => {
-  if (snap.exists) {
-    const data = snap.data() || {};
-    state.items = Array.isArray(data.items) ? data.items.map(it => ({
-      id: it.id,
-      dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
-      options: Object.assign({
-        handTossed:false, shortCheckDown:false, punchBird:false,
-        noOff:false, walkUp:false, waterMark:false
-      }, it.options || {})
-    })) : [];
-    state.columns = Object.assign(
-      { col1:[],col2:[],col3:[],col4:[],col5:[],dock:[] },
-      data.columns || {}
-    );
-    ensureAllIdsPlaced();
+// ---------- Add column ----------
+document.getElementById('addColumnBtn').addEventListener('click', async () => {
+  state.columns.cols.push([]);
+  renderColumnsAndDock();
+  await save();
+});
+
+// ---------- Load (live) with back-compat + init (2 columns if new) ----------
+docRef.onSnapshot(async snap => {
+  if (!snap.exists) {
+    // brand new: start with exactly 2 columns
+    state = { items: [], columns: { dock: [], cols: [[], []] } };
     renderAll();
-  } else {
-    save().catch(console.error);
+    await save().catch(console.error);
+    return;
+  }
+
+  const data = snap.data() || {};
+
+  // Items
+  state.items = Array.isArray(data.items) ? data.items.map(it => ({
+    id: it.id,
+    dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
+    options: Object.assign({
+      handTossed:false, shortCheckDown:false, punchBird:false,
+      noOff:false, walkUp:false, waterMark:false
+    }, it.options || {})
+  })) : [];
+
+  // Columns (migrate legacy; enforce 2 default)
+  const mig = migrateLegacyColumns(data.columns);
+  state.columns = { dock: mig.dock, cols: mig.cols };
+  compactColumnsKeepAtLeastN(2);
+  ensureAllIdsPlaced();
+  renderAll();
+
+  // If we migrated, write back once and hard-delete legacy keys so they don't resurrect
+  if (mig.migrated) {
+    try {
+      await docRef.set({ columns: { dock: state.columns.dock, cols: state.columns.cols } }, { merge: true });
+      const del = firebase.firestore.FieldValue.delete();
+      const deletes = {};
+      (mig.legacyKeys || []).forEach(k => { deletes[`columns.${k}`] = del; });
+      if (Object.keys(deletes).length) await docRef.set(deletes, { merge: true });
+    } catch (e) { console.error(e); }
   }
 });
 </script>
