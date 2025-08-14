@@ -87,6 +87,24 @@
   .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
+  
+  /* Force side-by-side columns on mobile with horizontal scroll */
+@media (max-width: 768px) {
+  .board {
+    display: flex !important;     /* override the earlier grid */
+    flex-wrap: nowrap;
+    gap: var(--gap);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 8px;
+    scroll-snap-type: x mandatory;
+  }
+  .column {
+    flex: 0 0 260px;              /* column width; tweak as needed */
+    scroll-snap-align: start;
+  }
+}
+
 </style>
 </head>
 <body>
