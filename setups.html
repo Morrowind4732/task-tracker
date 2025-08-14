@@ -57,54 +57,18 @@
     .opt span { display:inline; }      /* show label text on phones */
     .slider-wrap { grid-column: 1 / -1; order: 99; }
   }
-  
-  /* Keep columns side-by-side on mobile with horizontal scroll */
-@media (max-width: 768px) {
-  .board {
-    display: flex;            /* override grid */
-    flex-wrap: nowrap;        /* keep in one row */
-    gap: var(--gap);
-    overflow-x: auto;         /* horizontal scroll */
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 8px;      /* room for scrollbar */
-    scroll-snap-type: x mandatory; /* nice snap feel (optional) */
-  }
-  .column {
-    flex: 0 0 260px;          /* fixed column width; adjust as you like */
-    scroll-snap-align: start; /* snap each column into view */
-  }
-}
-
 
   /* Board / chips */
   .board-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
   .dock { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px dashed #cfcfcf; border-radius:10px; min-height:46px; }
-  .board { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:var(--gap); margin-top:12px; }
+  .board { display:grid; gap:var(--gap); margin-top:12px; } /* columns set via JS */
   .column { border:1px solid var(--border); border-radius:10px; min-height:140px; padding:8px; display:flex; flex-direction:column; gap:8px; background:#fff; }
   .column-title { font-weight:600; font-size:13px; color:#444; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
   .column-title .title { pointer-events:none; }
 
   .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
-  .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,0.15); background:#fff; }
+  .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow: 0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
-  
-  /* Force side-by-side columns on mobile with horizontal scroll */
-@media (max-width: 768px) {
-  .board {
-    display: flex !important;     /* override the earlier grid */
-    flex-wrap: nowrap;
-    gap: var(--gap);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 8px;
-    scroll-snap-type: x mandatory;
-  }
-  .column {
-    flex: 0 0 260px;              /* column width; tweak as needed */
-    scroll-snap-align: start;
-  }
-}
-
 </style>
 </head>
 <body>
@@ -172,15 +136,7 @@ document.getElementById('ctx').textContent = `Trainer: ${trainer}`;
 const docRef = db.collection('setups').doc(trainer).collection('configs').doc('marks');
 
 // ---------- State (dynamic columns) ----------
-/**
- * Firestore schema (new):
- * columns: { dock: [ids], cols: [ [ids], [ids], ... ] }
- * Back-compat: if snapshot has col1..colN, we migrate to cols[] in that order and delete legacy keys.
- */
-let state = {
-  items: [],
-  columns: { dock: [], cols: [] }
-};
+let state = { items: [], columns: { dock: [], cols: [] } };
 
 // ---------- DOM refs ----------
 const dock  = document.getElementById('dock');
@@ -226,17 +182,13 @@ function ensureAllIdsPlaced() {
   state.columns.cols = state.columns.cols.map(arr => arr.filter(id => byId(id)));
 }
 function compactColumnsKeepAtLeastN(n=2) {
-  // drop empty columns at the END only
   while (state.columns.cols.length > n && state.columns.cols[state.columns.cols.length-1].length === 0) {
     state.columns.cols.pop();
   }
-  // ensure minimum count
   while (state.columns.cols.length < n) state.columns.cols.push([]);
 }
 function migrateLegacyColumns(columns) {
   if (!columns) return { dock: [], cols: [], migrated:false, legacyKeys:[] };
-
-  // Already in new shape?
   if (Array.isArray(columns.cols)) {
     return {
       dock: Array.isArray(columns.dock) ? columns.dock.slice() : [],
@@ -245,8 +197,6 @@ function migrateLegacyColumns(columns) {
       legacyKeys:[]
     };
   }
-
-  // Legacy -> cols[]
   const legacyKeys = Object.keys(columns).filter(k => k.startsWith('col')).sort((a,b) => {
     const ai = parseInt(a.replace('col',''))||0, bi = parseInt(b.replace('col',''))||0;
     return ai - bi;
@@ -271,7 +221,6 @@ function renderMarksList() {
   marksList.innerHTML = '';
 
   state.items.forEach((item) => {
-    // defaults for older docs
     item.options = Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
       noOff:false, walkUp:false, waterMark:false
@@ -286,7 +235,7 @@ function renderMarksList() {
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
 
-    // Slider (col 2 on desktop; drops below on mobile via CSS)
+    // Slider (col 2 on desktop; full-width on mobile)
     const sliderWrap = document.createElement('div');
     sliderWrap.className = 'slider-wrap';
     const slider = document.createElement('input');
@@ -303,7 +252,7 @@ function renderMarksList() {
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Option checkboxes (with mobile-visible text)
+    // Option checkboxes
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
@@ -344,10 +293,10 @@ function renderMarksList() {
     });
 
     // Append in fixed order
-    row.appendChild(label);        // col 1
-    row.appendChild(sliderWrap);   // col 2
-    optCells.forEach(c => row.appendChild(c)); // cols 3-8
-    row.appendChild(del);          // last col
+    row.appendChild(label);
+    row.appendChild(sliderWrap);
+    optCells.forEach(c => row.appendChild(c));
+    row.appendChild(del);
 
     marksList.appendChild(row);
   });
@@ -377,6 +326,10 @@ function renderColumnsAndDock() {
 
   // Columns
   board.innerHTML = '';
+  // Set EXACT number of equal-width columns based on count
+  const count = Math.max(1, state.columns.cols.length);
+  board.style.gridTemplateColumns = `repeat(${count}, minmax(0, 1fr))`;
+
   state.columns.cols.forEach((arr, i) => {
     const col = document.createElement('div');
     col.className = 'column';
@@ -393,7 +346,6 @@ function renderColumnsAndDock() {
     remBtn.textContent = 'Remove';
     remBtn.title = 'Remove this column';
     remBtn.addEventListener('click', async () => {
-      // move chips back to dock, remove column, keep at least 2, then save
       state.columns.dock.push(...state.columns.cols[i]);
       state.columns.cols.splice(i, 1);
       compactColumnsKeepAtLeastN(2);
@@ -454,9 +406,7 @@ document.addEventListener('pointerup', async e => {
   const oldParent = dragging.parentElement;
 
   if (t) {
-    // remove from all
     removeIdFromAll(id);
-
     if (t === dock) {
       state.columns.dock.push(id);
       dock.appendChild(dragging);
@@ -466,7 +416,6 @@ document.addEventListener('pointerup', async e => {
         state.columns.cols[idx].push(id);
         t.appendChild(dragging);
       } else {
-        // fallback to dock if something is odd
         state.columns.dock.push(id);
         dock.appendChild(dragging);
       }
@@ -502,8 +451,7 @@ document.getElementById('addColumnBtn').addEventListener('click', async () => {
 // ---------- Load (live) with back-compat + init (2 columns if new) ----------
 docRef.onSnapshot(async snap => {
   if (!snap.exists) {
-    // brand new: start with exactly 2 columns
-    state = { items: [], columns: { dock: [], cols: [[], []] } };
+    state = { items: [], columns: { dock: [], cols: [[], []] } }; // exactly 2 to start
     renderAll();
     await save().catch(console.error);
     return;
