@@ -53,6 +53,17 @@
   .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow:0 4px 14px rgba(0,0,0,.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
+  
+  /* Show per-checkbox text on mobile, hide on desktop */
+.opt { display:flex; align-items:center; gap:8px; justify-content:center; }
+.opt span { display:none; font-size:13px; color:#333; }
+
+@media (max-width: 768px) {
+  .opt { justify-content:flex-start; }
+  .opt span { display:inline; }     /* show text on phones */
+  .opt-cell { text-align:left; }    /* left align cells */
+}
+
 </style>
 </head>
 <body>
@@ -193,7 +204,7 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
-    // Label
+    // Label (col 1)
     const label = document.createElement('div');
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
@@ -202,7 +213,8 @@ function renderMarksList() {
     const sliderWrap = document.createElement('div');
     sliderWrap.className = 'slider-wrap';
     const slider = document.createElement('input');
-    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
+    slider.type = 'range';
+    slider.min = 0; slider.max = 400; slider.step = 25;
     slider.value = item.dist;
     slider.addEventListener('input', () => {
       item.dist = clampToStep(Number(slider.value));
@@ -215,13 +227,18 @@ function renderMarksList() {
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Option checkboxes
+    // Option checkboxes (each with mobile-visible text)
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
+
+      const lab = document.createElement('label');
+      lab.className = 'opt'; // CSS: flex, gap; shows <span> on mobile
+
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = !!item.options[key];
+      cb.title = optLabel; // desktop tooltip
       cb.addEventListener('change', async () => {
         item.options[key] = cb.checked;
         document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
@@ -229,24 +246,30 @@ function renderMarksList() {
         });
         await save();
       });
-      cb.title = optLabel;
-      cell.appendChild(cb);
+
+      const txt = document.createElement('span');
+      txt.textContent = optLabel; // hidden on desktop, shown on mobile via CSS
+
+      lab.append(cb, txt);
+      cell.appendChild(lab);
       return cell;
     });
 
-    // Delete
+    // Delete button (last col)
     const del = document.createElement('button');
     del.className = 'btn';
     del.textContent = '✖';
     del.title = 'Remove mark';
     del.addEventListener('click', async () => {
       state.items = state.items.filter(x => x.id !== item.id);
-      for (const k of Object.keys(state.columns)) state.columns[k] = state.columns[k].filter(id => id !== item.id);
+      for (const k of Object.keys(state.columns)) {
+        state.columns[k] = state.columns[k].filter(id => id !== item.id);
+      }
       renderAll();
       await save();
     });
 
-    // Append in fixed order
+    // Append in fixed order for grid structure
     row.appendChild(label);        // col 1
     row.appendChild(sliderWrap);   // col 2
     optCells.forEach(c => row.appendChild(c)); // cols 3-8
@@ -255,12 +278,13 @@ function renderMarksList() {
     marksList.appendChild(row);
   });
 
-  // Refresh MARK # after deletions
+  // Refresh displayed MARK # sequence after any removals/reorders
   marksList.querySelectorAll('.mark-label').forEach((el, idx) => {
     const id = state.items[idx]?.id;
     if (id) el.textContent = markTextFrom(id);
   });
 }
+
 
 function makeChip(id) {
   const chip = document.createElement('div');
