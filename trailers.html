@@ -226,22 +226,28 @@ function endDrag() {
     const existingChip = target.querySelector('.chip:not(.drag-ghost)');
 
     if (existingChip && oldParent.classList.contains('slot')) {
-      // Swap if both from slots
+      // Swap: move the existing target chip back to the old slot
       oldParent.appendChild(existingChip);
+      // Persist the chip that now lives in the old slot
       updateQRMapping(oldParent.dataset.slot, existingChip.dataset.name).catch(console.error);
     } else if (existingChip) {
-      // Move existing chip back to dock if coming from dock
+      // Coming from dock: kick the existing chip to the dock
       dock.appendChild(existingChip);
       updateQRMapping(target.dataset.slot, null).catch(console.error);
     }
 
+    // Drop the dragging chip into the target and persist
     target.appendChild(dragging);
     updateQRMapping(target.dataset.slot, dragging.dataset.name).catch(console.error);
 
+    // Now persist whatever ended up in the OLD slot (may be empty, or the swapped chip)
     if (oldParent.classList.contains('slot') && oldParent !== target) {
-      updateQRMapping(oldParent.dataset.slot, null).catch(console.error);
+      const chipLeft = oldParent.querySelector('.chip:not(.drag-ghost)');
+      const nameLeft = chipLeft ? chipLeft.dataset.name : null;
+      updateQRMapping(oldParent.dataset.slot, nameLeft).catch(console.error);
     }
   } else {
+    // Dropped outside any slot -> back to dock
     dock.appendChild(dragging);
     if (oldParent.classList.contains('slot')) {
       updateQRMapping(oldParent.dataset.slot, null).catch(console.error);
@@ -251,6 +257,7 @@ function endDrag() {
   ghost.style.transform = 'translate(-9999px,-9999px)';
   dragging = null;
 }
+
 
 
 
