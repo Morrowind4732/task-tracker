@@ -19,7 +19,7 @@
   /* Header row */
   .marks-head {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(6, 80px) 72px;
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* +3 options */
     gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
@@ -28,7 +28,7 @@
   /* Mark rows as cards */
   .mark-item {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(6, 80px) 72px; /* label | slider | 6 opts | remove */
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
     gap:6px; align-items:center;
 
     background:#fafafa;
@@ -91,6 +91,9 @@
       <div class="head-center">no off</div>
       <div class="head-center">walk up</div>
       <div class="head-center">water mark</div>
+      <div class="head-center">go bird</div>
+      <div class="head-center">white coat</div>
+      <div class="head-center">retire</div>
       <div class="head-center">Remove</div>
     </div>
 
@@ -181,6 +184,9 @@ const OPTION_KEYS = [
   { key:'noOff',          label:'no off' },
   { key:'walkUp',         label:'walk up' },
   { key:'waterMark',      label:'water mark' },
+  { key:'goBird',         label:'go bird' },
+  { key:'whiteCoat',      label:'white coat' },
+  { key:'retire',         label:'retire' },
 ];
 
 function byId(id){ return state.items.find(i => i.id === id); }
@@ -218,12 +224,11 @@ function ensureAllIdsPlaced() {
   state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
 }
 
-// NEW: only add columns up to a minimum; never remove
+// Only add columns up to a minimum; never remove automatically
 function ensureMinColumns(n=2) {
   while (state.columns.cols.length < n) state.columns.cols.push({ items: [] });
 }
 
-// NEW: used only when migrating legacy shapes (optional tidy)
 function pruneTrailingEmptyColumns() {
   while (state.columns.cols.length > 0 && (state.columns.cols[state.columns.cols.length-1].items || []).length === 0) {
     state.columns.cols.pop();
@@ -287,7 +292,8 @@ function renderMarksList() {
   state.items.forEach((item) => {
     item.options = Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
     }, item.options || {});
 
     const row = document.createElement('div');
@@ -554,7 +560,11 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   state.items.push({
     id,
     dist: 0,
-    options: { handTossed:false, shortCheckDown:false, punchBird:false, noOff:false, walkUp:false, waterMark:false }
+    options: {
+      handTossed:false, shortCheckDown:false, punchBird:false,
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
+    }
   });
   state.columns.dock.push(id);
   renderAll();
@@ -564,12 +574,12 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
 
 // ---------- Add column ----------
 document.getElementById('addColumnBtn').addEventListener('click', async () => {
-  state.columns.cols.push({ items: [] });   // add and persist first
+  state.columns.cols.push({ items: [] });
   suppressSnapshots = true;
   try { await save(); }
   finally {
     suppressSnapshots = false;
-    renderColumnsAndDock();                 // then render
+    renderColumnsAndDock();
   }
 });
 
@@ -596,7 +606,8 @@ async function handleSnapshot(snap) {
     dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
     options: Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
     }, it.options || {})
   })) : [];
 
@@ -604,7 +615,7 @@ async function handleSnapshot(snap) {
   const mig = migrateLegacyColumns(data.columns);
   state.columns = { dock: mig.dock, cols: mig.cols };
 
-  // Only tidy on migration; otherwise never remove user's empty columns
+  // Tidy only when migrating; otherwise never remove user's empty columns
   if (mig.migrated) {
     pruneTrailingEmptyColumns();
   }
