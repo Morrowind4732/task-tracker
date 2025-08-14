@@ -19,7 +19,7 @@
   /* Header row */
   .marks-head {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* +3 options */
+    grid-template-columns: 100px 1fr repeat(6, 80px) 72px;
     gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
@@ -28,7 +28,7 @@
   /* Mark rows as cards */
   .mark-item {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
+    grid-template-columns: 100px 1fr repeat(6, 80px) 72px; /* label | slider | 6 opts | remove */
     gap:6px; align-items:center;
 
     background:#fafafa;
@@ -91,9 +91,6 @@
       <div class="head-center">no off</div>
       <div class="head-center">walk up</div>
       <div class="head-center">water mark</div>
-      <div class="head-center">go bird</div>
-      <div class="head-center">white coat</div>
-      <div class="head-center">retire</div>
       <div class="head-center">Remove</div>
     </div>
 
@@ -184,9 +181,6 @@ const OPTION_KEYS = [
   { key:'noOff',          label:'no off' },
   { key:'walkUp',         label:'walk up' },
   { key:'waterMark',      label:'water mark' },
-  { key:'goBird',         label:'go bird' },
-  { key:'whiteCoat',      label:'white coat' },
-  { key:'retire',         label:'retire' },
 ];
 
 function byId(id){ return state.items.find(i => i.id === id); }
@@ -202,6 +196,22 @@ function markTextFrom(id){
   const dist = item?.dist ?? 0;
   return `#${number} - ${dist} yards`;
 }
+
+// Chip label = base + short flags (HT/GO/WT/RT) if selected
+function chipTextFrom(id){
+  const base = markTextFrom(id);
+  const item = byId(id);
+  if (!item) return base;
+  const o = item.options || {};
+  const codes = [];
+  if (o.handTossed) codes.push('HT');
+  if (o.goBird)     codes.push('GO');
+  if (o.whiteCoat)  codes.push('WT');
+  if (o.retire)     codes.push('RT');
+  return codes.length ? `${base} ${codes.join(' ')}` : base;
+}
+
+
 function optionsSummary(id){
   const item = byId(id);
   if (!item || !item.options) return '';
@@ -224,11 +234,12 @@ function ensureAllIdsPlaced() {
   state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
 }
 
-// Only add columns up to a minimum; never remove automatically
+// NEW: only add columns up to a minimum; never remove
 function ensureMinColumns(n=2) {
   while (state.columns.cols.length < n) state.columns.cols.push({ items: [] });
 }
 
+// NEW: used only when migrating legacy shapes (optional tidy)
 function pruneTrailingEmptyColumns() {
   while (state.columns.cols.length > 0 && (state.columns.cols[state.columns.cols.length-1].items || []).length === 0) {
     state.columns.cols.pop();
@@ -290,6 +301,7 @@ function renderMarksList() {
   marksList.innerHTML = '';
 
   state.items.forEach((item) => {
+    // include defaults (with new flags) for older docs
     item.options = Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
       noOff:false, walkUp:false, waterMark:false,
@@ -300,12 +312,12 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
-    // Label (col 1)
+    // Label (desktop row label stays WITHOUT short flags)
     const label = document.createElement('div');
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
 
-    // Slider (col 2 on desktop; full-width on mobile)
+    // Slider
     const sliderWrap = document.createElement('div');
     sliderWrap.className = 'slider-wrap';
     const slider = document.createElement('input');
@@ -313,16 +325,18 @@ function renderMarksList() {
     slider.value = item.dist;
     slider.addEventListener('input', () => {
       item.dist = clampToStep(Number(slider.value));
+      // update row label
       label.textContent = markTextFrom(item.id);
+      // update any chips for this id (text uses chipTextFrom)
       document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
-        c.textContent = markTextFrom(item.id);
+        c.textContent = chipTextFrom(item.id);
         const sum = optionsSummary(item.id); c.title = sum || '';
       });
     });
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Option checkboxes
+    // Option checkboxes (mobile shows text next to each)
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
@@ -336,7 +350,9 @@ function renderMarksList() {
       cb.title = optLabel;
       cb.addEventListener('change', async () => {
         item.options[key] = cb.checked;
+        // update chips: both tooltip and the short codes in the text
         document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
+          c.textContent = chipTextFrom(item.id);
           const sum = optionsSummary(item.id); c.title = sum || '';
         });
         await save();
@@ -363,6 +379,7 @@ function renderMarksList() {
       await save().finally(()=>{ suppressSnapshots=false; });
     });
 
+    // Append in fixed order
     row.appendChild(label);
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
@@ -378,16 +395,18 @@ function renderMarksList() {
   });
 }
 
+
 // ---------- UI: Chips / Columns ----------
 function makeChip(id) {
   const chip = document.createElement('div');
   chip.className = 'chip';
   chip.dataset.id = id;
-  chip.textContent = markTextFrom(id);
+  chip.textContent = chipTextFrom(id);   // <-- use chipTextFrom
   const sum = optionsSummary(id);
   if (sum) chip.title = sum;
   return chip;
 }
+
 
 function renderColumnsAndDock() {
   // Dock
@@ -560,11 +579,7 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   state.items.push({
     id,
     dist: 0,
-    options: {
-      handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false,
-      goBird:false, whiteCoat:false, retire:false
-    }
+    options: { handTossed:false, shortCheckDown:false, punchBird:false, noOff:false, walkUp:false, waterMark:false }
   });
   state.columns.dock.push(id);
   renderAll();
@@ -574,12 +589,12 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
 
 // ---------- Add column ----------
 document.getElementById('addColumnBtn').addEventListener('click', async () => {
-  state.columns.cols.push({ items: [] });
+  state.columns.cols.push({ items: [] });   // add and persist first
   suppressSnapshots = true;
   try { await save(); }
   finally {
     suppressSnapshots = false;
-    renderColumnsAndDock();
+    renderColumnsAndDock();                 // then render
   }
 });
 
@@ -606,8 +621,7 @@ async function handleSnapshot(snap) {
     dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
     options: Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false,
-      goBird:false, whiteCoat:false, retire:false
+      noOff:false, walkUp:false, waterMark:false
     }, it.options || {})
   })) : [];
 
@@ -615,7 +629,7 @@ async function handleSnapshot(snap) {
   const mig = migrateLegacyColumns(data.columns);
   state.columns = { dock: mig.dock, cols: mig.cols };
 
-  // Tidy only when migrating; otherwise never remove user's empty columns
+  // Only tidy on migration; otherwise never remove user's empty columns
   if (mig.migrated) {
     pruneTrailingEmptyColumns();
   }
