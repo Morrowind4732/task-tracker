@@ -33,7 +33,7 @@
   padding: 8px 10px;         /* inner spacing */
   border: 1px solid #ddd;    /* light border */
   border-radius: 8px;        /* rounded corners */
-  margin-bottom: 12px;       /* space between marks */
+  margin-bottom: 20px;       /* space between marks */
   }
   .mark-label { font-weight:600; }
   .opt-cell { text-align:center; }
@@ -169,8 +169,9 @@ function markTextFrom(id){
   const idx = indexOfId(id);
   const number = idx >= 0 ? (idx + 1) : '?';
   const dist = item?.dist ?? 0;
-  return `MARK ${number} ${dist}`;
+  return `#${number} - ${dist} yards`;
 }
+
 function optionsSummary(id){
   const item = byId(id);
   if (!item || !item.options) return '';
