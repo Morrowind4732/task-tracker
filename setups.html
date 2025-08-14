@@ -19,7 +19,7 @@
   /* Header row */
   .marks-head {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(6, 80px) 72px;
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
     gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
@@ -28,7 +28,7 @@
   /* Mark rows as cards */
   .mark-item {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(6, 80px) 72px; /* label | slider | 6 opts | remove */
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
     gap:6px; align-items:center;
 
     background:#fafafa;
@@ -91,6 +91,9 @@
       <div class="head-center">no off</div>
       <div class="head-center">walk up</div>
       <div class="head-center">water mark</div>
+      <div class="head-center">go bird</div>
+      <div class="head-center">white coat</div>
+      <div class="head-center">retire</div>
       <div class="head-center">Remove</div>
     </div>
 
@@ -181,6 +184,9 @@ const OPTION_KEYS = [
   { key:'noOff',          label:'no off' },
   { key:'walkUp',         label:'walk up' },
   { key:'waterMark',      label:'water mark' },
+  { key:'goBird',         label:'go bird' },
+  { key:'whiteCoat',      label:'white coat' },
+  { key:'retire',         label:'retire' },
 ];
 
 function byId(id){ return state.items.find(i => i.id === id); }
@@ -211,7 +217,6 @@ function chipTextFrom(id){
   return codes.length ? `${base} ${codes.join(' ')}` : base;
 }
 
-
 function optionsSummary(id){
   const item = byId(id);
   if (!item || !item.options) return '';
@@ -234,12 +239,11 @@ function ensureAllIdsPlaced() {
   state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
 }
 
-// NEW: only add columns up to a minimum; never remove
+// Only add columns up to a minimum; never remove automatically
 function ensureMinColumns(n=2) {
   while (state.columns.cols.length < n) state.columns.cols.push({ items: [] });
 }
 
-// NEW: used only when migrating legacy shapes (optional tidy)
 function pruneTrailingEmptyColumns() {
   while (state.columns.cols.length > 0 && (state.columns.cols[state.columns.cols.length-1].items || []).length === 0) {
     state.columns.cols.pop();
@@ -395,18 +399,16 @@ function renderMarksList() {
   });
 }
 
-
 // ---------- UI: Chips / Columns ----------
 function makeChip(id) {
   const chip = document.createElement('div');
   chip.className = 'chip';
   chip.dataset.id = id;
-  chip.textContent = chipTextFrom(id);   // <-- use chipTextFrom
+  chip.textContent = chipTextFrom(id);   // uses short flags
   const sum = optionsSummary(id);
   if (sum) chip.title = sum;
   return chip;
 }
-
 
 function renderColumnsAndDock() {
   // Dock
@@ -579,7 +581,11 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   state.items.push({
     id,
     dist: 0,
-    options: { handTossed:false, shortCheckDown:false, punchBird:false, noOff:false, walkUp:false, waterMark:false }
+    options: {
+      handTossed:false, shortCheckDown:false, punchBird:false,
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
+    }
   });
   state.columns.dock.push(id);
   renderAll();
@@ -621,7 +627,8 @@ async function handleSnapshot(snap) {
     dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
     options: Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
     }, it.options || {})
   })) : [];
 
@@ -629,7 +636,7 @@ async function handleSnapshot(snap) {
   const mig = migrateLegacyColumns(data.columns);
   state.columns = { dock: mig.dock, cols: mig.cols };
 
-  // Only tidy on migration; otherwise never remove user's empty columns
+  // Tidy only when migrating; otherwise never remove user's empty columns
   if (mig.migrated) {
     pruneTrailingEmptyColumns();
   }
