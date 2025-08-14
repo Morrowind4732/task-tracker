@@ -57,6 +57,24 @@
     .opt span { display:inline; }      /* show label text on phones */
     .slider-wrap { grid-column: 1 / -1; order: 99; }
   }
+  
+  /* Keep columns side-by-side on mobile with horizontal scroll */
+@media (max-width: 768px) {
+  .board {
+    display: flex;            /* override grid */
+    flex-wrap: nowrap;        /* keep in one row */
+    gap: var(--gap);
+    overflow-x: auto;         /* horizontal scroll */
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 8px;      /* room for scrollbar */
+    scroll-snap-type: x mandatory; /* nice snap feel (optional) */
+  }
+  .column {
+    flex: 0 0 260px;          /* fixed column width; adjust as you like */
+    scroll-snap-align: start; /* snap each column into view */
+  }
+}
+
 
   /* Board / chips */
   .board-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
