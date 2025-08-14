@@ -305,24 +305,10 @@ async function updateQRMapping(slotId, dogName) {
     .collection("slots")
     .doc(slotId);
 
-  let dogId = null;
-  if (dogName) {
-    try {
-      const profileSnap = await db.collection("dogProfiles")
-        .where("name", "==", dogName)
-        .limit(1)
-        .get();
-      if (!profileSnap.empty) {
-        dogId = profileSnap.docs[0].id;
-      }
-    } catch (err) {
-      console.error(`Error fetching dogId for ${dogName}:`, err);
-    }
-  }
-
+  // Just save dogName, no dogId lookup
   await ref.set({
     dogName: dogName || null,
-    dogId: dogId || null,
+    sex: sex,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   }, { merge: true });
 
@@ -331,6 +317,7 @@ async function updateQRMapping(slotId, dogName) {
   current.slotData[slotId] = dogName || null;
   await db.collection("layouts").doc(layoutDocId).set(current);
 }
+
 
 
 
