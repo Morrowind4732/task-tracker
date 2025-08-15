@@ -16,6 +16,20 @@
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
+  /* Tabs (browser style) */
+  .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
+  .tab {
+    position:relative; padding:8px 12px; border:1px solid var(--border);
+    border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px;
+    background:#f6f6f6; cursor:pointer; font-weight:600; color:#444;
+  }
+  .tab.active {
+    background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset;
+  }
+  .tab:hover { background:#fdfdfd; }
+  .tab-add { margin-left:4px; }
+
   /* Header row */
   .marks-head {
     display:grid;
@@ -30,13 +44,8 @@
     display:grid;
     grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
     gap:6px; align-items:center;
-
-    background:#fafafa;
-    padding:10px;
-    border:1px solid #ddd;
-    border-radius:10px;
-    margin-bottom:12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
+    margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   .mark-label { font-weight:700; }
   .opt-cell { text-align:center; }
@@ -76,6 +85,19 @@
   <h1>Setups – Marks</h1>
   <div class="muted" id="ctx">Loading…</div>
 
+  <!-- Tabs -->
+  <div class="section">
+    <div class="tabs-bar">
+      <div class="board-controls" style="margin-right:auto;">
+        <label>Day: <input type="date" id="dayPicker"></label>
+        <button class="btn ghost" id="todayBtn">Today</button>
+      </div>
+      <div class="tabs" id="tabs"></div>
+      <button class="btn ghost tab-add" id="addSetupBtn">+ Add Setup</button>
+    </div>
+  </div>
+
+  <!-- Marks -->
   <div class="section" id="marksContainer">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
       <strong>Marks</strong>
@@ -100,12 +122,11 @@
     <div class="marks-list" id="marksList"></div>
   </div>
 
+  <!-- Board -->
   <div class="section">
     <div class="board-head">
       <strong>Board</strong>
       <div class="board-controls">
-        <label>Day: <input type="date" id="dayPicker"></label>
-        <button class="btn ghost" id="todayBtn">Today</button>
         <button class="btn ghost" id="addColumnBtn">+ Add Column</button>
       </div>
     </div>
@@ -140,7 +161,7 @@ const params = new URL(location.href).searchParams;
 const trainer = params.get('trainer') || 'default';
 document.getElementById('ctx').textContent = `Trainer: ${trainer}`;
 
-// ---------- Daily docs ----------
+// ---------- Date handling ----------
 function ymd(d) {
   const pad = n => String(n).padStart(2,'0');
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
@@ -151,27 +172,28 @@ const localToday = new Date();
 dayPicker.value = ymd(localToday);
 todayBtn.addEventListener('click', () => { dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
 
-// dynamic docRef based on date
 let currentDateKey = dayPicker.value;
-let docRef = () => db.collection('setups').doc(trainer).collection('days').doc(currentDateKey).collection('configs').doc('marks');
 
-// ---------- State (dynamic columns) ----------
-// VALID SHAPE: { items:[{id,dist,options}], columns:{ dock:[ids], cols:[ {items:[ids]}, ... ] } }
+// ---------- Firestore refs ----------
+const dayDocPath = () => db.collection('setups').doc(trainer).collection('days').doc(currentDateKey);
+const setupsColl = () => dayDocPath().collection('setups');
+const oldSingleDoc = () => dayDocPath().collection('configs').doc('marks'); // for migration
+const setupDocRef = () => (activeSetupId ? setupsColl().doc(activeSetupId) : null);
+
+// ---------- Tabs state ----------
+let setupsMeta = [];  // [{id, name, order}]
+let activeSetupId = null;
+
+// ---------- Setup-level state (the content of one tab) ----------
 let state = { items: [], columns: { dock: [], cols: [] } };
 
 // ---------- Snapshot control ----------
-let unsub = null;                // active listener
-let suppressSnapshots = false;   // ignore Firestore snapshots during local writes
+let unsubSetups = null;          // listener for tabs list
+let unsubSetupDoc = null;        // listener for active tab document
+let suppressSetupDocSnapshots = false;
 
-async function switchDay(key) {
-  currentDateKey = key;
-  if (unsub) { try { unsub(); } catch(e){} unsub = null; }
-  state = { items: [], columns: { dock: [], cols: [] } };
-  renderAll();
-  unsub = docRef().onSnapshot(handleSnapshot);
-}
-
-// ---------- DOM refs ----------
+// ---------- DOM ----------
+const tabsEl = document.getElementById('tabs');
 const dock  = document.getElementById('dock');
 const board = document.getElementById('board');
 const ghost = document.getElementById('ghost');
@@ -194,7 +216,7 @@ function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
 function makeId(){ return 'm_' + Math.random().toString(36).slice(2,9); }
 function clampToStep(v){ return Math.max(0, Math.min(400, Math.round(v/25)*25)); }
 
-// Label text format: "#1 - 400 yards"
+// Base row label
 function markTextFrom(id){
   const item = byId(id);
   const idx = indexOfId(id);
@@ -203,7 +225,7 @@ function markTextFrom(id){
   return `#${number} - ${dist} yards`;
 }
 
-// Chip label = base + short flags (HT/GO/WT/RT) if selected
+// Chip label = base + short flags
 function chipTextFrom(id){
   const base = markTextFrom(id);
   const item = byId(id);
@@ -238,59 +260,23 @@ function ensureAllIdsPlaced() {
   state.columns.dock = state.columns.dock.filter(id => byId(id));
   state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
 }
-
-// Only add columns up to a minimum; never remove automatically
 function ensureMinColumns(n=2) {
   while (state.columns.cols.length < n) state.columns.cols.push({ items: [] });
 }
-
 function pruneTrailingEmptyColumns() {
   while (state.columns.cols.length > 0 && (state.columns.cols[state.columns.cols.length-1].items || []).length === 0) {
     state.columns.cols.pop();
   }
 }
 
-function migrateLegacyColumns(columns) {
-  if (!columns) return { dock: [], cols: [{items:[]},{items:[]}], migrated: true, legacyKeys: [] };
-
-  // Already in good shape?
-  if (Array.isArray(columns.cols) && columns.cols.every(el => el && typeof el === 'object' && Array.isArray(el.items))) {
-    return {
-      dock: Array.isArray(columns.dock) ? columns.dock.slice() : [],
-      cols: columns.cols.map(c => ({ items: Array.isArray(c.items) ? c.items.slice() : [] })),
-      migrated: false,
-      legacyKeys: []
-    };
-  }
-
-  // Array-of-arrays -> convert to array of maps
-  if (Array.isArray(columns.cols) && columns.cols.every(el => Array.isArray(el))) {
-    return {
-      dock: Array.isArray(columns.dock) ? columns.dock.slice() : [],
-      cols: columns.cols.map(arr => ({ items: arr.slice() })),
-      migrated: true,
-      legacyKeys: []
-    };
-  }
-
-  // Legacy col1..colN -> convert
-  const legacyKeys = Object.keys(columns).filter(k => k.startsWith('col')).sort((a,b) => {
-    const ai = parseInt(a.replace('col',''))||0, bi = parseInt(b.replace('col',''))||0;
-    return ai - bi;
-  });
-  if (legacyKeys.length) {
-    const cols = legacyKeys.map(k => ({ items: Array.isArray(columns[k]) ? columns[k].slice() : [] }));
-    const dock = Array.isArray(columns.dock) ? columns.dock.slice() : [];
-    return { dock, cols, migrated: true, legacyKeys };
-  }
-
-  // Fallback
-  return { dock: Array.isArray(columns.dock) ? columns.dock.slice() : [], cols: [{items:[]},{items:[]}], migrated: true, legacyKeys: [] };
-}
-
+// ---------- Save current setup ----------
 async function save() {
+  const ref = setupDocRef();
+  if (!ref) return;
   ensureAllIdsPlaced();
-  await docRef().set({
+  await ref.set({
+    name: currentSetupName(),       // keep name
+    order: currentSetupOrder(),     // keep order
     items: state.items,
     columns: { dock: state.columns.dock, cols: state.columns.cols },
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -299,13 +285,149 @@ async function save() {
   }, { merge: true });
 }
 
+// ---------- Tabs UI ----------
+function currentSetupMeta() { return setupsMeta.find(s => s.id === activeSetupId) || null; }
+function currentSetupName() { return currentSetupMeta()?.name || 'Setup'; }
+function currentSetupOrder(){ return currentSetupMeta()?.order ?? 1; }
+
+function renderTabs() {
+  tabsEl.innerHTML = '';
+  setupsMeta
+    .sort((a,b) => (a.order ?? 0) - (b.order ?? 0))
+    .forEach(meta => {
+      const b = document.createElement('button');
+      b.className = 'tab' + (meta.id === activeSetupId ? ' active' : '');
+      b.textContent = meta.name || 'Setup';
+      b.addEventListener('click', () => {
+        if (meta.id !== activeSetupId) setActiveSetup(meta.id);
+      });
+      tabsEl.appendChild(b);
+    });
+}
+
+// ---------- Setup collection listener ----------
+async function attachSetupsListener() {
+  if (unsubSetups) { try { unsubSetups(); } catch(e){} unsubSetups = null; }
+  unsubSetups = setupsColl().orderBy('order').onSnapshot(async snap => {
+    const list = [];
+    snap.forEach(doc => {
+      const d = doc.data() || {};
+      list.push({ id: doc.id, name: d.name || 'Setup', order: typeof d.order === 'number' ? d.order : 1 });
+    });
+    setupsMeta = list;
+
+    if (setupsMeta.length === 0) {
+      // First time for this day – try to migrate old single doc
+      const old = await oldSingleDoc().get();
+      const order = 1;
+      const newDoc = setupsColl().doc();
+      const setupData = old.exists ? {
+        name: 'Setup 1',
+        order,
+        items: Array.isArray(old.data().items) ? old.data().items : [],
+        columns: old.data().columns || { dock: [], cols: [{items:[]},{items:[]}] },
+        trainer, dateKey: currentDateKey,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      } : {
+        name: 'Setup 1',
+        order,
+        items: [],
+        columns: { dock: [], cols: [{items:[]},{items:[]}] },
+        trainer, dateKey: currentDateKey,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      await newDoc.set(setupData);
+      setupsMeta = [{ id: newDoc.id, name: 'Setup 1', order }];
+    }
+
+    renderTabs();
+
+    // Restore previously active tab (per trainer/day), or pick first
+    const lsKey = `activeSetup:${trainer}:${currentDateKey}`;
+    const wanted = localStorage.getItem(lsKey);
+    const exists = setupsMeta.some(s => s.id === wanted);
+    const firstId = setupsMeta[0]?.id;
+    const nextActive = exists ? wanted : firstId;
+    if (nextActive && nextActive !== activeSetupId) setActiveSetup(nextActive, { fromList: true });
+  });
+}
+
+// ---------- Active setup doc listener ----------
+function setActiveSetup(id, { fromList=false } = {}) {
+  activeSetupId = id;
+  localStorage.setItem(`activeSetup:${trainer}:${currentDateKey}`, id);
+  renderTabs();
+
+  if (unsubSetupDoc) { try { unsubSetupDoc(); } catch(e){} unsubSetupDoc = null; }
+  state = { items: [], columns: { dock: [], cols: [] } };
+  renderAll(); // clear UI quickly
+  const ref = setupDocRef();
+  if (!ref) return;
+
+  unsubSetupDoc = ref.onSnapshot(async snap => {
+    if (suppressSetupDocSnapshots) return;
+
+    if (!snap.exists) {
+      // initialize this setup doc
+      state = { items: [], columns: { dock: [], cols: [{items:[]},{items:[]}] } };
+      renderAll();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+      return;
+    }
+
+    const data = snap.data() || {};
+    // Items
+    state.items = Array.isArray(data.items) ? data.items.map(it => ({
+      id: it.id,
+      dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
+      options: Object.assign({
+        handTossed:false, shortCheckDown:false, punchBird:false,
+        noOff:false, walkUp:false, waterMark:false,
+        goBird:false, whiteCoat:false, retire:false
+      }, it.options || {})
+    })) : [];
+
+    // Columns (handle legacy shapes)
+    let colsShape = data.columns;
+    if (!colsShape) colsShape = { dock: [], cols: [{items:[]},{items:[]}] };
+    // Normalize to { dock:[], cols:[{items:[]},...] }
+    if (Array.isArray(colsShape.cols) && colsShape.cols.every(el => Array.isArray(el))) {
+      colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: colsShape.cols.map(a => ({ items: a.slice() })) };
+    } else if (Array.isArray(colsShape.col1)) {
+      const legacyKeys = Object.keys(colsShape).filter(k=>k.startsWith('col')).sort((a,b)=>parseInt(a.replace('col',''))-parseInt(b.replace('col','')));
+      colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: legacyKeys.map(k => ({ items: Array.isArray(colsShape[k])? colsShape[k]:[] })) };
+    }
+
+    state.columns = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: Array.isArray(colsShape.cols) ? colsShape.cols : [{items:[]},{items:[]}] };
+
+    ensureMinColumns(2);
+    ensureAllIdsPlaced();
+    renderAll();
+  });
+}
+
+// ---------- Switch day ----------
+async function switchDay(key) {
+  currentDateKey = key;
+  if (unsubSetups) { try { unsubSetups(); } catch(e){} unsubSetups = null; }
+  if (unsubSetupDoc) { try { unsubSetupDoc(); } catch(e){} unsubSetupDoc = null; }
+  setupsMeta = [];
+  activeSetupId = null;
+  state = { items: [], columns: { dock: [], cols: [] } };
+  renderAll();
+  renderTabs();
+  await attachSetupsListener();
+}
+
+dayPicker.addEventListener('change', () => switchDay(dayPicker.value));
+
 // ---------- UI: Marks ----------
 function renderMarksList() {
   const marksList = document.getElementById('marksList');
   marksList.innerHTML = '';
 
   state.items.forEach((item) => {
-    // include defaults (with new flags) for older docs
     item.options = Object.assign({
       handTossed:false, shortCheckDown:false, punchBird:false,
       noOff:false, walkUp:false, waterMark:false,
@@ -316,7 +438,7 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
-    // Label (desktop row label stays WITHOUT short flags)
+    // Label
     const label = document.createElement('div');
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
@@ -329,9 +451,7 @@ function renderMarksList() {
     slider.value = item.dist;
     slider.addEventListener('input', () => {
       item.dist = clampToStep(Number(slider.value));
-      // update row label
       label.textContent = markTextFrom(item.id);
-      // update any chips for this id (text uses chipTextFrom)
       document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
         c.textContent = chipTextFrom(item.id);
         const sum = optionsSummary(item.id); c.title = sum || '';
@@ -340,7 +460,7 @@ function renderMarksList() {
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Option checkboxes (mobile shows text next to each)
+    // Option checkboxes
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
@@ -354,12 +474,12 @@ function renderMarksList() {
       cb.title = optLabel;
       cb.addEventListener('change', async () => {
         item.options[key] = cb.checked;
-        // update chips: both tooltip and the short codes in the text
         document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
           c.textContent = chipTextFrom(item.id);
           const sum = optionsSummary(item.id); c.title = sum || '';
         });
-        await save();
+        suppressSetupDocSnapshots = true;
+        await save().finally(()=>{ suppressSetupDocSnapshots = false; });
       });
 
       const txt = document.createElement('span');
@@ -379,11 +499,10 @@ function renderMarksList() {
       state.items = state.items.filter(x => x.id !== item.id);
       removeIdFromAll(item.id);
       renderAll();
-      suppressSnapshots = true;
-      await save().finally(()=>{ suppressSnapshots=false; });
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
     });
 
-    // Append in fixed order
     row.appendChild(label);
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
@@ -404,7 +523,7 @@ function makeChip(id) {
   const chip = document.createElement('div');
   chip.className = 'chip';
   chip.dataset.id = id;
-  chip.textContent = chipTextFrom(id);   // uses short flags
+  chip.textContent = chipTextFrom(id);
   const sum = optionsSummary(id);
   if (sum) chip.title = sum;
   return chip;
@@ -436,14 +555,13 @@ function renderColumnsAndDock() {
     remBtn.textContent = 'Remove';
     remBtn.title = 'Remove this column';
     remBtn.addEventListener('click', async () => {
-      // optimistic
       state.columns.dock.push(...(state.columns.cols[i].items || []));
       state.columns.cols.splice(i, 1);
       ensureMinColumns(2);
       renderColumnsAndDock();
 
-      suppressSnapshots = true;
-      await save().finally(()=>{ suppressSnapshots=false; });
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
     });
 
     title.append(tText, remBtn);
@@ -461,11 +579,7 @@ function renderAll(){
 
 // ---------- Drag & drop (chips) ----------
 let dragging = null, offsetX = 0, offsetY = 0, activePointerId = null;
-
-function setGhost(text, x, y) {
-  ghost.textContent = text;
-  ghost.style.transform = `translate(${x - offsetX}px, ${y - offsetY}px)`;
-}
+function setGhost(text, x, y) { ghost.textContent = text; ghost.style.transform = `translate(${x - offsetX}px, ${y - offsetY}px)`; }
 function containers() { return [ ...document.querySelectorAll('.column'), dock ]; }
 function nearestDropContainer(x, y) {
   let best = null, bestDist = Infinity;
@@ -481,82 +595,48 @@ function nearestDropContainer(x, y) {
 function highlight(el, on) { el.classList.toggle('drop-hint', !!on); }
 function clearHighlights() { containers().forEach(c => highlight(c, false)); }
 function hideGhost() { ghost.style.transform = 'translate(-9999px,-9999px)'; ghost.textContent = ''; }
-function endDragCleanup() {
-  clearHighlights();
-  hideGhost();
-  dragging = null;
-  activePointerId = null;
-  document.body.style.cursor = '';
-}
+function endDragCleanup() { clearHighlights(); hideGhost(); dragging = null; activePointerId = null; document.body.style.cursor = ''; }
 
 document.addEventListener('pointerdown', e => {
-  const chip = e.target.closest('.chip');
-  if (!chip) return;
-
+  const chip = e.target.closest('.chip'); if (!chip) return;
   e.preventDefault();
   activePointerId = e.pointerId;
   chip.setPointerCapture?.(activePointerId);
-
   dragging = chip;
   const r = chip.getBoundingClientRect();
-  offsetX = e.clientX - r.left;
-  offsetY = e.clientY - r.top;
-
+  offsetX = e.clientX - r.left; offsetY = e.clientY - r.top;
   setGhost(chip.textContent, e.clientX, e.clientY);
   document.body.style.cursor = 'grabbing';
 });
-
 document.addEventListener('pointermove', e => {
   if (!dragging || e.pointerId !== activePointerId) return;
-
   setGhost(dragging.textContent, e.clientX, e.clientY);
   clearHighlights();
   const t = nearestDropContainer(e.clientX, e.clientY);
   if (t) highlight(t, true);
 });
-
 document.addEventListener('pointerup', async e => {
   if (!dragging || e.pointerId !== activePointerId) return;
-
   dragging.releasePointerCapture?.(activePointerId);
-
   clearHighlights();
   const id = dragging.dataset.id;
   const t = nearestDropContainer(e.clientX, e.clientY);
   const oldParent = dragging.parentElement;
-
-  if (!t) {
-    oldParent.appendChild(dragging);
-    endDragCleanup();
-    return;
-  }
-
+  if (!t) { oldParent.appendChild(dragging); endDragCleanup(); return; }
   // Optimistic local update
   removeIdFromAll(id);
-  if (t === dock) {
-    state.columns.dock.push(id);
-    dock.appendChild(dragging);
-  } else {
+  if (t === dock) { state.columns.dock.push(id); dock.appendChild(dragging); }
+  else {
     const idx = Number(t.dataset.colindex);
-    if (!Number.isNaN(idx) && state.columns.cols[idx]) {
-      (state.columns.cols[idx].items ||= []).push(id);
-      t.appendChild(dragging);
-    } else {
-      state.columns.dock.push(id);
-      dock.appendChild(dragging);
-    }
+    if (!Number.isNaN(idx) && state.columns.cols[idx]) { (state.columns.cols[idx].items ||= []).push(id); t.appendChild(dragging); }
+    else { state.columns.dock.push(id); dock.appendChild(dragging); }
   }
-
-  hideGhost();
-  dragging = null;
-  activePointerId = null;
-  document.body.style.cursor = '';
-
-  suppressSnapshots = true;
+  hideGhost(); dragging = null; activePointerId = null; document.body.style.cursor = '';
+  suppressSetupDocSnapshots = true;
   try { await save(); }
-  catch (err) {
+  catch(err){
     console.error('Save failed after drop:', err);
-    // Revert UI if save fails
+    // Revert UI
     removeIdFromAll(id);
     if (oldParent === dock) state.columns.dock.push(id);
     else {
@@ -566,9 +646,8 @@ document.addEventListener('pointerup', async e => {
     }
     renderColumnsAndDock();
   }
-  finally { suppressSnapshots = false; }
+  finally { suppressSetupDocSnapshots = false; }
 });
-
 document.addEventListener('pointercancel', () => {
   if (!dragging) return;
   dragging.releasePointerCapture?.(activePointerId);
@@ -589,74 +668,37 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   });
   state.columns.dock.push(id);
   renderAll();
-  suppressSnapshots = true;
-  await save().finally(()=>{ suppressSnapshots=false; });
+  suppressSetupDocSnapshots = true;
+  await save().finally(()=>{ suppressSetupDocSnapshots=false; });
 });
 
 // ---------- Add column ----------
 document.getElementById('addColumnBtn').addEventListener('click', async () => {
-  state.columns.cols.push({ items: [] });   // add and persist first
-  suppressSnapshots = true;
+  state.columns.cols.push({ items: [] });
+  suppressSetupDocSnapshots = true;
   try { await save(); }
-  finally {
-    suppressSnapshots = false;
-    renderColumnsAndDock();                 // then render
-  }
+  finally { suppressSetupDocSnapshots = false; renderColumnsAndDock(); }
 });
 
-// ---------- Day switching ----------
-dayPicker.addEventListener('change', () => switchDay(dayPicker.value));
+// ---------- Add setup (tab) ----------
+document.getElementById('addSetupBtn').addEventListener('click', async () => {
+  // Determine next order and default name
+  const nextOrder = (Math.max(0, ...setupsMeta.map(s => s.order || 0)) + 1) || 1;
+  const nextIndex = (setupsMeta.length + 1);
+  const name = `Setup ${nextIndex}`;
 
-// ---------- Snapshot handler ----------
-async function handleSnapshot(snap) {
-  if (suppressSnapshots) return;
-
-  if (!snap.exists) {
-    state = { items: [], columns: { dock: [], cols: [{items:[]},{items:[]}] } };
-    renderAll();
-    suppressSnapshots = true;
-    await save().finally(()=>{ suppressSnapshots=false; });
-    return;
-  }
-
-  const data = snap.data() || {};
-
-  // Items
-  state.items = Array.isArray(data.items) ? data.items.map(it => ({
-    id: it.id,
-    dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
-    options: Object.assign({
-      handTossed:false, shortCheckDown:false, punchBird:false,
-      noOff:false, walkUp:false, waterMark:false,
-      goBird:false, whiteCoat:false, retire:false
-    }, it.options || {})
-  })) : [];
-
-  // Columns (migrate legacy / invalid shapes)
-  const mig = migrateLegacyColumns(data.columns);
-  state.columns = { dock: mig.dock, cols: mig.cols };
-
-  // Tidy only when migrating; otherwise never remove user's empty columns
-  if (mig.migrated) {
-    pruneTrailingEmptyColumns();
-  }
-  ensureMinColumns(2);
-  ensureAllIdsPlaced();
-  renderAll();
-
-  // If we migrated, write back once and hard-delete legacy keys
-  if (mig.migrated) {
-    try {
-      await docRef().set({ columns: { dock: state.columns.dock, cols: state.columns.cols } }, { merge: true });
-      if (mig.legacyKeys && mig.legacyKeys.length) {
-        const del = firebase.firestore.FieldValue.delete();
-        const deletes = {};
-        mig.legacyKeys.forEach(k => { deletes[`columns.${k}`] = del; });
-        await docRef().set(deletes, { merge: true });
-      }
-    } catch (e) { console.error(e); }
-  }
-}
+  const docRef = setupsColl().doc();
+  await docRef.set({
+    name,
+    order: nextOrder,
+    items: [],
+    columns: { dock: [], cols: [{items:[]},{items:[]}] },
+    trainer, dateKey: currentDateKey,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  // The setups listener will pick it up and activate via localStorage set below:
+  localStorage.setItem(`activeSetup:${trainer}:${currentDateKey}`, docRef.id);
+});
 
 // ---------- Kick things off ----------
 switchDay(currentDateKey);
