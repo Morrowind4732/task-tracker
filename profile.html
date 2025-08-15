@@ -3,91 +3,106 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Scoring V2 – Radial (Full Labels)</title>
+<title>Scoring V2 (Radial Flags)</title>
 
 <style>
-  :root { --gap:12px; --border:#ddd; --accent:#0b74ff; }
+  :root { --gap:12px; --border:#ddd; --chip-bg:#f7f7f7; --accent:#0b74ff; }
   body { font-family: system-ui, sans-serif; margin: 16px; background:#f5f5f5; }
   .title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .mini-link { font-size:12px; color:var(--accent); text-decoration:underline; }
   .mini-link:visited { color:var(--accent); }
   .muted { color:#666; font-size:12px; }
+
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
-  /* Tabs / day */
+  /* Tabs (setups + rerun tabs) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
-  .tab { padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
+  .tab { position:relative; padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
+  .tab.rerun { font-style:italic; }
   .tab:hover { background:#fdfdfd; }
 
-  /* Mini pane tabs */
-  .mini-tabs { display:flex; gap:6px; align-items:center; }
-  .mini-tab { padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f7f7f7; font-weight:600; cursor:pointer; }
-  .mini-tab.active { background:#fff; border-color:#bbb; }
+  /* Hero / dog card */
+  .hero { display:grid; grid-template-columns: 120px 1fr; gap: 12px; align-items:center; }
+  .hero img { width:120px; height:120px; object-fit:cover; border-radius:10px; border:1px solid #ccc; background:#fafafa; }
 
   /* Score cards */
   .score-list { display:flex; flex-direction:column; gap:12px; }
   .score-card {
     border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
-    display:grid; gap:8px; grid-template-columns: 1fr;
+    display:grid; gap:10px; grid-template-columns: 1fr auto; align-items:center;
   }
-  .score-header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  .score-title { font-weight:700; }
-  .score-tools { display:flex; gap:10px; align-items:center; }
-  .slider-row { display:flex; align-items:center; gap:10px; }
+  .score-title { font-weight:700; grid-column: 1 / 2; }
+  .slider-row { display:flex; align-items:center; gap:10px; grid-column: 1 / -1; }
   .slider-row input[type="range"] { flex:1; }
   .slider-val { width:48px; text-align:right; font-variant-numeric: tabular-nums; }
+  .flag-trigger { grid-column: 2 / 3; justify-self:end; }
+
+  .score-head{
+    display:grid;
+    grid-template-columns: 1fr auto;
+    align-items:center;
+    row-gap:8px;
+    margin-bottom: 12px;
+  }
+  .score-head #scoresTitle { grid-column: 1 / 2; }
+  .score-head #rerunBtn    { grid-column: 2 / 3; justify-self:end; }
+  .mini-tabs { display:flex; gap:6px; align-items:center; grid-column: 1 / -1; }
+  .mini-tab { padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f7f7f7; font-weight:600; cursor:pointer; }
+  .mini-tab.active { background:#fff; border-color:#bbb; box-shadow:0 1px 0 rgba(0,0,0,.05); }
+
   .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .divider { height:1px; background:#eee; margin:12px 0; }
 
-  /* ---------- Radial overlay (like setups wheel) ---------- */
-  .r-overlay { position:fixed; inset:0; background:rgba(0,0,0,.28); display:none; align-items:center; justify-content:center; z-index:9999; }
-  .r-overlay.open { display:flex; }
-  .r-wheel {
-    position: relative;
-    width: 340px; height: 340px;    /* bigger wheel for full labels */
-    border-radius: 50%;
-    background:#fff;
-    border:1px solid var(--border);
-    box-shadow:0 12px 30px rgba(0,0,0,.25);
+  /* Radial flag overlay */
+  .radial-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.35);
+    display: none; align-items: center; justify-content: center;
+    z-index: 9999;
   }
-  .r-center {
-    position:absolute; left:50%; top:50%;
-    transform:translate(-50%,-50%);
-    width: 140px; height:140px;     /* bigger cancel */
-    border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    text-align:center; padding:10px;
-    background:#fafafa; border:2px solid #eee; font-weight:700; font-size:16px;
-    cursor:pointer;
+  .radial-overlay.open { display:flex; }
+  .wheel {
+    position: relative; width: 320px; height: 320px; border-radius: 50%;
+    background:#fff; border:1px solid var(--border);
+    box-shadow:0 12px 30px rgba(0,0,0,.3);
   }
-  .r-item {
-    position:absolute;
-    max-width: 200px;               /* allow full names */
-    padding:10px 12px;              /* bigger pills */
-    border-radius:999px;
-    border:1px solid #ddd; background:#fff; font-size:14px; line-height:1.15;
-    text-align:center; white-space:normal;           /* allow wrap to 2 lines */
-    box-shadow:0 6px 14px rgba(0,0,0,.10);
-    cursor:pointer;
-  }
-  .r-item.active { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .r-caption {
+  .wheel h4 {
     position:absolute; left:50%; top:10px; transform:translateX(-50%);
-    font-weight:700; font-size:15px;
+    margin:0; font-size:14px; text-align:center;
   }
+  .center-cancel {
+    position:absolute; left:50%; top:50%; transform: translate(-50%,-50%);
+    width: 120px; height: 120px; border-radius: 50%;
+    background:#f8f8f8; border:1px solid #ddd; font-weight:700;
+  }
+  .rad-btn {
+    position:absolute;
+    min-width: 128px; height: 46px; padding: 8px 10px;
+    border-radius: 12px; border:1px solid #ccc; background:#fff;
+    font-size: 13px; line-height:1.1;
+    display:flex; align-items:center; justify-content:center;
+    text-align:center; box-shadow:0 6px 18px rgba(0,0,0,.12);
+  }
+  .rad-btn.active { background:#0b74ff; color:#fff; border-color:#0b74ff; }
+  .rad-btn:disabled { opacity:.6; }
 
-  /* Bigger gear “Flags” button */
-  .gear { padding:12px 16px; border-radius:12px; font-size:16px; }
+  /* helpful on small phones */
+  @media (max-width: 380px){
+    .wheel { width: 300px; height:300px; }
+    .center-cancel { width: 110px; height:110px; }
+    .rad-btn { min-width: 120px; height: 44px; font-size: 12px; }
+  }
 </style>
 </head>
 <body>
   <div class="title-row">
-    <h1 style="margin:0">Scoring V2 (Radial)</h1>
+    <h1>Scoring V2</h1>
     <a id="changeUserLink" class="mini-link" href="#">change user</a>
   </div>
   <div class="muted" id="ctx">Loading…</div>
@@ -95,7 +110,7 @@
   <!-- Tabs / day -->
   <div class="section">
     <div class="tabs-bar">
-      <div style="margin-right:auto; display:flex; gap:8px; align-items:center;">
+      <div class="board-controls" style="margin-right:auto; display:flex; gap:8px; align-items:center;">
         <label>Day: <input type="date" id="dayPicker"></label>
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
@@ -103,10 +118,15 @@
     </div>
   </div>
 
+  <!-- Dog hero -->
+  <div class="section" id="dogCard">Loading dog…</div>
+
   <!-- Scores -->
   <div class="section" id="scoresSection">
-    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px;">
-      <strong id="scoresTitle">—</strong>
+    <div class="score-head">
+      <strong id="scoresTitle"></strong>
+      <button class="btn ghost" id="rerunBtn">Add Rerun</button>
+
       <div class="mini-tabs" id="paneTabs">
         <button class="mini-tab active" data-pane="marks">Marks</button>
         <button class="mini-tab" data-pane="blinds">Blinds</button>
@@ -114,8 +134,8 @@
     </div>
 
     <div class="score-list" id="scoreList"></div>
-
-    <div class="actions" style="margin-top:10px">
+    <div class="divider"></div>
+    <div class="actions">
       <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
       <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
       <button class="btn" id="saveOnlyBtn">💾 Save</button>
@@ -123,12 +143,12 @@
     </div>
   </div>
 
-  <!-- Radial overlay (shared for all items) -->
-  <div id="radialOverlay" class="r-overlay" aria-hidden="true">
-    <div class="r-wheel">
-      <div class="r-caption" id="rCaption">Flags</div>
-      <button class="r-center" id="rCancel" type="button">Cancel</button>
-      <!-- buttons injected here -->
+  <!-- Radial Flag Overlay (reused for any item) -->
+  <div class="radial-overlay" id="flagOverlay" aria-hidden="true">
+    <div class="wheel" role="dialog" aria-modal="true" aria-label="Flags">
+      <h4 id="wheelTitle">Flags</h4>
+      <button class="center-cancel" id="cancelWheel">Cancel</button>
+      <!-- buttons injected by JS -->
     </div>
   </div>
 
@@ -137,7 +157,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
       getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
-      collection, query, orderBy
+      collection, query, orderBy, deleteDoc,
+      collectionGroup, where, getDocs
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     /* ---------------- Firebase init ---------------- */
@@ -155,17 +176,144 @@
 
     /* ---------------- Utilities ---------------- */
     const ctxEl = document.getElementById('ctx');
-    function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+    function ymd(d){ const p=n=>String(n).padStart(2,'0'); return \`\${d.getFullYear()}-\${p(d.getMonth()+1)}-\${p(d.getDate())}\`; }
     function slug(s){
       return String(s||"").toLowerCase().trim()
-        .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
+        .replace(/[\\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
         .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
     }
-    const SAVE_DEBOUNCE_MS = 300;
-    let saveTimer = null;
-    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
+    const SAVE_DEBOUNCE_MS = 400;
+    let saveTimer=null; function scheduleSave(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
-    /* ---------------- Flags (full labels) ---------------- */
+    /* ---------------- URL params (QR compatible) ---------------- */
+    const params  = new URL(location.href).searchParams;
+    const trailer = (params.get('trailer')||'').trim();
+    const sexRaw  = (params.get('sex')||'').trim().toLowerCase();
+    const sexNorm = (sexRaw === 'm' || sexRaw === 'male') ? 'male'
+                   : (sexRaw === 'f' || sexRaw === 'female') ? 'female'
+                   : sexRaw;
+    const slotNum = (params.get('slot')||'').trim();          // e.g. R2C3 or R2C3H
+    let   trainerId = (params.get('trainer')||'').trim();
+
+    const trailerNorm   = trailer.toLowerCase();
+    const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
+    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
+    const slotId        = \`\${trailerPrefix}_\${sexPrefix}_\${slotNum}\`;
+
+    // Trainer chooser link
+    const changeUserLink = document.getElementById('changeUserLink');
+    changeUserLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      const url = new URL(location.href);
+      url.searchParams.delete('trainer');
+      history.replaceState(null, '', url.toString());
+      showTrainerPrompt();
+    });
+
+    function showTrainerPrompt(){
+      const name = prompt("Who are you? (Scott / Cody / Brian)", trainerId || "");
+      if (name) {
+        trainerId = name;
+        const url = new URL(location.href);
+        url.searchParams.set('trainer', trainerId);
+        history.replaceState(null, '', url.toString());
+        ctxEl.textContent = \`Trainer: \${trainerId}\`;
+        boot();
+      }
+    }
+    if (trainerId) ctxEl.textContent = \`Trainer: \${trainerId}\`;
+
+    if (!trailer || !sexNorm || !slotNum) {
+      document.getElementById('dogCard').textContent = "Missing trailer, sex, or slot in URL.";
+      throw new Error("Missing QR params");
+    }
+
+    /* ---------------- Day + tabs (setups) ---------------- */
+    const dayPicker = document.getElementById('dayPicker');
+    const todayBtn  = document.getElementById('todayBtn');
+    dayPicker.value = ymd(new Date());
+    todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
+    dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
+    const tabsEl = document.getElementById('tabs');
+
+    let currentDateKey = dayPicker.value;
+    let setupsMeta = [];       // [{id,name,order}]
+    let activeSetupId = null;  // setup doc id
+    let activeRunId   = 'base';// 'base' or 'rerun'
+    let rerunExists   = false; // rerun presence for active setup
+    let activePane    = 'marks'; // 'marks' | 'blinds'
+
+    // current dog (from trailerLayouts)
+    let dog = { id:null, name:null, photo:null };
+
+    // listeners
+    let unsubSetups=null, unsubSetupDoc=null, unsubScoreDocBase=null, unsubScoreDocRerun=null;
+
+    // items to render
+    let setupItemsMarks = [];
+    let setupItemsBlinds = [];
+
+    // score state shape
+    let scores = { marks:{}, blinds:{} };
+
+    /* ---------------- Firestore paths ---------------- */
+    const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
+    const setupsColl = () => collection(dayDocPath(), "setups");
+    const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
+
+    const slotRef = doc(db, "trailerLayouts", \`\${trailerNorm}-\${sexNorm}\`, "slots", slotId);
+
+    const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
+    const dogRunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
+    const mirrorRunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
+
+    /* ---------------- Dog card ---------------- */
+    const dogCard = document.getElementById('dogCard');
+    function renderDogCard(){
+      dogCard.innerHTML = dog?.name
+        ? \`<div class="hero">
+             <img src="\${dog.photo||''}" alt="">
+             <div>
+               <h2 style="margin:0 0 4px">\${dog.name}</h2>
+               <div class="muted">Trailer: \${trailer} · Sex: \${sexNorm} · Slot: \${slotId}</div>
+             </div>
+           </div>\`
+        : \`<div class="muted">Empty slot \${slotId}</div>\`;
+    }
+
+    /* ---------------- Setup tabs ---------------- */
+    function renderTabs(){
+      tabsEl.innerHTML = '';
+      setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
+        const b = document.createElement('button');
+        b.className = 'tab' + (m.id===activeSetupId && activeRunId==='base' ? ' active' : '');
+        b.textContent = m.name || \`Setup \${idx+1}\`;
+        b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
+        tabsEl.appendChild(b);
+
+        if (m.id === activeSetupId && (rerunExists || activeRunId==='rerun')) {
+          const r = document.createElement('button');
+          r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
+          r.textContent = \`Rerun \${m.name || \`Setup \${idx+1}\`}\`;
+          r.addEventListener('click', ()=>setActiveSetup(m.id, 'rerun'));
+          tabsEl.appendChild(r);
+        }
+      });
+    }
+
+    /* ---------------- Pane tabs ---------------- */
+    const paneTabs = document.getElementById('paneTabs');
+    paneTabs.addEventListener('click', (e)=>{
+      const btn = e.target.closest('.mini-tab'); if (!btn) return;
+      const pane = btn.dataset.pane;
+      if (pane && pane !== activePane) {
+        activePane = pane;
+        paneTabs.querySelectorAll('.mini-tab').forEach(b => b.classList.toggle('active', b.dataset.pane===activePane));
+        renderScoresUIFromCurrentItems();
+      }
+    });
+
+    /* ---------------- Flags (definitions + radial layout) ---------------- */
     const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
@@ -181,233 +329,79 @@
     const FLAG_DEFS_BLINDS = [
       { key:'poorInitial',     label:'Poor Initial' },
       { key:'scallop',         label:'Scallop' },
-      { key:'castRefusal',     label:'Cast Refusal' },
-      { key:'pickedUpPoison',  label:'Picked Up Poison' },
       { key:'hunted',          label:'Hunted' },
+      { key:'pickedUpPoison',  label:'Picked Up Poison' },
+      { key:'castRefusal',     label:'Cast Refusal' },
       { key:'ignoredWhistle',  label:'Ignored Whistle' },
       { key:'failedDiversion', label:'Failed Diversion' },
       { key:'skipped',         label:'Skipped' },
     ];
 
-    // 10 “surround” positions: top arc (4), left, right, bottom arc (4)
-    // Spaced for the larger wheel/pills.
-    const POS10 = [
-      {dx:-120, dy:-130}, {dx:-50, dy:-140}, {dx: 50, dy:-140}, {dx:120, dy:-130},
-      {dx:-160, dy:   0}, {dx: 160, dy:   0},
-      {dx:-120, dy: 130}, {dx:-50, dy: 140}, {dx: 50, dy: 140}, {dx:120, dy: 130},
-    ];
-
-    // Layouts (keep 10 slots; null hides a slot)
-    const MARKS_LAYOUT = [
-      'headswing','shortCheckDown','overran','bigHunt',         // top 4
-      'break','skipped',                                        // left / right
-      'handled','castRefusal','sitOnWhistle','backSideOfGun'    // bottom 4
-    ];
-    const BLINDS_LAYOUT = [
-      'poorInitial','scallop','castRefusal','pickedUpPoison',   // top 4
-      null, null,                                               // left/right (unused)
-      'hunted','ignoredWhistle','failedDiversion','skipped'     // bottom 4
-    ];
-
-    /* ---------------- URL params ---------------- */
-    const params  = new URL(location.href).searchParams;
-    const trailer = (params.get('trailer')||'').trim();
-    const sex     = (params.get('sex')||'').trim();
-    const slotNum = (params.get('slot')||'').trim();
-    let   trainerId = (params.get('trainer')||'').trim();
-
-    const trailerNorm = trailer.toLowerCase();
-    const sexNorm     = sex.toLowerCase();
-
-    document.getElementById('changeUserLink').addEventListener('click', (e)=>{
-      e.preventDefault();
-      const url = new URL(location.href);
-      url.searchParams.delete('trainer');
-      history.replaceState(null, '', url.toString());
-      trainerId = '';
-      ctxEl.textContent = 'Trainer not set (add ?trainer=NAME in URL).';
-    });
-
-    if (!trailer || !sex || !slotNum) {
-      document.getElementById('scoresSection').innerHTML = '<div class="muted">Missing trailer, sex, or slot in URL.</div>';
-      throw new Error('Missing QR params');
+    // For the wheel we want 4 top, 4 bottom, 1 left, 1 right:
+    function wheelSlotsFor(pane){
+      if (pane==='marks'){
+        return {
+          top:    FLAG_DEFS_MARKS.slice(0,4),
+          bottom: FLAG_DEFS_MARKS.slice(4,8),
+          left:   [FLAG_DEFS_MARKS[8]],
+          right:  [FLAG_DEFS_MARKS[9]]
+        };
+      } else {
+        // Use all 8 uniques; duplicate 2 on left/right so users still get 10 buttons
+        return {
+          top:    FLAG_DEFS_BLINDS.slice(0,4),
+          bottom: FLAG_DEFS_BLINDS.slice(4,8),
+          left:   [FLAG_DEFS_BLINDS[4]],   // Cast Refusal
+          right:  [FLAG_DEFS_BLINDS[5]]    // Ignored Whistle
+        };
+      }
     }
-    ctxEl.textContent = trainerId ? `Trainer: ${trainerId}` : 'Trainer not set';
 
-    /* ---------------- Day + setups ---------------- */
-    const dayPicker = document.getElementById('dayPicker');
-    const todayBtn  = document.getElementById('todayBtn');
-    dayPicker.value = ymd(new Date());
-    todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
-    dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
-
-    const tabsEl = document.getElementById('tabs');
-    let currentDateKey = dayPicker.value;
-    let setupsMeta = [];       // [{id,name,order}]
-    let activeSetupId = null;  // setup doc id
-    let activePane = 'marks';  // marks | blinds
-
-    // current dog from slot
-    const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
-    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
-    const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
-    const slotRef       = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
-    let dog = { id:null, name:null };
-
-    // Firestore paths
-    const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
-    const setupsColl = () => collection(dayDocPath(), "setups");
-    const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
-
-    // Scores documents
-    const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
-    const dogRunDoc     = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base");
-    const mirrorRunDoc  = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", "base");
-
-    // UI refs
-    const paneTabs = document.getElementById('paneTabs');
+    /* ---------------- Scores UI ---------------- */
     const scoreList = document.getElementById('scoreList');
     const scoresTitle = document.getElementById('scoresTitle');
+    const rerunBtn = document.getElementById('rerunBtn');
     const saveStatus = document.getElementById('saveStatus');
 
-    // state
-    let setupItemsMarks = [];
-    let setupItemsBlinds = [];
-    let scores = { marks:{}, blinds:{} };
-
-    /* ---------------- Tabs / panes ---------------- */
-    function renderTabs(){
-      tabsEl.innerHTML = '';
-      setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
-        const b = document.createElement('button');
-        b.className = 'tab' + (m.id===activeSetupId ? ' active' : '');
-        b.textContent = m.name || `Setup ${idx+1}`;
-        b.addEventListener('click', ()=>setActiveSetup(m.id));
-        tabsEl.appendChild(b);
-      });
-    }
-    paneTabs.addEventListener('click', (e)=>{
-      const btn = e.target.closest('.mini-tab'); if (!btn) return;
-      const pane = btn.dataset.pane;
-      if (pane && pane !== activePane) {
-        activePane = pane;
-        paneTabs.querySelectorAll('.mini-tab').forEach(b => b.classList.toggle('active', b.dataset.pane===activePane));
-        renderScoresUIFromCurrentItems();
-      }
-    });
-
-    /* ---------------- Cards + radial wheel ---------------- */
     function markLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `Mark #${n} • ${dist}y`;
+      return \`#\${n} - \${dist} yards\`;
     }
     function blindLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `Blind #${n} • ${dist}y`;
-    }
-
-    // Shared overlay
-    const rOverlay = document.getElementById('radialOverlay');
-    const rWheel   = rOverlay.querySelector('.r-wheel');
-    const rCancel  = document.getElementById('rCancel');
-    const rCaption = document.getElementById('rCaption');
-
-    let currentWheelCtx = null; // { pane, itemId, flags, layout, defs }
-
-    function closeWheel(){
-      rOverlay.classList.remove('open');
-      rOverlay.setAttribute('aria-hidden','true');
-      rWheel.querySelectorAll('.r-item').forEach(n=>n.remove());
-      currentWheelCtx=null;
-    }
-    rCancel.addEventListener('click', closeWheel);
-    rOverlay.addEventListener('click', (e)=>{ if (e.target === rOverlay) closeWheel(); });
-
-    function openWheel({ title, pane, itemId, flags, layout, defs }){
-      // Clean last
-      rWheel.querySelectorAll('.r-item').forEach(n=>n.remove());
-      currentWheelCtx = { pane, itemId, flags, layout, defs };
-      rCaption.textContent = title || 'Flags';
-
-      // Build items (FULL LABELS)
-      for (let i=0;i<POS10.length;i++){
-        const key = layout[i];
-        if (!key) continue; // hidden slot (e.g., blinds left/right)
-        const def = defs.find(d=>d.key===key);
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'r-item';
-        btn.textContent = def?.label || key;  // <— FULL DESCRIPTION
-        btn.title = def?.label || key;
-        const {dx,dy} = POS10[i];
-        btn.style.left = '50%';
-        btn.style.top  = '50%';
-        btn.style.transform = `translate(-50%,-50%) translate(${dx}px, ${dy}px)`;
-        if (flags[key]) btn.classList.add('active');
-        btn.addEventListener('click', ()=>{
-          const newVal = !flags[key];
-          flags[key] = newVal;
-          btn.classList.toggle('active', newVal);
-          // persist to state and debounce save
-          const bucket = pane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
-          (bucket[itemId] ||= { score:0, flags:{} });
-          bucket[itemId].flags[key] = newVal;
-          scheduleSave();
-        });
-        rWheel.appendChild(btn);
-      }
-
-      // Open
-      rOverlay.classList.add('open');
-      rOverlay.setAttribute('aria-hidden','false');
+      return \`#\${n} - \${dist} yards\`;
     }
 
     function renderScoresUI(items){
       scoreList.innerHTML = '';
       const paneName = activePane==='marks' ? 'Marks' : 'Blinds';
+      const runName  = activeRunId==='base' ? 'Base' : 'Rerun';
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup';
-      scoresTitle.textContent = `${paneName} • ${setupName}`;
+      scoresTitle.textContent = \`\${paneName} • \${runName} (\${setupName})\`;
 
       const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
-      const layout = activePane==='marks' ? MARKS_LAYOUT : BLINDS_LAYOUT;
-      const defs   = activePane==='marks' ? FLAG_DEFS_MARKS : FLAG_DEFS_BLINDS;
 
       items.forEach((item, idx)=>{
         const card = document.createElement('div');
         card.className = 'score-card';
 
-        const head = document.createElement('div');
-        head.className = 'score-header';
         const title = document.createElement('div');
         title.className = 'score-title';
         title.textContent = activePane==='marks' ? markLabel(item, idx) : blindLabel(item, idx);
 
-        const tools = document.createElement('div');
-        tools.className = 'score-tools';
-        const gear = document.createElement('button');
-        gear.className = 'btn gear';
-        gear.type = 'button';
-        gear.textContent = '⚙ Flags';
-        gear.addEventListener('click', ()=>{
-          const flagsState = (bucket[item.id]?.flags) || {};
-          openWheel({
-            title: title.textContent,
-            pane: activePane,
-            itemId: item.id,
-            flags: flagsState,
-            layout,
-            defs
-          });
+        const flagBtn = document.createElement('button');
+        flagBtn.className = 'btn flag-trigger';
+        flagBtn.textContent = 'Flags';
+        flagBtn.addEventListener('click', ()=>{
+          openWheelForItem(activePane, item.id, title.textContent);
         });
-        tools.appendChild(gear);
 
         const sliderRow = document.createElement('div');
         sliderRow.className = 'slider-row';
         const slider = document.createElement('input');
-        slider.type = 'range';
-        slider.min = '0'; slider.max = '10'; slider.step = '0.5';
+        slider.type = 'range'; slider.min='0'; slider.max='10'; slider.step='0.5';
         const cur = bucket[item.id]?.score ?? 0;
         slider.value = String(cur);
         const out = document.createElement('div');
@@ -421,69 +415,201 @@
         });
         sliderRow.append(slider, out);
 
-        head.append(title, tools);
-        card.append(head, sliderRow);
+        card.append(title, flagBtn, sliderRow);
         scoreList.appendChild(card);
       });
+
+      rerunBtn.textContent = activeRunId==='rerun' ? 'Remove Rerun' : 'Add Rerun';
     }
+
     function renderScoresUIFromCurrentItems(){
       const items = activePane==='marks' ? setupItemsMarks : setupItemsBlinds;
       renderScoresUI(items);
     }
 
+    /* ---------------- Radial wheel behavior ---------------- */
+    const overlayEl = document.getElementById('flagOverlay');
+    const wheelEl   = document.querySelector('.wheel');
+    const wheelTitle= document.getElementById('wheelTitle');
+    const cancelWheelBtn = document.getElementById('cancelWheel');
+
+    let wheelCtx = { pane:'marks', itemId:null };
+
+    function placeButton(el, spot, index=0){
+      // Wheel geometry
+      const W = wheelEl.clientWidth, H = wheelEl.clientHeight;
+      const cx = W/2, cy = H/2;
+      const Rtop = 100, Rside = 110, Rbot = 100;
+
+      if (spot==='left') {
+        el.style.left = (cx - Rside) + 'px';
+        el.style.top  = (cy - 23) + 'px';
+      } else if (spot==='right') {
+        el.style.left = (cx + Rside - el.offsetWidth) + 'px';
+        el.style.top  = (cy - 23) + 'px';
+      } else if (spot.startsWith('top')) {
+        // four positions, evenly spaced
+        const offsets = [-90, -30, 30, 90];
+        const dx = offsets[index];
+        el.style.left = (cx + dx - el.offsetWidth/2) + 'px';
+        el.style.top  = (cy - Rtop - el.offsetHeight/2) + 'px';
+      } else if (spot.startsWith('bottom')) {
+        const offsets = [-90, -30, 30, 90];
+        const dx = offsets[index];
+        el.style.left = (cx + dx - el.offsetWidth/2) + 'px';
+        el.style.top  = (cy + Rbot - el.offsetHeight/2) + 'px';
+      }
+    }
+
+    function openWheelForItem(pane, itemId, titleText){
+      wheelCtx = { pane, itemId };
+      wheelTitle.textContent = titleText + ' — Flags';
+
+      // clear previous buttons
+      wheelEl.querySelectorAll('.rad-btn[data-flag]').forEach(n => n.remove());
+
+      const slots = wheelSlotsFor(pane);
+      const bucket = pane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
+      const fstate = (bucket[itemId]?.flags) || {};
+
+      // Create buttons
+      const makeBtn = (def) => {
+        const b = document.createElement('button');
+        b.className = 'rad-btn';
+        b.dataset.flag = def.key;
+        b.textContent = def.label;
+        if (fstate[def.key]) b.classList.add('active');
+        b.addEventListener('click', ()=>{
+          (bucket[itemId] ||= { score:0, flags:{} });
+          const on = !(bucket[itemId].flags[def.key]);
+          bucket[itemId].flags[def.key] = on;
+          b.classList.toggle('active', on);
+          scheduleSave();
+        });
+        wheelEl.appendChild(b);
+        // Let it render so offsetWidth is known before positioning
+        requestAnimationFrame(()=>{}); // no-op frame
+        return b;
+      };
+
+      const created = {
+        top:    slots.top.map(makeBtn),
+        bottom: slots.bottom.map(makeBtn),
+        left:   slots.left.map(makeBtn),
+        right:  slots.right.map(makeBtn),
+      };
+
+      // Position them
+      // Need a tick so sizes are measured
+      requestAnimationFrame(()=>{
+        created.left.forEach((b)=> placeButton(b, 'left'));
+        created.right.forEach((b)=> placeButton(b, 'right'));
+        created.top.forEach((b,i)=> placeButton(b, 'top', i));
+        created.bottom.forEach((b,i)=> placeButton(b, 'bottom', i));
+      });
+
+      overlayEl.classList.add('open');
+      overlayEl.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeWheel(){
+      overlayEl.classList.remove('open');
+      overlayEl.setAttribute('aria-hidden', 'true');
+    }
+    cancelWheelBtn.addEventListener('click', closeWheel);
+    overlayEl.addEventListener('click', (e)=>{ if (e.target === overlayEl) closeWheel(); });
+
+    /* ---------------- Rerun add/remove ---------------- */
+    rerunBtn.addEventListener('click', async ()=>{
+      if (!dog.id || !activeSetupId) return;
+      if (activeRunId === 'rerun') {
+        await Promise.allSettled([ deleteDoc(dogRunDoc()), deleteDoc(mirrorRunDoc()) ]);
+        activeRunId = 'base';
+        rerunExists = false;
+        renderTabs();
+        attachRunListeners();
+      } else {
+        const payload = {
+          scores: { marks:{}, blinds:{} },
+          trainer: trainerId, setupId: activeSetupId, runId: 'rerun',
+          dogId: dog.id, dogName: dog.name || null, dateKey: currentDateKey,
+          trailer: trailer, sex: sexNorm, slotId,
+          updatedAt: serverTimestamp()
+        };
+        await Promise.allSettled([
+          setDoc(dogRunDoc(), payload, {merge:true}),
+          setDoc(mirrorRunDoc(), payload, {merge:true})
+        ]);
+        activeRunId = 'rerun';
+        rerunExists = true;
+        renderTabs();
+        attachRunListeners();
+      }
+    });
+
     /* ---------------- Saving ---------------- */
+    document.getElementById('saveOnlyBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('saveOnlyBtn');
+      btn.disabled = true;
+      try { await saveNow(); }
+      finally { btn.disabled = false; }
+    });
+
     async function saveNow(){
-      if (!dog.id || !activeSetupId || !trainerId) return;
+      if (!dog.id || !activeSetupId) return;
       saveStatus.textContent = 'Saving…';
+
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name) || null;
       const payload = {
         scores,
         trainer: trainerId, setupId: activeSetupId, setupName,
         dogId: dog.id, dogName: dog.name || null,
-        runId: 'base',
+        runId: activeRunId,
         dateKey: currentDateKey,
-        trailer, sex, slotId,
+        trailer: trailer, sex: sexNorm, slotId,
         updatedAt: serverTimestamp()
       };
       try {
         await Promise.all([
           setDoc(dogRunDoc(), payload, { merge:true }),
           setDoc(mirrorRunDoc(), payload, { merge:true }),
-          setDoc(ratingsDayDoc(), { date: currentDateKey, trailer, sex, slotId, lastScoredAt: serverTimestamp(), trainer: trainerId }, { merge:true })
+          setDoc(ratingsDayDoc(), { date: currentDateKey, trailer, sex: sexNorm, slotId, lastScoredAt: serverTimestamp(), trainer: trainerId }, { merge:true })
         ]);
         saveStatus.textContent = 'Saved.';
-        setTimeout(()=>saveStatus.textContent='', 800);
+        setTimeout(()=>saveStatus.textContent='', 900);
       } catch (e) {
         console.error(e);
         saveStatus.textContent = 'Save failed.';
       }
     }
-    document.getElementById('saveOnlyBtn').addEventListener('click', async ()=>{
-      const b = document.getElementById('saveOnlyBtn'); b.disabled = true;
-      try { await saveNow(); } finally { b.disabled = false; }
-    });
+
     document.getElementById('saveCameraBtn').addEventListener('click', async ()=>{
       await saveNow();
       location.href = "https://morrowind4732.github.io/task-tracker/Camera.html";
     });
 
-    /* ---------------- Listeners: dog + setups + run ---------------- */
-    const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
-    onSnapshot(slotRef, async (snap)=>{
-      dog = { id:null, name:null };
-      if (snap.exists()) {
-        const data = snap.data() || {};
-        dog.name = data.dogName || null;
-        if (dog.name) dog.id = slug(dog.name);
-      }
-      if (trainerId) attachSetupsListener();
-    });
-
-    let unsubSetups=null, unsubSetupDoc=null, unsubScores=null;
+    /* ---------------- Listeners: dog, setups, runs ---------------- */
+    async function attachDogListener(){
+      onSnapshot(slotRef, async (snap)=>{
+        dog = { id:null, name:null, photo:null };
+        if (snap.exists()) {
+          const data = snap.data() || {};
+          dog.name = data.dogName || null;
+          if (dog.name) {
+            dog.id = slug(dog.name);
+            // optional: fetch profile photo if present
+            const pSnap = await getDoc( doc(db, "profiles", dog.id) );
+            if (pSnap.exists()) dog.photo = (pSnap.data()||{}).photo || null;
+          }
+        }
+        renderDogCard();
+        if (trainerId) attachSetupsListener();
+      });
+    }
 
     async function attachSetupsListener(){
       if (!trainerId) return;
-      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
+      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups = null; }
       const qy = query(setupsColl(), orderBy('order'));
       unsubSetups = onSnapshot(qy, async (snap)=>{
         const arr = [];
@@ -495,17 +621,18 @@
         if (!activeSetupId && setupsMeta.length) activeSetupId = setupsMeta[0].id;
         renderTabs();
         attachSetupDocListener();
-        attachScoresListener();
+        attachRunListeners();
       });
     }
 
     function attachSetupDocListener(){
       if (!activeSetupId) return;
-      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
-      unsubSetupDoc = onSnapshot(setupDoc(), (snap)=>{
+      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc = null; }
+      const ref = setupDoc();
+      unsubSetupDoc = onSnapshot(ref, (snap)=>{
         const data = snap.data()||{};
-        setupItemsMarks  = Array.isArray(data.items)  ? data.items.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
-        setupItemsBlinds = Array.isArray(data.blinds) ? data.blinds.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
+        setupItemsMarks  = Array.isArray(data.items)?  data.items.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
+        setupItemsBlinds = Array.isArray(data.blinds)? data.blinds.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
         renderScoresUIFromCurrentItems();
       });
     }
@@ -525,20 +652,34 @@
       return out;
     }
 
-    function attachScoresListener(){
-      if (unsubScores) { try{unsubScores();}catch{} unsubScores=null; }
+    function attachRunListeners(){
       if (!dog.id || !activeSetupId) return;
-      unsubScores = onSnapshot(dogRunDoc(), (snap)=>{
-        scores = normalizeScoresShape(snap.data());
+
+      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase = null; }
+      unsubScoreDocBase = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base"), (snap)=>{
+        if (activeRunId==='base') {
+          scores = normalizeScoresShape(snap.data());
+          renderScoresUIFromCurrentItems();
+        }
+      });
+
+      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun = null; }
+      unsubScoreDocRerun = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun"), (snap)=>{
+        rerunExists = snap.exists();
+        if (activeRunId==='rerun') {
+          scores = normalizeScoresShape(snap.data());
+        }
+        renderTabs();
         renderScoresUIFromCurrentItems();
       });
     }
 
-    async function setActiveSetup(id){
+    async function setActiveSetup(id, runId){
       activeSetupId = id;
+      activeRunId = runId || 'base';
       renderTabs();
       attachSetupDocListener();
-      attachScoresListener();
+      attachRunListeners();
       const snap = await getDoc(dogRunDoc());
       scores = normalizeScoresShape(snap.exists() ? snap.data() : null);
       renderScoresUIFromCurrentItems();
@@ -548,21 +689,30 @@
       currentDateKey = key;
       if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
       if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
-      if (unsubScores) { try{unsubScores();}catch{} unsubScores=null; }
+      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase=null; }
+      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun=null; }
 
       setupsMeta = [];
       activeSetupId = null;
+      activeRunId = 'base';
+      rerunExists = false;
       scores = { marks:{}, blinds:{} };
+      setupItemsMarks = [];
+      setupItemsBlinds = [];
       renderTabs();
-      scoreList.innerHTML = '';
+      renderScoresUI([]);
+
       if (trainerId) attachSetupsListener();
     }
 
     /* ---------------- Boot ---------------- */
-    (function boot(){
-      ctxEl.textContent = trainerId ? `Trainer: ${trainerId}` : 'Trainer not set';
-      switchDay(ymd(new Date()));
-    })();
+    async function boot(){
+      if (!trainerId) return showTrainerPrompt();
+      ctxEl.textContent = \`Trainer: \${trainerId}\`;
+      await switchDay(ymd(new Date()));
+      attachDogListener();
+    }
+    if (trainerId) boot(); else showTrainerPrompt();
   </script>
 </body>
 </html>
