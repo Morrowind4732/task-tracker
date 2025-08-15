@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Scoring V2 – Radial (Like Setups)</title>
+<title>Scoring V2 – Radial (Full Labels)</title>
 
 <style>
   :root { --gap:12px; --border:#ddd; --accent:#0b74ff; }
@@ -38,7 +38,7 @@
   }
   .score-header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .score-title { font-weight:700; }
-  .score-tools { display:flex; gap:8px; align-items:center; }
+  .score-tools { display:flex; gap:10px; align-items:center; }
   .slider-row { display:flex; align-items:center; gap:10px; }
   .slider-row input[type="range"] { flex:1; }
   .slider-val { width:48px; text-align:right; font-variant-numeric: tabular-nums; }
@@ -49,7 +49,7 @@
   .r-overlay.open { display:flex; }
   .r-wheel {
     position: relative;
-    width: 300px; height: 300px;
+    width: 340px; height: 340px;    /* bigger wheel for full labels */
     border-radius: 50%;
     background:#fff;
     border:1px solid var(--border);
@@ -58,28 +58,31 @@
   .r-center {
     position:absolute; left:50%; top:50%;
     transform:translate(-50%,-50%);
-    width: 120px; height:120px; border-radius:50%;
+    width: 140px; height:140px;     /* bigger cancel */
+    border-radius:50%;
     display:flex; align-items:center; justify-content:center;
     text-align:center; padding:10px;
-    background:#fafafa; border:2px solid #eee; font-weight:700;
+    background:#fafafa; border:2px solid #eee; font-weight:700; font-size:16px;
     cursor:pointer;
   }
   .r-item {
-    position:absolute; width:auto; max-width:120px;
-    border-radius:999px; padding:6px 10px;
-    border:1px solid #ddd; background:#fff; font-size:12px;
-    text-align:center; white-space:nowrap;
+    position:absolute;
+    max-width: 200px;               /* allow full names */
+    padding:10px 12px;              /* bigger pills */
+    border-radius:999px;
+    border:1px solid #ddd; background:#fff; font-size:14px; line-height:1.15;
+    text-align:center; white-space:normal;           /* allow wrap to 2 lines */
     box-shadow:0 6px 14px rgba(0,0,0,.10);
     cursor:pointer;
   }
   .r-item.active { background:var(--accent); color:#fff; border-color:var(--accent); }
   .r-caption {
     position:absolute; left:50%; top:10px; transform:translateX(-50%);
-    font-weight:700; font-size:14px;
+    font-weight:700; font-size:15px;
   }
 
-  /* Small gear */
-  .gear { padding:6px 8px; border-radius:8px; }
+  /* Bigger gear “Flags” button */
+  .gear { padding:12px 16px; border-radius:12px; font-size:16px; }
 </style>
 </head>
 <body>
@@ -162,7 +165,7 @@
     let saveTimer = null;
     function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
-    /* ---------------- Flags + layout mapping ---------------- */
+    /* ---------------- Flags (full labels) ---------------- */
     const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
@@ -186,32 +189,24 @@
       { key:'skipped',         label:'Skipped' },
     ];
 
-    // Place 10 “surround” positions like your setups wheel:
-    // top arc (4), left, right, bottom arc (4). Center is Cancel.
+    // 10 “surround” positions: top arc (4), left, right, bottom arc (4)
+    // Spaced for the larger wheel/pills.
     const POS10 = [
-      {dx:-100, dy:-110}, {dx:-40, dy:-120}, {dx: 40, dy:-120}, {dx:100, dy:-110}, // top 4
-      {dx:-140, dy:  0}, {dx: 140, dy:  0},                                        // left / right
-      {dx:-100, dy: 110}, {dx:-40, dy: 120}, {dx: 40, dy: 120}, {dx:100, dy: 110}, // bottom 4
+      {dx:-120, dy:-130}, {dx:-50, dy:-140}, {dx: 50, dy:-140}, {dx:120, dy:-130},
+      {dx:-160, dy:   0}, {dx: 160, dy:   0},
+      {dx:-120, dy: 130}, {dx:-50, dy: 140}, {dx: 50, dy: 140}, {dx:120, dy: 130},
     ];
 
-    // Short labels on the pills; full label is hover title
-    const SHORT = {
-      headswing:'HS', shortCheckDown:'SCD', overran:'OR', bigHunt:'BH',
-      handled:'HND', castRefusal:'CR', sitOnWhistle:'SOW', backSideOfGun:'BSG',
-      break:'BRK', skipped:'SKP',
-      poorInitial:'PI', scallop:'SCL', pickedUpPoison:'PUP', hunted:'HNT',
-      ignoredWhistle:'IW', failedDiversion:'FD'
-    };
-
+    // Layouts (keep 10 slots; null hides a slot)
     const MARKS_LAYOUT = [
-      'headswing','shortCheckDown','overran','bigHunt', // top 4
-      'break','skipped',                                // left/right
-      'handled','castRefusal','sitOnWhistle','backSideOfGun' // bottom 4
+      'headswing','shortCheckDown','overran','bigHunt',         // top 4
+      'break','skipped',                                        // left / right
+      'handled','castRefusal','sitOnWhistle','backSideOfGun'    // bottom 4
     ];
     const BLINDS_LAYOUT = [
-      'poorInitial','scallop','castRefusal','pickedUpPoison', // top 4
-      null, null,                                             // left/right hidden for 8 total
-      'hunted','ignoredWhistle','failedDiversion','skipped'   // bottom 4
+      'poorInitial','scallop','castRefusal','pickedUpPoison',   // top 4
+      null, null,                                               // left/right (unused)
+      'hunted','ignoredWhistle','failedDiversion','skipped'     // bottom 4
     ];
 
     /* ---------------- URL params ---------------- */
@@ -224,7 +219,6 @@
     const trailerNorm = trailer.toLowerCase();
     const sexNorm     = sex.toLowerCase();
 
-    // Change user link (just clears ?trainer=)
     document.getElementById('changeUserLink').addEventListener('click', (e)=>{
       e.preventDefault();
       const url = new URL(location.href);
@@ -322,7 +316,12 @@
 
     let currentWheelCtx = null; // { pane, itemId, flags, layout, defs }
 
-    function closeWheel(){ rOverlay.classList.remove('open'); rOverlay.setAttribute('aria-hidden','true'); rWheel.querySelectorAll('.r-item').forEach(n=>n.remove()); currentWheelCtx=null; }
+    function closeWheel(){
+      rOverlay.classList.remove('open');
+      rOverlay.setAttribute('aria-hidden','true');
+      rWheel.querySelectorAll('.r-item').forEach(n=>n.remove());
+      currentWheelCtx=null;
+    }
     rCancel.addEventListener('click', closeWheel);
     rOverlay.addEventListener('click', (e)=>{ if (e.target === rOverlay) closeWheel(); });
 
@@ -331,7 +330,8 @@
       rWheel.querySelectorAll('.r-item').forEach(n=>n.remove());
       currentWheelCtx = { pane, itemId, flags, layout, defs };
       rCaption.textContent = title || 'Flags';
-      // Build items
+
+      // Build items (FULL LABELS)
       for (let i=0;i<POS10.length;i++){
         const key = layout[i];
         if (!key) continue; // hidden slot (e.g., blinds left/right)
@@ -339,7 +339,7 @@
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'r-item';
-        btn.textContent = SHORT[key] || def?.label || key;
+        btn.textContent = def?.label || key;  // <— FULL DESCRIPTION
         btn.title = def?.label || key;
         const {dx,dy} = POS10[i];
         btn.style.left = '50%';
@@ -358,6 +358,7 @@
         });
         rWheel.appendChild(btn);
       }
+
       // Open
       rOverlay.classList.add('open');
       rOverlay.setAttribute('aria-hidden','false');
@@ -467,6 +468,7 @@
     });
 
     /* ---------------- Listeners: dog + setups + run ---------------- */
+    const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
     onSnapshot(slotRef, async (snap)=>{
       dog = { id:null, name:null };
       if (snap.exists()) {
