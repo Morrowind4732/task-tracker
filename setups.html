@@ -113,6 +113,10 @@
     .blind-item .opt span { display:inline; }
     .blind-slider { grid-column: 1 / -1; order: 99; }
   }
+  
+  .btn.danger { border-color:#f87171; color:#b91c1c; }
+.btn.danger:hover { background:#fee2e2; }
+
 </style>
 </head>
 <body>
@@ -141,8 +145,10 @@
         <label>Day: <input type="date" id="dayPicker"></label>
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
-      <div class="tabs" id="tabs"></div>
-      <button class="btn ghost" id="addSetupBtn">+ Add Setup</button>
+<div class="tabs" id="tabs"></div>
+<button class="btn ghost" id="addSetupBtn">+ Add Setup</button>
+<button class="btn ghost danger" id="deleteSetupBtn">– Delete Setup</button>
+
     </div>
   </div>
 
@@ -429,17 +435,20 @@ function setActiveSetup(id){
 
   const ref = setupDocRef(); if (!ref) return;
   unsubSetupDoc = ref.onSnapshot(async snap=>{
-    if (!snap.exists){
-      state = { items: [], columns:{ dock:[], cols:[{items:[]},{items:[]}] }, blinds: [] };
-      renderAll();
-      suppressSetupDocSnapshots = true;
-      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+    if (!snap.exists) {
+      // If the requested setup doesn't exist, switch to the first available.
+      const firstId = setupsMeta[0]?.id;
+      if (firstId && firstId !== activeSetupId) {
+        setActiveSetup(firstId);
+      }
+      // If there are no setups at all, attachSetupsListener will create one.
       return;
     }
-    const data = snap.data()||{};
 
-    // Items (Marks)
-    state.items = Array.isArray(data.items) ? data.items.map(it=>({
+    const data = snap.data() || {};
+
+    // ----- Items (Marks)
+    state.items = Array.isArray(data.items) ? data.items.map(it => ({
       id: it.id,
       dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
       options: Object.assign({
@@ -449,21 +458,25 @@ function setActiveSetup(id){
       }, it.options || {})
     })) : [];
 
-    // Columns (Marks)
+    // ----- Columns (Marks)
     let colsShape = data.columns;
     if (!colsShape) colsShape = { dock: [], cols: [{items:[]},{items:[]}] };
     if (Array.isArray(colsShape.cols) && colsShape.cols.every(el=>Array.isArray(el))){
       colsShape = { dock:Array.isArray(colsShape.dock)?colsShape.dock:[], cols: colsShape.cols.map(a=>({items:a.slice()})) };
     } else if (Array.isArray(colsShape.col1)) {
-      const legacyKeys = Object.keys(colsShape).filter(k=>k.startsWith('col')).sort((a,b)=>parseInt(a.replace('col',''))-parseInt(b.replace('col','')));
+      const legacyKeys = Object.keys(colsShape).filter(k=>k.startsWith('col'))
+        .sort((a,b)=>parseInt(a.replace('col',''))-parseInt(b.replace('col','')));
       colsShape = { dock:Array.isArray(colsShape.dock)?colsShape.dock:[], cols: legacyKeys.map(k=>({items:Array.isArray(colsShape[k])?colsShape[k]:[]})) };
     }
-    state.columns = { dock: Array.isArray(colsShape.dock)?colsShape.dock:[], cols: Array.isArray(colsShape.cols)?colsShape.cols:[{items:[]},{items:[]}] };
+    state.columns = {
+      dock: Array.isArray(colsShape.dock)?colsShape.dock:[],
+      cols: Array.isArray(colsShape.cols)?colsShape.cols:[{items:[]},{items:[]}]
+    };
     ensureMinColumns(2);
     ensureAllIdsPlaced();
 
-    // Blinds (NEW)
-    state.blinds = Array.isArray(data.blinds) ? data.blinds.map(bl=>({
+    // ----- Blinds
+    state.blinds = Array.isArray(data.blinds) ? data.blinds.map(bl => ({
       id: bl.id,
       dist: typeof bl.dist==='number' ? clampToStep(bl.dist) : 0,
       options: Object.assign({
@@ -474,6 +487,7 @@ function setActiveSetup(id){
     renderAll();
   });
 }
+
 
 // ---------- Switch day ----------
 async function switchDay(key){
@@ -809,6 +823,57 @@ document.getElementById('addSetupBtn').addEventListener('click', async () => {
   });
   localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, newDoc.id);
 });
+
+// Deep-delete helper for setups/<id>/scores/*/runs/*
+async function deleteSetupDeep(setupRef){
+  // Delete nested scores/*/runs/*
+  const scoresSnap = await setupRef.collection('scores').get();
+  for (const dogDoc of scoresSnap.docs) {
+    const runsSnap = await dogDoc.ref.collection('runs').get();
+    // batch delete runs for this dog
+    if (!runsSnap.empty) {
+      const batch = db.batch();
+      runsSnap.forEach(r => batch.delete(r.ref));
+      await batch.commit();
+    }
+    await dogDoc.ref.delete();
+  }
+  // Delete the setup doc itself
+  await setupRef.delete();
+}
+
+document.getElementById('deleteSetupBtn').addEventListener('click', async () => {
+  if (!activeSetupId) return;
+
+  // Don't allow deleting the last setup
+  if (setupsMeta.length <= 1) {
+    alert('You must have at least one setup. Add another before deleting this one.');
+    return;
+  }
+
+  const meta = setupsMeta.find(s => s.id === activeSetupId) || { name: 'Setup' };
+  const ok = confirm(`Delete "${meta.name}"?\nThis will also remove its marks/blinds and any saved scores for this setup.`);
+  if (!ok) return;
+
+  const ref = setupDocRef(); // setups/<trainer>/days/<date>/setups/<activeSetupId>
+  try {
+    await deleteSetupDeep(ref);
+
+    // Choose a new active setup (first remaining by order)
+    const remaining = setupsMeta.filter(s => s.id !== activeSetupId)
+                                .sort((a,b)=>(a.order??0)-(b.order??0));
+    if (remaining.length) {
+      const next = remaining[0].id;
+      localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, next);
+      setActiveSetup(next);
+    
+    }
+  } catch (e) {
+    console.error('Delete setup failed:', e);
+    alert('Sorry, deleting this setup failed. Check the console for details.');
+  }
+});
+
 
 // ---------- Boot ----------
 async function boot(){
