@@ -3,35 +3,34 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Scoring V2 (Radial)</title>
+<title>Scoring V2 – Radial (Like Setups)</title>
 
 <style>
-  :root { --gap:12px; --border:#ddd; --chip-bg:#f7f7f7; --accent:#0b74ff; }
+  :root { --gap:12px; --border:#ddd; --accent:#0b74ff; }
   body { font-family: system-ui, sans-serif; margin: 16px; background:#f5f5f5; }
   .title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .mini-link { font-size:12px; color:var(--accent); text-decoration:underline; }
   .mini-link:visited { color:var(--accent); }
   .muted { color:#666; font-size:12px; }
-
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
-  /* Tabs (setups) */
+  /* Tabs / day */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
   .tab { padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
   .tab:hover { background:#fdfdfd; }
 
-  /* Mini pane tabs (Marks/Blinds) */
+  /* Mini pane tabs */
   .mini-tabs { display:flex; gap:6px; align-items:center; }
   .mini-tab { padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f7f7f7; font-weight:600; cursor:pointer; }
-  .mini-tab.active { background:#fff; border-color:#bbb; box-shadow:0 1px 0 rgba(0,0,0,.05); }
+  .mini-tab.active { background:#fff; border-color:#bbb; }
 
-  /* Score list */
+  /* Score cards */
   .score-list { display:flex; flex-direction:column; gap:12px; }
   .score-card {
     border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
@@ -39,44 +38,53 @@
   }
   .score-header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .score-title { font-weight:700; }
+  .score-tools { display:flex; gap:8px; align-items:center; }
   .slider-row { display:flex; align-items:center; gap:10px; }
   .slider-row input[type="range"] { flex:1; }
   .slider-val { width:48px; text-align:right; font-variant-numeric: tabular-nums; }
   .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
 
-  /* Radial menu */
-  .radial {
+  /* ---------- Radial overlay (like setups wheel) ---------- */
+  .r-overlay { position:fixed; inset:0; background:rgba(0,0,0,.28); display:none; align-items:center; justify-content:center; z-index:9999; }
+  .r-overlay.open { display:flex; }
+  .r-wheel {
     position: relative;
-    width: 300px;
-    height: 220px;
-    margin: 6px auto 4px;
-    border-radius: 16px;
-    background: #fff;
-    border: 1px dashed #e8e8e8;
-  }
-  .rbtn {
-    position: absolute;
-    left: 50%; top: 50%;
-    transform: translate(-50%, -50%); /* base, we add the offset in style attr */
-    padding: 6px 10px;
-    border-radius: 999px;
-    border:1px solid #ccc;
+    width: 300px; height: 300px;
+    border-radius: 50%;
     background:#fff;
-    font-size: 12px;
-    white-space: nowrap;
-    user-select:none;
+    border:1px solid var(--border);
+    box-shadow:0 12px 30px rgba(0,0,0,.25);
   }
-  .rbtn[hidden] { display:none !important; }
-  .rbtn.active { background: var(--accent); color:#fff; border-color: var(--accent); }
-  .rbtn:focus { outline: 2px solid #a3c8ff; outline-offset: 2px; }
+  .r-center {
+    position:absolute; left:50%; top:50%;
+    transform:translate(-50%,-50%);
+    width: 120px; height:120px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:10px;
+    background:#fafafa; border:2px solid #eee; font-weight:700;
+    cursor:pointer;
+  }
+  .r-item {
+    position:absolute; width:auto; max-width:120px;
+    border-radius:999px; padding:6px 10px;
+    border:1px solid #ddd; background:#fff; font-size:12px;
+    text-align:center; white-space:nowrap;
+    box-shadow:0 6px 14px rgba(0,0,0,.10);
+    cursor:pointer;
+  }
+  .r-item.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .r-caption {
+    position:absolute; left:50%; top:10px; transform:translateX(-50%);
+    font-weight:700; font-size:14px;
+  }
 
-  .score-head { margin-bottom: 10px; display:grid; grid-template-columns: 1fr auto; align-items:center; gap:8px; }
-  #scoresTitle { font-weight:700; }
+  /* Small gear */
+  .gear { padding:6px 8px; border-radius:8px; }
 </style>
 </head>
 <body>
   <div class="title-row">
-    <h1 style="margin:0">Scoring V2</h1>
+    <h1 style="margin:0">Scoring V2 (Radial)</h1>
     <a id="changeUserLink" class="mini-link" href="#">change user</a>
   </div>
   <div class="muted" id="ctx">Loading…</div>
@@ -94,7 +102,7 @@
 
   <!-- Scores -->
   <div class="section" id="scoresSection">
-    <div class="score-head">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:8px;">
       <strong id="scoresTitle">—</strong>
       <div class="mini-tabs" id="paneTabs">
         <button class="mini-tab active" data-pane="marks">Marks</button>
@@ -103,11 +111,21 @@
     </div>
 
     <div class="score-list" id="scoreList"></div>
+
     <div class="actions" style="margin-top:10px">
       <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
       <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
       <button class="btn" id="saveOnlyBtn">💾 Save</button>
       <span class="muted" id="saveStatus"></span>
+    </div>
+  </div>
+
+  <!-- Radial overlay (shared for all items) -->
+  <div id="radialOverlay" class="r-overlay" aria-hidden="true">
+    <div class="r-wheel">
+      <div class="r-caption" id="rCaption">Flags</div>
+      <button class="r-center" id="rCancel" type="button">Cancel</button>
+      <!-- buttons injected here -->
     </div>
   </div>
 
@@ -141,27 +159,10 @@
         .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
     }
     const SAVE_DEBOUNCE_MS = 300;
+    let saveTimer = null;
+    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
-    /* ---------------- Flags & layout ---------------- */
-    // 10 positions: Top 4, Bottom 4, Left, Right
-    // We'll physically place as: top[0..3], left, right, bottom[0..3]
-    const POS10 = [
-      {dx:-105, dy:-84}, {dx:-35, dy:-84}, {dx:35, dy:-84}, {dx:105, dy:-84}, // top 4
-      {dx:-145, dy:0}, {dx:145, dy:0},                                       // left, right
-      {dx:-105, dy:84}, {dx:-35, dy:84}, {dx:35, dy:84}, {dx:105, dy:84},    // bottom 4
-    ];
-
-    // Short codes for compact buttons (title has full label)
-    const SHORT = {
-      // marks
-      headswing:'HS', shortCheckDown:'SCD', overran:'OR', bigHunt:'BH',
-      handled:'HND', castRefusal:'CR', sitOnWhistle:'SOW', backSideOfGun:'BSG',
-      break:'BRK', skipped:'SKP',
-      // blinds
-      poorInitial:'PI', scallop:'SCL', pickedUpPoison:'PUP', hunted:'HNT',
-      ignoredWhistle:'IW', failedDiversion:'FD'
-    };
-
+    /* ---------------- Flags + layout mapping ---------------- */
     const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
@@ -174,7 +175,6 @@
       { key:'break',           label:'Break' },
       { key:'skipped',         label:'Skipped' },
     ];
-
     const FLAG_DEFS_BLINDS = [
       { key:'poorInitial',     label:'Poor Initial' },
       { key:'scallop',         label:'Scallop' },
@@ -186,17 +186,32 @@
       { key:'skipped',         label:'Skipped' },
     ];
 
-    // Layout map: which keys go where on the 10 slots
+    // Place 10 “surround” positions like your setups wheel:
+    // top arc (4), left, right, bottom arc (4). Center is Cancel.
+    const POS10 = [
+      {dx:-100, dy:-110}, {dx:-40, dy:-120}, {dx: 40, dy:-120}, {dx:100, dy:-110}, // top 4
+      {dx:-140, dy:  0}, {dx: 140, dy:  0},                                        // left / right
+      {dx:-100, dy: 110}, {dx:-40, dy: 120}, {dx: 40, dy: 120}, {dx:100, dy: 110}, // bottom 4
+    ];
+
+    // Short labels on the pills; full label is hover title
+    const SHORT = {
+      headswing:'HS', shortCheckDown:'SCD', overran:'OR', bigHunt:'BH',
+      handled:'HND', castRefusal:'CR', sitOnWhistle:'SOW', backSideOfGun:'BSG',
+      break:'BRK', skipped:'SKP',
+      poorInitial:'PI', scallop:'SCL', pickedUpPoison:'PUP', hunted:'HNT',
+      ignoredWhistle:'IW', failedDiversion:'FD'
+    };
+
     const MARKS_LAYOUT = [
       'headswing','shortCheckDown','overran','bigHunt', // top 4
-      'break','skipped',                                // left, right
-      'handled','castRefusal','sitOnWhistle','backSideOfGun', // bottom 4
+      'break','skipped',                                // left/right
+      'handled','castRefusal','sitOnWhistle','backSideOfGun' // bottom 4
     ];
-    // Blinds have 8 -> fill top/bottom; hide left/right
     const BLINDS_LAYOUT = [
-      'poorInitial','scallop','castRefusal','pickedUpPoison', // top
-      null,null,                                              // left/right hidden
-      'hunted','ignoredWhistle','failedDiversion','skipped'   // bottom
+      'poorInitial','scallop','castRefusal','pickedUpPoison', // top 4
+      null, null,                                             // left/right hidden for 8 total
+      'hunted','ignoredWhistle','failedDiversion','skipped'   // bottom 4
     ];
 
     /* ---------------- URL params ---------------- */
@@ -209,22 +224,21 @@
     const trailerNorm = trailer.toLowerCase();
     const sexNorm     = sex.toLowerCase();
 
-    // Trainer switcher
-    const changeUserLink = document.getElementById('changeUserLink');
-    changeUserLink.addEventListener('click', (e) => {
+    // Change user link (just clears ?trainer=)
+    document.getElementById('changeUserLink').addEventListener('click', (e)=>{
       e.preventDefault();
       const url = new URL(location.href);
       url.searchParams.delete('trainer');
       history.replaceState(null, '', url.toString());
       trainerId = '';
-      ctxEl.textContent = 'Pick a trainer by adding ?trainer=NAME to the URL.';
+      ctxEl.textContent = 'Trainer not set (add ?trainer=NAME in URL).';
     });
 
     if (!trailer || !sex || !slotNum) {
       document.getElementById('scoresSection').innerHTML = '<div class="muted">Missing trailer, sex, or slot in URL.</div>';
       throw new Error('Missing QR params');
     }
-    if (!trainerId) ctxEl.textContent = 'Trainer: (not set)'; else ctxEl.textContent = `Trainer: ${trainerId}`;
+    ctxEl.textContent = trainerId ? `Trainer: ${trainerId}` : 'Trainer not set';
 
     /* ---------------- Day + setups ---------------- */
     const dayPicker = document.getElementById('dayPicker');
@@ -237,9 +251,9 @@
     let currentDateKey = dayPicker.value;
     let setupsMeta = [];       // [{id,name,order}]
     let activeSetupId = null;  // setup doc id
-    let activePane    = 'marks'; // 'marks' | 'blinds'
+    let activePane = 'marks';  // marks | blinds
 
-    // current dog from slot (same as V1 behavior)
+    // current dog from slot
     const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
     const sexPrefix     = sexNorm.charAt(0).toUpperCase();
     const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
@@ -266,9 +280,8 @@
     let setupItemsMarks = [];
     let setupItemsBlinds = [];
     let scores = { marks:{}, blinds:{} };
-    let saveTimer = null;
-    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
+    /* ---------------- Tabs / panes ---------------- */
     function renderTabs(){
       tabsEl.innerHTML = '';
       setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
@@ -279,7 +292,6 @@
         tabsEl.appendChild(b);
       });
     }
-
     paneTabs.addEventListener('click', (e)=>{
       const btn = e.target.closest('.mini-tab'); if (!btn) return;
       const pane = btn.dataset.pane;
@@ -290,43 +302,65 @@
       }
     });
 
+    /* ---------------- Cards + radial wheel ---------------- */
     function markLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `#${n} • ${dist}y`;
+      return `Mark #${n} • ${dist}y`;
     }
     function blindLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `#${n} • ${dist}y`;
+      return `Blind #${n} • ${dist}y`;
     }
 
-    function makeRadial(container, layoutKeys, flagsState, onToggle){
-      // ensure flags object
-      const flags = flagsState || {};
+    // Shared overlay
+    const rOverlay = document.getElementById('radialOverlay');
+    const rWheel   = rOverlay.querySelector('.r-wheel');
+    const rCancel  = document.getElementById('rCancel');
+    const rCaption = document.getElementById('rCaption');
+
+    let currentWheelCtx = null; // { pane, itemId, flags, layout, defs }
+
+    function closeWheel(){ rOverlay.classList.remove('open'); rOverlay.setAttribute('aria-hidden','true'); rWheel.querySelectorAll('.r-item').forEach(n=>n.remove()); currentWheelCtx=null; }
+    rCancel.addEventListener('click', closeWheel);
+    rOverlay.addEventListener('click', (e)=>{ if (e.target === rOverlay) closeWheel(); });
+
+    function openWheel({ title, pane, itemId, flags, layout, defs }){
+      // Clean last
+      rWheel.querySelectorAll('.r-item').forEach(n=>n.remove());
+      currentWheelCtx = { pane, itemId, flags, layout, defs };
+      rCaption.textContent = title || 'Flags';
+      // Build items
       for (let i=0;i<POS10.length;i++){
-        const defKey = layoutKeys[i];
+        const key = layout[i];
+        if (!key) continue; // hidden slot (e.g., blinds left/right)
+        const def = defs.find(d=>d.key===key);
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'rbtn';
+        btn.className = 'r-item';
+        btn.textContent = SHORT[key] || def?.label || key;
+        btn.title = def?.label || key;
         const {dx,dy} = POS10[i];
-        btn.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px)`;
-        if (!defKey) {
-          btn.hidden = true;
-        } else {
-          const fullLabel = (FLAG_DEFS_MARKS.find(f=>f.key===defKey)?.label) || (FLAG_DEFS_BLINDS.find(f=>f.key===defKey)?.label) || defKey;
-          btn.title = fullLabel;
-          btn.textContent = SHORT[defKey] || fullLabel;
-          if (flags[defKey]) btn.classList.add('active');
-          btn.addEventListener('click', ()=>{
-            const newVal = !flags[defKey];
-            flags[defKey] = newVal;
-            btn.classList.toggle('active', newVal);
-            onToggle(defKey, newVal);
-          });
-        }
-        container.appendChild(btn);
+        btn.style.left = '50%';
+        btn.style.top  = '50%';
+        btn.style.transform = `translate(-50%,-50%) translate(${dx}px, ${dy}px)`;
+        if (flags[key]) btn.classList.add('active');
+        btn.addEventListener('click', ()=>{
+          const newVal = !flags[key];
+          flags[key] = newVal;
+          btn.classList.toggle('active', newVal);
+          // persist to state and debounce save
+          const bucket = pane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
+          (bucket[itemId] ||= { score:0, flags:{} });
+          bucket[itemId].flags[key] = newVal;
+          scheduleSave();
+        });
+        rWheel.appendChild(btn);
       }
+      // Open
+      rOverlay.classList.add('open');
+      rOverlay.setAttribute('aria-hidden','false');
     }
 
     function renderScoresUI(items){
@@ -337,6 +371,7 @@
 
       const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
       const layout = activePane==='marks' ? MARKS_LAYOUT : BLINDS_LAYOUT;
+      const defs   = activePane==='marks' ? FLAG_DEFS_MARKS : FLAG_DEFS_BLINDS;
 
       items.forEach((item, idx)=>{
         const card = document.createElement('div');
@@ -347,6 +382,25 @@
         const title = document.createElement('div');
         title.className = 'score-title';
         title.textContent = activePane==='marks' ? markLabel(item, idx) : blindLabel(item, idx);
+
+        const tools = document.createElement('div');
+        tools.className = 'score-tools';
+        const gear = document.createElement('button');
+        gear.className = 'btn gear';
+        gear.type = 'button';
+        gear.textContent = '⚙ Flags';
+        gear.addEventListener('click', ()=>{
+          const flagsState = (bucket[item.id]?.flags) || {};
+          openWheel({
+            title: title.textContent,
+            pane: activePane,
+            itemId: item.id,
+            flags: flagsState,
+            layout,
+            defs
+          });
+        });
+        tools.appendChild(gear);
 
         const sliderRow = document.createElement('div');
         sliderRow.className = 'slider-row';
@@ -366,22 +420,11 @@
         });
         sliderRow.append(slider, out);
 
-        const radial = document.createElement('div');
-        radial.className = 'radial';
-
-        const flagsState = (bucket[item.id]?.flags) || {};
-        makeRadial(radial, layout, flagsState, (key, val)=>{
-          (bucket[item.id] ||= { score:0, flags:{} });
-          bucket[item.id].flags[key] = val;
-          scheduleSave();
-        });
-
-        head.append(title);
-        card.append(head, sliderRow, radial);
+        head.append(title, tools);
+        card.append(head, sliderRow);
         scoreList.appendChild(card);
       });
     }
-
     function renderScoresUIFromCurrentItems(){
       const items = activePane==='marks' ? setupItemsMarks : setupItemsBlinds;
       renderScoresUI(items);
@@ -391,7 +434,6 @@
     async function saveNow(){
       if (!dog.id || !activeSetupId || !trainerId) return;
       saveStatus.textContent = 'Saving…';
-
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name) || null;
       const payload = {
         scores,
@@ -415,7 +457,6 @@
         saveStatus.textContent = 'Save failed.';
       }
     }
-
     document.getElementById('saveOnlyBtn').addEventListener('click', async ()=>{
       const b = document.getElementById('saveOnlyBtn'); b.disabled = true;
       try { await saveNow(); } finally { b.disabled = false; }
@@ -425,24 +466,22 @@
       location.href = "https://morrowind4732.github.io/task-tracker/Camera.html";
     });
 
-    /* ---------------- Listeners ---------------- */
-    async function attachDogListener(){
-      onSnapshot(slotRef, async (snap)=>{
-        dog = { id:null, name:null };
-        if (snap.exists()) {
-          const data = snap.data() || {};
-          dog.name = data.dogName || null;
-          if (dog.name) dog.id = slug(dog.name);
-        }
-        if (trainerId) attachSetupsListener();
-      });
-    }
+    /* ---------------- Listeners: dog + setups + run ---------------- */
+    onSnapshot(slotRef, async (snap)=>{
+      dog = { id:null, name:null };
+      if (snap.exists()) {
+        const data = snap.data() || {};
+        dog.name = data.dogName || null;
+        if (dog.name) dog.id = slug(dog.name);
+      }
+      if (trainerId) attachSetupsListener();
+    });
 
-    let unsubSetups = null, unsubSetupDoc = null, unsubScores = null;
+    let unsubSetups=null, unsubSetupDoc=null, unsubScores=null;
 
     async function attachSetupsListener(){
       if (!trainerId) return;
-      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups = null; }
+      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
       const qy = query(setupsColl(), orderBy('order'));
       unsubSetups = onSnapshot(qy, async (snap)=>{
         const arr = [];
@@ -460,12 +499,11 @@
 
     function attachSetupDocListener(){
       if (!activeSetupId) return;
-      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc = null; }
-      const ref = setupDoc();
-      unsubSetupDoc = onSnapshot(ref, (snap)=>{
+      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
+      unsubSetupDoc = onSnapshot(setupDoc(), (snap)=>{
         const data = snap.data()||{};
-        setupItemsMarks = Array.isArray(data.items)? data.items.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
-        setupItemsBlinds = Array.isArray(data.blinds)? data.blinds.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
+        setupItemsMarks  = Array.isArray(data.items)  ? data.items.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
+        setupItemsBlinds = Array.isArray(data.blinds) ? data.blinds.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
         renderScoresUIFromCurrentItems();
       });
     }
@@ -486,7 +524,7 @@
     }
 
     function attachScoresListener(){
-      if (unsubScores) { try{unsubScores();}catch{} unsubScores = null; }
+      if (unsubScores) { try{unsubScores();}catch{} unsubScores=null; }
       if (!dog.id || !activeSetupId) return;
       unsubScores = onSnapshot(dogRunDoc(), (snap)=>{
         scores = normalizeScoresShape(snap.data());
@@ -519,12 +557,10 @@
     }
 
     /* ---------------- Boot ---------------- */
-    async function boot(){
+    (function boot(){
       ctxEl.textContent = trainerId ? `Trainer: ${trainerId}` : 'Trainer not set';
-      await switchDay(ymd(new Date()));
-      attachDogListener();
-    }
-    boot();
+      switchDay(ymd(new Date()));
+    })();
   </script>
 </body>
 </html>
