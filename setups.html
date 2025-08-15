@@ -16,6 +16,19 @@
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
+  /* Trainer picker overlay */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.4);
+    display: none; align-items: center; justify-content: center; z-index: 99999;
+  }
+  .overlay.open { display: flex; }
+  .overlay-card {
+    background: #fff; padding: 18px; border-radius: 12px; min-width: 280px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.2); border: 1px solid #e5e5e5;
+  }
+  .overlay-card h3 { margin: 0 0 10px; }
+  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content: space-between; }
+
   /* Tabs (browser style) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
@@ -24,9 +37,7 @@
     border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px;
     background:#f6f6f6; cursor:pointer; font-weight:600; color:#444;
   }
-  .tab.active {
-    background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset;
-  }
+  .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
   .tab:hover { background:#fdfdfd; }
   .tab-add { margin-left:4px; }
 
@@ -63,7 +74,7 @@
     .mark-label { grid-column: 1 / -1; }
     .opt-cell { text-align:left; }
     .opt { justify-content:flex-start; }
-    .opt span { display:inline; }      /* show label text on phones */
+    .opt span { display:inline; } /* show label text on phones */
     .slider-wrap { grid-column: 1 / -1; order: 99; }
   }
 
@@ -79,11 +90,32 @@
   .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow: 0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
+  
+  .title-row { display:flex; align-items:center; gap:10px; }
+.mini-link { font-size:12px; color:#0b74ff; text-decoration:underline; }
+.mini-link:visited { color:#0b74ff; }
+
 </style>
 </head>
 <body>
+<div class="title-row">
   <h1>Setups – Marks</h1>
-  <div class="muted" id="ctx">Loading…</div>
+  <a class="mini-link" href="https://morrowind4732.github.io/task-tracker/setups.html">change user</a>
+</div>
+<div class="muted" id="ctx">Loading…</div>
+
+
+  <!-- Trainer chooser overlay -->
+  <div class="overlay" id="trainerOverlay">
+    <div class="overlay-card">
+      <h3>Who are you?</h3>
+      <div class="overlay-actions">
+        <button class="btn primary" data-trainer="Scott">Scott</button>
+        <button class="btn primary" data-trainer="Cody">Cody</button>
+        <button class="btn primary" data-trainer="Brian">Brian</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Tabs -->
   <div class="section">
@@ -156,43 +188,69 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-// ---------- Params ----------
-const params = new URL(location.href).searchParams;
-const trainer = params.get('trainer') || 'default';
-document.getElementById('ctx').textContent = `Trainer: ${trainer}`;
+// ---------- UI refs ----------
+const ctxEl  = document.getElementById('ctx');
+const overlay = document.getElementById('trainerOverlay');
+overlay.addEventListener('click', (e) => {
+  // prevent closing when clicking card
+  if (e.target === overlay) e.stopPropagation();
+});
 
 // ---------- Date handling ----------
-function ymd(d) {
-  const pad = n => String(n).padStart(2,'0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-}
+function ymd(d){ const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 const dayPicker = document.getElementById('dayPicker');
 const todayBtn  = document.getElementById('todayBtn');
 const localToday = new Date();
 dayPicker.value = ymd(localToday);
 todayBtn.addEventListener('click', () => { dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
-
 let currentDateKey = dayPicker.value;
 
-// ---------- Firestore refs ----------
-const dayDocPath = () => db.collection('setups').doc(trainer).collection('days').doc(currentDateKey);
+// ---------- Trainer selection ----------
+const params = new URL(location.href).searchParams;
+let trainerId = params.get('trainer');     // e.g., "Scott", "Cody", "Brian"
+let trainerName = trainerId || '';         // display name; use same string so we don't break old docs
+
+function setTrainer(name) {
+  trainerId = name;
+  trainerName = name;
+  ctxEl.textContent = `Trainer: ${trainerName}`;
+  // Put ?trainer=name in the URL without reloading
+  const url = new URL(location.href);
+  url.searchParams.set('trainer', trainerId);
+  history.replaceState(null, '', url.toString());
+  // Start the app for this trainer
+  initForTrainer();
+}
+
+function showTrainerPrompt() {
+  overlay.classList.add('open');
+  overlay.querySelectorAll('button[data-trainer]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      overlay.classList.remove('open');
+      setTrainer(btn.dataset.trainer);
+    }, { once:true });
+  });
+}
+
+// ---------- Firestore refs (depend on trainerId) ----------
+const dayDocPath = () => db.collection('setups').doc(trainerId).collection('days').doc(currentDateKey);
 const setupsColl = () => dayDocPath().collection('setups');
-const oldSingleDoc = () => dayDocPath().collection('configs').doc('marks'); // for migration
+const oldSingleDoc = () => dayDocPath().collection('configs').doc('marks'); // migration from old single-setup
 const setupDocRef = () => (activeSetupId ? setupsColl().doc(activeSetupId) : null);
 
 // ---------- Tabs state ----------
 let setupsMeta = [];  // [{id, name, order}]
 let activeSetupId = null;
 
-// ---------- Setup-level state (the content of one tab) ----------
+// ---------- Setup-level state ----------
 let state = { items: [], columns: { dock: [], cols: [] } };
 
 // ---------- Snapshot control ----------
-let unsubSetups = null;          // listener for tabs list
-let unsubSetupDoc = null;        // listener for active tab document
+let unsubSetups = null;          // listener for setups list
+let unsubSetupDoc = null;        // listener for active setup
 let suppressSetupDocSnapshots = false;
 
-// ---------- DOM ----------
+// ---------- DOM refs ----------
 const tabsEl = document.getElementById('tabs');
 const dock  = document.getElementById('dock');
 const board = document.getElementById('board');
@@ -225,7 +283,7 @@ function markTextFrom(id){
   return `#${number} - ${dist} yards`;
 }
 
-// Chip label = base + short flags
+// Chip label = base + short flags (HT/GO/WC/RT)
 function chipTextFrom(id){
   const base = markTextFrom(id);
   const item = byId(id);
@@ -234,7 +292,7 @@ function chipTextFrom(id){
   const codes = [];
   if (o.handTossed) codes.push('HT');
   if (o.goBird)     codes.push('GO');
-  if (o.whiteCoat)  codes.push('WT');
+  if (o.whiteCoat)  codes.push('WC'); // WC per your correction
   if (o.retire)     codes.push('RT');
   return codes.length ? `${base} ${codes.join(' ')}` : base;
 }
@@ -275,13 +333,14 @@ async function save() {
   if (!ref) return;
   ensureAllIdsPlaced();
   await ref.set({
-    name: currentSetupName(),       // keep name
-    order: currentSetupOrder(),     // keep order
+    name: currentSetupName(),
+    order: currentSetupOrder(),
     items: state.items,
     columns: { dock: state.columns.dock, cols: state.columns.cols },
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     dateKey: currentDateKey,
-    trainer
+    trainer: trainerId,
+    trainerName
   }, { merge: true });
 }
 
@@ -326,14 +385,14 @@ async function attachSetupsListener() {
         order,
         items: Array.isArray(old.data().items) ? old.data().items : [],
         columns: old.data().columns || { dock: [], cols: [{items:[]},{items:[]}] },
-        trainer, dateKey: currentDateKey,
+        trainer: trainerId, trainerName, dateKey: currentDateKey,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       } : {
         name: 'Setup 1',
         order,
         items: [],
         columns: { dock: [], cols: [{items:[]},{items:[]}] },
-        trainer, dateKey: currentDateKey,
+        trainer: trainerId, trainerName, dateKey: currentDateKey,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       };
       await newDoc.set(setupData);
@@ -343,7 +402,7 @@ async function attachSetupsListener() {
     renderTabs();
 
     // Restore previously active tab (per trainer/day), or pick first
-    const lsKey = `activeSetup:${trainer}:${currentDateKey}`;
+    const lsKey = `activeSetup:${trainerId}:${currentDateKey}`;
     const wanted = localStorage.getItem(lsKey);
     const exists = setupsMeta.some(s => s.id === wanted);
     const firstId = setupsMeta[0]?.id;
@@ -353,9 +412,9 @@ async function attachSetupsListener() {
 }
 
 // ---------- Active setup doc listener ----------
-function setActiveSetup(id, { fromList=false } = {}) {
+function setActiveSetup(id) {
   activeSetupId = id;
-  localStorage.setItem(`activeSetup:${trainer}:${currentDateKey}`, id);
+  localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, id);
   renderTabs();
 
   if (unsubSetupDoc) { try { unsubSetupDoc(); } catch(e){} unsubSetupDoc = null; }
@@ -388,17 +447,15 @@ function setActiveSetup(id, { fromList=false } = {}) {
       }, it.options || {})
     })) : [];
 
-    // Columns (handle legacy shapes)
+    // Columns (normalize)
     let colsShape = data.columns;
     if (!colsShape) colsShape = { dock: [], cols: [{items:[]},{items:[]}] };
-    // Normalize to { dock:[], cols:[{items:[]},...] }
     if (Array.isArray(colsShape.cols) && colsShape.cols.every(el => Array.isArray(el))) {
       colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: colsShape.cols.map(a => ({ items: a.slice() })) };
     } else if (Array.isArray(colsShape.col1)) {
       const legacyKeys = Object.keys(colsShape).filter(k=>k.startsWith('col')).sort((a,b)=>parseInt(a.replace('col',''))-parseInt(b.replace('col','')));
       colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: legacyKeys.map(k => ({ items: Array.isArray(colsShape[k])? colsShape[k]:[] })) };
     }
-
     state.columns = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: Array.isArray(colsShape.cols) ? colsShape.cols : [{items:[]},{items:[]}] };
 
     ensureMinColumns(2);
@@ -410,6 +467,7 @@ function setActiveSetup(id, { fromList=false } = {}) {
 // ---------- Switch day ----------
 async function switchDay(key) {
   currentDateKey = key;
+  // reset listeners/state
   if (unsubSetups) { try { unsubSetups(); } catch(e){} unsubSetups = null; }
   if (unsubSetupDoc) { try { unsubSetupDoc(); } catch(e){} unsubSetupDoc = null; }
   setupsMeta = [];
@@ -419,7 +477,6 @@ async function switchDay(key) {
   renderTabs();
   await attachSetupsListener();
 }
-
 dayPicker.addEventListener('change', () => switchDay(dayPicker.value));
 
 // ---------- UI: Marks ----------
@@ -460,14 +517,12 @@ function renderMarksList() {
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Option checkboxes
+    // Options
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
-
       const lab = document.createElement('label');
       lab.className = 'opt';
-
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.checked = !!item.options[key];
@@ -479,22 +534,15 @@ function renderMarksList() {
           const sum = optionsSummary(item.id); c.title = sum || '';
         });
         suppressSetupDocSnapshots = true;
-        await save().finally(()=>{ suppressSetupDocSnapshots = false; });
+        await save().finally(()=>{ suppressSetupDocSnapshots=false; });
       });
-
-      const txt = document.createElement('span');
-      txt.textContent = optLabel;
-
-      lab.append(cb, txt);
-      cell.appendChild(lab);
-      return cell;
+      const txt = document.createElement('span'); txt.textContent = optLabel;
+      lab.append(cb, txt); cell.appendChild(lab); return cell;
     });
 
     // Delete mark
     const del = document.createElement('button');
-    del.className = 'btn';
-    del.textContent = 'Remove';
-    del.title = 'Remove mark';
+    del.className = 'btn'; del.textContent = 'Remove'; del.title = 'Remove mark';
     del.addEventListener('click', async () => {
       state.items = state.items.filter(x => x.id !== item.id);
       removeIdFromAll(item.id);
@@ -507,11 +555,10 @@ function renderMarksList() {
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
     row.appendChild(del);
-
     marksList.appendChild(row);
   });
 
-  // Refresh numbering after deletions
+  // Refresh numbering
   marksList.querySelectorAll('.mark-label').forEach((el, idx) => {
     const id = state.items[idx]?.id;
     if (id) el.textContent = markTextFrom(id);
@@ -528,7 +575,6 @@ function makeChip(id) {
   if (sum) chip.title = sum;
   return chip;
 }
-
 function renderColumnsAndDock() {
   // Dock
   dock.innerHTML = '';
@@ -559,7 +605,6 @@ function renderColumnsAndDock() {
       state.columns.cols.splice(i, 1);
       ensureMinColumns(2);
       renderColumnsAndDock();
-
       suppressSetupDocSnapshots = true;
       await save().finally(()=>{ suppressSetupDocSnapshots=false; });
     });
@@ -571,11 +616,7 @@ function renderColumnsAndDock() {
     board.appendChild(col);
   });
 }
-
-function renderAll(){
-  renderMarksList();
-  renderColumnsAndDock();
-}
+function renderAll(){ renderMarksList(); renderColumnsAndDock(); }
 
 // ---------- Drag & drop (chips) ----------
 let dragging = null, offsetX = 0, offsetY = 0, activePointerId = null;
@@ -682,26 +723,33 @@ document.getElementById('addColumnBtn').addEventListener('click', async () => {
 
 // ---------- Add setup (tab) ----------
 document.getElementById('addSetupBtn').addEventListener('click', async () => {
-  // Determine next order and default name
   const nextOrder = (Math.max(0, ...setupsMeta.map(s => s.order || 0)) + 1) || 1;
   const nextIndex = (setupsMeta.length + 1);
   const name = `Setup ${nextIndex}`;
-
   const docRef = setupsColl().doc();
   await docRef.set({
-    name,
-    order: nextOrder,
+    name, order: nextOrder,
     items: [],
     columns: { dock: [], cols: [{items:[]},{items:[]}] },
-    trainer, dateKey: currentDateKey,
+    trainer: trainerId, trainerName, dateKey: currentDateKey,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   });
-  // The setups listener will pick it up and activate via localStorage set below:
-  localStorage.setItem(`activeSetup:${trainer}:${currentDateKey}`, docRef.id);
+  localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, docRef.id);
 });
 
-// ---------- Kick things off ----------
-switchDay(currentDateKey);
+// ---------- Boot logic ----------
+async function initForTrainer() {
+  ctxEl.textContent = `Trainer: ${trainerName}`;
+  await switchDay(currentDateKey);
+}
+
+// If trainer is already in URL, start; otherwise prompt
+if (trainerId && trainerId.trim()) {
+  trainerName = trainerId;
+  initForTrainer();
+} else {
+  showTrainerPrompt();
+}
 </script>
 </body>
 </html>
