@@ -1,270 +1,582 @@
 <!doctype html>
+<html>
+<head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Kennel</title>
+<title>Scoring</title>
 
-<!-- Chart.js for graphs -->
+<!-- Chart area placeholder (no logic yet) -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
-  body { font-family: system-ui, sans-serif; margin: 16px; }
-  .card { max-width: 820px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
-  .hero { display: grid; grid-template-columns: 160px 1fr; gap: 16px; align-items: center; }
-  .hero img { width:160px; height:160px; object-fit:cover; border-radius:12px; border:1px solid #ccc; }
-  .badges { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
-  .badge { padding:4px 8px; border:1px solid #bbb; border-radius:999px; font-size:12px; }
-  .section { margin-top: 16px; }
-  .section h3 { margin: 0 0 8px; }
-  .ratings { display:grid; grid-template-columns: 1fr; gap:12px; }
-  .rating-row { display:flex; align-items:center; gap:12px; }
-  .label { width: 110px; font-weight: 600; }
-  .stars { display:inline-flex; gap:8px; }
-  .star-svg { width: 40px; height: 40px; cursor: pointer; }
-  textarea { width: 100%; min-height: 96px; box-sizing: border-box; padding: 10px; font-size: 16px; border:1px solid #bbb; border-radius:8px; }
-  .actions { display:flex; gap:10px; margin-top:12px; }
-  .btn {
-    appearance: none; border:1px solid #bbb; background:#fff;
-    padding:10px 14px; border-radius:10px; font-size:16px; cursor:pointer;
+  :root { --gap:12px; --border:#ddd; --chip-bg:#f7f7f7; --accent:#0b74ff; }
+  body { font-family: system-ui, sans-serif; margin: 16px; background:#f5f5f5; }
+  .title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .mini-link { font-size:12px; color:var(--accent); text-decoration:underline; }
+  .mini-link:visited { color:var(--accent); }
+  .muted { color:#666; font-size:12px; }
+
+  .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.ghost { background:#fff; border-color:#ccc; }
+
+  .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
+
+  /* Trainer picker overlay */
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
+  .overlay.open { display:flex; }
+  .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
+  .overlay-card h3 { margin:0 0 10px; }
+  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
+
+  /* Tabs (setups + contextual rerun) */
+  .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
+  .tab { position:relative; padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
+  .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
+  .tab.rerun { font-style:italic; }
+  .tab:hover { background:#fdfdfd; }
+
+  /* Hero / dog card */
+  .hero { display:grid; grid-template-columns: 120px 1fr; gap: 12px; align-items:center; }
+  .hero img { width:120px; height:120px; object-fit:cover; border-radius:10px; border:1px solid #ccc; background:#fafafa; }
+
+  /* Scoring list */
+  .score-list { display:flex; flex-direction:column; gap:12px; }
+  .score-card {
+    border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
+    display:grid; gap:8px; grid-template-columns: 1fr; 
   }
-  .btn.primary { background:#0b74ff; color:#fff; border-color:#0b74ff; }
-  .muted { color:#666; font-size:12px; margin-top:8px; }
+  .score-header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+  .score-title { font-weight:700; }
+  .slider-row { display:flex; align-items:center; gap:10px; }
+  .slider-row input[type="range"] { flex:1; }
+  .slider-val { width:48px; text-align:right; font-variant-numeric: tabular-nums; }
+
+  .flags { display:flex; flex-wrap:wrap; gap:8px; }
+  .flag { display:flex; align-items:center; gap:6px; border:1px solid #ddd; background:#fff; padding:6px 8px; border-radius:999px; font-size:13px; }
+
+  .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .divider { height:1px; background:#eee; margin:12px 0; }
+
+  /* Board controls reused styling */
+  .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 </style>
+</head>
+<body>
+  <div class="title-row">
+    <h1>Scoring</h1>
+    <!-- click to force trainer picker again -->
+    <a id="changeUserLink" class="mini-link" href="https://morrowind4732.github.io/task-tracker/scoring.html">change user</a>
+  </div>
+  <div class="muted" id="ctx">Loading…</div>
 
-<div class="card" id="card">Loading…</div>
-
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
-  import { getFirestore, doc, getDoc, onSnapshot, setDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
-
-  const firebaseConfig = {
-    apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
-    authDomain: "task-tracker-73b77.firebaseapp.com",
-    projectId: "task-tracker-73b77",
-    storageBucket: "task-tracker-73b77.firebasestorage.app",
-    messagingSenderId: "795274673000",
-    appId: "1:795274673000:web:0ea07130e45c72384134dd",
-    measurementId: "G-VLW5KLY4FF"
-  };
-
-  const app = initializeApp(firebaseConfig);
-  const db  = getFirestore(app);
-
-// Get params
-const params  = new URL(location.href).searchParams;
-const trailer = params.get('trailer'); // "scott", "cody", etc.
-const sex     = params.get('sex');     // "male" or "female"
-const slotNum = params.get('slot');    // e.g. "R1C1"
-
-// Build collection name like "scott-male"
-const trailerCollection = `${trailer}-${sex}`;
-
-// Build slot ID like "S_M_R1C1" or "C_F_R1C1"
-const trailerPrefix = trailer.charAt(0).toUpperCase(); // S or C
-const sexPrefix = sex.charAt(0).toUpperCase();         // M or F
-const slotId = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
-
-// Use the parsed values to get the slot doc
-const slotRef = doc(db, "trailerLayouts", trailerCollection, "slots", slotId);
-
-  const cardEl  = document.getElementById('card');
-  const CAMERA_URL = "https://morrowind4732.github.io/task-tracker/Camera.html";
-
-  if (!trailer || !sex || !slotId) {
-    cardEl.textContent = "Missing trailer, sex, or slot in URL.";
-    throw new Error("Missing params");
-  }
-
-  const ratingState = { marks: 0, blinds: 0, behavior: 0, notes: "" };
-  let currentDog = { id: null, name: null, profile: null };
-
-  function nameToId(name){
-    return String(name||"").toLowerCase().trim()
-      .replace(/[\s_]+/g, '-').replace(/[^a-z0-9-]/g, '')
-      .replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
-  }
-  function todayLocalYYYYMMDD() {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-
-  function renderStars(name, current) {
-    let html = `<div class="rating-row">
-      <div class="label">${name[0].toUpperCase()+name.slice(1)}</div>
-      <div class="stars" data-field="${name}">`;
-    for (let i = 1; i <= 5; i++) {
-      const fillPercent = (current >= i) ? 100 : (current >= i - 0.5 ? 50 : 0);
-      html += `
-        <svg class="star-svg" viewBox="0 0 24 24" data-value="${i}">
-          <defs>
-            <linearGradient id="grad-${name}-${i}" x1="0" x2="1" y1="0" y2="0">
-              <stop offset="${fillPercent}%" stop-color="#f39c12"/>
-              <stop offset="${fillPercent}%" stop-color="#ccc"/>
-            </linearGradient>
-          </defs>
-          <path fill="url(#grad-${name}-${i})" stroke="#999" stroke-width="1"
-            d="M12 .587l3.668 7.568 8.332 1.151-6.064 5.834 
-               1.516 8.26L12 18.896l-7.452 4.504 
-               1.516-8.26L.0 9.306l8.332-1.151z"/>
-        </svg>`;
-    }
-    html += `</div></div>`;
-    return html;
-  }
-
-  function attachStarHandlers() {
-    document.querySelectorAll('.stars').forEach(starRow => {
-      starRow.addEventListener('click', e => {
-        const star = e.target.closest('.star-svg');
-        if (!star) return;
-        const value = Number(star.dataset.value);
-        const field = starRow.dataset.field;
-        const current = ratingState[field] || 0;
-        if (current >= value) {
-          ratingState[field] = 0;
-        } else if (current >= value - 0.5) {
-          ratingState[field] = value;
-        } else {
-          ratingState[field] = value - 0.5;
-        }
-        renderProfileCard(currentDog.profile, trailer, slotId);
-      });
-    });
-  }
-
-  async function loadTodayIfExists() {
-    if (!currentDog.id) return;
-    const date = todayLocalYYYYMMDD();
-    const ref = doc(db, "ratings", currentDog.id, "days", date);
-    const snap = await getDoc(ref);
-    if (snap.exists()) Object.assign(ratingState, snap.data());
-  }
-
-  async function saveAndGoCamera() {
-    if (!currentDog.id) currentDog.id = nameToId(currentDog.name || "");
-    const status = document.getElementById('saveStatus');
-    status.textContent = "Saving…";
-    const date = todayLocalYYYYMMDD();
-    const ref  = doc(db, "ratings", currentDog.id, "days", date);
-    const payload = { ...ratingState, dogId: currentDog.id, dogName: currentDog.name || null, trailer, sex, slotId, date, updatedAt: serverTimestamp() };
-    try {
-      await setDoc(ref, payload, { merge: true });
-      status.textContent = "Saved. Redirecting to camera…";
-      setTimeout(() => location.href = CAMERA_URL, 120);
-    } catch (e) {
-      console.error(e);
-      status.textContent = "Failed to save.";
-    }
-  }
-
-  function renderProfileCard(profile, trailer, slotId) {
-    currentDog.profile = profile;
-    cardEl.innerHTML = `
-      <div class="hero">
-        <img src="${profile?.photo||''}" alt="">
-        <div>
-          <h1 style="margin:0 0 4px">${profile?.name || currentDog.name || 'Unassigned'}</h1>
-          <div>${[profile?.breed, (profile?.age!=null?`${profile.age} yrs`:null)].filter(Boolean).join(' · ')}</div>
-          <div class="badges">${(profile?.tags||[]).map(t=>`<span class="badge">${t}</span>`).join('')}</div>
-          <div class="muted">Trailer: ${trailer} · Sex: ${sex} · Slot: ${slotId}</div>
-        </div>
+  <!-- Trainer chooser overlay -->
+  <div class="overlay" id="trainerOverlay">
+    <div class="overlay-card">
+      <h3>Who are you?</h3>
+      <div class="overlay-actions">
+        <button class="btn primary" data-trainer="Scott">Scott</button>
+        <button class="btn primary" data-trainer="Cody">Cody</button>
+        <button class="btn primary" data-trainer="Brian">Brian</button>
       </div>
-      <div class="section"><h3>Ratings (today)</h3><div class="ratings">
-        ${renderStars('marks',    ratingState.marks)}
-        ${renderStars('blinds',   ratingState.blinds)}
-        ${renderStars('behavior', ratingState.behavior)}
-      </div></div>
-      <div class="section"><h3>Notes</h3><textarea id="notesBox" placeholder="Additional comments...">${ratingState.notes||''}</textarea></div>
+    </div>
+  </div>
+
+  <!-- Tabs / day -->
+  <div class="section">
+    <div class="tabs-bar">
+      <div class="board-controls" style="margin-right:auto;">
+        <label>Day: <input type="date" id="dayPicker"></label>
+        <button class="btn ghost" id="todayBtn">Today</button>
+      </div>
+      <div class="tabs" id="tabs"></div>
+    </div>
+  </div>
+
+  <!-- Dog hero -->
+  <div class="section" id="dogCard">Loading dog…</div>
+
+  <!-- Scores -->
+  <div class="section" id="scoresSection">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <strong id="scoresTitle">Scores</strong>
       <div class="actions">
-        <button class="btn primary" id="saveBtn">💾 Save & Camera</button>
-        <a class="btn" id="cameraBtn" href="${CAMERA_URL}">📷 Camera (no save)</a>
+        <button class="btn ghost" id="rerunBtn">Add Rerun</button>
       </div>
-      <div class="muted" id="saveStatus"></div>
-      <div class="card" style="margin-top:20px;"><h3>Ratings Overview</h3>
-        <div><label><input type="radio" name="graphRange" value="weekly" checked> Weekly</label>
-        <label><input type="radio" name="graphRange" value="monthly"> Monthly</label></div>
-        <canvas id="marksChart" height="150"></canvas>
-        <canvas id="blindsChart" height="150"></canvas>
-        <canvas id="behaviorChart" height="150"></canvas>
-      </div>
-      <div class="card" style="margin-top:20px;"><h3>View Past Report</h3>
-        <input type="date" id="reportDate" /><button class="btn" id="loadReportBtn">Load</button>
-        <div id="reportResult" style="margin-top:10px; font-size:14px; color:#333;"></div>
-      </div>`;
-    attachStarHandlers();
-    document.getElementById('notesBox').addEventListener('input', e => ratingState.notes = e.target.value);
-    document.getElementById('saveBtn').onclick = saveAndGoCamera;
-  }
+    </div>
+    <div class="score-list" id="scoreList"></div>
+    <div class="divider"></div>
+    <div class="actions">
+      <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
+      <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
+      <span class="muted" id="saveStatus"></span>
+    </div>
+  </div>
 
-  // Chart logic remains the same...
-  let marksChart, blindsChart, behaviorChart;
-  async function fetchRatingsData(daysBack) {
-    if (!currentDog.id) return [];
-    const today = new Date();
-    const results = [];
-    for (let i = daysBack - 1; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(today.getDate() - i);
-      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      const snap = await getDoc(doc(db, "ratings", currentDog.id, "days", dateStr));
-      if (snap.exists()) {
-        results.push({ date: dateStr, ...snap.data() });
+  <!-- Charts placeholder -->
+  <div class="section">
+    <strong>Charts (coming soon)</strong>
+    <div style="margin-top:8px">
+      <canvas id="chart1" height="120"></canvas>
+      <canvas id="chart2" height="120"></canvas>
+    </div>
+  </div>
+
+  <!-- Firebase (v10 modules) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+    import {
+      getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
+      collection, query, orderBy, addDoc, deleteDoc
+    } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+    /* ---------------- Firebase init ---------------- */
+    const firebaseConfig = {
+      apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+      authDomain: "task-tracker-73b77.firebaseapp.com",
+      projectId: "task-tracker-73b77",
+      storageBucket: "task-tracker-73b77.firebasestorage.app",
+      messagingSenderId: "795274673000",
+      appId: "1:795274673000:web:0ea07130e45c72384134dd",
+      measurementId: "G-VLW5KLY4FF"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    /* ---------------- Utilities ---------------- */
+    const ctxEl = document.getElementById('ctx');
+    function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+    function slug(s){
+      return String(s||"").toLowerCase().trim()
+        .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
+        .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
+    }
+
+    // negative action flags (keys are used in Firestore)
+    const FLAG_DEFS = [
+      { key:'headswing',       label:'Headswing' },
+      { key:'shortCheckDown',  label:'Short Check Down' },
+      { key:'overran',         label:'Overran' },
+      { key:'bigHunt',         label:'Big Hunt' },
+      { key:'handled',         label:'Handled' },
+      { key:'castRefusal',     label:'Cast Refusal' },
+      { key:'sitOnWhistle',    label:'Sit On Whistle' },
+      { key:'backSideOfGun',   label:'Back Side of Gun' },
+      { key:'break',           label:'Break' }, // note: saved as 'break' (string), ok in Firestore
+    ];
+
+    /* ---------------- URL params (QR compatible) ---------------- */
+    const params  = new URL(location.href).searchParams;
+    // trailer/sex/slot stay exactly as your old flow
+    const trailer = (params.get('trailer')||'').trim();
+    const sex     = (params.get('sex')||'').trim();
+    const slotNum = (params.get('slot')||'').trim();
+
+    // normalizations for resilience (future-proofing)
+    const trailerNorm = trailer.toLowerCase();
+    const sexNorm     = sex.toLowerCase();
+    const trailerCollection = `${trailerNorm}-${sexNorm}`;
+    const trailerPrefix = trailerNorm.charAt(0).toUpperCase(); // S/C/B...
+    const sexPrefix     = sexNorm.charAt(0).toUpperCase();     // M/F
+    const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
+
+    if (!trailer || !sex || !slotNum) {
+      document.getElementById('dogCard').textContent = "Missing trailer, sex, or slot in URL.";
+      throw new Error("Missing QR params");
+    }
+
+    /* ---------------- Trainer picker ---------------- */
+    const overlay = document.getElementById('trainerOverlay');
+    const changeUserLink = document.getElementById('changeUserLink');
+    changeUserLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      const url = new URL(location.href);
+      url.searchParams.delete('trainer');
+      history.replaceState(null, '', url.toString());
+      showTrainerPrompt();
+    });
+
+    function showTrainerPrompt(){
+      overlay.classList.add('open');
+      overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          overlay.classList.remove('open');
+          setTrainer(btn.dataset.trainer);
+        }, {once:true});
+      });
+    }
+
+    let trainerId = (new URL(location.href)).searchParams.get('trainer') || '';
+    function setTrainer(name){
+      trainerId = name;
+      const url = new URL(location.href);
+      url.searchParams.set('trainer', trainerId);
+      history.replaceState(null, '', url.toString());
+      ctxEl.textContent = `Trainer: ${trainerId}`;
+      boot();
+    }
+
+    if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
+
+    /* ---------------- Day + tabs (setups) ---------------- */
+    const dayPicker = document.getElementById('dayPicker');
+    const todayBtn  = document.getElementById('todayBtn');
+    dayPicker.value = ymd(new Date());
+    todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
+    dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
+
+    const tabsEl = document.getElementById('tabs');
+
+    let currentDateKey = dayPicker.value;
+    let setupsMeta = [];       // [{id,name,order}]
+    let activeSetupId = null;  // Firestore setup doc id
+    let activeRunId   = 'base';// 'base' or 'rerun' (one rerun per setup as requested)
+    let rerunExists   = false; // whether rerun doc exists for active setup
+    let dog = { id:null, name:null, profile:null, photo:null };
+
+    // Setup listeners
+    let unsubSetups = null;
+    let unsubSetupDoc = null;         // for reading items of active setup
+    let unsubScoreDocBase = null;     // for base run (to build UI/state)
+    let unsubScoreDocRerun = null;    // to know if rerun exists
+
+    // Score state for UI (current setup + run)
+    // scores = { [markId]: { score: number, flags: {[key]:bool} } }
+    let scores = {};
+
+    // Debounced save
+    let saveTimer = null;
+    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 400); }
+
+    /* ---------------- Firestore paths ---------------- */
+    const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
+    const setupsColl = () => collection(dayDocPath(), "setups");
+    const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
+
+    // Kennel slot → dog lookup (QR-based)
+    const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
+
+    // Dog-centric paths
+    const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
+    const dogRunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
+    const dogRerunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun");
+
+    // Mirror under setups
+    const mirrorRunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
+    const mirrorRerunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", "rerun");
+
+    /* ---------------- Dog hero rendering ---------------- */
+    const dogCard = document.getElementById('dogCard');
+    function renderDogCard(){
+      dogCard.innerHTML = `
+        <div class="hero">
+          <img src="${dog.photo||''}" alt="">
+          <div>
+            <h2 style="margin:0 0 4px">${dog.name || 'Unassigned'}</h2>
+            <div class="muted">Trailer: ${trailer} · Sex: ${sex} · Slot: ${slotId}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    /* ---------------- Tabs rendering ---------------- */
+    function renderTabs(){
+      tabsEl.innerHTML = '';
+      setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
+        const b = document.createElement('button');
+        b.className = 'tab' + (m.id===activeSetupId && activeRunId==='base' ? ' active' : '');
+        b.textContent = m.name || `Setup ${idx+1}`;
+        b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
+        tabsEl.appendChild(b);
+
+        // If rerun exists for THIS setup, append its tab right after
+        if (m.id === activeSetupId && rerunExists) {
+          const r = document.createElement('button');
+          r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
+          r.textContent = `Rerun ${m.name || `Setup ${idx+1}`}`;
+          r.addEventListener('click', ()=>setActiveSetup(m.id, 'rerun'));
+          tabsEl.appendChild(r);
+        }
+      });
+    }
+
+    /* ---------------- Scores UI ---------------- */
+    const scoreList = document.getElementById('scoreList');
+    const scoresTitle = document.getElementById('scoresTitle');
+    const rerunBtn = document.getElementById('rerunBtn');
+    const saveStatus = document.getElementById('saveStatus');
+
+    function markLabel(item, idx){
+      const n = (idx+1);
+      const dist = typeof item.dist==='number' ? item.dist : 0;
+      return `#${n} - ${dist} yards`;
+    }
+
+    function renderScoresUI(items){
+      scoreList.innerHTML = '';
+      scoresTitle.textContent = `Scores – ${activeRunId==='base' ? 'Base' : 'Rerun'} (${(setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup'})`;
+
+      items.forEach((item, idx)=>{
+        const card = document.createElement('div');
+        card.className = 'score-card';
+
+        const head = document.createElement('div');
+        head.className = 'score-header';
+
+        const title = document.createElement('div');
+        title.className = 'score-title';
+        title.textContent = markLabel(item, idx);
+
+        const sliderRow = document.createElement('div');
+        sliderRow.className = 'slider-row';
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0'; slider.max = '10'; slider.step = '0.5';
+        const current = scores[item.id]?.score ?? 0;
+        slider.value = String(current);
+
+        const out = document.createElement('div');
+        out.className = 'slider-val';
+        out.textContent = Number(current).toFixed(1);
+
+        slider.addEventListener('input', ()=>{
+          const val = Number(slider.value);
+          out.textContent = val.toFixed(1);
+          (scores[item.id] ||= { score:0, flags:{} }).score = val;
+          scheduleSave();
+        });
+
+        sliderRow.append(slider, out);
+
+        const flagsWrap = document.createElement('div');
+        flagsWrap.className = 'flags';
+        const flagsState = (scores[item.id]?.flags) || {};
+        FLAG_DEFS.forEach(fd=>{
+          const tag = document.createElement('label');
+          tag.className = 'flag';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = !!flagsState[fd.key];
+          cb.addEventListener('change', ()=>{
+            (scores[item.id] ||= { score:0, flags:{} });
+            scores[item.id].flags[fd.key] = cb.checked;
+            scheduleSave();
+          });
+          const span = document.createElement('span'); span.textContent = fd.label;
+          tag.append(cb, span);
+          flagsWrap.appendChild(tag);
+        });
+
+        head.append(title);
+        card.append(head, sliderRow, flagsWrap);
+        scoreList.appendChild(card);
+      });
+
+      // Rerun button label
+      rerunBtn.textContent = activeRunId==='rerun' ? 'Remove Rerun' : 'Add Rerun';
+    }
+
+    /* ---------------- Rerun add/remove ---------------- */
+    rerunBtn.addEventListener('click', async ()=>{
+      if (!dog.id || !activeSetupId) return;
+      if (activeRunId === 'rerun') {
+        // remove rerun
+        await Promise.allSettled([ deleteDoc(dogRerunDoc()), deleteDoc(mirrorRerunDoc()) ]);
+        activeRunId = 'base';
+        rerunExists = false;
+        renderTabs();
+        // reattach listener for base (rerun listener will be set below anyway)
+        attachRunListeners();
       } else {
-        results.push({ date: dateStr, marks: 0, blinds: 0, behavior: 0 });
+        // add rerun doc (empty sheet)
+        const payload = {
+          scores: {},
+          trainer: trainerId, setupId: activeSetupId, runId: 'rerun',
+          dogId: dog.id, dogName: dog.name || null, dateKey: currentDateKey,
+          trailer: trailer, sex: sex, slotId,
+          updatedAt: serverTimestamp()
+        };
+        await Promise.allSettled([ setDoc(dogRerunDoc(), payload, {merge:true}), setDoc(mirrorRerunDoc(), payload, {merge:true}) ]);
+        activeRunId = 'rerun';
+        rerunExists = true;
+        renderTabs();
+        attachRunListeners();
+      }
+    });
+
+    /* ---------------- Saving ---------------- */
+    async function saveNow(){
+      if (!dog.id || !activeSetupId) return;
+      saveStatus.textContent = 'Saving…';
+
+      const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name) || null;
+      const payload = {
+        scores,
+        trainer: trainerId, setupId: activeSetupId, setupName,
+        dogId: dog.id, dogName: dog.name || null,
+        runId: activeRunId,
+        dateKey: currentDateKey,
+        trailer: trailer, sex: sex, slotId,
+        updatedAt: serverTimestamp()
+      };
+      try {
+        await Promise.all([
+          setDoc(dogRunDoc(), payload, { merge:true }),
+          setDoc(mirrorRunDoc(), payload, { merge:true }),
+          setDoc(ratingsDayDoc(), { // light daily doc for backward compatibility
+            date: currentDateKey, trailer, sex, slotId,
+            lastScoredAt: serverTimestamp(), trainer: trainerId
+          }, { merge:true })
+        ]);
+        saveStatus.textContent = 'Saved.';
+        setTimeout(()=>saveStatus.textContent='', 800);
+      } catch (e) {
+        console.error(e);
+        saveStatus.textContent = 'Save failed.';
       }
     }
-    return results;
-  }
-  function renderCharts(data) {
-    const labels = data.map(d => d.date);
-    const marksData = data.map(d => d.marks || 0);
-    const blindsData = data.map(d => d.blinds || 0);
-    const behaviorData = data.map(d => d.behavior || 0);
-    const commonOptions = { responsive: true, scales: { y: { min: 0, max: 5, ticks: { stepSize: 0.5 } } } };
-    if (marksChart) marksChart.destroy();
-    if (blindsChart) blindsChart.destroy();
-    if (behaviorChart) behaviorChart.destroy();
-    marksChart = new Chart(document.getElementById('marksChart'), { type: 'line', data: { labels, datasets: [{ label: 'Marks', data: marksData, borderColor: '#f39c12', fill: false }] }, options: commonOptions });
-    blindsChart = new Chart(document.getElementById('blindsChart'), { type: 'line', data: { labels, datasets: [{ label: 'Blinds', data: blindsData, borderColor: '#3498db', fill: false }] }, options: commonOptions });
-    behaviorChart = new Chart(document.getElementById('behaviorChart'), { type: 'line', data: { labels, datasets: [{ label: 'Behavior', data: behaviorData, borderColor: '#2ecc71', fill: false }] }, options: commonOptions });
-  }
-  async function updateCharts(range) {
-    const daysBack = range === 'weekly' ? 7 : new Date().getDate();
-    const data = await fetchRatingsData(daysBack);
-    renderCharts(data);
-  }
 
-  document.addEventListener('click', async e => {
-    if (e.target.id === 'loadReportBtn') {
-      const date = document.getElementById('reportDate').value;
-      if (!date || !currentDog.id) return;
-      const snap = await getDoc(doc(db, "ratings", currentDog.id, "days", date));
-      const resultDiv = document.getElementById('reportResult');
-      if (snap.exists()) {
-        const data = snap.data();
-        resultDiv.innerHTML = `<strong>${date}</strong><br>Marks: ${data.marks || 0}<br>Blinds: ${data.blinds || 0}<br>Behavior: ${data.behavior || 0}<br>Notes: ${data.notes || ''}`;
-      } else {
-        resultDiv.textContent = "No data found for that date.";
-      }
+    // Save & Camera
+    document.getElementById('saveCameraBtn').addEventListener('click', async ()=>{
+      await saveNow();
+      location.href = "https://morrowind4732.github.io/task-tracker/Camera.html";
+    });
+
+    /* ---------------- Listeners: dog, setups, runs ---------------- */
+    async function attachDogListener(){
+      onSnapshot(slotRef, async (snap)=>{
+        let profileData = null;
+        dog = { id:null, name:null, profile:null, photo:null };
+        if (snap.exists()) {
+          const data = snap.data();
+          dog.name = data.dogName || null;
+          if (dog.name) {
+            dog.id = slug(dog.name);
+            const pSnap = await getDoc( doc(db, "profiles", dog.id) );
+            if (pSnap.exists()) {
+              profileData = pSnap.data();
+              dog.profile = profileData;
+              dog.photo = profileData.photo || null;
+            }
+          }
+        }
+        renderDogCard();
+        // once we have a trainer and a dog, we can attach setups
+        if (trainerId) attachSetupsListener();
+      });
     }
-  });
-  document.addEventListener('change', e => { if (e.target.name === 'graphRange') updateCharts(e.target.value); });
 
-  // THIS is the only change: reading from trailerLayouts/{trailer}-{sex}/slots/{slotId}
-
-  onSnapshot(slotRef, async (snap) => {
-    let profileData = null;
-    currentDog = { id: null, name: null, profile: null };
-    if (snap.exists()) {
-      const data = snap.data();
-      currentDog.name = data.dogName || null;
-      if (currentDog.name) {
-        currentDog.id = nameToId(currentDog.name);
-        const profSnap = await getDoc(doc(db, "profiles", currentDog.id));
-        if (profSnap.exists()) profileData = profSnap.data();
-      }
+    async function attachSetupsListener(){
+      if (!trainerId) return;
+      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups = null; }
+      const q = query(setupsColl(), orderBy('order'));
+      unsubSetups = onSnapshot(q, async (snap)=>{
+        const arr = [];
+        snap.forEach(d=>{
+          const data = d.data()||{};
+          arr.push({ id:d.id, name:data.name||'Setup', order: typeof data.order==='number'?data.order:9999 });
+        });
+        setupsMeta = arr;
+        if (!activeSetupId && setupsMeta.length) activeSetupId = setupsMeta[0].id;
+        renderTabs();
+        attachSetupDocListener();
+        attachRunListeners();
+      });
     }
-    await loadTodayIfExists();
-    renderProfileCard(profileData, trailer, slotId);
-    if (currentDog.id) updateCharts('weekly');
-  });
-</script>
+
+    function attachSetupDocListener(){
+      if (!activeSetupId) return;
+      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc = null; }
+      const ref = setupDoc();
+      unsubSetupDoc = onSnapshot(ref, (snap)=>{
+        const data = snap.data()||{};
+        const items = Array.isArray(data.items)? data.items.map(it=>({
+          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
+        })) : [];
+        renderScoresUI(items);
+      });
+    }
+
+    function attachRunListeners(){
+      if (!dog.id || !activeSetupId) return;
+
+      // base run doc
+      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase = null; }
+      unsubScoreDocBase = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base"), (snap)=>{
+        if (activeRunId==='base') {
+          const data = snap.data()||{};
+          scores = data.scores || {};
+          renderScoresUIFromCurrentItems();
+        }
+      });
+
+      // rerun presence + data (exists → show tab)
+      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun = null; }
+      unsubScoreDocRerun = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun"), (snap)=>{
+        rerunExists = snap.exists();
+        if (activeRunId==='rerun') {
+          const data = snap.data()||{};
+          scores = data.scores || {};
+        }
+        renderTabs();
+        renderScoresUIFromCurrentItems();
+      });
+    }
+
+    function renderScoresUIFromCurrentItems(){
+      const ref = setupDoc();
+      if (!ref) return;
+      getDoc(ref).then(s=>{
+        const data = s.data()||{};
+        const items = Array.isArray(data.items)? data.items.map(it=>({
+          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
+        })) : [];
+        renderScoresUI(items);
+      });
+    }
+
+    async function setActiveSetup(id, runId){
+      activeSetupId = id;
+      activeRunId = runId || 'base';
+      renderTabs();
+      attachSetupDocListener();
+      attachRunListeners();
+      // load current scores for selected run
+      const snap = await getDoc(dogRunDoc());
+      scores = (snap.exists() ? (snap.data().scores||{}) : {});
+      renderScoresUIFromCurrentItems();
+    }
+
+    async function switchDay(key){
+      currentDateKey = key;
+      // reset listeners
+      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
+      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
+      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase=null; }
+      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun=null; }
+
+      setupsMeta = [];
+      activeSetupId = null;
+      activeRunId = 'base';
+      rerunExists = false;
+      scores = {};
+      renderTabs();
+      renderScoresUI([]);
+
+      if (trainerId) attachSetupsListener();
+    }
+
+    /* ---------------- Boot ---------------- */
+    async function boot(){
+      if (!trainerId) return showTrainerPrompt();
+      ctxEl.textContent = `Trainer: ${trainerId}`;
+      await switchDay(currentDateKey);
+      attachDogListener();
+    }
+
+    if (trainerId) boot(); else showTrainerPrompt();
+  </script>
+</body>
+</html>
