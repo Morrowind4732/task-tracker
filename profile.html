@@ -118,6 +118,8 @@
 }
 
 
+
+
 </style>
 </head>
 <body>
@@ -888,7 +890,11 @@ function mirrorRC(rc, toSex){
   return fmtRC(clamp(r,1,b.maxR||1), mirroredC);
 }
 
-/** Compute neighbor targets around current {rc, sex} */
+/** Compute neighbor targets around current {rc, sex}
+ *  Bottom button rule:
+ *  - If there IS a dog in the next row same column (rc or rcH), show Down -> that slot.
+ *  - Otherwise, show Swap -> opposite sex (mirrored column).
+ */
 function neighbors(rc, sexN) {
   const { r, c } = parseRC(rc);
   const sameBounds = (sexN==='male') ? maleBounds : femaleBounds;
@@ -898,14 +904,32 @@ function neighbors(rc, sexN) {
   const rightC = clamp(c+1, 1, sameBounds.maxC);
   const upR    = clamp(r-1, 1, sameBounds.maxR);
 
+  // ---- Decide the bottom action (Down or Swap)
+  let bottom;
+  if (r < sameBounds.maxR) {
+    const downR  = clamp(r+1, 1, sameBounds.maxR);
+    const downRC = fmtRC(downR, c);
+    const downInfo = lookupName(downRC, sexN); // tries rc first, then rcH
+
+    // if either rc or rcH has a dog, use Down to that slot; else Swap
+    if (downInfo.name && downInfo.name !== '— Empty —') {
+      bottom = { key:'down', label:'Down', rc: downInfo.rcUsed, sex: sexN };
+    } else {
+      bottom = { key:'swap', label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex: opp };
+    }
+  } else {
+    // already on last row: no "down" possible -> Swap
+    bottom = { key:'swap', label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex: opp };
+  }
+
   return [
-    { key:'left',  label:'Left',   rc: fmtRC(r, leftC),  sex:sexN },
-    { key:'right', label:'Right',  rc: fmtRC(r, rightC), sex:sexN },
-    { key:'up',    label:'Up',     rc: fmtRC(upR, c),    sex:sexN },
-    // swap to opposite sex with mirrored column
-    { key:'swap',  label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex:opp }
+    { key:'left',  label:'Left',   rc: fmtRC(r, leftC),  sex: sexN },
+    { key:'right', label:'Right',  rc: fmtRC(r, rightC), sex: sexN },
+    { key:'up',    label:'Up',     rc: fmtRC(upR, c),    sex: sexN },
+    bottom
   ];
 }
+
 
 /** Open wheel, place four items, each using rcH fallback if needed */
 async function openWheel() {
