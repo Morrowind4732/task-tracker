@@ -183,11 +183,13 @@
 
     <div class="score-list" id="scoreList"></div>
     <div class="divider"></div>
-    <div class="actions">
-      <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
-      <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
-      <span class="muted" id="saveStatus"></span>
-    </div>
+<div class="actions">
+  <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
+  <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
+  <button class="btn" id="saveOnlyBtn">💾 Save</button>
+  <span class="muted" id="saveStatus"></span>
+</div>
+
   </div>
 
   <!-- Charts -->
@@ -535,6 +537,17 @@
     });
 
     /* ---------------- Saving ---------------- */
+	document.getElementById('saveOnlyBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('saveOnlyBtn');
+  btn.disabled = true;
+  try {
+    await saveNow();     // reuses your existing save logic; no navigation
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+	
     async function saveNow(){
       if (!dog.id || !activeSetupId) return;
       saveStatus.textContent = 'Saving…';
