@@ -1,12 +1,9 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Scoring</title>
-
-<!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<title>Scoring V2 (Radial)</title>
 
 <style>
   :root { --gap:12px; --border:#ddd; --chip-bg:#f7f7f7; --accent:#0b74ff; }
@@ -22,19 +19,11 @@
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
-  /* Trainer picker overlay */
-  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
-  .overlay.open { display:flex; }
-  .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
-  .overlay-card h3 { margin:0 0 10px; }
-  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
-
-  /* Tabs (setups + rerun tabs) */
+  /* Tabs (setups) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
-  .tab { position:relative; padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
+  .tab { padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
-  .tab.rerun { font-style:italic; }
   .tab:hover { background:#fdfdfd; }
 
   /* Mini pane tabs (Marks/Blinds) */
@@ -42,11 +31,7 @@
   .mini-tab { padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f7f7f7; font-weight:600; cursor:pointer; }
   .mini-tab.active { background:#fff; border-color:#bbb; box-shadow:0 1px 0 rgba(0,0,0,.05); }
 
-  /* Hero / dog card */
-  .hero { display:grid; grid-template-columns: 120px 1fr; gap: 12px; align-items:center; }
-  .hero img { width:120px; height:120px; object-fit:cover; border-radius:10px; border:1px solid #ccc; background:#fafafa; }
-
-  /* Scoring list */
+  /* Score list */
   .score-list { display:flex; flex-direction:column; gap:12px; }
   .score-card {
     border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
@@ -57,126 +42,60 @@
   .slider-row { display:flex; align-items:center; gap:10px; }
   .slider-row input[type="range"] { flex:1; }
   .slider-val { width:48px; text-align:right; font-variant-numeric: tabular-nums; }
-
-  .flags { display:flex; flex-wrap:wrap; gap:8px; }
-  .flag { display:flex; align-items:center; gap:6px; border:1px solid #ddd; background:#fff; padding:6px 8px; border-radius:999px; font-size:13px; }
-
   .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  .divider { height:1px; background:#eee; margin:12px 0; }
-  .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-  /* Scores header layout */
-  .score-head{
-    display:grid;
-    grid-template-columns: 1fr auto; /* title left, rerun right */
-    align-items:center;
-    row-gap:8px;
+  /* Radial menu */
+  .radial {
+    position: relative;
+    width: 300px;
+    height: 220px;
+    margin: 6px auto 4px;
+    border-radius: 16px;
+    background: #fff;
+    border: 1px dashed #e8e8e8;
   }
-  .score-head #scoresTitle { grid-column: 1 / 2; }
-  .score-head #rerunBtn    { grid-column: 2 / 3; justify-self:end; }
-  .score-head .mini-tabs   { grid-column: 1 / -1; justify-content:flex-start; }
+  .rbtn {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%); /* base, we add the offset in style attr */
+    padding: 6px 10px;
+    border-radius: 999px;
+    border:1px solid #ccc;
+    background:#fff;
+    font-size: 12px;
+    white-space: nowrap;
+    user-select:none;
+  }
+  .rbtn[hidden] { display:none !important; }
+  .rbtn.active { background: var(--accent); color:#fff; border-color: var(--accent); }
+  .rbtn:focus { outline: 2px solid #a3c8ff; outline-offset: 2px; }
 
-  /* Charts */
-  .chart-head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-  .chart-range { display:flex; gap:12px; align-items:center; }
-  
-  /* --- Radial kennel navigator --- */
-.k-fab {
-  position: fixed; right:16px; bottom:16px;
-  width:56px; height:56px; border-radius:50%;
-  background: var(--accent); color:#fff; border:none;
-  box-shadow:0 8px 20px rgba(0,0,0,.25); font-size:22px;
-  cursor:pointer; z-index: 9998;
-}
-.k-overlay { position:fixed; inset:0; background:rgba(0,0,0,.25);
-  display:none; align-items:center; justify-content:center; z-index:9999; }
-.k-overlay.open { display:flex; }
-.k-wheel {
-  position: relative; width: 280px; height:280px; border-radius:50%;
-  background:#fff; border:1px solid var(--border);
-  box-shadow:0 12px 30px rgba(0,0,0,.25);
-}
-.k-center { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); text-align:center; }
-.k-center h4 { margin:0 0 4px; font-size:14px; }
-.k-center .muted { font-size:12px; color:#666; }
-
-.k-item {
-  position:absolute; width:130px; height:84px; border-radius:12px;
-  background:#fff; border:1px solid #ddd;
-  box-shadow:0 10px 18px rgba(0,0,0,.12);
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  gap:4px; text-align:center; padding:8px; cursor:pointer;
-}
-.k-item b { font-size:13px; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.k-item small { color:#666; font-size:11px; }
-.k-item:hover { border-color:#bbb; }
-
-
-/* extra space below the Marks/Blinds buttons */
-.score-head { 
-  margin-bottom: 12px;   /* tweak to taste */
-}
-
-
-
-
+  .score-head { margin-bottom: 10px; display:grid; grid-template-columns: 1fr auto; align-items:center; gap:8px; }
+  #scoresTitle { font-weight:700; }
 </style>
 </head>
 <body>
   <div class="title-row">
-    <h1>Scoring</h1>
-    <a id="changeUserLink" class="mini-link" href="https://morrowind4732.github.io/task-tracker/scoring.html">change user</a>
+    <h1 style="margin:0">Scoring V2</h1>
+    <a id="changeUserLink" class="mini-link" href="#">change user</a>
   </div>
   <div class="muted" id="ctx">Loading…</div>
-
-  <!-- Trainer chooser overlay -->
-  <div class="overlay" id="trainerOverlay">
-    <div class="overlay-card">
-      <h3>Who are you?</h3>
-      <div class="overlay-actions">
-        <button class="btn primary" data-trainer="Scott">Scott</button>
-        <button class="btn primary" data-trainer="Cody">Cody</button>
-        <button class="btn primary" data-trainer="Brian">Brian</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Tabs / day -->
   <div class="section">
     <div class="tabs-bar">
-      <div class="board-controls" style="margin-right:auto;">
+      <div style="margin-right:auto; display:flex; gap:8px; align-items:center;">
         <label>Day: <input type="date" id="dayPicker"></label>
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
       <div class="tabs" id="tabs"></div>
     </div>
   </div>
-  
-  
-  <button id="kennelFab" class="k-fab" title="Open kennel navigator">⇄</button>
-<div id="kennelOverlay" class="k-overlay" aria-hidden="true">
-  <div class="k-wheel">
-    <div class="k-center">
-      <h4 id="kCurName">—</h4>
-      <div class="muted" id="kCurSlot">R?C?</div>
-    </div>
-    <!-- items get injected by JS -->
-  </div>
-</div>
-
-  <!-- Dog hero -->
-  <div class="section" id="dogCard">Loading dog…</div>
-  
-  
-
-
 
   <!-- Scores -->
   <div class="section" id="scoresSection">
     <div class="score-head">
-      <strong id="scoresTitle"></strong>
-      <button class="btn ghost" id="rerunBtn">Add Rerun</button>
-
+      <strong id="scoresTitle">—</strong>
       <div class="mini-tabs" id="paneTabs">
         <button class="mini-tab active" data-pane="marks">Marks</button>
         <button class="mini-tab" data-pane="blinds">Blinds</button>
@@ -184,28 +103,12 @@
     </div>
 
     <div class="score-list" id="scoreList"></div>
-    <div class="divider"></div>
-<div class="actions">
-  <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
-  <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
-  <button class="btn" id="saveOnlyBtn">💾 Save</button>
-  <span class="muted" id="saveStatus"></span>
-</div>
-
-  </div>
-
-  <!-- Charts -->
-  <div class="section">
-    <div class="chart-head">
-      <strong>Negatives over time</strong>
-      <div class="chart-range">
-        <label><input type="radio" name="negRange" value="7" checked> 7 Days</label>
-        <label><input type="radio" name="negRange" value="30"> 1 Month</label>
-      </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
+      <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
+      <button class="btn" id="saveOnlyBtn">💾 Save</button>
+      <span class="muted" id="saveStatus"></span>
     </div>
-    <div class="muted" id="chartSubtitle" style="margin:6px 0 10px">Shows % of items where each negative occurred (marks + blinds).</div>
-    <canvas id="negativesChart" height="200"></canvas>
-    <div class="muted" id="chartMeta" style="margin-top:8px"></div>
   </div>
 
   <!-- Firebase (v10 modules) -->
@@ -213,8 +116,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
       getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
-      collection, query, orderBy, deleteDoc,
-      collectionGroup, where, getDocs
+      collection, query, orderBy
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     /* ---------------- Firebase init ---------------- */
@@ -238,10 +140,28 @@
         .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
         .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
     }
-    function daysBackKey(n){ const d=new Date(); d.setDate(d.getDate()-n); return ymd(d); }
-    const SAVE_DEBOUNCE_MS = 400;
+    const SAVE_DEBOUNCE_MS = 300;
 
-    /* ---------------- Flags ---------------- */
+    /* ---------------- Flags & layout ---------------- */
+    // 10 positions: Top 4, Bottom 4, Left, Right
+    // We'll physically place as: top[0..3], left, right, bottom[0..3]
+    const POS10 = [
+      {dx:-105, dy:-84}, {dx:-35, dy:-84}, {dx:35, dy:-84}, {dx:105, dy:-84}, // top 4
+      {dx:-145, dy:0}, {dx:145, dy:0},                                       // left, right
+      {dx:-105, dy:84}, {dx:-35, dy:84}, {dx:35, dy:84}, {dx:105, dy:84},    // bottom 4
+    ];
+
+    // Short codes for compact buttons (title has full label)
+    const SHORT = {
+      // marks
+      headswing:'HS', shortCheckDown:'SCD', overran:'OR', bigHunt:'BH',
+      handled:'HND', castRefusal:'CR', sitOnWhistle:'SOW', backSideOfGun:'BSG',
+      break:'BRK', skipped:'SKP',
+      // blinds
+      poorInitial:'PI', scallop:'SCL', pickedUpPoison:'PUP', hunted:'HNT',
+      ignoredWhistle:'IW', failedDiversion:'FD'
+    };
+
     const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
@@ -254,6 +174,7 @@
       { key:'break',           label:'Break' },
       { key:'skipped',         label:'Skipped' },
     ];
+
     const FLAG_DEFS_BLINDS = [
       { key:'poorInitial',     label:'Poor Initial' },
       { key:'scallop',         label:'Scallop' },
@@ -265,63 +186,47 @@
       { key:'skipped',         label:'Skipped' },
     ];
 
-    // Unified map of flag -> label (marks labels take precedence where duplicated)
-    const FLAG_LABELS = (() => {
-      const map = {};
-      [...FLAG_DEFS_MARKS, ...FLAG_DEFS_BLINDS].forEach(f => { if (!map[f.key]) map[f.key] = f.label; });
-      return map;
-    })();
-    const ALL_FLAG_KEYS = Object.keys(FLAG_LABELS);
+    // Layout map: which keys go where on the 10 slots
+    const MARKS_LAYOUT = [
+      'headswing','shortCheckDown','overran','bigHunt', // top 4
+      'break','skipped',                                // left, right
+      'handled','castRefusal','sitOnWhistle','backSideOfGun', // bottom 4
+    ];
+    // Blinds have 8 -> fill top/bottom; hide left/right
+    const BLINDS_LAYOUT = [
+      'poorInitial','scallop','castRefusal','pickedUpPoison', // top
+      null,null,                                              // left/right hidden
+      'hunted','ignoredWhistle','failedDiversion','skipped'   // bottom
+    ];
 
-    /* ---------------- URL params (QR compatible) ---------------- */
+    /* ---------------- URL params ---------------- */
     const params  = new URL(location.href).searchParams;
     const trailer = (params.get('trailer')||'').trim();
     const sex     = (params.get('sex')||'').trim();
     const slotNum = (params.get('slot')||'').trim();
+    let   trainerId = (params.get('trainer')||'').trim();
+
     const trailerNorm = trailer.toLowerCase();
     const sexNorm     = sex.toLowerCase();
-    const trailerCollection = `${trailerNorm}-${sexNorm}`;
-    const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
-    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
-    const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
-    if (!trailer || !sex || !slotNum) {
-      document.getElementById('dogCard').textContent = "Missing trailer, sex, or slot in URL.";
-      throw new Error("Missing QR params");
-    }
 
-    /* ---------------- Trainer picker ---------------- */
-    const overlay = document.getElementById('trainerOverlay');
+    // Trainer switcher
     const changeUserLink = document.getElementById('changeUserLink');
     changeUserLink.addEventListener('click', (e) => {
       e.preventDefault();
       const url = new URL(location.href);
       url.searchParams.delete('trainer');
       history.replaceState(null, '', url.toString());
-      showTrainerPrompt();
+      trainerId = '';
+      ctxEl.textContent = 'Pick a trainer by adding ?trainer=NAME to the URL.';
     });
 
-    function showTrainerPrompt(){
-      overlay.classList.add('open');
-      overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
-        btn.addEventListener('click', ()=>{
-          overlay.classList.remove('open');
-          setTrainer(btn.dataset.trainer);
-        }, {once:true});
-      });
+    if (!trailer || !sex || !slotNum) {
+      document.getElementById('scoresSection').innerHTML = '<div class="muted">Missing trailer, sex, or slot in URL.</div>';
+      throw new Error('Missing QR params');
     }
+    if (!trainerId) ctxEl.textContent = 'Trainer: (not set)'; else ctxEl.textContent = `Trainer: ${trainerId}`;
 
-    let trainerId = (new URL(location.href)).searchParams.get('trainer') || '';
-    function setTrainer(name){
-      trainerId = name;
-      const url = new URL(location.href);
-      url.searchParams.set('trainer', trainerId);
-      history.replaceState(null, '', url.toString());
-      ctxEl.textContent = `Trainer: ${trainerId}`;
-      boot();
-    }
-    if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
-
-    /* ---------------- Day + tabs (setups) ---------------- */
+    /* ---------------- Day + setups ---------------- */
     const dayPicker = document.getElementById('dayPicker');
     const todayBtn  = document.getElementById('todayBtn');
     dayPicker.value = ymd(new Date());
@@ -329,85 +234,52 @@
     dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
 
     const tabsEl = document.getElementById('tabs');
-
     let currentDateKey = dayPicker.value;
     let setupsMeta = [];       // [{id,name,order}]
     let activeSetupId = null;  // setup doc id
-    let activeRunId   = 'base';// 'base' or 'rerun'
-    let rerunExists   = false; // rerun presence for active setup
     let activePane    = 'marks'; // 'marks' | 'blinds'
 
-    // current dog
-    let dog = { id:null, name:null, profile:null, photo:null };
+    // current dog from slot (same as V1 behavior)
+    const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
+    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
+    const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
+    const slotRef       = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
+    let dog = { id:null, name:null };
 
-    // listeners
-    let unsubSetups = null;
-    let unsubSetupDoc = null;
-    let unsubScoreDocBase = null;
-    let unsubScoreDocRerun = null;
-
-    // items to render
-    let setupItemsMarks = [];
-    let setupItemsBlinds = [];
-
-    // score state
-    let scores = { marks:{}, blinds:{} };
-
-    // Debounced save
-    let saveTimer = null;
-    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
-
-    /* ---------------- Firestore paths ---------------- */
+    // Firestore paths
     const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
     const setupsColl = () => collection(dayDocPath(), "setups");
     const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
-    // Kennel slot → dog lookup
-    const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
-
-    // Dog-centric runs
+    // Scores documents
     const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
-    const dogRunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
+    const dogRunDoc     = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base");
+    const mirrorRunDoc  = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", "base");
 
-    // Mirrors under setups
-    const mirrorRunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
+    // UI refs
+    const paneTabs = document.getElementById('paneTabs');
+    const scoreList = document.getElementById('scoreList');
+    const scoresTitle = document.getElementById('scoresTitle');
+    const saveStatus = document.getElementById('saveStatus');
 
-    /* ---------------- Dog hero rendering ---------------- */
-    const dogCard = document.getElementById('dogCard');
-    function renderDogCard(){
-      dogCard.innerHTML = `
-        <div class="hero">
-          <img src="${dog.photo||''}" alt="">
-          <div>
-            <h2 style="margin:0 0 4px">${dog.name || 'Unassigned'}</h2>
-            <div class="muted">Trailer: ${trailer} · Sex: ${sex} · Slot: ${slotId}</div>
-          </div>
-        </div>
-      `;
-    }
+    // state
+    let setupItemsMarks = [];
+    let setupItemsBlinds = [];
+    let scores = { marks:{}, blinds:{} };
+    let saveTimer = null;
+    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
-    /* ---------------- Setup tabs ---------------- */
     function renderTabs(){
       tabsEl.innerHTML = '';
       setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
         const b = document.createElement('button');
-        b.className = 'tab' + (m.id===activeSetupId && activeRunId==='base' ? ' active' : '');
+        b.className = 'tab' + (m.id===activeSetupId ? ' active' : '');
         b.textContent = m.name || `Setup ${idx+1}`;
-        b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
+        b.addEventListener('click', ()=>setActiveSetup(m.id));
         tabsEl.appendChild(b);
-
-        if (m.id === activeSetupId && (rerunExists || activeRunId==='rerun')) {
-          const r = document.createElement('button');
-          r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
-          r.textContent = `Rerun ${m.name || `Setup ${idx+1}`}`;
-          r.addEventListener('click', ()=>setActiveSetup(m.id, 'rerun'));
-          tabsEl.appendChild(r);
-        }
       });
     }
 
-    /* ---------------- Pane tabs (Marks/Blinds) ---------------- */
-    const paneTabs = document.getElementById('paneTabs');
     paneTabs.addEventListener('click', (e)=>{
       const btn = e.target.closest('.mini-tab'); if (!btn) return;
       const pane = btn.dataset.pane;
@@ -418,32 +290,53 @@
       }
     });
 
-    /* ---------------- Scores UI ---------------- */
-    const scoreList = document.getElementById('scoreList');
-    const scoresTitle = document.getElementById('scoresTitle');
-    const rerunBtn = document.getElementById('rerunBtn');
-    const saveStatus = document.getElementById('saveStatus');
-
     function markLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `#${n} - ${dist} yards`;
+      return `#${n} • ${dist}y`;
     }
     function blindLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `#${n} - ${dist} yards`;
+      return `#${n} • ${dist}y`;
+    }
+
+    function makeRadial(container, layoutKeys, flagsState, onToggle){
+      // ensure flags object
+      const flags = flagsState || {};
+      for (let i=0;i<POS10.length;i++){
+        const defKey = layoutKeys[i];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'rbtn';
+        const {dx,dy} = POS10[i];
+        btn.style.transform = `translate(-50%, -50%) translate(${dx}px, ${dy}px)`;
+        if (!defKey) {
+          btn.hidden = true;
+        } else {
+          const fullLabel = (FLAG_DEFS_MARKS.find(f=>f.key===defKey)?.label) || (FLAG_DEFS_BLINDS.find(f=>f.key===defKey)?.label) || defKey;
+          btn.title = fullLabel;
+          btn.textContent = SHORT[defKey] || fullLabel;
+          if (flags[defKey]) btn.classList.add('active');
+          btn.addEventListener('click', ()=>{
+            const newVal = !flags[defKey];
+            flags[defKey] = newVal;
+            btn.classList.toggle('active', newVal);
+            onToggle(defKey, newVal);
+          });
+        }
+        container.appendChild(btn);
+      }
     }
 
     function renderScoresUI(items){
       scoreList.innerHTML = '';
       const paneName = activePane==='marks' ? 'Marks' : 'Blinds';
-      const runName  = activeRunId==='base' ? 'Base' : 'Rerun';
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup';
-      scoresTitle.textContent = `${paneName} • ${runName} (${setupName})`;
+      scoresTitle.textContent = `${paneName} • ${setupName}`;
 
-      const defs = activePane==='marks' ? FLAG_DEFS_MARKS : FLAG_DEFS_BLINDS;
       const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
+      const layout = activePane==='marks' ? MARKS_LAYOUT : BLINDS_LAYOUT;
 
       items.forEach((item, idx)=>{
         const card = document.createElement('div');
@@ -451,58 +344,42 @@
 
         const head = document.createElement('div');
         head.className = 'score-header';
-
         const title = document.createElement('div');
         title.className = 'score-title';
         title.textContent = activePane==='marks' ? markLabel(item, idx) : blindLabel(item, idx);
 
         const sliderRow = document.createElement('div');
         sliderRow.className = 'slider-row';
-
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.min = '0'; slider.max = '10'; slider.step = '0.5';
         const cur = bucket[item.id]?.score ?? 0;
         slider.value = String(cur);
-
         const out = document.createElement('div');
         out.className = 'slider-val';
         out.textContent = Number(cur).toFixed(1);
-
         slider.addEventListener('input', ()=>{
           const val = Number(slider.value);
           out.textContent = val.toFixed(1);
           (bucket[item.id] ||= { score:0, flags:{} }).score = val;
           scheduleSave();
         });
-
         sliderRow.append(slider, out);
 
-        const flagsWrap = document.createElement('div');
-        flagsWrap.className = 'flags';
+        const radial = document.createElement('div');
+        radial.className = 'radial';
+
         const flagsState = (bucket[item.id]?.flags) || {};
-        defs.forEach(fd=>{
-          const tag = document.createElement('label');
-          tag.className = 'flag';
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.checked = !!flagsState[fd.key];
-          cb.addEventListener('change', ()=>{
-            (bucket[item.id] ||= { score:0, flags:{} });
-            bucket[item.id].flags[fd.key] = cb.checked;
-            scheduleSave();
-          });
-          const span = document.createElement('span'); span.textContent = fd.label;
-          tag.append(cb, span);
-          flagsWrap.appendChild(tag);
+        makeRadial(radial, layout, flagsState, (key, val)=>{
+          (bucket[item.id] ||= { score:0, flags:{} });
+          bucket[item.id].flags[key] = val;
+          scheduleSave();
         });
 
         head.append(title);
-        card.append(head, sliderRow, flagsWrap);
+        card.append(head, sliderRow, radial);
         scoreList.appendChild(card);
       });
-
-      rerunBtn.textContent = activeRunId==='rerun' ? 'Remove Rerun' : 'Add Rerun';
     }
 
     function renderScoresUIFromCurrentItems(){
@@ -510,48 +387,9 @@
       renderScoresUI(items);
     }
 
-    /* ---------------- Rerun add/remove ---------------- */
-    rerunBtn.addEventListener('click', async ()=>{
-      if (!dog.id || !activeSetupId) return;
-      if (activeRunId === 'rerun') {
-        await Promise.allSettled([ deleteDoc(dogRunDoc()), deleteDoc(mirrorRunDoc()) ]);
-        activeRunId = 'base';
-        rerunExists = false;
-        renderTabs();
-        attachRunListeners();
-      } else {
-        const payload = {
-          scores: { marks:{}, blinds:{} },
-          trainer: trainerId, setupId: activeSetupId, runId: 'rerun',
-          dogId: dog.id, dogName: dog.name || null, dateKey: currentDateKey,
-          trailer: trailer, sex: sex, slotId,
-          updatedAt: serverTimestamp()
-        };
-        await Promise.allSettled([
-          setDoc(dogRunDoc(), payload, {merge:true}),
-          setDoc(mirrorRunDoc(), payload, {merge:true})
-        ]);
-        activeRunId = 'rerun';
-        rerunExists = true;
-        renderTabs();
-        attachRunListeners();
-      }
-    });
-
     /* ---------------- Saving ---------------- */
-	document.getElementById('saveOnlyBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('saveOnlyBtn');
-  btn.disabled = true;
-  try {
-    await saveNow();     // reuses your existing save logic; no navigation
-  } finally {
-    btn.disabled = false;
-  }
-});
-
-	
     async function saveNow(){
-      if (!dog.id || !activeSetupId) return;
+      if (!dog.id || !activeSetupId || !trainerId) return;
       saveStatus.textContent = 'Saving…';
 
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name) || null;
@@ -559,9 +397,9 @@
         scores,
         trainer: trainerId, setupId: activeSetupId, setupName,
         dogId: dog.id, dogName: dog.name || null,
-        runId: activeRunId,
+        runId: 'base',
         dateKey: currentDateKey,
-        trailer: trailer, sex: sex, slotId,
+        trailer, sex, slotId,
         updatedAt: serverTimestamp()
       };
       try {
@@ -578,35 +416,29 @@
       }
     }
 
+    document.getElementById('saveOnlyBtn').addEventListener('click', async ()=>{
+      const b = document.getElementById('saveOnlyBtn'); b.disabled = true;
+      try { await saveNow(); } finally { b.disabled = false; }
+    });
     document.getElementById('saveCameraBtn').addEventListener('click', async ()=>{
       await saveNow();
       location.href = "https://morrowind4732.github.io/task-tracker/Camera.html";
     });
 
-    /* ---------------- Listeners: dog, setups, runs ---------------- */
+    /* ---------------- Listeners ---------------- */
     async function attachDogListener(){
       onSnapshot(slotRef, async (snap)=>{
-        let profileData = null;
-        dog = { id:null, name:null, profile:null, photo:null };
+        dog = { id:null, name:null };
         if (snap.exists()) {
-          const data = snap.data();
+          const data = snap.data() || {};
           dog.name = data.dogName || null;
-          if (dog.name) {
-            dog.id = slug(dog.name);
-            const pSnap = await getDoc( doc(db, "profiles", dog.id) );
-            if (pSnap.exists()) {
-              profileData = pSnap.data();
-              dog.profile = profileData;
-              dog.photo = profileData.photo || null;
-            }
-          }
+          if (dog.name) dog.id = slug(dog.name);
         }
-        renderDogCard();
         if (trainerId) attachSetupsListener();
-        // Refresh chart (if dog changed)
-        updateNegativesChart(getRangeDays());
       });
     }
+
+    let unsubSetups = null, unsubSetupDoc = null, unsubScores = null;
 
     async function attachSetupsListener(){
       if (!trainerId) return;
@@ -622,7 +454,7 @@
         if (!activeSetupId && setupsMeta.length) activeSetupId = setupsMeta[0].id;
         renderTabs();
         attachSetupDocListener();
-        attachRunListeners();
+        attachScoresListener();
       });
     }
 
@@ -653,34 +485,20 @@
       return out;
     }
 
-    function attachRunListeners(){
+    function attachScoresListener(){
+      if (unsubScores) { try{unsubScores();}catch{} unsubScores = null; }
       if (!dog.id || !activeSetupId) return;
-
-      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase = null; }
-      unsubScoreDocBase = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base"), (snap)=>{
-        if (activeRunId==='base') {
-          scores = normalizeScoresShape(snap.data());
-          renderScoresUIFromCurrentItems();
-        }
-      });
-
-      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun = null; }
-      unsubScoreDocRerun = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun"), (snap)=>{
-        rerunExists = snap.exists();
-        if (activeRunId==='rerun') {
-          scores = normalizeScoresShape(snap.data());
-        }
-        renderTabs();
+      unsubScores = onSnapshot(dogRunDoc(), (snap)=>{
+        scores = normalizeScoresShape(snap.data());
         renderScoresUIFromCurrentItems();
       });
     }
 
-    async function setActiveSetup(id, runId){
+    async function setActiveSetup(id){
       activeSetupId = id;
-      activeRunId = runId || 'base';
       renderTabs();
       attachSetupDocListener();
-      attachRunListeners();
+      attachScoresListener();
       const snap = await getDoc(dogRunDoc());
       scores = normalizeScoresShape(snap.exists() ? snap.data() : null);
       renderScoresUIFromCurrentItems();
@@ -690,314 +508,23 @@
       currentDateKey = key;
       if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
       if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
-      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase=null; }
-      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun=null; }
+      if (unsubScores) { try{unsubScores();}catch{} unsubScores=null; }
 
       setupsMeta = [];
       activeSetupId = null;
-      activeRunId = 'base';
-      rerunExists = false;
       scores = { marks:{}, blinds:{} };
-      setupItemsMarks = [];
-      setupItemsBlinds = [];
       renderTabs();
-      renderScoresUI([]);
-
+      scoreList.innerHTML = '';
       if (trainerId) attachSetupsListener();
-      updateNegativesChart(getRangeDays()); // keep charts in sync with date changes
-    }
-
-    /* ---------------- Charts: Negatives % ---------------- */
-    const negativesCanvas = document.getElementById('negativesChart');
-    const chartMeta = document.getElementById('chartMeta');
-    let negativesChart = null;
-
-    function getRangeDays(){
-      const checked = document.querySelector('input[name="negRange"]:checked')?.value || '7';
-      return checked === '30' ? 30 : 7;
-    }
-    document.querySelectorAll('input[name="negRange"]').forEach(r =>
-      r.addEventListener('change', ()=> updateNegativesChart(getRangeDays()))
-    );
-
-    async function fetchRunsInRange(days){
-      if (!dog.id) return [];
-      const startKey = daysBackKey(days - 1);
-      const endKey   = ymd(new Date());
-
-      // Prefer an indexed collectionGroup query; fall back to client-side filter if needed
-      try {
-        const q = query(
-          collectionGroup(db, 'runs'),
-          where('dogId','==', dog.id),
-          where('dateKey','>=', startKey),
-          where('dateKey','<=', endKey)
-        );
-        const snap = await getDocs(q);
-        return snap.docs.map(d => d.data() || {});
-      } catch (e) {
-        console.warn('Indexed query failed (likely missing composite index). Falling back to broader fetch+filter.', e);
-        const q = query(collectionGroup(db, 'runs'), where('dogId','==', dog.id));
-        const snap = await getDocs(q);
-        return snap.docs.map(d => d.data() || {}).filter(r => r.dateKey >= startKey && r.dateKey <= endKey);
-      }
-    }
-
-    function aggregateNegatives(runDocs){
-      const counts = {};
-      ALL_FLAG_KEYS.forEach(k => counts[k] = 0);
-      let totalItems = 0;
-
-      for (const r of runDocs) {
-        const s = r.scores || {};
-        const buckets = [s.marks || {}, s.blinds || {}];
-        for (const bucket of buckets) {
-          for (const entry of Object.values(bucket)) {
-            totalItems += 1;
-            const flags = entry?.flags || {};
-            for (const key of ALL_FLAG_KEYS) {
-              if (flags[key]) counts[key] += 1;
-            }
-          }
-        }
-      }
-      return { counts, totalItems };
-    }
-
-    function renderNegativesChart(agg){
-      const keys = ALL_FLAG_KEYS;
-      const labels = keys.map(k => FLAG_LABELS[k]);
-      const total = agg.totalItems || 0;
-      const percents = keys.map(k => total ? +( (agg.counts[k] * 100) / total ).toFixed(1) : 0);
-
-      if (negativesChart) negativesChart.destroy();
-      negativesChart = new Chart(negativesCanvas.getContext('2d'), {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            {
-              label: '% of items with issue',
-              data: percents
-            }
-          ]
-        },
-        options: {
-          indexAxis: 'y',
-          responsive: true,
-          plugins: {
-            tooltip: {
-              callbacks: {
-                label: (ctx) => `${ctx.parsed.x}%`
-              }
-            },
-            legend: { display: false }
-          },
-          scales: {
-            x: { min: 0, max: 100, ticks: { callback: v => v + '%' } },
-            y: { ticks: { autoSkip: false } }
-          }
-        }
-      });
-
-      chartMeta.textContent =
-        total
-          ? `Based on ${total} item${total===1?'':'s'} (marks + blinds) in the selected window.`
-          : 'No runs in the selected window yet.';
-    }
-
-    async function updateNegativesChart(days){
-      const runs = await fetchRunsInRange(days);
-      const agg = aggregateNegatives(runs);
-      renderNegativesChart(agg);
     }
 
     /* ---------------- Boot ---------------- */
     async function boot(){
-      if (!trainerId) return showTrainerPrompt();
-      ctxEl.textContent = `Trainer: ${trainerId}`;
+      ctxEl.textContent = trainerId ? `Trainer: ${trainerId}` : 'Trainer not set';
       await switchDay(ymd(new Date()));
       attachDogListener();
-      updateNegativesChart(getRangeDays());
     }
-	
-	/* ========= Radial kennel navigator ========= */
-
-/** Parse "R2C3" or "R2C3H" -> { r:2, c:3, half:true? } */
-function parseRC(rc) {
-  const m = /^R(\d+)C(\d+)(H)?$/i.exec(rc||'');
-  return m ? { r:+m[1], c:+m[2], half: !!m[3] } : { r:NaN, c:NaN, half:false };
-}
-/** Format -> "R2C3" (+ 'H' if half true) */
-function fmtRC(r,c,half=false){ return `R${r}C${c}${half?'H':''}`; }
-const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-
-/** Read trailerLayouts/<trailer>-<sex>/slots and build a map of id->dogName (keeps H docs too) */
-async function fetchSlotsMap(sexNorm) {
-  const key = `${trailerNorm}-${sexNorm}`;
-  const snaps = await getDocs(collection(db, "trailerLayouts", key, "slots"));
-  const map = {};
-  snaps.forEach(d => {
-    // ids look like S_M_R1C1 or S_M_R1C1H; keep last part exactly as-is
-    const rc = d.id.split("_").slice(2).join("_"); // "R1C1" or "R1C1H"
-    map[rc] = (d.data() || {}).dogName || "";
-  });
-  return map;
-}
-
-/** Discover max rows/cols present in a slots map (ignores H) */
-function boundsFromMap(map){
-  let maxR = 1, maxC = 1;
-  Object.keys(map||{}).forEach(k=>{
-    const m = /^R(\d+)C(\d+)/i.exec(k);
-    if (m){ maxR = Math.max(maxR, +m[1]); maxC = Math.max(maxC, +m[2]); }
-  });
-  return { maxR, maxC };
-}
-
-const overlayEl = document.getElementById('kennelOverlay');
-const wheelEl   = overlayEl.querySelector('.k-wheel');
-const fabEl     = document.getElementById('kennelFab');
-const kCurNameEl= document.getElementById('kCurName');
-const kCurSlotEl= document.getElementById('kCurSlot');
-
-let slotsMale=null, slotsFemale=null;
-let maleBounds={maxR:2,maxC:8}, femaleBounds={maxR:2,maxC:8}; // safe defaults
-let longPressTimer=null;
-
-/** Ensure both sides are loaded and bounds computed */
-async function ensureLayouts() {
-  if (!slotsMale)   { slotsMale   = await fetchSlotsMap('male');   maleBounds   = boundsFromMap(slotsMale); }
-  if (!slotsFemale) { slotsFemale = await fetchSlotsMap('female'); femaleBounds = boundsFromMap(slotsFemale); }
-}
-
-/** Look up the display name, trying rc first then rcH. Returns {name, rcUsed} */
-function lookupName(rc, sexN){
-  const map = (sexN==='male') ? slotsMale : slotsFemale;
-  const first = map?.[rc] || "";
-  if (first) return { name:first, rcUsed:rc };
-  const rcH = rc.endsWith('H') ? rc : (rc + 'H');
-  const second = map?.[rcH] || "";
-  return { name: (second || '— Empty —'), rcUsed: (second ? rcH : rc) };
-}
-
-/** Mirror columns when swapping sex, using the TARGET side's maxC */
-function mirrorRC(rc, toSex){
-  const { r, c } = parseRC(rc);
-  const b = (toSex==='female') ? femaleBounds : maleBounds;
-  const mc = b.maxC || 1;
-  const mirroredC = clamp(mc - c + 1, 1, mc);
-  return fmtRC(clamp(r,1,b.maxR||1), mirroredC);
-}
-
-/** Compute neighbor targets around current {rc, sex}
- *  Bottom button rule:
- *  - If there IS a dog in the next row same column (rc or rcH), show Down -> that slot.
- *  - Otherwise, show Swap -> opposite sex (mirrored column).
- */
-function neighbors(rc, sexN) {
-  const { r, c } = parseRC(rc);
-  const sameBounds = (sexN==='male') ? maleBounds : femaleBounds;
-  const opp = (sexN==='male') ? 'female' : 'male';
-
-  const leftC  = clamp(c-1, 1, sameBounds.maxC);
-  const rightC = clamp(c+1, 1, sameBounds.maxC);
-  const upR    = clamp(r-1, 1, sameBounds.maxR);
-
-  // ---- Decide the bottom action (Down or Swap)
-  let bottom;
-  if (r < sameBounds.maxR) {
-    const downR  = clamp(r+1, 1, sameBounds.maxR);
-    const downRC = fmtRC(downR, c);
-    const downInfo = lookupName(downRC, sexN); // tries rc first, then rcH
-
-    // if either rc or rcH has a dog, use Down to that slot; else Swap
-    if (downInfo.name && downInfo.name !== '— Empty —') {
-      bottom = { key:'down', label:'Down', rc: downInfo.rcUsed, sex: sexN };
-    } else {
-      bottom = { key:'swap', label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex: opp };
-    }
-  } else {
-    // already on last row: no "down" possible -> Swap
-    bottom = { key:'swap', label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex: opp };
-  }
-
-  return [
-    { key:'left',  label:'Left',   rc: fmtRC(r, leftC),  sex: sexN },
-    { key:'right', label:'Right',  rc: fmtRC(r, rightC), sex: sexN },
-    { key:'up',    label:'Up',     rc: fmtRC(upR, c),    sex: sexN },
-    bottom
-  ];
-}
-
-
-/** Open wheel, place four items, each using rcH fallback if needed */
-async function openWheel() {
-  await ensureLayouts();
-
-  // Use URL context
-  const rc = slotNum;      // e.g. "R2C3" or "R2C3H"
-  const sexN = sexNorm;    // 'male' | 'female'
-  const curr = lookupName(rc, sexN);
-  const curName = dog?.name || curr.name;
-
-  kCurNameEl.textContent = curName || 'Unassigned';
-  kCurSlotEl.textContent = curr.rcUsed;
-
-  // clear prior items
-  wheelEl.querySelectorAll('.k-item').forEach(n => n.remove());
-
-  const items = neighbors(rc, sexN).map(n => {
-    const info = lookupName(n.rc, n.sex);
-    return { ...n, dogName: info.name, rcUsed: info.rcUsed };
-  });
-
-  function addItem(dx, dy, title, rcUsed, sex, displayName){
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'k-item';
-    btn.style.left = '50%';
-    btn.style.top  = '50%';
-    btn.style.transform = `translate(-50%,-50%) translate(${dx}px, ${dy}px)`;
-    btn.innerHTML = `<b>${displayName || '—'}</b><small>${title} · ${sex==='female'?'♀':'♂'} · ${rcUsed}</small>`;
-    btn.addEventListener('click', ()=> {
-      const url = new URL(location.href);
-      url.searchParams.set('sex', sex);
-      url.searchParams.set('slot', rcUsed);       // navigate to real slot, using H if that’s where the dog lives
-      location.href = url.toString();
-    });
-    wheelEl.appendChild(btn);
-  }
-
-  const R = 100; // radius from center
-  addItem(-R, 0,           'Left',   items[0].rcUsed, items[0].sex, items[0].dogName);
-  addItem( R, 0,           'Right',  items[1].rcUsed, items[1].sex, items[1].dogName);
-  addItem( 0, -R,          'Up',     items[2].rcUsed, items[2].sex, items[2].dogName);
-  addItem( 0,  R,   items[3].label,  items[3].rcUsed, items[3].sex, items[3].dogName);
-
-  overlayEl.classList.add('open');
-  overlayEl.setAttribute('aria-hidden', 'false');
-}
-
-function closeWheel(){
-  overlayEl.classList.remove('open');
-  overlayEl.setAttribute('aria-hidden', 'true');
-}
-
-/* FAB open */
-fabEl.addEventListener('click', openWheel);
-/* Click outside to close */
-overlayEl.addEventListener('click', (e)=> { if (e.target === overlayEl) closeWheel(); });
-/* Long press on dog card to open (mobile) */
-dogCard.addEventListener('pointerdown', () => { longPressTimer = setTimeout(openWheel, 450); });
-['pointerup','pointerleave','pointercancel','dragstart'].forEach(ev=>{
-  dogCard.addEventListener(ev, ()=>{ clearTimeout(longPressTimer); });
-});
-/* ========= /radial ========= */
-
-
-
-    if (trainerId) boot(); else showTrainerPrompt();
+    boot();
   </script>
 </body>
 </html>
