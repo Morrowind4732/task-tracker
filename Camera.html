@@ -6,13 +6,14 @@
   body { font-family: system-ui, sans-serif; margin: 16px; }
   video { width: 100%; max-width: 480px; border-radius: 12px; }
   #result { margin-top: 12px; font-size: 16px; }
-  button { margin-top: 8px; }
+  button { margin-top: 8px; margin-right: 8px; }
 </style>
 
 <video id="preview" playsinline></video>
 <div id="result">Result: <span id="out">—</span></div>
 <button id="start">Start</button>
 <button id="stop">Stop</button>
+<button id="setup">Setup</button>
 
 <script type="module">
   import { BrowserQRCodeReader } from "https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/+esm";
@@ -21,6 +22,7 @@
   const out = document.getElementById('out');
   const startBtn = document.getElementById('start');
   const stopBtn  = document.getElementById('stop');
+  const setupBtn = document.getElementById('setup');
 
   const reader = new BrowserQRCodeReader();
   let controls = null;
@@ -69,6 +71,17 @@
 
   startBtn.onclick = () => start();
   stopBtn.onclick  = stop;
+
+  // NEW: Setup button -> setups page (preserve ?trainer= if present)
+  setupBtn.onclick = () => {
+    const cur = new URL(location.href);
+    const trainer = cur.searchParams.get('trainer');
+    const dest = new URL('https://morrowind4732.github.io/task-tracker/setups.html', location.href);
+    if (trainer) dest.searchParams.set('trainer', trainer);
+    // stop camera before leaving
+    stop();
+    location.href = dest.toString();
+  };
 
   // --- Auto-start logic ---
   (async () => {
