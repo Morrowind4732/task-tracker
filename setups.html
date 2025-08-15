@@ -1,23 +1,21 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Scoring</title>
-
-<!-- Chart area placeholder (no logic yet) -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Setups – Marks & Blinds</title>
 <style>
-  :root { --gap:12px; --border:#ddd; --chip-bg:#f7f7f7; --accent:#0b74ff; }
+  :root { --gap: 12px; --chip-bg:#f7f7f7; --border:#ddd; --accent:#0b74ff; }
   body { font-family: system-ui, sans-serif; margin: 16px; background:#f5f5f5; }
+  h1 { margin: 0 0 8px; }
+  .muted { color:#666; font-size:12px; margin-top:2px; }
+
   .title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .mini-link { font-size:12px; color:var(--accent); text-decoration:underline; }
   .mini-link:visited { color:var(--accent); }
-  .muted { color:#666; font-size:12px; }
 
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
-  .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.primary { background:#0b74ff; border-color:#0b74ff; color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
@@ -29,58 +27,98 @@
   .overlay-card h3 { margin:0 0 10px; }
   .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
 
-  /* Tabs (setups + rerun tabs) */
+  /* Tabs (browser style) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
-  .tab { position:relative; padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
+  .tab {
+    position:relative; padding:8px 12px; border:1px solid var(--border);
+    border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px;
+    background:#f6f6f6; cursor:pointer; font-weight:600; color:#444;
+  }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
-  .tab.rerun { font-style:italic; }
   .tab:hover { background:#fdfdfd; }
 
-  /* Mini pane tabs (Marks/Blinds) */
-  .mini-tabs { display:flex; gap:6px; align-items:center; }
-  .mini-tab { padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f7f7f7; font-weight:600; cursor:pointer; }
-  .mini-tab.active { background:#fff; border-color:#bbb; box-shadow:0 1px 0 rgba(0,0,0,.05); }
-
-  /* Hero / dog card */
-  .hero { display:grid; grid-template-columns: 120px 1fr; gap: 12px; align-items:center; }
-  .hero img { width:120px; height:120px; object-fit:cover; border-radius:10px; border:1px solid #ccc; background:#fafafa; }
-
-  /* Scoring list */
-  .score-list { display:flex; flex-direction:column; gap:12px; }
-  .score-card {
-    border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
-    display:grid; gap:8px; grid-template-columns: 1fr;
-  }
-  .score-header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
-  .score-title { font-weight:700; }
-  .slider-row { display:flex; align-items:center; gap:10px; }
-  .slider-row input[type="range"] { flex:1; }
-  .slider-val { width:48px; text-align:right; font-variant-numeric: tabular-nums; }
-
-  .flags { display:flex; flex-wrap:wrap; gap:8px; }
-  .flag { display:flex; align-items:center; gap:6px; border:1px solid #ddd; background:#fff; padding:6px 8px; border-radius:999px; font-size:13px; }
-
-  .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
-  .divider { height:1px; background:#eee; margin:12px 0; }
-  .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-
-  /* NEW: header layout so Add Rerun stays right, pane tabs left on next row */
-  .score-head{
+  /* Header row (Marks) */
+  .marks-head {
     display:grid;
-    grid-template-columns: 1fr auto; /* title left, rerun right */
-    align-items:center;
-    row-gap:8px;
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove (we keep 9 cols to match your latest) */
+    gap:6px; align-items:center;
+    font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
-  .score-head #scoresTitle { grid-column: 1 / 2; }
-  .score-head #rerunBtn    { grid-column: 2 / 3; justify-self:end; }
-  .score-head .mini-tabs   { grid-column: 1 / -1; justify-content:flex-start; }
+  .head-center { text-align:center; }
+
+  /* Mark rows as cards */
+  .mark-item {
+    display:grid;
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px;
+    gap:6px; align-items:center;
+    background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
+    margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .mark-label { font-weight:700; }
+  .opt-cell { text-align:center; }
+  .slider-wrap { grid-column: 2 / 3; }
+  input[type="range"] { width:100%; }
+
+  /* Per-checkbox labels: hidden on desktop, shown on mobile */
+  .opt { display:flex; align-items:center; gap:8px; justify-content:center; }
+  .opt span { display:none; font-size:13px; color:#333; }
+
+  /* Mobile tweaks for Marks */
+  @media (max-width: 768px) {
+    .marks-head { display:none; }
+    .mark-item { grid-template-columns: repeat(3, 1fr); grid-auto-rows: auto; }
+    .mark-label { grid-column: 1 / -1; }
+    .opt-cell { text-align:left; }
+    .opt { justify-content:flex-start; }
+    .opt span { display:inline; }
+    .slider-wrap { grid-column: 1 / -1; order: 99; }
+  }
+
+  /* Board / chips (Marks) */
+  .board-head { display:flex; gap:8px; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
+  .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .dock { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px dashed #cfcfcf; border-radius:10px; min-height:46px; }
+  .board { display:grid; gap:var(--gap); margin-top:12px; } /* columns set via JS */
+  .column { border:1px solid var(--border); border-radius:10px; min-height:140px; padding:8px; display:flex; flex-direction:column; gap:8px; background:#fff; }
+  .column-title { font-weight:600; font-size:13px; color:#444; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .column-title .title { pointer-events:none; }
+
+  .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
+  .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow: 0 4px 14px rgba(0,0,0,0.15); background:#fff; }
+  .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
+
+  /* === BLINDS === */
+  .blinds-head {
+    display:grid;
+    grid-template-columns: 120px 1fr repeat(5, 110px) 72px; /* label | slider | 5 opts | remove */
+    gap:6px; align-items:center;
+    font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
+  }
+  .blind-item {
+    display:grid;
+    grid-template-columns: 120px 1fr repeat(5, 110px) 72px;
+    gap:6px; align-items:center;
+    background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
+    margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .blind-label { font-weight:700; }
+
+  @media (max-width:768px){
+    .blinds-head { display:none; }
+    .blind-item { grid-template-columns: repeat(3, 1fr); grid-auto-rows:auto; }
+    .blind-label { grid-column: 1 / -1; }
+    .blind-item .opt-cell { text-align:left; }
+    .blind-item .opt { justify-content:flex-start; }
+    .blind-item .opt span { display:inline; }
+    .blind-slider { grid-column: 1 / -1; order: 99; }
+  }
 </style>
 </head>
 <body>
   <div class="title-row">
-    <h1>Scoring</h1>
-    <a id="changeUserLink" class="mini-link" href="https://morrowind4732.github.io/task-tracker/scoring.html">change user</a>
+    <h1>Setups – Marks & Blinds</h1>
+    <a id="changeUserLink" class="mini-link" href="https://morrowind4732.github.io/task-tracker/setups.html">change user</a>
   </div>
   <div class="muted" id="ctx">Loading…</div>
 
@@ -104,543 +142,682 @@
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
       <div class="tabs" id="tabs"></div>
+      <button class="btn ghost" id="addSetupBtn">+ Add Setup</button>
     </div>
   </div>
 
-  <!-- Dog hero -->
-  <div class="section" id="dogCard">Loading dog…</div>
+  <!-- MARKS -->
+  <div class="section" id="marksContainer">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <strong>Marks</strong>
+      <button class="btn primary" id="addMarkBtn">+ Add Mark</button>
+    </div>
 
-  <!-- Scores -->
-  <div class="section" id="scoresSection">
-    <div class="score-head">
-      <strong id="scoresTitle"></strong>
-      <button class="btn ghost" id="rerunBtn">Add Rerun</button>
+    <div class="marks-head">
+      <div></div>
+      <div class="head-center">Distance</div>
+      <div class="head-center">hand tossed</div>
+      <div class="head-center">short check down</div>
+      <div class="head-center">punch bird</div>
+      <div class="head-center">no off</div>
+      <div class="head-center">walk up</div>
+      <div class="head-center">water mark</div>
+      <div class="head-center">go bird</div>
+      <div class="head-center">white coat</div>
+      <div class="head-center">retire</div>
+      <div class="head-center">Remove</div>
+    </div>
 
-      <div class="mini-tabs" id="paneTabs">
-        <button class="mini-tab active" data-pane="marks">Marks</button>
-        <button class="mini-tab" data-pane="blinds">Blinds</button>
+    <div class="marks-list" id="marksList"></div>
+
+    <div class="board-head">
+      <strong></strong>
+      <div class="board-controls">
+        <button class="btn ghost" id="addColumnBtn">+ Add Group</button>
       </div>
     </div>
-
-    <div class="score-list" id="scoreList"></div>
-    <div class="divider"></div>
-    <div class="actions">
-      <button class="btn primary" id="saveCameraBtn">💾 Save & Camera</button>
-      <a class="btn" id="cameraOnlyBtn" href="https://morrowind4732.github.io/task-tracker/Camera.html">📷 Camera (no save)</a>
-      <span class="muted" id="saveStatus"></span>
-    </div>
+    <strong>Unassigned</strong>
+    <div class="dock" id="dock"></div>
+    <div class="board" id="board"><!-- dynamic columns --></div>
   </div>
 
-  <!-- Charts placeholder -->
-  <div class="section">
-    <strong>Charts (coming soon)</strong>
-    <div style="margin-top:8px">
-      <canvas id="chart1" height="120"></canvas>
-      <canvas id="chart2" height="120"></canvas>
+  <!-- BLINDS -->
+  <div class="section" id="blindsContainer">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <strong>Blinds</strong>
+      <button class="btn primary" id="addBlindBtn">+ Add Blind</button>
     </div>
+
+    <div class="blinds-head">
+      <div></div>
+      <div class="head-center">Distance</div>
+      <div class="head-center">Water</div>
+      <div class="head-center">Poison 1</div>
+      <div class="head-center">Poison 2</div>
+      <div class="head-center">Duck</div>
+      <div class="head-center">W Drill</div>
+      <div class="head-center">Remove</div>
+    </div>
+
+    <div class="blinds-list" id="blindsList"></div>
   </div>
 
-  <!-- Firebase (v10 modules) -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
-    import {
-      getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
-      collection, query, orderBy, deleteDoc
-    } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+  <div class="chip drag-ghost" id="ghost"></div>
 
-    /* ---------------- Firebase init ---------------- */
-    const firebaseConfig = {
-      apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
-      authDomain: "task-tracker-73b77.firebaseapp.com",
-      projectId: "task-tracker-73b77",
-      storageBucket: "task-tracker-73b77.firebasestorage.app",
-      messagingSenderId: "795274673000",
-      appId: "1:795274673000:web:0ea07130e45c72384134dd",
-      measurementId: "G-VLW5KLY4FF"
-    };
-    const app = initializeApp(firebaseConfig);
-    const db  = getFirestore(app);
+  <!-- Firebase (compat) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
-    /* ---------------- Utilities ---------------- */
-    const ctxEl = document.getElementById('ctx');
-    function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
-    function slug(s){
-      return String(s||"").toLowerCase().trim()
-        .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
-        .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
-    }
-    const SAVE_DEBOUNCE_MS = 400;
+<script>
+// ---------- Firebase ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+  authDomain: "task-tracker-73b77.firebaseapp.com",
+  projectId: "task-tracker-73b77",
+  storageBucket: "task-tracker-73b77.firebasestorage.app",
+  messagingSenderId: "795274673000",
+  appId: "1:795274673000:web:0ea07130e45c72384134dd",
+  measurementId: "G-VLW5KLY4FF"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
-    /* ---------------- Flags ---------------- */
-    // Marks flags (added "skipped")
-    const FLAG_DEFS_MARKS = [
-      { key:'headswing',       label:'Headswing' },
-      { key:'shortCheckDown',  label:'Short Check Down' },
-      { key:'overran',         label:'Overran' },
-      { key:'bigHunt',         label:'Big Hunt' },
-      { key:'handled',         label:'Handled' },
-      { key:'castRefusal',     label:'Cast Refusal' },
-      { key:'sitOnWhistle',    label:'Sit On Whistle' },
-      { key:'backSideOfGun',   label:'Back Side of Gun' },
-      { key:'break',           label:'Break' },
-      { key:'skipped',         label:'Skipped' },
-    ];
-    // Blinds flags
-    const FLAG_DEFS_BLINDS = [
-      { key:'poorInitial',     label:'Poor Initial' },
-      { key:'scallop',         label:'Scallop' },
-      { key:'castRefusal',     label:'Cast Refusal' },
-      { key:'pickedUpPoison',  label:'Picked Up Poison' },
-      { key:'hunted',          label:'Hunted' },
-      { key:'ignoredWhistle',  label:'Ignored Whistle' },
-      { key:'failedDiversion', label:'Failed Diversion' },
-      { key:'skipped',         label:'Skipped' },
-    ];
+// ---------- UI refs ----------
+const ctxEl  = document.getElementById('ctx');
+const overlay = document.getElementById('trainerOverlay');
+document.getElementById('changeUserLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  const url = new URL(location.href);
+  url.searchParams.delete('trainer');
+  history.replaceState(null, '', url.toString());
+  showTrainerPrompt();
+});
 
-    /* ---------------- URL params (QR compatible) ---------------- */
-    const params  = new URL(location.href).searchParams;
-    const trailer = (params.get('trailer')||'').trim();
-    const sex     = (params.get('sex')||'').trim();
-    const slotNum = (params.get('slot')||'').trim();
-    const trailerNorm = trailer.toLowerCase();
-    const sexNorm     = sex.toLowerCase();
-    const trailerCollection = `${trailerNorm}-${sexNorm}`;
-    const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
-    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
-    const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
-    if (!trailer || !sex || !slotNum) {
-      document.getElementById('dogCard').textContent = "Missing trailer, sex, or slot in URL.";
-      throw new Error("Missing QR params");
-    }
+// ---------- Date handling ----------
+function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+const dayPicker = document.getElementById('dayPicker');
+const todayBtn  = document.getElementById('todayBtn');
+dayPicker.value = ymd(new Date());
+todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
+let currentDateKey = dayPicker.value;
 
-    /* ---------------- Trainer picker ---------------- */
-    const overlay = document.getElementById('trainerOverlay');
-    const changeUserLink = document.getElementById('changeUserLink');
-    changeUserLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      const url = new URL(location.href);
-      url.searchParams.delete('trainer');
-      history.replaceState(null, '', url.toString());
-      showTrainerPrompt();
+// ---------- Trainer selection ----------
+const params = new URL(location.href).searchParams;
+let trainerId = params.get('trainer') || '';
+function setTrainer(name){
+  trainerId = name;
+  const url = new URL(location.href);
+  url.searchParams.set('trainer', trainerId);
+  history.replaceState(null, '', url.toString());
+  ctxEl.textContent = `Trainer: ${trainerId}`;
+  boot();
+}
+function showTrainerPrompt(){
+  overlay.classList.add('open');
+  overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      overlay.classList.remove('open');
+      setTrainer(btn.dataset.trainer);
+    }, { once:true });
+  });
+}
+if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
+
+// ---------- Tabs state ----------
+const tabsEl = document.getElementById('tabs');
+let setupsMeta = [];       // [{id, name, order}]
+let activeSetupId = null;
+
+// ---------- Setup-level state (Marks + Blinds) ----------
+/*
+  state = {
+    items:   [ {id, dist, options:{ ...marks flags... }} ],
+    columns: { dock:[], cols:[ {items:[]}, ... ] },
+    blinds:  [ {id, dist, options:{ water, poison1, poison2, duck, wDrill }} ]
+  }
+*/
+let state = { items: [], columns: { dock: [], cols: [] }, blinds: [] };
+
+// ---------- Snapshot control ----------
+let unsubSetups = null;          // listener for setups list
+let unsubSetupDoc = null;        // listener for active setup
+let suppressSetupDocSnapshots = false;
+
+// ---------- DOM refs ----------
+const dock  = document.getElementById('dock');
+const board = document.getElementById('board');
+const ghost = document.getElementById('ghost');
+
+// ---------- Helpers (Marks) ----------
+const OPTION_KEYS = [
+  { key:'handTossed',     label:'hand tossed' },
+  { key:'shortCheckDown', label:'short check down' },
+  { key:'punchBird',      label:'punch bird' },
+  { key:'noOff',          label:'no off' },
+  { key:'walkUp',         label:'walk up' },
+  { key:'waterMark',      label:'water mark' },
+  { key:'goBird',         label:'go bird' },
+  { key:'whiteCoat',      label:'white coat' },
+  { key:'retire',         label:'retire' },
+];
+// ---------- Helpers (Blinds) ----------
+const BLIND_OPTION_KEYS = [
+  { key:'water',   label:'Water' },
+  { key:'poison1', label:'Poison 1' },
+  { key:'poison2', label:'Poison 2' },
+  { key:'duck',    label:'Duck' },
+  { key:'wDrill',  label:'W Drill' },
+];
+
+function byId(id){ return state.items.find(i => i.id === id); }
+function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
+function makeId(){ return 'm_' + Math.random().toString(36).slice(2,9); }
+function clampToStep(v){ return Math.max(0, Math.min(400, Math.round(v/25)*25)); }
+
+// Labels
+function markTextFrom(id){ const item = byId(id); const idx = indexOfId(id); const number = idx >= 0 ? (idx + 1) : '?'; const dist = item?.dist ?? 0; return `#${number} - ${dist} yards`; }
+function optionsSummary(id){
+  const item = byId(id); if (!item || !item.options) return '';
+  return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
+}
+function chipTextFrom(id){
+  const base = markTextFrom(id);
+  const item = byId(id); if (!item) return base;
+  const o = item.options || {};
+  const codes = [];
+  if (o.handTossed) codes.push('HT');
+  if (o.goBird)     codes.push('GO');
+  if (o.whiteCoat)  codes.push('WC');
+  if (o.retire)     codes.push('RT');
+  return codes.length ? `${base} ${codes.join(' ')}` : base;
+}
+
+// Columns helpers (Marks board)
+function collectColItems(){ const out=[]; (state.columns.cols||[]).forEach(c => (c?.items||[]).forEach(id => out.push(id))); return out; }
+function removeIdFromAll(id){
+  state.columns.dock = state.columns.dock.filter(x => x !== id);
+  state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(x => x !== id) }));
+}
+function ensureAllIdsPlaced(){
+  const placed = new Set([ ...state.columns.dock, ...collectColItems() ]);
+  for (const it of state.items) if (!placed.has(it.id)) state.columns.dock.push(it.id);
+  state.columns.dock = state.columns.dock.filter(id => byId(id));
+  state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
+}
+function ensureMinColumns(n=2){ while (state.columns.cols.length < n) state.columns.cols.push({ items: [] }); }
+
+// ---------- Firestore refs ----------
+const dayDocPath = () => db.collection('setups').doc(trainerId).collection('days').doc(currentDateKey);
+const setupsColl = () => dayDocPath().collection('setups');
+const setupDocRef = () => (activeSetupId ? setupsColl().doc(activeSetupId) : null);
+
+// ---------- Save current setup ----------
+async function save(){
+  const ref = setupDocRef(); if (!ref) return;
+  ensureAllIdsPlaced();
+  await ref.set({
+    name: currentSetupName(),
+    order: currentSetupOrder(),
+    items: state.items,
+    columns: { dock: state.columns.dock, cols: state.columns.cols },
+    blinds: state.blinds,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    dateKey: currentDateKey,
+    trainer: trainerId
+  }, { merge: true });
+}
+
+// ---------- Tabs UI ----------
+function currentSetupMeta(){ return setupsMeta.find(s => s.id === activeSetupId) || null; }
+function currentSetupName(){ return currentSetupMeta()?.name || 'Setup'; }
+function currentSetupOrder(){ return currentSetupMeta()?.order ?? 1; }
+
+function renderTabs(){
+  tabsEl.innerHTML = '';
+  setupsMeta.sort((a,b)=>(a.order ?? 0)-(b.order ?? 0)).forEach((meta, i)=>{
+    const b = document.createElement('button');
+    b.className = 'tab' + (meta.id===activeSetupId ? ' active' : '');
+    b.textContent = meta.name || `Setup ${i+1}`;
+    b.addEventListener('click', ()=>{ if (meta.id !== activeSetupId) setActiveSetup(meta.id); });
+    tabsEl.appendChild(b);
+  });
+}
+
+// ---------- Setup collection listener ----------
+async function attachSetupsListener(){
+  if (unsubSetups){ try{unsubSetups();}catch(e){} unsubSetups=null; }
+  unsubSetups = setupsColl().orderBy('order').onSnapshot(async snap=>{
+    const list=[];
+    snap.forEach(doc=>{
+      const d=doc.data()||{};
+      list.push({ id:doc.id, name:d.name||'Setup', order: typeof d.order==='number'?d.order:9999 });
     });
-
-    function showTrainerPrompt(){
-      overlay.classList.add('open');
-      overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
-        btn.addEventListener('click', ()=>{
-          overlay.classList.remove('open');
-          setTrainer(btn.dataset.trainer);
-        }, {once:true});
+    setupsMeta = list;
+    if (setupsMeta.length===0){
+      // create first setup
+      const newDoc = setupsColl().doc();
+      await newDoc.set({
+        name:'Setup 1', order:1,
+        items:[], columns:{ dock:[], cols:[{items:[]},{items:[]}] },
+        blinds:[],
+        trainer:trainerId, dateKey: currentDateKey,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       });
+      setupsMeta = [{ id:newDoc.id, name:'Setup 1', order:1 }];
     }
+    renderTabs();
 
-    let trainerId = (new URL(location.href)).searchParams.get('trainer') || '';
-    function setTrainer(name){
-      trainerId = name;
-      const url = new URL(location.href);
-      url.searchParams.set('trainer', trainerId);
-      history.replaceState(null, '', url.toString());
-      ctxEl.textContent = `Trainer: ${trainerId}`;
-      boot();
+    // pick active
+    const lsKey = `activeSetup:${trainerId}:${currentDateKey}`;
+    const wanted = localStorage.getItem(lsKey);
+    const exists = setupsMeta.some(s=>s.id===wanted);
+    const firstId = setupsMeta[0]?.id;
+    const nextActive = exists ? wanted : firstId;
+    if (nextActive && nextActive !== activeSetupId) setActiveSetup(nextActive, { fromList:true });
+  });
+}
+
+// ---------- Active setup doc listener ----------
+function setActiveSetup(id){
+  activeSetupId = id;
+  localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, id);
+  renderTabs();
+
+  if (unsubSetupDoc){ try{unsubSetupDoc();}catch(e){} unsubSetupDoc=null; }
+  state = { items: [], columns:{ dock:[], cols:[] }, blinds: [] };
+  renderAll();
+
+  const ref = setupDocRef(); if (!ref) return;
+  unsubSetupDoc = ref.onSnapshot(async snap=>{
+    if (!snap.exists){
+      state = { items: [], columns:{ dock:[], cols:[{items:[]},{items:[]}] }, blinds: [] };
+      renderAll();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+      return;
     }
-    if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
+    const data = snap.data()||{};
 
-    /* ---------------- Day + tabs (setups) ---------------- */
-    const dayPicker = document.getElementById('dayPicker');
-    const todayBtn  = document.getElementById('todayBtn');
-    dayPicker.value = ymd(new Date());
-    todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
-    dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
+    // Items (Marks)
+    state.items = Array.isArray(data.items) ? data.items.map(it=>({
+      id: it.id,
+      dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
+      options: Object.assign({
+        handTossed:false, shortCheckDown:false, punchBird:false,
+        noOff:false, walkUp:false, waterMark:false,
+        goBird:false, whiteCoat:false, retire:false
+      }, it.options || {})
+    })) : [];
 
-    const tabsEl = document.getElementById('tabs');
-
-    let currentDateKey = dayPicker.value;
-    let setupsMeta = [];       // [{id,name,order}]
-    let activeSetupId = null;  // setup doc id
-    let activeRunId   = 'base';// 'base' or 'rerun'
-    let rerunExists   = false; // rerun presence for active setup
-    let activePane    = 'marks'; // 'marks' | 'blinds'
-
-    // current dog
-    let dog = { id:null, name:null, profile:null, photo:null };
-
-    // listeners
-    let unsubSetups = null;
-    let unsubSetupDoc = null;
-    let unsubScoreDocBase = null;
-    let unsubScoreDocRerun = null;
-
-    // items to render
-    let setupItemsMarks = [];
-    let setupItemsBlinds = [];
-
-    // score state (now separated)
-    // { marks: {id:{score,flags}}, blinds: {id:{score,flags}} }
-    let scores = { marks:{}, blinds:{} };
-
-    // Debounced save
-    let saveTimer = null;
-    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
-
-    /* ---------------- Firestore paths ---------------- */
-    const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
-    const setupsColl = () => collection(dayDocPath(), "setups");
-    const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
-
-    // Kennel slot → dog lookup (QR-based)
-    const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
-
-    // Dog-centric runs
-    const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
-    const dogRunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
-
-    // Mirrors under setups
-    const mirrorRunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
-
-    /* ---------------- Dog hero rendering ---------------- */
-    const dogCard = document.getElementById('dogCard');
-    function renderDogCard(){
-      dogCard.innerHTML = `
-        <div class="hero">
-          <img src="${dog.photo||''}" alt="">
-          <div>
-            <h2 style="margin:0 0 4px">${dog.name || 'Unassigned'}</h2>
-            <div class="muted">Trailer: ${trailer} · Sex: ${sex} · Slot: ${slotId}</div>
-          </div>
-        </div>
-      `;
+    // Columns (Marks)
+    let colsShape = data.columns;
+    if (!colsShape) colsShape = { dock: [], cols: [{items:[]},{items:[]}] };
+    if (Array.isArray(colsShape.cols) && colsShape.cols.every(el=>Array.isArray(el))){
+      colsShape = { dock:Array.isArray(colsShape.dock)?colsShape.dock:[], cols: colsShape.cols.map(a=>({items:a.slice()})) };
+    } else if (Array.isArray(colsShape.col1)) {
+      const legacyKeys = Object.keys(colsShape).filter(k=>k.startsWith('col')).sort((a,b)=>parseInt(a.replace('col',''))-parseInt(b.replace('col','')));
+      colsShape = { dock:Array.isArray(colsShape.dock)?colsShape.dock:[], cols: legacyKeys.map(k=>({items:Array.isArray(colsShape[k])?colsShape[k]:[]})) };
     }
+    state.columns = { dock: Array.isArray(colsShape.dock)?colsShape.dock:[], cols: Array.isArray(colsShape.cols)?colsShape.cols:[{items:[]},{items:[]}] };
+    ensureMinColumns(2);
+    ensureAllIdsPlaced();
 
-    /* ---------------- Setup tabs ---------------- */
-    function renderTabs(){
-      tabsEl.innerHTML = '';
-      setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
-        const b = document.createElement('button');
-        b.className = 'tab' + (m.id===activeSetupId && activeRunId==='base' ? ' active' : '');
-        b.textContent = m.name || `Setup ${idx+1}`;
-        b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
-        tabsEl.appendChild(b);
+    // Blinds (NEW)
+    state.blinds = Array.isArray(data.blinds) ? data.blinds.map(bl=>({
+      id: bl.id,
+      dist: typeof bl.dist==='number' ? clampToStep(bl.dist) : 0,
+      options: Object.assign({
+        water:false, poison1:false, poison2:false, duck:false, wDrill:false
+      }, bl.options || {})
+    })) : [];
 
-        // show rerun tab next to active setup if it exists or if you're on rerun
-        if (m.id === activeSetupId && (rerunExists || activeRunId==='rerun')) {
-          const r = document.createElement('button');
-          r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
-          r.textContent = `Rerun ${m.name || `Setup ${idx+1}`}`;
-          r.addEventListener('click', ()=>setActiveSetup(m.id, 'rerun'));
-          tabsEl.appendChild(r);
-        }
+    renderAll();
+  });
+}
+
+// ---------- Switch day ----------
+async function switchDay(key){
+  currentDateKey = key;
+  if (unsubSetups){ try{unsubSetups();}catch{} unsubSetups=null; }
+  if (unsubSetupDoc){ try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
+  setupsMeta = [];
+  activeSetupId = null;
+  state = { items: [], columns:{ dock:[], cols:[] }, blinds: [] };
+  renderAll(); renderTabs();
+  if (trainerId) attachSetupsListener();
+}
+dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
+
+// ---------- UI: MARKS ----------
+function renderMarksList() {
+  const marksList = document.getElementById('marksList');
+  marksList.innerHTML = '';
+
+  state.items.forEach((item) => {
+    item.options = Object.assign({
+      handTossed:false, shortCheckDown:false, punchBird:false,
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
+    }, item.options || {});
+
+    const row = document.createElement('div');
+    row.className = 'mark-item';
+    row.dataset.id = item.id;
+
+    const label = document.createElement('div');
+    label.className = 'mark-label';
+    label.textContent = markTextFrom(item.id);
+
+    const sliderWrap = document.createElement('div');
+    sliderWrap.className = 'slider-wrap';
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
+    slider.value = item.dist;
+    slider.addEventListener('input', () => {
+      item.dist = clampToStep(Number(slider.value));
+      label.textContent = markTextFrom(item.id);
+      document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
+        c.textContent = chipTextFrom(item.id);
+        const sum = optionsSummary(item.id); c.title = sum || '';
       });
-    }
-
-    /* ---------------- Pane tabs (Marks/Blinds) ---------------- */
-    const paneTabs = document.getElementById('paneTabs');
-    paneTabs.addEventListener('click', (e)=>{
-      const btn = e.target.closest('.mini-tab'); if (!btn) return;
-      const pane = btn.dataset.pane;
-      if (pane && pane !== activePane) {
-        activePane = pane;
-        paneTabs.querySelectorAll('.mini-tab').forEach(b => b.classList.toggle('active', b.dataset.pane===activePane));
-        renderScoresUIFromCurrentItems();
-      }
     });
+    slider.addEventListener('change', save);
+    sliderWrap.appendChild(slider);
 
-    /* ---------------- Scores UI ---------------- */
-    const scoreList = document.getElementById('scoreList');
-    const scoresTitle = document.getElementById('scoresTitle');
-    const rerunBtn = document.getElementById('rerunBtn');
-    const saveStatus = document.getElementById('saveStatus');
-
-    function markLabel(item, idx){
-      const n = (idx+1);
-      const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `#${n} - ${dist} yards`;
-    }
-    function blindLabel(item, idx){
-      const n = (idx+1);
-      const dist = typeof item.dist==='number' ? item.dist : 0;
-      return `#${n} - ${dist} yards`;
-    }
-
-    function renderScoresUI(items){
-      scoreList.innerHTML = '';
-      const paneName = activePane==='marks' ? 'Marks' : 'Blinds';
-      const runName  = activeRunId==='base' ? 'Base' : 'Rerun';
-      const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup';
-      scoresTitle.textContent = `${paneName} • ${runName} (${setupName})`;
-
-      const defs = activePane==='marks' ? FLAG_DEFS_MARKS : FLAG_DEFS_BLINDS;
-      const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
-
-      items.forEach((item, idx)=>{
-        const card = document.createElement('div');
-        card.className = 'score-card';
-
-        const head = document.createElement('div');
-        head.className = 'score-header';
-
-        const title = document.createElement('div');
-        title.className = 'score-title';
-        title.textContent = activePane==='marks' ? markLabel(item, idx) : blindLabel(item, idx);
-
-        const sliderRow = document.createElement('div');
-        sliderRow.className = 'slider-row';
-
-        const slider = document.createElement('input');
-        slider.type = 'range';
-        slider.min = '0'; slider.max = '10'; slider.step = '0.5';
-        const cur = bucket[item.id]?.score ?? 0;
-        slider.value = String(cur);
-
-        const out = document.createElement('div');
-        out.className = 'slider-val';
-        out.textContent = Number(cur).toFixed(1);
-
-        slider.addEventListener('input', ()=>{
-          const val = Number(slider.value);
-          out.textContent = val.toFixed(1);
-          (bucket[item.id] ||= { score:0, flags:{} }).score = val;
-          scheduleSave();
+    const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
+      const cell = document.createElement('div');
+      cell.className = 'opt-cell';
+      const lab = document.createElement('label'); lab.className = 'opt';
+      const cb = document.createElement('input'); cb.type = 'checkbox';
+      cb.checked = !!item.options[key]; cb.title = optLabel;
+      cb.addEventListener('change', async () => {
+        item.options[key] = cb.checked;
+        document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
+          c.textContent = chipTextFrom(item.id);
+          const sum = optionsSummary(item.id); c.title = sum || '';
         });
-
-        sliderRow.append(slider, out);
-
-        const flagsWrap = document.createElement('div');
-        flagsWrap.className = 'flags';
-        const flagsState = (bucket[item.id]?.flags) || {};
-        defs.forEach(fd=>{
-          const tag = document.createElement('label');
-          tag.className = 'flag';
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.checked = !!flagsState[fd.key];
-          cb.addEventListener('change', ()=>{
-            (bucket[item.id] ||= { score:0, flags:{} });
-            bucket[item.id].flags[fd.key] = cb.checked;
-            scheduleSave();
-          });
-          const span = document.createElement('span'); span.textContent = fd.label;
-          tag.append(cb, span);
-          flagsWrap.appendChild(tag);
-        });
-
-        head.append(title);
-        card.append(head, sliderRow, flagsWrap);
-        scoreList.appendChild(card);
+        suppressSetupDocSnapshots = true;
+        await save().finally(()=>{ suppressSetupDocSnapshots=false; });
       });
-
-      // Rerun button label
-      rerunBtn.textContent = activeRunId==='rerun' ? 'Remove Rerun' : 'Add Rerun';
-    }
-
-    function renderScoresUIFromCurrentItems(){
-      const items = activePane==='marks' ? setupItemsMarks : setupItemsBlinds;
-      renderScoresUI(items);
-    }
-
-    /* ---------------- Rerun add/remove ---------------- */
-    rerunBtn.addEventListener('click', async ()=>{
-      if (!dog.id || !activeSetupId) return;
-      if (activeRunId === 'rerun') {
-        await Promise.allSettled([ deleteDoc(dogRunDoc()), deleteDoc(mirrorRunDoc()) ]);
-        activeRunId = 'base';
-        rerunExists = false;
-        renderTabs();
-        attachRunListeners();
-      } else {
-        const payload = {
-          scores: { marks:{}, blinds:{} },
-          trainer: trainerId, setupId: activeSetupId, runId: 'rerun',
-          dogId: dog.id, dogName: dog.name || null, dateKey: currentDateKey,
-          trailer: trailer, sex: sex, slotId,
-          updatedAt: serverTimestamp()
-        };
-        await Promise.allSettled([
-          setDoc(dogRunDoc(), payload, {merge:true}),
-          setDoc(mirrorRunDoc(), payload, {merge:true})
-        ]);
-        activeRunId = 'rerun';
-        rerunExists = true;
-        renderTabs();
-        attachRunListeners();
-      }
+      const txt = document.createElement('span'); txt.textContent = optLabel;
+      lab.append(cb, txt); cell.appendChild(lab); return cell;
     });
 
-    /* ---------------- Saving ---------------- */
-    async function saveNow(){
-      if (!dog.id || !activeSetupId) return;
-      saveStatus.textContent = 'Saving…';
-
-      const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name) || null;
-      const payload = {
-        scores,
-        trainer: trainerId, setupId: activeSetupId, setupName,
-        dogId: dog.id, dogName: dog.name || null,
-        runId: activeRunId,
-        dateKey: currentDateKey,
-        trailer: trailer, sex: sex, slotId,
-        updatedAt: serverTimestamp()
-      };
-      try {
-        await Promise.all([
-          setDoc(dogRunDoc(), payload, { merge:true }),
-          setDoc(mirrorRunDoc(), payload, { merge:true }),
-          setDoc(ratingsDayDoc(), { // light daily doc remains
-            date: currentDateKey, trailer, sex, slotId,
-            lastScoredAt: serverTimestamp(), trainer: trainerId
-          }, { merge:true })
-        ]);
-        saveStatus.textContent = 'Saved.';
-        setTimeout(()=>saveStatus.textContent='', 800);
-      } catch (e) {
-        console.error(e);
-        saveStatus.textContent = 'Save failed.';
-      }
-    }
-
-    document.getElementById('saveCameraBtn').addEventListener('click', async ()=>{
-      await saveNow();
-      location.href = "https://morrowind4732.github.io/task-tracker/Camera.html";
+    const del = document.createElement('button');
+    del.className = 'btn'; del.textContent = 'X'; del.title = 'Remove mark';
+    del.addEventListener('click', async () => {
+      state.items = state.items.filter(x => x.id !== item.id);
+      removeIdFromAll(item.id);
+      renderAll();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
     });
 
-    /* ---------------- Listeners: dog, setups, runs ---------------- */
-    async function attachDogListener(){
-      onSnapshot(slotRef, async (snap)=>{
-        let profileData = null;
-        dog = { id:null, name:null, profile:null, photo:null };
-        if (snap.exists()) {
-          const data = snap.data();
-          dog.name = data.dogName || null;
-          if (dog.name) {
-            dog.id = slug(dog.name);
-            const pSnap = await getDoc( doc(db, "profiles", dog.id) );
-            if (pSnap.exists()) {
-              profileData = pSnap.data();
-              dog.profile = profileData;
-              dog.photo = profileData.photo || null;
-            }
-          }
-        }
-        renderDogCard();
-        if (trainerId) attachSetupsListener();
+    row.appendChild(label);
+    row.appendChild(sliderWrap);
+    optCells.forEach(c => row.appendChild(c));
+    row.appendChild(del);
+
+    marksList.appendChild(row);
+  });
+
+  marksList.querySelectorAll('.mark-label').forEach((el, idx) => {
+    const id = state.items[idx]?.id;
+    if (id) el.textContent = markTextFrom(id);
+  });
+}
+
+function makeChip(id) {
+  const chip = document.createElement('div');
+  chip.className = 'chip';
+  chip.dataset.id = id;
+  chip.textContent = chipTextFrom(id);
+  const sum = optionsSummary(id);
+  if (sum) chip.title = sum;
+  return chip;
+}
+function renderColumnsAndDock() {
+  dock.innerHTML = '';
+  state.columns.dock.forEach(id => dock.appendChild(makeChip(id)));
+
+  board.innerHTML = '';
+  const count = Math.max(1, state.columns.cols.length);
+  board.style.gridTemplateColumns = `repeat(${count}, minmax(0, 1fr))`;
+
+  state.columns.cols.forEach((colData, i) => {
+    const col = document.createElement('div');
+    col.className = 'column';
+    col.dataset.colindex = String(i);
+
+    const title = document.createElement('div');
+    title.className = 'column-title';
+    const tText = document.createElement('span');
+    tText.className = 'title';
+    tText.textContent = `Group ${i + 1}`;
+
+    const remBtn = document.createElement('button');
+    remBtn.className = 'btn';
+    remBtn.textContent = 'X';
+    remBtn.title = 'Remove this column';
+    remBtn.addEventListener('click', async () => {
+      state.columns.dock.push(...(state.columns.cols[i].items || []));
+      state.columns.cols.splice(i, 1);
+      ensureMinColumns(2);
+      renderColumnsAndDock();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+    });
+
+    title.append(tText, remBtn);
+    col.appendChild(title);
+
+    (colData.items || []).forEach(id => col.appendChild(makeChip(id)));
+    board.appendChild(col);
+  });
+}
+
+// ---------- UI: BLINDS ----------
+function blindTextFromIndex(idx, dist){ return `#${idx+1} - ${dist} yards`; }
+
+function renderBlindsList(){
+  const blindsList = document.getElementById('blindsList');
+  blindsList.innerHTML = '';
+
+  state.blinds.forEach((blind, idx) => {
+    blind.options = Object.assign({
+      water:false, poison1:false, poison2:false, duck:false, wDrill:false
+    }, blind.options || {});
+
+    const row = document.createElement('div');
+    row.className = 'blind-item';
+    row.dataset.id = blind.id;
+
+    const label = document.createElement('div');
+    label.className = 'blind-label';
+    label.textContent = blindTextFromIndex(idx, blind.dist ?? 0);
+
+    const sliderWrap = document.createElement('div');
+    sliderWrap.className = 'blind-slider';
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
+    slider.value = blind.dist ?? 0;
+    slider.addEventListener('input', () => {
+      blind.dist = clampToStep(Number(slider.value));
+      label.textContent = blindTextFromIndex(idx, blind.dist);
+    });
+    slider.addEventListener('change', save);
+    sliderWrap.appendChild(slider);
+
+    const optCells = BLIND_OPTION_KEYS.map(({key, label:optLabel}) => {
+      const cell = document.createElement('div');
+      cell.className = 'opt-cell';
+      const lab = document.createElement('label'); lab.className = 'opt';
+      const cb = document.createElement('input'); cb.type = 'checkbox';
+      cb.checked = !!blind.options[key]; cb.title = optLabel;
+      cb.addEventListener('change', async ()=>{
+        blind.options[key] = cb.checked;
+        suppressSetupDocSnapshots = true;
+        await save().finally(()=>{ suppressSetupDocSnapshots=false; });
       });
+      const txt = document.createElement('span'); txt.textContent = optLabel;
+      lab.append(cb, txt); cell.appendChild(lab); return cell;
+    });
+
+    const del = document.createElement('button');
+    del.className = 'btn'; del.textContent = 'X'; del.title = 'Remove blind';
+    del.addEventListener('click', async ()=>{
+      state.blinds = state.blinds.filter(b => b.id !== blind.id);
+      renderBlindsList();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+    });
+
+    row.appendChild(label);
+    row.appendChild(sliderWrap);
+    optCells.forEach(c => row.appendChild(c));
+    row.appendChild(del);
+    blindsList.appendChild(row);
+  });
+
+  // refresh numbering after deletions
+  blindsList.querySelectorAll('.blind-label').forEach((el, i)=>{
+    const dist = state.blinds[i]?.dist ?? 0;
+    el.textContent = blindTextFromIndex(i, dist);
+  });
+}
+
+// ---------- Render all ----------
+function renderAll(){ renderMarksList(); renderColumnsAndDock(); renderBlindsList(); }
+
+// ---------- Drag & drop (chips for Marks) ----------
+let dragging = null, offsetX = 0, offsetY = 0, activePointerId = null;
+function setGhost(text, x, y) { ghost.textContent = text; ghost.style.transform = `translate(${x - offsetX}px, ${y - offsetY}px)`; }
+function containers() { return [ ...document.querySelectorAll('.column'), dock ]; }
+function nearestDropContainer(x, y) { let best=null, bestDist=Infinity; for (const t of containers()){ const r=t.getBoundingClientRect(); if (x<r.left||x>r.right||y<r.top||y>r.bottom) continue; const cx=(r.left+r.right)/2, cy=(r.top+r.bottom)/2; const d=Math.hypot(x-cx, y-cy); if (d<bestDist){ best=t; bestDist=d; } } return best; }
+function highlight(el, on) { el.classList.toggle('drop-hint', !!on); }
+function clearHighlights() { containers().forEach(c => highlight(c, false)); }
+function hideGhost() { ghost.style.transform = 'translate(-9999px,-9999px)'; ghost.textContent = ''; }
+function endDragCleanup() { clearHighlights(); hideGhost(); dragging = null; activePointerId = null; document.body.style.cursor = ''; }
+
+document.addEventListener('pointerdown', e => {
+  const chip = e.target.closest('.chip'); if (!chip) return;
+  e.preventDefault();
+  activePointerId = e.pointerId;
+  chip.setPointerCapture?.(activePointerId);
+  dragging = chip;
+  const r = chip.getBoundingClientRect();
+  offsetX = e.clientX - r.left; offsetY = e.clientY - r.top;
+  setGhost(chip.textContent, e.clientX, e.clientY);
+  document.body.style.cursor = 'grabbing';
+});
+document.addEventListener('pointermove', e => {
+  if (!dragging || e.pointerId !== activePointerId) return;
+  setGhost(dragging.textContent, e.clientX, e.clientY);
+  clearHighlights();
+  const t = nearestDropContainer(e.clientX, e.clientY);
+  if (t) highlight(t, true);
+});
+document.addEventListener('pointerup', async e => {
+  if (!dragging || e.pointerId !== activePointerId) return;
+  dragging.releasePointerCapture?.(activePointerId);
+  clearHighlights();
+  const id = dragging.dataset.id;
+  const t = nearestDropContainer(e.clientX, e.clientY);
+  const oldParent = dragging.parentElement;
+
+  if (!t) { oldParent.appendChild(dragging); endDragCleanup(); return; }
+
+  removeIdFromAll(id);
+  if (t === dock) { state.columns.dock.push(id); dock.appendChild(dragging); }
+  else {
+    const idx = Number(t.dataset.colindex);
+    if (!Number.isNaN(idx) && state.columns.cols[idx]) { (state.columns.cols[idx].items ||= []).push(id); t.appendChild(dragging); }
+    else { state.columns.dock.push(id); dock.appendChild(dragging); }
+  }
+  hideGhost(); dragging = null; activePointerId = null; document.body.style.cursor = '';
+
+  suppressSetupDocSnapshots = true;
+  try { await save(); }
+  catch(err){
+    console.error('Save failed after drop:', err);
+    removeIdFromAll(id);
+    if (oldParent === dock) state.columns.dock.push(id);
+    else {
+      const idxOld = Number(oldParent.dataset.colindex);
+      if (!Number.isNaN(idxOld) && state.columns.cols[idxOld]) (state.columns.cols[idxOld].items ||= []).push(id);
+      else state.columns.dock.push(id);
     }
+    renderColumnsAndDock();
+  }
+  finally { suppressSetupDocSnapshots = false; }
+});
+document.addEventListener('pointercancel', () => {
+  if (!dragging) return;
+  dragging.releasePointerCapture?.(activePointerId);
+  endDragCleanup();
+});
 
-    async function attachSetupsListener(){
-      if (!trainerId) return;
-      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups = null; }
-      const q = query(setupsColl(), orderBy('order'));
-      unsubSetups = onSnapshot(q, async (snap)=>{
-        const arr = [];
-        snap.forEach(d=>{
-          const data = d.data()||{};
-          arr.push({ id:d.id, name:data.name||'Setup', order: typeof data.order==='number'?data.order:9999 });
-        });
-        setupsMeta = arr;
-        if (!activeSetupId && setupsMeta.length) activeSetupId = setupsMeta[0].id;
-        renderTabs();
-        attachSetupDocListener();
-        attachRunListeners();
-      });
+// ---------- Buttons ----------
+document.getElementById('addMarkBtn').addEventListener('click', async () => {
+  const id = makeId();
+  state.items.push({
+    id,
+    dist: 0,
+    options: {
+      handTossed:false, shortCheckDown:false, punchBird:false,
+      noOff:false, walkUp:false, waterMark:false,
+      goBird:false, whiteCoat:false, retire:false
     }
+  });
+  state.columns.dock.push(id);
+  renderAll();
+  suppressSetupDocSnapshots = true;
+  await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+});
 
-    function attachSetupDocListener(){
-      if (!activeSetupId) return;
-      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc = null; }
-      const ref = setupDoc();
-      unsubSetupDoc = onSnapshot(ref, (snap)=>{
-        const data = snap.data()||{};
-        setupItemsMarks = Array.isArray(data.items)? data.items.map(it=>({
-          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
-        })) : [];
-        setupItemsBlinds = Array.isArray(data.blinds)? data.blinds.map(it=>({
-          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
-        })) : [];
-        renderScoresUIFromCurrentItems();
-      });
-    }
+document.getElementById('addColumnBtn').addEventListener('click', async () => {
+  state.columns.cols.push({ items: [] });
+  suppressSetupDocSnapshots = true;
+  try { await save(); }
+  finally { suppressSetupDocSnapshots = false; renderColumnsAndDock(); }
+});
 
-    // Adapt/migrate scores shape from doc data
-    function normalizeScoresShape(data){
-      // Expecting {scores:{marks:{}, blinds:{}}}
-      let out = { marks:{}, blinds:{} };
-      if (data && data.scores) {
-        const s = data.scores;
-        if ('marks' in s || 'blinds' in s) {
-          out.marks  = s.marks  || {};
-          out.blinds = s.blinds || {};
-        } else {
-          // legacy flat map → treat as marks
-          out.marks = s || {};
-          out.blinds = {};
-        }
-      }
-      return out;
-    }
+document.getElementById('addBlindBtn').addEventListener('click', async () => {
+  const id = makeId();
+  state.blinds.push({
+    id,
+    dist: 0,
+    options: { water:false, poison1:false, poison2:false, duck:false, wDrill:false }
+  });
+  renderBlindsList();
+  suppressSetupDocSnapshots = true;
+  await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+});
 
-    function attachRunListeners(){
-      if (!dog.id || !activeSetupId) return;
+document.getElementById('addSetupBtn').addEventListener('click', async () => {
+  const nextOrder = (Math.max(0, ...setupsMeta.map(s => s.order || 0)) + 1) || 1;
+  const nextIndex = (setupsMeta.length + 1);
+  const name = `Setup ${nextIndex}`;
+  const newDoc = setupsColl().doc();
+  await newDoc.set({
+    name, order: nextOrder,
+    items: [],
+    columns: { dock: [], cols: [{items:[]},{items:[]}] },
+    blinds: [],
+    trainer: trainerId, dateKey: currentDateKey,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, newDoc.id);
+});
 
-      // base run doc
-      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase = null; }
-      unsubScoreDocBase = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base"), (snap)=>{
-        if (activeRunId==='base') {
-          scores = normalizeScoresShape(snap.data());
-          renderScoresUIFromCurrentItems();
-        }
-      });
+// ---------- Boot ----------
+async function boot(){
+  if (!trainerId) return showTrainerPrompt();
+  ctxEl.textContent = `Trainer: ${trainerId}`;
+  await switchDay(currentDateKey);
+}
 
-      // rerun presence + data
-      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun = null; }
-      unsubScoreDocRerun = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun"), (snap)=>{
-        rerunExists = snap.exists();
-        if (activeRunId==='rerun') {
-          scores = normalizeScoresShape(snap.data());
-        }
-        renderTabs();
-        renderScoresUIFromCurrentItems();
-      });
-    }
-
-    async function setActiveSetup(id, runId){
-      activeSetupId = id;
-      activeRunId = runId || 'base';
-      renderTabs();
-      attachSetupDocListener();
-      attachRunListeners();
-      const snap = await getDoc(dogRunDoc());
-      scores = normalizeScoresShape(snap.exists() ? snap.data() : null);
-      renderScoresUIFromCurrentItems();
-    }
-
-    async function switchDay(key){
-      currentDateKey = key;
-      if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
-      if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
-      if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase=null; }
-      if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun=null; }
-
-      setupsMeta = [];
-      activeSetupId = null;
-      activeRunId = 'base';
-      rerunExists = false;
-      scores = { marks:{}, blinds:{} };
-      setupItemsMarks = [];
-      setupItemsBlinds = [];
-      renderTabs();
-      renderScoresUI([]);
-
-      if (trainerId) attachSetupsListener();
-    }
-
-    /* ---------------- Boot ---------------- */
-    async function boot(){
-      if (!trainerId) return showTrainerPrompt();
-      ctxEl.textContent = `Trainer: ${trainerId}`;
-      await switchDay(currentDateKey);
-      attachDogListener();
-    }
-
-    if (trainerId) boot(); else showTrainerPrompt();
-  </script>
+if (trainerId) boot(); else showTrainerPrompt();
+</script>
 </body>
 </html>
