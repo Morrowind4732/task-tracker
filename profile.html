@@ -19,7 +19,6 @@
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
-  /* Tabs (setups + rerun tabs) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
   .tab { position:relative; padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
@@ -27,11 +26,9 @@
   .tab.rerun { font-style:italic; }
   .tab:hover { background:#fdfdfd; }
 
-  /* Hero / dog card */
   .hero { display:grid; grid-template-columns: 120px 1fr; gap: 12px; align-items:center; }
   .hero img { width:120px; height:120px; object-fit:cover; border-radius:10px; border:1px solid #ccc; background:#fafafa; }
 
-  /* Score cards */
   .score-list { display:flex; flex-direction:column; gap:12px; }
   .score-card {
     border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
@@ -59,7 +56,6 @@
   .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .divider { height:1px; background:#eee; margin:12px 0; }
 
-  /* Radial flag overlay */
   .radial-overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,.35);
@@ -92,7 +88,6 @@
   .rad-btn.active { background:#0b74ff; color:#fff; border-color:#0b74ff; }
   .rad-btn:disabled { opacity:.6; }
 
-  /* helpful on small phones */
   @media (max-width: 380px){
     .wheel { width: 300px; height:300px; }
     .center-cancel { width: 110px; height:110px; }
@@ -107,7 +102,6 @@
   </div>
   <div class="muted" id="ctx">Loading…</div>
 
-  <!-- Tabs / day -->
   <div class="section">
     <div class="tabs-bar">
       <div class="board-controls" style="margin-right:auto; display:flex; gap:8px; align-items:center;">
@@ -118,10 +112,8 @@
     </div>
   </div>
 
-  <!-- Dog hero -->
   <div class="section" id="dogCard">Loading dog…</div>
 
-  <!-- Scores -->
   <div class="section" id="scoresSection">
     <div class="score-head">
       <strong id="scoresTitle"></strong>
@@ -143,12 +135,12 @@
     </div>
   </div>
 
-  <!-- Radial Flag Overlay (reused for any item) -->
+  <!-- Radial Flag Overlay -->
   <div class="radial-overlay" id="flagOverlay" aria-hidden="true">
     <div class="wheel" role="dialog" aria-modal="true" aria-label="Flags">
       <h4 id="wheelTitle">Flags</h4>
       <button class="center-cancel" id="cancelWheel">Cancel</button>
-      <!-- buttons injected by JS -->
+      <!-- flag buttons injected by JS -->
     </div>
   </div>
 
@@ -174,12 +166,12 @@
     const app = initializeApp(firebaseConfig);
     const db  = getFirestore(app);
 
-    /* ---------------- Utilities ---------------- */
+    /* ---------------- Utils ---------------- */
     const ctxEl = document.getElementById('ctx');
-    function ymd(d){ const p=n=>String(n).padStart(2,'0'); return \`\${d.getFullYear()}-\${p(d.getMonth()+1)}-\${p(d.getDate())}\`; }
+    function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
     function slug(s){
       return String(s||"").toLowerCase().trim()
-        .replace(/[\\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
+        .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
         .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
     }
     const SAVE_DEBOUNCE_MS = 400;
@@ -188,42 +180,35 @@
     /* ---------------- URL params (QR compatible) ---------------- */
     const params  = new URL(location.href).searchParams;
     const trailer = (params.get('trailer')||'').trim();
-    const sexRaw  = (params.get('sex')||'').trim().toLowerCase();
-    const sexNorm = (sexRaw === 'm' || sexRaw === 'male') ? 'male'
-                   : (sexRaw === 'f' || sexRaw === 'female') ? 'female'
-                   : sexRaw;
-    const slotNum = (params.get('slot')||'').trim();          // e.g. R2C3 or R2C3H
+    const sexRaw  = (params.get('sex')||'').trim().toLowerCase(); // could be m/M/male or f/F/female
+    const slotNum = (params.get('slot')||'').trim();              // e.g. R2C3 or R2C3H
     let   trainerId = (params.get('trainer')||'').trim();
 
     const trailerNorm   = trailer.toLowerCase();
     const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
-    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
-    const slotId        = \`\${trailerPrefix}_\${sexPrefix}_\${slotNum}\`;
 
-    // Trainer chooser link
+    // We'll resolve the correct Firestore path and the correct slotId dynamically.
+    let sexResolved = '';      // 'male' or 'female'
+    let slotIdResolved = '';   // e.g. S_M_R2C3 or S_F_R2C3
+    let slotDocRef = null;     // resolved DocumentReference
+
+    // Trainer shortcut
     const changeUserLink = document.getElementById('changeUserLink');
     changeUserLink.addEventListener('click', (e) => {
       e.preventDefault();
-      const url = new URL(location.href);
-      url.searchParams.delete('trainer');
-      history.replaceState(null, '', url.toString());
-      showTrainerPrompt();
-    });
-
-    function showTrainerPrompt(){
       const name = prompt("Who are you? (Scott / Cody / Brian)", trainerId || "");
       if (name) {
         trainerId = name;
         const url = new URL(location.href);
         url.searchParams.set('trainer', trainerId);
         history.replaceState(null, '', url.toString());
-        ctxEl.textContent = \`Trainer: \${trainerId}\`;
+        ctxEl.textContent = `Trainer: ${trainerId}`;
         boot();
       }
-    }
-    if (trainerId) ctxEl.textContent = \`Trainer: \${trainerId}\`;
+    });
+    if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
-    if (!trailer || !sexNorm || !slotNum) {
+    if (!trailer || !sexRaw || !slotNum) {
       document.getElementById('dogCard').textContent = "Missing trailer, sex, or slot in URL.";
       throw new Error("Missing QR params");
     }
@@ -243,42 +228,38 @@
     let rerunExists   = false; // rerun presence for active setup
     let activePane    = 'marks'; // 'marks' | 'blinds'
 
-    // current dog (from trailerLayouts)
-    let dog = { id:null, name:null, photo:null };
+    let dog = { id:null, name:null, photo:null }; // from trailerLayouts
 
-    // listeners
     let unsubSetups=null, unsubSetupDoc=null, unsubScoreDocBase=null, unsubScoreDocRerun=null;
 
-    // items to render
     let setupItemsMarks = [];
     let setupItemsBlinds = [];
-
-    // score state shape
     let scores = { marks:{}, blinds:{} };
 
-    /* ---------------- Firestore paths ---------------- */
+    /* ---------------- Firestore paths (dynamic) ---------------- */
     const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
     const setupsColl = () => collection(dayDocPath(), "setups");
     const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
-    const slotRef = doc(db, "trailerLayouts", \`\${trailerNorm}-\${sexNorm}\`, "slots", slotId);
-
     const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
-    const dogRunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
-    const mirrorRunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
+    const dogRunDoc     = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
+    const mirrorRunDoc  = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
 
     /* ---------------- Dog card ---------------- */
     const dogCard = document.getElementById('dogCard');
     function renderDogCard(){
-      dogCard.innerHTML = dog?.name
-        ? \`<div class="hero">
-             <img src="\${dog.photo||''}" alt="">
-             <div>
-               <h2 style="margin:0 0 4px">\${dog.name}</h2>
-               <div class="muted">Trailer: \${trailer} · Sex: \${sexNorm} · Slot: \${slotId}</div>
-             </div>
-           </div>\`
-        : \`<div class="muted">Empty slot \${slotId}</div>\`;
+      if (dog?.name) {
+        dogCard.innerHTML = `
+          <div class="hero">
+            <img src="${dog.photo||''}" alt="">
+            <div>
+              <h2 style="margin:0 0 4px">${dog.name}</h2>
+              <div class="muted">Trailer: ${trailer} · Sex: ${sexResolved} · Slot: ${slotIdResolved}</div>
+            </div>
+          </div>`;
+      } else {
+        dogCard.innerHTML = `<div class="muted">Empty slot ${slotIdResolved}</div>`;
+      }
     }
 
     /* ---------------- Setup tabs ---------------- */
@@ -287,14 +268,14 @@
       setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
         const b = document.createElement('button');
         b.className = 'tab' + (m.id===activeSetupId && activeRunId==='base' ? ' active' : '');
-        b.textContent = m.name || \`Setup \${idx+1}\`;
+        b.textContent = m.name || `Setup ${idx+1}`;
         b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
         tabsEl.appendChild(b);
 
         if (m.id === activeSetupId && (rerunExists || activeRunId==='rerun')) {
           const r = document.createElement('button');
           r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
-          r.textContent = \`Rerun \${m.name || \`Setup \${idx+1}\`}\`;
+          r.textContent = `Rerun ${m.name || `Setup ${idx+1}`}`;
           r.addEventListener('click', ()=>setActiveSetup(m.id, 'rerun'));
           tabsEl.appendChild(r);
         }
@@ -313,7 +294,7 @@
       }
     });
 
-    /* ---------------- Flags (definitions + radial layout) ---------------- */
+    /* ---------------- Flags (definitions) ---------------- */
     const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
@@ -337,7 +318,6 @@
       { key:'skipped',         label:'Skipped' },
     ];
 
-    // For the wheel we want 4 top, 4 bottom, 1 left, 1 right:
     function wheelSlotsFor(pane){
       if (pane==='marks'){
         return {
@@ -347,12 +327,11 @@
           right:  [FLAG_DEFS_MARKS[9]]
         };
       } else {
-        // Use all 8 uniques; duplicate 2 on left/right so users still get 10 buttons
         return {
           top:    FLAG_DEFS_BLINDS.slice(0,4),
           bottom: FLAG_DEFS_BLINDS.slice(4,8),
-          left:   [FLAG_DEFS_BLINDS[4]],   // Cast Refusal
-          right:  [FLAG_DEFS_BLINDS[5]]    // Ignored Whistle
+          left:   [FLAG_DEFS_BLINDS[4]],
+          right:  [FLAG_DEFS_BLINDS[5]]
         };
       }
     }
@@ -366,12 +345,12 @@
     function markLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return \`#\${n} - \${dist} yards\`;
+      return `#${n} - ${dist} yards`;
     }
     function blindLabel(item, idx){
       const n = (idx+1);
       const dist = typeof item.dist==='number' ? item.dist : 0;
-      return \`#\${n} - \${dist} yards\`;
+      return `#${n} - ${dist} yards`;
     }
 
     function renderScoresUI(items){
@@ -379,7 +358,7 @@
       const paneName = activePane==='marks' ? 'Marks' : 'Blinds';
       const runName  = activeRunId==='base' ? 'Base' : 'Rerun';
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup';
-      scoresTitle.textContent = \`\${paneName} • \${runName} (\${setupName})\`;
+      scoresTitle.textContent = `${paneName} • ${runName} (${setupName})`;
 
       const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
 
@@ -436,7 +415,6 @@
     let wheelCtx = { pane:'marks', itemId:null };
 
     function placeButton(el, spot, index=0){
-      // Wheel geometry
       const W = wheelEl.clientWidth, H = wheelEl.clientHeight;
       const cx = W/2, cy = H/2;
       const Rtop = 100, Rside = 110, Rbot = 100;
@@ -448,7 +426,6 @@
         el.style.left = (cx + Rside - el.offsetWidth) + 'px';
         el.style.top  = (cy - 23) + 'px';
       } else if (spot.startsWith('top')) {
-        // four positions, evenly spaced
         const offsets = [-90, -30, 30, 90];
         const dx = offsets[index];
         el.style.left = (cx + dx - el.offsetWidth/2) + 'px';
@@ -465,14 +442,12 @@
       wheelCtx = { pane, itemId };
       wheelTitle.textContent = titleText + ' — Flags';
 
-      // clear previous buttons
       wheelEl.querySelectorAll('.rad-btn[data-flag]').forEach(n => n.remove());
 
       const slots = wheelSlotsFor(pane);
       const bucket = pane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
       const fstate = (bucket[itemId]?.flags) || {};
 
-      // Create buttons
       const makeBtn = (def) => {
         const b = document.createElement('button');
         b.className = 'rad-btn';
@@ -487,8 +462,7 @@
           scheduleSave();
         });
         wheelEl.appendChild(b);
-        // Let it render so offsetWidth is known before positioning
-        requestAnimationFrame(()=>{}); // no-op frame
+        requestAnimationFrame(()=>{});
         return b;
       };
 
@@ -499,8 +473,6 @@
         right:  slots.right.map(makeBtn),
       };
 
-      // Position them
-      // Need a tick so sizes are measured
       requestAnimationFrame(()=>{
         created.left.forEach((b)=> placeButton(b, 'left'));
         created.right.forEach((b)=> placeButton(b, 'right'));
@@ -526,14 +498,13 @@
         await Promise.allSettled([ deleteDoc(dogRunDoc()), deleteDoc(mirrorRunDoc()) ]);
         activeRunId = 'base';
         rerunExists = false;
-        renderTabs();
-        attachRunListeners();
+        renderTabs(); attachRunListeners();
       } else {
         const payload = {
           scores: { marks:{}, blinds:{} },
           trainer: trainerId, setupId: activeSetupId, runId: 'rerun',
           dogId: dog.id, dogName: dog.name || null, dateKey: currentDateKey,
-          trailer: trailer, sex: sexNorm, slotId,
+          trailer: trailer, sex: sexResolved, slotId: slotIdResolved,
           updatedAt: serverTimestamp()
         };
         await Promise.allSettled([
@@ -542,8 +513,7 @@
         ]);
         activeRunId = 'rerun';
         rerunExists = true;
-        renderTabs();
-        attachRunListeners();
+        renderTabs(); attachRunListeners();
       }
     });
 
@@ -566,14 +536,14 @@
         dogId: dog.id, dogName: dog.name || null,
         runId: activeRunId,
         dateKey: currentDateKey,
-        trailer: trailer, sex: sexNorm, slotId,
+        trailer: trailer, sex: sexResolved, slotId: slotIdResolved,
         updatedAt: serverTimestamp()
       };
       try {
         await Promise.all([
           setDoc(dogRunDoc(), payload, { merge:true }),
           setDoc(mirrorRunDoc(), payload, { merge:true }),
-          setDoc(ratingsDayDoc(), { date: currentDateKey, trailer, sex: sexNorm, slotId, lastScoredAt: serverTimestamp(), trainer: trainerId }, { merge:true })
+          setDoc(ratingsDayDoc(), { date: currentDateKey, trailer, sex: sexResolved, slotId: slotIdResolved, lastScoredAt: serverTimestamp(), trainer: trainerId }, { merge:true })
         ]);
         saveStatus.textContent = 'Saved.';
         setTimeout(()=>saveStatus.textContent='', 900);
@@ -589,15 +559,51 @@
     });
 
     /* ---------------- Listeners: dog, setups, runs ---------------- */
+    async function resolveSlotRefAndId(){
+      // Build candidate sex keys and corresponding slotIds
+      const cands = [];
+      if (sexRaw.startsWith('m')) cands.push('male','m');
+      else if (sexRaw.startsWith('f')) cands.push('female','f');
+      else cands.push(sexRaw);
+
+      // Try candidates first
+      for (const key of cands){
+        const sexPrefix = key.startsWith('f') ? 'F' : 'M';
+        const sid = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
+        const ref = doc(db, "trailerLayouts", `${trailerNorm}-${key}`, "slots", sid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) return { ref, sexKey: (key.startsWith('f')?'female':'male'), sid };
+      }
+      // Fallback: try both sides
+      for (const key of ['male','m','female','f']){
+        const sexPrefix = key.startsWith('f') ? 'F' : 'M';
+        const sid = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
+        const ref = doc(db, "trailerLayouts", `${trailerNorm}-${key}`, "slots", sid);
+        const snap = await getDoc(ref);
+        if (snap.exists()) return { ref, sexKey: (key.startsWith('f')?'female':'male'), sid };
+      }
+      // Nothing found; default to user's side and slotId
+      const defKey = sexRaw.startsWith('f') ? 'female' : 'male';
+      const defPrefix = defKey==='female' ? 'F' : 'M';
+      const sid = `${trailerPrefix}_${defPrefix}_${slotNum}`;
+      const ref = doc(db, "trailerLayouts", `${trailerNorm}-${defKey}`, "slots", sid);
+      return { ref, sexKey: defKey, sid };
+    }
+
     async function attachDogListener(){
-      onSnapshot(slotRef, async (snap)=>{
+      // Resolve the correct doc path first
+      const resolved = await resolveSlotRefAndId();
+      slotDocRef     = resolved.ref;
+      sexResolved    = resolved.sexKey;     // 'male' | 'female'
+      slotIdResolved = resolved.sid;
+
+      onSnapshot(slotDocRef, async (snap)=>{
         dog = { id:null, name:null, photo:null };
         if (snap.exists()) {
           const data = snap.data() || {};
           dog.name = data.dogName || null;
           if (dog.name) {
             dog.id = slug(dog.name);
-            // optional: fetch profile photo if present
             const pSnap = await getDoc( doc(db, "profiles", dog.id) );
             if (pSnap.exists()) dog.photo = (pSnap.data()||{}).photo || null;
           }
@@ -707,12 +713,12 @@
 
     /* ---------------- Boot ---------------- */
     async function boot(){
-      if (!trainerId) return showTrainerPrompt();
-      ctxEl.textContent = \`Trainer: \${trainerId}\`;
+      if (!trainerId) return changeUserLink.click();
+      ctxEl.textContent = `Trainer: ${trainerId}`;
       await switchDay(ymd(new Date()));
-      attachDogListener();
+      await attachDogListener();
     }
-    if (trainerId) boot(); else showTrainerPrompt();
+    if (trainerId) boot(); else changeUserLink.click();
   </script>
 </body>
 </html>
