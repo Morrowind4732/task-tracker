@@ -116,6 +116,27 @@
     .blind-item .opt span { display:inline; }
     .blind-slider { grid-column: 1 / -1; order: 99; }
   }
+  
+  /* 1) Narrow the "Remove" column */
+.marks-head, .mark-item { grid-template-columns: 44px 100px 1fr repeat(9, 80px); }
+.blinds-head, .blind-item { grid-template-columns: 44px 120px 1fr repeat(5, 110px); }
+
+/* 2) Compact icon-style buttons */
+.btn.icon {
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  min-width: 0;         /* prevent any default min-width */
+  line-height: 1;
+  display: inline-grid; /* center the X nicely */
+  place-items: center;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+/* optional: small X buttons on column headers too */
+.column-title .btn { width: 28px; height: 28px; padding: 0; min-width: 0; }
+
 </style>
 </head>
 <body>
@@ -516,10 +537,10 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
-    const del = document.createElement('button');
-    del.className = 'btn';
-    del.textContent = 'X';
-    del.title = 'Remove mark';
+// Marks delete
+const del = document.createElement('button');
+del.className = 'btn icon';
+del.textContent = '×';    // looks cleaner than 'X'
     del.addEventListener('click', async () => {
       state.items = state.items.filter(x => x.id !== item.id);
       removeIdFromAll(item.id);
@@ -647,8 +668,10 @@ function renderBlindsList(){
     row.className = 'blind-item';
     row.dataset.id = blind.id;
 
-    const del = document.createElement('button');
-    del.className = 'btn'; del.textContent = 'X'; del.title = 'Remove blind';
+// Blinds delete
+const del = document.createElement('button');
+del.className = 'btn icon';
+del.textContent = '×';
     del.addEventListener('click', async ()=>{
       state.blinds = state.blinds.filter(b => b.id !== blind.id);
       renderBlindsList();
@@ -875,6 +898,7 @@ document.getElementById('deleteSetupBtn').addEventListener('click', async () => 
     alert('Sorry, deleting this setup failed. Check the console for details.');
   }
 });
+
 
 
 // ---------- Boot ----------
