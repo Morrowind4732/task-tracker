@@ -17,6 +17,8 @@
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:#0b74ff; border-color:#0b74ff; color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
+  .btn.danger { border-color:#f87171; color:#b91c1c; }
+  .btn.danger:hover { background:#fee2e2; }
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
@@ -40,24 +42,24 @@
 
   /* Header row (Marks) */
   .marks-head {
-    display:grid;
-    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove (we keep 9 cols to match your latest) */
-    gap:6px; align-items:center;
+    /* remove column | label | slider | 9 opts */
+    grid-template-columns: 72px 100px 1fr repeat(9, 80px);
+    display:grid; gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
   .head-center { text-align:center; }
 
   /* Mark rows as cards */
   .mark-item {
-    display:grid;
-    grid-template-columns: 100px 1fr repeat(9, 80px) 72px;
-    gap:6px; align-items:center;
+    /* remove column | label | slider | 9 opts */
+    grid-template-columns: 72px 100px 1fr repeat(9, 80px);
+    display:grid; gap:6px; align-items:center;
     background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
     margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   .mark-label { font-weight:700; }
   .opt-cell { text-align:center; }
-  .slider-wrap { grid-column: 2 / 3; }
+  .slider-wrap { grid-column: 3 / 4; } /* moved one column to the right */
   input[type="range"] { width:100%; }
 
   /* Per-checkbox labels: hidden on desktop, shown on mobile */
@@ -84,25 +86,26 @@
   .column-title { font-weight:600; font-size:13px; color:#444; display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
   .column-title .title { pointer-events:none; }
 
-  .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
+  .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:#fff; font-size:14px; touch-action:none; cursor:grab; }
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow: 0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
 
   /* === BLINDS === */
   .blinds-head {
-    display:grid;
-    grid-template-columns: 120px 1fr repeat(5, 110px) 72px; /* label | slider | 5 opts | remove */
-    gap:6px; align-items:center;
+    /* remove | label | slider | 5 opts */
+    grid-template-columns: 72px 120px 1fr repeat(5, 110px);
+    display:grid; gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
   .blind-item {
-    display:grid;
-    grid-template-columns: 120px 1fr repeat(5, 110px) 72px;
-    gap:6px; align-items:center;
+    /* remove | label | slider | 5 opts */
+    grid-template-columns: 72px 120px 1fr repeat(5, 110px);
+    display:grid; gap:6px; align-items:center;
     background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
     margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   .blind-label { font-weight:700; }
+  .blind-slider { grid-column: 3 / 4; } /* moved one column to the right */
 
   @media (max-width:768px){
     .blinds-head { display:none; }
@@ -113,10 +116,6 @@
     .blind-item .opt span { display:inline; }
     .blind-slider { grid-column: 1 / -1; order: 99; }
   }
-  
-  .btn.danger { border-color:#f87171; color:#b91c1c; }
-.btn.danger:hover { background:#fee2e2; }
-
 </style>
 </head>
 <body>
@@ -145,10 +144,9 @@
         <label>Day: <input type="date" id="dayPicker"></label>
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
-<div class="tabs" id="tabs"></div>
-<button class="btn ghost" id="addSetupBtn">+ Add Setup</button>
-<button class="btn ghost danger" id="deleteSetupBtn">– Delete Setup</button>
-
+      <div class="tabs" id="tabs"></div>
+      <button class="btn ghost" id="addSetupBtn">+ Add Setup</button>
+      <button class="btn ghost danger" id="deleteSetupBtn">– Delete Setup</button>
     </div>
   </div>
 
@@ -160,6 +158,7 @@
     </div>
 
     <div class="marks-head">
+      <div class="head-center">Remove</div>
       <div></div>
       <div class="head-center">Distance</div>
       <div class="head-center">hand tossed</div>
@@ -171,7 +170,6 @@
       <div class="head-center">go bird</div>
       <div class="head-center">white coat</div>
       <div class="head-center">retire</div>
-      <div class="head-center">Remove</div>
     </div>
 
     <div class="marks-list" id="marksList"></div>
@@ -195,6 +193,7 @@
     </div>
 
     <div class="blinds-head">
+      <div class="head-center">Remove</div>
       <div></div>
       <div class="head-center">Distance</div>
       <div class="head-center">Water</div>
@@ -202,7 +201,6 @@
       <div class="head-center">Poison 2</div>
       <div class="head-center">Duck</div>
       <div class="head-center">W Drill</div>
-      <div class="head-center">Remove</div>
     </div>
 
     <div class="blinds-list" id="blindsList"></div>
@@ -518,6 +516,18 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
+    const del = document.createElement('button');
+    del.className = 'btn';
+    del.textContent = 'X';
+    del.title = 'Remove mark';
+    del.addEventListener('click', async () => {
+      state.items = state.items.filter(x => x.id !== item.id);
+      removeIdFromAll(item.id);
+      renderAll();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+    });
+
     const label = document.createElement('div');
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
@@ -557,20 +567,11 @@ function renderMarksList() {
       lab.append(cb, txt); cell.appendChild(lab); return cell;
     });
 
-    const del = document.createElement('button');
-    del.className = 'btn'; del.textContent = 'X'; del.title = 'Remove mark';
-    del.addEventListener('click', async () => {
-      state.items = state.items.filter(x => x.id !== item.id);
-      removeIdFromAll(item.id);
-      renderAll();
-      suppressSetupDocSnapshots = true;
-      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
-    });
-
+    // Append in new order: delete first, then label, slider, then options
+    row.appendChild(del);
     row.appendChild(label);
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
-    row.appendChild(del);
 
     marksList.appendChild(row);
   });
@@ -646,6 +647,15 @@ function renderBlindsList(){
     row.className = 'blind-item';
     row.dataset.id = blind.id;
 
+    const del = document.createElement('button');
+    del.className = 'btn'; del.textContent = 'X'; del.title = 'Remove blind';
+    del.addEventListener('click', async ()=>{
+      state.blinds = state.blinds.filter(b => b.id !== blind.id);
+      renderBlindsList();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+    });
+
     const label = document.createElement('div');
     label.className = 'blind-label';
     label.textContent = blindTextFromIndex(idx, blind.dist ?? 0);
@@ -677,19 +687,12 @@ function renderBlindsList(){
       lab.append(cb, txt); cell.appendChild(lab); return cell;
     });
 
-    const del = document.createElement('button');
-    del.className = 'btn'; del.textContent = 'X'; del.title = 'Remove blind';
-    del.addEventListener('click', async ()=>{
-      state.blinds = state.blinds.filter(b => b.id !== blind.id);
-      renderBlindsList();
-      suppressSetupDocSnapshots = true;
-      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
-    });
-
+    // New order: delete first, then label, slider, options
+    row.appendChild(del);
     row.appendChild(label);
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
-    row.appendChild(del);
+
     blindsList.appendChild(row);
   });
 
@@ -866,7 +869,6 @@ document.getElementById('deleteSetupBtn').addEventListener('click', async () => 
       const next = remaining[0].id;
       localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, next);
       setActiveSetup(next);
-    
     }
   } catch (e) {
     console.error('Delete setup failed:', e);
