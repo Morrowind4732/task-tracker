@@ -29,13 +29,18 @@
   .overlay-card h3 { margin:0 0 10px; }
   .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
 
-  /* Tabs (setups + contextual rerun) */
+  /* Tabs (setups + rerun tabs) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .tabs { display:flex; align-items:flex-end; gap:6px; flex-wrap:wrap; }
   .tab { position:relative; padding:8px 12px; border:1px solid var(--border); border-bottom:none; border-top-left-radius:10px; border-top-right-radius:10px; background:#f6f6f6; cursor:pointer; font-weight:600; color:#444; }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
   .tab.rerun { font-style:italic; }
   .tab:hover { background:#fdfdfd; }
+
+  /* Mini pane tabs (Marks/Blinds) */
+  .mini-tabs { display:flex; gap:6px; align-items:center; }
+  .mini-tab { padding:6px 10px; border:1px solid var(--border); border-radius:999px; background:#f7f7f7; font-weight:600; cursor:pointer; }
+  .mini-tab.active { background:#fff; border-color:#bbb; box-shadow:0 1px 0 rgba(0,0,0,.05); }
 
   /* Hero / dog card */
   .hero { display:grid; grid-template-columns: 120px 1fr; gap: 12px; align-items:center; }
@@ -45,7 +50,7 @@
   .score-list { display:flex; flex-direction:column; gap:12px; }
   .score-card {
     border:1px solid #e2e2e2; border-radius:10px; padding:10px; background:#fafafa;
-    display:grid; gap:8px; grid-template-columns: 1fr; 
+    display:grid; gap:8px; grid-template-columns: 1fr;
   }
   .score-header { display:flex; justify-content:space-between; align-items:center; gap:10px; }
   .score-title { font-weight:700; }
@@ -58,15 +63,12 @@
 
   .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .divider { height:1px; background:#eee; margin:12px 0; }
-
-  /* Board controls reused styling */
   .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 </style>
 </head>
 <body>
   <div class="title-row">
     <h1>Scoring</h1>
-    <!-- click to force trainer picker again -->
     <a id="changeUserLink" class="mini-link" href="https://morrowind4732.github.io/task-tracker/scoring.html">change user</a>
   </div>
   <div class="muted" id="ctx">Loading…</div>
@@ -99,10 +101,14 @@
 
   <!-- Scores -->
   <div class="section" id="scoresSection">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; gap:10px; flex-wrap:wrap;">
       <strong id="scoresTitle">Scores</strong>
-      <div class="actions">
+      <div class="actions" style="margin-left:auto;">
         <button class="btn ghost" id="rerunBtn">Add Rerun</button>
+        <div class="mini-tabs" id="paneTabs">
+          <button class="mini-tab active" data-pane="marks">Marks</button>
+          <button class="mini-tab" data-pane="blinds">Blinds</button>
+        </div>
       </div>
     </div>
     <div class="score-list" id="scoreList"></div>
@@ -128,7 +134,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
       getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
-      collection, query, orderBy, addDoc, deleteDoc
+      collection, query, orderBy, deleteDoc
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     /* ---------------- Firebase init ---------------- */
@@ -152,9 +158,11 @@
         .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
         .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
     }
+    const SAVE_DEBOUNCE_MS = 400;
 
-    // negative action flags (keys are used in Firestore)
-    const FLAG_DEFS = [
+    /* ---------------- Flags ---------------- */
+    // Marks flags (added "skipped")
+    const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
       { key:'overran',         label:'Overran' },
@@ -163,24 +171,32 @@
       { key:'castRefusal',     label:'Cast Refusal' },
       { key:'sitOnWhistle',    label:'Sit On Whistle' },
       { key:'backSideOfGun',   label:'Back Side of Gun' },
-      { key:'break',           label:'Break' }, // note: saved as 'break' (string), ok in Firestore
+      { key:'break',           label:'Break' },
+      { key:'skipped',         label:'Skipped' },
+    ];
+    // Blinds flags
+    const FLAG_DEFS_BLINDS = [
+      { key:'poorInitial',     label:'Poor Initial' },
+      { key:'scallop',         label:'Scallop' },
+      { key:'castRefusal',     label:'Cast Refusal' },
+      { key:'pickedUpPoison',  label:'Picked Up Poison' },
+      { key:'hunted',          label:'Hunted' },
+      { key:'ignoredWhistle',  label:'Ignored Whistle' },
+      { key:'failedDiversion', label:'Failed Diversion' },
+      { key:'skipped',         label:'Skipped' },
     ];
 
     /* ---------------- URL params (QR compatible) ---------------- */
     const params  = new URL(location.href).searchParams;
-    // trailer/sex/slot stay exactly as your old flow
     const trailer = (params.get('trailer')||'').trim();
     const sex     = (params.get('sex')||'').trim();
     const slotNum = (params.get('slot')||'').trim();
-
-    // normalizations for resilience (future-proofing)
     const trailerNorm = trailer.toLowerCase();
     const sexNorm     = sex.toLowerCase();
     const trailerCollection = `${trailerNorm}-${sexNorm}`;
-    const trailerPrefix = trailerNorm.charAt(0).toUpperCase(); // S/C/B...
-    const sexPrefix     = sexNorm.charAt(0).toUpperCase();     // M/F
+    const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
+    const sexPrefix     = sexNorm.charAt(0).toUpperCase();
     const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
-
     if (!trailer || !sex || !slotNum) {
       document.getElementById('dogCard').textContent = "Missing trailer, sex, or slot in URL.";
       throw new Error("Missing QR params");
@@ -216,7 +232,6 @@
       ctxEl.textContent = `Trainer: ${trainerId}`;
       boot();
     }
-
     if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
     /* ---------------- Day + tabs (setups) ---------------- */
@@ -230,24 +245,31 @@
 
     let currentDateKey = dayPicker.value;
     let setupsMeta = [];       // [{id,name,order}]
-    let activeSetupId = null;  // Firestore setup doc id
-    let activeRunId   = 'base';// 'base' or 'rerun' (one rerun per setup as requested)
-    let rerunExists   = false; // whether rerun doc exists for active setup
+    let activeSetupId = null;  // setup doc id
+    let activeRunId   = 'base';// 'base' or 'rerun'
+    let rerunExists   = false; // rerun presence for active setup
+    let activePane    = 'marks'; // 'marks' | 'blinds'
+
+    // current dog
     let dog = { id:null, name:null, profile:null, photo:null };
 
-    // Setup listeners
+    // listeners
     let unsubSetups = null;
-    let unsubSetupDoc = null;         // for reading items of active setup
-    let unsubScoreDocBase = null;     // for base run (to build UI/state)
-    let unsubScoreDocRerun = null;    // to know if rerun exists
+    let unsubSetupDoc = null;
+    let unsubScoreDocBase = null;
+    let unsubScoreDocRerun = null;
 
-    // Score state for UI (current setup + run)
-    // scores = { [markId]: { score: number, flags: {[key]:bool} } }
-    let scores = {};
+    // items to render
+    let setupItemsMarks = [];
+    let setupItemsBlinds = [];
+
+    // score state (now separated)
+    // { marks: {id:{score,flags}}, blinds: {id:{score,flags}} }
+    let scores = { marks:{}, blinds:{} };
 
     // Debounced save
     let saveTimer = null;
-    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 400); }
+    function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
     /* ---------------- Firestore paths ---------------- */
     const dayDocPath = () => doc(db, "setups", trainerId, "days", currentDateKey);
@@ -257,14 +279,12 @@
     // Kennel slot → dog lookup (QR-based)
     const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
 
-    // Dog-centric paths
+    // Dog-centric runs
     const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
     const dogRunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", activeRunId);
-    const dogRerunDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun");
 
-    // Mirror under setups
+    // Mirrors under setups
     const mirrorRunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", activeRunId);
-    const mirrorRerunDoc = () => doc(db, "setups", trainerId, "days", currentDateKey, "setups", activeSetupId, "scores", dog.id, "runs", "rerun");
 
     /* ---------------- Dog hero rendering ---------------- */
     const dogCard = document.getElementById('dogCard');
@@ -280,7 +300,7 @@
       `;
     }
 
-    /* ---------------- Tabs rendering ---------------- */
+    /* ---------------- Setup tabs ---------------- */
     function renderTabs(){
       tabsEl.innerHTML = '';
       setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
@@ -290,8 +310,8 @@
         b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
         tabsEl.appendChild(b);
 
-        // If rerun exists for THIS setup, append its tab right after
-        if (m.id === activeSetupId && rerunExists) {
+        // show rerun tab next to active setup if it exists or if you're on rerun
+        if (m.id === activeSetupId && (rerunExists || activeRunId==='rerun')) {
           const r = document.createElement('button');
           r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
           r.textContent = `Rerun ${m.name || `Setup ${idx+1}`}`;
@@ -300,6 +320,18 @@
         }
       });
     }
+
+    /* ---------------- Pane tabs (Marks/Blinds) ---------------- */
+    const paneTabs = document.getElementById('paneTabs');
+    paneTabs.addEventListener('click', (e)=>{
+      const btn = e.target.closest('.mini-tab'); if (!btn) return;
+      const pane = btn.dataset.pane;
+      if (pane && pane !== activePane) {
+        activePane = pane;
+        paneTabs.querySelectorAll('.mini-tab').forEach(b => b.classList.toggle('active', b.dataset.pane===activePane));
+        renderScoresUIFromCurrentItems();
+      }
+    });
 
     /* ---------------- Scores UI ---------------- */
     const scoreList = document.getElementById('scoreList');
@@ -312,10 +344,21 @@
       const dist = typeof item.dist==='number' ? item.dist : 0;
       return `#${n} - ${dist} yards`;
     }
+    function blindLabel(item, idx){
+      const n = (idx+1);
+      const dist = typeof item.dist==='number' ? item.dist : 0;
+      return `#${n} - ${dist} yards`;
+    }
 
     function renderScoresUI(items){
       scoreList.innerHTML = '';
-      scoresTitle.textContent = `Scores – ${activeRunId==='base' ? 'Base' : 'Rerun'} (${(setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup'})`;
+      const paneName = activePane==='marks' ? 'Marks' : 'Blinds';
+      const runName  = activeRunId==='base' ? 'Base' : 'Rerun';
+      const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup';
+      scoresTitle.textContent = `Scores – ${paneName} • ${runName} (${setupName})`;
+
+      const defs = activePane==='marks' ? FLAG_DEFS_MARKS : FLAG_DEFS_BLINDS;
+      const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
 
       items.forEach((item, idx)=>{
         const card = document.createElement('div');
@@ -326,7 +369,7 @@
 
         const title = document.createElement('div');
         title.className = 'score-title';
-        title.textContent = markLabel(item, idx);
+        title.textContent = activePane==='marks' ? markLabel(item, idx) : blindLabel(item, idx);
 
         const sliderRow = document.createElement('div');
         sliderRow.className = 'slider-row';
@@ -334,17 +377,17 @@
         const slider = document.createElement('input');
         slider.type = 'range';
         slider.min = '0'; slider.max = '10'; slider.step = '0.5';
-        const current = scores[item.id]?.score ?? 0;
-        slider.value = String(current);
+        const cur = bucket[item.id]?.score ?? 0;
+        slider.value = String(cur);
 
         const out = document.createElement('div');
         out.className = 'slider-val';
-        out.textContent = Number(current).toFixed(1);
+        out.textContent = Number(cur).toFixed(1);
 
         slider.addEventListener('input', ()=>{
           const val = Number(slider.value);
           out.textContent = val.toFixed(1);
-          (scores[item.id] ||= { score:0, flags:{} }).score = val;
+          (bucket[item.id] ||= { score:0, flags:{} }).score = val;
           scheduleSave();
         });
 
@@ -352,16 +395,16 @@
 
         const flagsWrap = document.createElement('div');
         flagsWrap.className = 'flags';
-        const flagsState = (scores[item.id]?.flags) || {};
-        FLAG_DEFS.forEach(fd=>{
+        const flagsState = (bucket[item.id]?.flags) || {};
+        defs.forEach(fd=>{
           const tag = document.createElement('label');
           tag.className = 'flag';
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = !!flagsState[fd.key];
           cb.addEventListener('change', ()=>{
-            (scores[item.id] ||= { score:0, flags:{} });
-            scores[item.id].flags[fd.key] = cb.checked;
+            (bucket[item.id] ||= { score:0, flags:{} });
+            bucket[item.id].flags[fd.key] = cb.checked;
             scheduleSave();
           });
           const span = document.createElement('span'); span.textContent = fd.label;
@@ -378,27 +421,32 @@
       rerunBtn.textContent = activeRunId==='rerun' ? 'Remove Rerun' : 'Add Rerun';
     }
 
+    function renderScoresUIFromCurrentItems(){
+      const items = activePane==='marks' ? setupItemsMarks : setupItemsBlinds;
+      renderScoresUI(items);
+    }
+
     /* ---------------- Rerun add/remove ---------------- */
     rerunBtn.addEventListener('click', async ()=>{
       if (!dog.id || !activeSetupId) return;
       if (activeRunId === 'rerun') {
-        // remove rerun
-        await Promise.allSettled([ deleteDoc(dogRerunDoc()), deleteDoc(mirrorRerunDoc()) ]);
+        await Promise.allSettled([ deleteDoc(dogRunDoc()), deleteDoc(mirrorRunDoc()) ]);
         activeRunId = 'base';
         rerunExists = false;
         renderTabs();
-        // reattach listener for base (rerun listener will be set below anyway)
         attachRunListeners();
       } else {
-        // add rerun doc (empty sheet)
         const payload = {
-          scores: {},
+          scores: { marks:{}, blinds:{} },
           trainer: trainerId, setupId: activeSetupId, runId: 'rerun',
           dogId: dog.id, dogName: dog.name || null, dateKey: currentDateKey,
           trailer: trailer, sex: sex, slotId,
           updatedAt: serverTimestamp()
         };
-        await Promise.allSettled([ setDoc(dogRerunDoc(), payload, {merge:true}), setDoc(mirrorRerunDoc(), payload, {merge:true}) ]);
+        await Promise.allSettled([
+          setDoc(dogRunDoc(), payload, {merge:true}),
+          setDoc(mirrorRunDoc(), payload, {merge:true})
+        ]);
         activeRunId = 'rerun';
         rerunExists = true;
         renderTabs();
@@ -425,7 +473,7 @@
         await Promise.all([
           setDoc(dogRunDoc(), payload, { merge:true }),
           setDoc(mirrorRunDoc(), payload, { merge:true }),
-          setDoc(ratingsDayDoc(), { // light daily doc for backward compatibility
+          setDoc(ratingsDayDoc(), { // light daily doc remains
             date: currentDateKey, trailer, sex, slotId,
             lastScoredAt: serverTimestamp(), trainer: trainerId
           }, { merge:true })
@@ -438,7 +486,6 @@
       }
     }
 
-    // Save & Camera
     document.getElementById('saveCameraBtn').addEventListener('click', async ()=>{
       await saveNow();
       location.href = "https://morrowind4732.github.io/task-tracker/Camera.html";
@@ -463,7 +510,6 @@
           }
         }
         renderDogCard();
-        // once we have a trainer and a dog, we can attach setups
         if (trainerId) attachSetupsListener();
       });
     }
@@ -492,11 +538,32 @@
       const ref = setupDoc();
       unsubSetupDoc = onSnapshot(ref, (snap)=>{
         const data = snap.data()||{};
-        const items = Array.isArray(data.items)? data.items.map(it=>({
+        setupItemsMarks = Array.isArray(data.items)? data.items.map(it=>({
           id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
         })) : [];
-        renderScoresUI(items);
+        setupItemsBlinds = Array.isArray(data.blinds)? data.blinds.map(it=>({
+          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
+        })) : [];
+        renderScoresUIFromCurrentItems();
       });
+    }
+
+    // Adapt/migrate scores shape from doc data
+    function normalizeScoresShape(data){
+      // Expecting {scores:{marks:{}, blinds:{}}}
+      let out = { marks:{}, blinds:{} };
+      if (data && data.scores) {
+        const s = data.scores;
+        if ('marks' in s || 'blinds' in s) {
+          out.marks  = s.marks  || {};
+          out.blinds = s.blinds || {};
+        } else {
+          // legacy flat map → treat as marks
+          out.marks = s || {};
+          out.blinds = {};
+        }
+      }
+      return out;
     }
 
     function attachRunListeners(){
@@ -506,34 +573,20 @@
       if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase = null; }
       unsubScoreDocBase = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base"), (snap)=>{
         if (activeRunId==='base') {
-          const data = snap.data()||{};
-          scores = data.scores || {};
+          scores = normalizeScoresShape(snap.data());
           renderScoresUIFromCurrentItems();
         }
       });
 
-      // rerun presence + data (exists → show tab)
+      // rerun presence + data
       if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun = null; }
       unsubScoreDocRerun = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun"), (snap)=>{
         rerunExists = snap.exists();
         if (activeRunId==='rerun') {
-          const data = snap.data()||{};
-          scores = data.scores || {};
+          scores = normalizeScoresShape(snap.data());
         }
         renderTabs();
         renderScoresUIFromCurrentItems();
-      });
-    }
-
-    function renderScoresUIFromCurrentItems(){
-      const ref = setupDoc();
-      if (!ref) return;
-      getDoc(ref).then(s=>{
-        const data = s.data()||{};
-        const items = Array.isArray(data.items)? data.items.map(it=>({
-          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
-        })) : [];
-        renderScoresUI(items);
       });
     }
 
@@ -543,15 +596,13 @@
       renderTabs();
       attachSetupDocListener();
       attachRunListeners();
-      // load current scores for selected run
       const snap = await getDoc(dogRunDoc());
-      scores = (snap.exists() ? (snap.data().scores||{}) : {});
+      scores = normalizeScoresShape(snap.exists() ? snap.data() : null);
       renderScoresUIFromCurrentItems();
     }
 
     async function switchDay(key){
       currentDateKey = key;
-      // reset listeners
       if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
       if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
       if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase=null; }
@@ -561,7 +612,9 @@
       activeSetupId = null;
       activeRunId = 'base';
       rerunExists = false;
-      scores = {};
+      scores = { marks:{}, blinds:{} };
+      setupItemsMarks = [];
+      setupItemsBlinds = [];
       renderTabs();
       renderScoresUI([]);
 
