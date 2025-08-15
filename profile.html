@@ -111,6 +111,13 @@
 .k-item small { color:#666; font-size:11px; }
 .k-item:hover { border-color:#bbb; }
 
+
+/* extra space below the Marks/Blinds buttons */
+.score-head { 
+  margin-bottom: 12px;   /* tweak to taste */
+}
+
+
 </style>
 </head>
 <body>
@@ -801,28 +808,36 @@
 	
 	/* ========= Radial kennel navigator ========= */
 
-/** Parse "R2C3" -> { r:2, c:3 } */
+/** Parse "R2C3" or "R2C3H" -> { r:2, c:3, half:true? } */
 function parseRC(rc) {
-  const m = /^R(\d+)C(\d+)$/i.exec(rc||''); 
-  return m ? { r: +m[1], c: +m[2] } : { r: NaN, c: NaN };
+  const m = /^R(\d+)C(\d+)(H)?$/i.exec(rc||'');
+  return m ? { r:+m[1], c:+m[2], half: !!m[3] } : { r:NaN, c:NaN, half:false };
 }
-/** Format {r,c} -> "R2C3" */
-function fmtRC(r,c){ return `R${r}C${c}`; }
-/** Make trailerLayouts collection key: "trailer-sex" (already have trailerNorm/sexNorm) */
+/** Format -> "R2C3" (+ 'H' if half true) */
+function fmtRC(r,c,half=false){ return `R${r}C${c}${half?'H':''}`; }
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
-/** Build a map of slotNum ("R#C#") -> dogName for a side */
+/** Read trailerLayouts/<trailer>-<sex>/slots and build a map of id->dogName (keeps H docs too) */
 async function fetchSlotsMap(sexNorm) {
   const key = `${trailerNorm}-${sexNorm}`;
   const snaps = await getDocs(collection(db, "trailerLayouts", key, "slots"));
   const map = {};
   snaps.forEach(d => {
-    // doc.id looks like "S_M_R1C1" or "C_F_R2C3" – last piece is the rc
-    const parts = d.id.split("_");
-    const rc = parts.slice(2).join("_"); // "R1C1"
-    const data = d.data() || {};
-    map[rc] = data.dogName || ""; // empty if unassigned
+    // ids look like S_M_R1C1 or S_M_R1C1H; keep last part exactly as-is
+    const rc = d.id.split("_").slice(2).join("_"); // "R1C1" or "R1C1H"
+    map[rc] = (d.data() || {}).dogName || "";
   });
   return map;
+}
+
+/** Discover max rows/cols present in a slots map (ignores H) */
+function boundsFromMap(map){
+  let maxR = 1, maxC = 1;
+  Object.keys(map||{}).forEach(k=>{
+    const m = /^R(\d+)C(\d+)/i.exec(k);
+    if (m){ maxR = Math.max(maxR, +m[1]); maxC = Math.max(maxC, +m[2]); }
+  });
+  return { maxR, maxC };
 }
 
 const overlayEl = document.getElementById('kennelOverlay');
@@ -832,83 +847,101 @@ const kCurNameEl= document.getElementById('kCurName');
 const kCurSlotEl= document.getElementById('kCurSlot');
 
 let slotsMale=null, slotsFemale=null;
+let maleBounds={maxR:2,maxC:8}, femaleBounds={maxR:2,maxC:8}; // safe defaults
 let longPressTimer=null;
 
-/** Ensure both sides are loaded */
+/** Ensure both sides are loaded and bounds computed */
 async function ensureLayouts() {
-  if (!slotsMale)   slotsMale   = await fetchSlotsMap('male');
-  if (!slotsFemale) slotsFemale = await fetchSlotsMap('female');
+  if (!slotsMale)   { slotsMale   = await fetchSlotsMap('male');   maleBounds   = boundsFromMap(slotsMale); }
+  if (!slotsFemale) { slotsFemale = await fetchSlotsMap('female'); femaleBounds = boundsFromMap(slotsFemale); }
 }
 
-/** Compute neighbor targets for current rc + sex */
-function neighbors(rc, sexNorm) {
-  const {r,c} = parseRC(rc);
-  const oppSex = sexNorm === 'male' ? 'female' : 'male';
+/** Look up the display name, trying rc first then rcH. Returns {name, rcUsed} */
+function lookupName(rc, sexN){
+  const map = (sexN==='male') ? slotsMale : slotsFemale;
+  const first = map?.[rc] || "";
+  if (first) return { name:first, rcUsed:rc };
+  const rcH = rc.endsWith('H') ? rc : (rc + 'H');
+  const second = map?.[rcH] || "";
+  return { name: (second || '— Empty —'), rcUsed: (second ? rcH : rc) };
+}
+
+/** Mirror columns when swapping sex, using the TARGET side's maxC */
+function mirrorRC(rc, toSex){
+  const { r, c } = parseRC(rc);
+  const b = (toSex==='female') ? femaleBounds : maleBounds;
+  const mc = b.maxC || 1;
+  const mirroredC = clamp(mc - c + 1, 1, mc);
+  return fmtRC(clamp(r,1,b.maxR||1), mirroredC);
+}
+
+/** Compute neighbor targets around current {rc, sex} */
+function neighbors(rc, sexN) {
+  const { r, c } = parseRC(rc);
+  const sameBounds = (sexN==='male') ? maleBounds : femaleBounds;
+  const opp = (sexN==='male') ? 'female' : 'male';
+
+  const leftC  = clamp(c-1, 1, sameBounds.maxC);
+  const rightC = clamp(c+1, 1, sameBounds.maxC);
+  const upR    = clamp(r-1, 1, sameBounds.maxR);
+
   return [
-    { key:'left',  label:'Left',   rc: fmtRC(r, c-1), sex:sexNorm },
-    { key:'right', label:'Right',  rc: fmtRC(r, c+1), sex:sexNorm },
-    { key:'up',    label:'Up',     rc: fmtRC(r-1, c), sex:sexNorm },
-    { key:'swap',  label:(oppSex==='female' ? 'Female' : 'Male'), rc: rc, sex:oppSex }
+    { key:'left',  label:'Left',   rc: fmtRC(r, leftC),  sex:sexN },
+    { key:'right', label:'Right',  rc: fmtRC(r, rightC), sex:sexN },
+    { key:'up',    label:'Up',     rc: fmtRC(upR, c),    sex:sexN },
+    // swap to opposite sex with mirrored column
+    { key:'swap',  label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex:opp }
   ];
 }
 
-/** Get name for rc on a side */
-function nameFor(rc, sexNorm) {
-  const map = (sexNorm==='male') ? slotsMale : slotsFemale;
-  return (map && rc in map && map[rc]) ? map[rc] : '— Empty —';
-}
-
-/** Open wheel centered, place four items with names */
+/** Open wheel, place four items, each using rcH fallback if needed */
 async function openWheel() {
   await ensureLayouts();
 
-  // current context from URL
-  const rc = slotNum;          // you already have this in your script: e.g. "R2C3"
-  const sexN = sexNorm;        // lowercased sex from URL
-  const curName = dog?.name || nameFor(rc, sexN);
+  // Use URL context
+  const rc = slotNum;      // e.g. "R2C3" or "R2C3H"
+  const sexN = sexNorm;    // 'male' | 'female'
+  const curr = lookupName(rc, sexN);
+  const curName = dog?.name || curr.name;
 
   kCurNameEl.textContent = curName || 'Unassigned';
-  kCurSlotEl.textContent = rc;
+  kCurSlotEl.textContent = curr.rcUsed;
 
   // clear prior items
   wheelEl.querySelectorAll('.k-item').forEach(n => n.remove());
 
-  const items = neighbors(rc, sexN).map(n => ({
-    ...n,
-    dogName: nameFor(n.rc, n.sex)
-  }));
+  const items = neighbors(rc, sexN).map(n => {
+    const info = lookupName(n.rc, n.sex);
+    return { ...n, dogName: info.name, rcUsed: info.rcUsed };
+  });
 
-  // helper to make item button
-  function addItem(dx, dy, title, rc, sex, displayName){
+  function addItem(dx, dy, title, rcUsed, sex, displayName){
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'k-item';
     btn.style.left = '50%';
     btn.style.top  = '50%';
     btn.style.transform = `translate(-50%,-50%) translate(${dx}px, ${dy}px)`;
-    btn.innerHTML = `<b>${displayName || '—'}</b><small>${title} · ${sex==='female'?'♀':'♂'} · ${rc}</small>`;
+    btn.innerHTML = `<b>${displayName || '—'}</b><small>${title} · ${sex==='female'?'♀':'♂'} · ${rcUsed}</small>`;
     btn.addEventListener('click', ()=> {
-      // navigate by swapping URL params
       const url = new URL(location.href);
       url.searchParams.set('sex', sex);
-      url.searchParams.set('slot', rc);
+      url.searchParams.set('slot', rcUsed);       // navigate to real slot, using H if that’s where the dog lives
       location.href = url.toString();
     });
     wheelEl.appendChild(btn);
   }
 
   const R = 100; // radius from center
-  // Positions: left, right, up, swap at bottom
-  addItem(-R, 0,       'Left',  items[0].rc, items[0].sex, items[0].dogName);
-  addItem( R, 0,       'Right', items[1].rc, items[1].sex, items[1].dogName);
-  addItem( 0, -R,      'Up',    items[2].rc, items[2].sex, items[2].dogName);
-  addItem( 0,  R,      items[3].label, items[3].rc, items[3].sex, items[3].dogName);
+  addItem(-R, 0,           'Left',   items[0].rcUsed, items[0].sex, items[0].dogName);
+  addItem( R, 0,           'Right',  items[1].rcUsed, items[1].sex, items[1].dogName);
+  addItem( 0, -R,          'Up',     items[2].rcUsed, items[2].sex, items[2].dogName);
+  addItem( 0,  R,   items[3].label,  items[3].rcUsed, items[3].sex, items[3].dogName);
 
   overlayEl.classList.add('open');
   overlayEl.setAttribute('aria-hidden', 'false');
 }
 
-/** Close wheel */
 function closeWheel(){
   overlayEl.classList.remove('open');
   overlayEl.setAttribute('aria-hidden', 'true');
@@ -917,19 +950,14 @@ function closeWheel(){
 /* FAB open */
 fabEl.addEventListener('click', openWheel);
 /* Click outside to close */
-overlayEl.addEventListener('click', (e)=> {
-  if (e.target === overlayEl) closeWheel();
-});
-
+overlayEl.addEventListener('click', (e)=> { if (e.target === overlayEl) closeWheel(); });
 /* Long press on dog card to open (mobile) */
-
-dogCard.addEventListener('pointerdown', () => {
-  longPressTimer = setTimeout(openWheel, 450);
-});
+dogCard.addEventListener('pointerdown', () => { longPressTimer = setTimeout(openWheel, 450); });
 ['pointerup','pointerleave','pointercancel','dragstart'].forEach(ev=>{
   dogCard.addEventListener(ev, ()=>{ clearTimeout(longPressTimer); });
 });
 /* ========= /radial ========= */
+
 
 
     if (trainerId) boot(); else showTrainerPrompt();
