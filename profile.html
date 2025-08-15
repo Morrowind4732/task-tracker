@@ -64,6 +64,14 @@
   .actions { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .divider { height:1px; background:#eee; margin:12px 0; }
   .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  
+  #scoreHeadActions{
+  display:flex;
+  flex-direction:column;   /* stack vertically */
+  align-items:flex-end;    /* right-align the stack */
+  gap:8px;
+}
+
 </style>
 </head>
 <body>
@@ -103,13 +111,14 @@
   <div class="section" id="scoresSection">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; gap:10px; flex-wrap:wrap;">
       <strong id="scoresTitle">Scores</strong>
-      <div class="actions" style="margin-left:auto;">
-        <button class="btn ghost" id="rerunBtn">Add Rerun</button>
-        <div class="mini-tabs" id="paneTabs">
-          <button class="mini-tab active" data-pane="marks">Marks</button>
-          <button class="mini-tab" data-pane="blinds">Blinds</button>
-        </div>
-      </div>
+      <div id="scoreHeadActions" style="margin-left:auto;">
+  <button class="btn ghost" id="rerunBtn">Add Rerun</button>
+  <div class="mini-tabs" id="paneTabs">
+    <button class="mini-tab active" data-pane="marks">Marks</button>
+    <button class="mini-tab" data-pane="blinds">Blinds</button>
+  </div>
+</div>
+
     </div>
     <div class="score-list" id="scoreList"></div>
     <div class="divider"></div>
@@ -355,7 +364,8 @@
       const paneName = activePane==='marks' ? 'Marks' : 'Blinds';
       const runName  = activeRunId==='base' ? 'Base' : 'Rerun';
       const setupName = (setupsMeta.find(s=>s.id===activeSetupId)?.name)||'Setup';
-      scoresTitle.textContent = `Scores – ${paneName} • ${runName} (${setupName})`;
+      scoresTitle.textContent = `${paneName} • ${runName} (${setupName})`;
+
 
       const defs = activePane==='marks' ? FLAG_DEFS_MARKS : FLAG_DEFS_BLINDS;
       const bucket = activePane==='marks' ? (scores.marks ||= {}) : (scores.blinds ||= {});
