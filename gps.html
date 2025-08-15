@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>GPS – Setups Map</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  :root{
+    --accent:#0b74ff;
+    --ray:#111827;
+    --panel:#ffffffcc;
+    --bg:#f5f5f5;
+
+    /* 5 distinct blues (by group index 0..4) */
+    --g0:#0b74ff;
+    --g1:#2563eb;
+    --g2:#3b82f6;
+    --g3:#60a5fa;
+    --g4:#93c5fd;
+    --blind:#16a34a;   /* green */
+    --trainer:#f97316; /* orange */
+  }
+  html, body { height:100%; margin:0; background:var(--bg); font-family:system-ui, sans-serif; }
+  #map { height:100%; width:100%; }
+  @supports (height: 100svh) { #map { height:100svh; } }
+
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
+  .overlay.open { display:flex; }
+  .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
+  .overlay-card h3 { margin:0 0 10px; }
+  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
+  .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .btn.ghost { background:#fff; border-color:#ccc; }
+  .btn.warn { border-color:#ef4444; color:#b91c1c; }
+
+  .hud {
+    position:fixed; left:10px; top:10px; z-index:1000;
+    display:grid; gap:8px; padding:10px;
+    background:var(--panel); backdrop-filter: blur(4px);
+    border:1px solid #ddd; border-radius:12px; max-width:min(92vw,520px);
+  }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; align-items:flex-end; }
+  .tab {
+    padding:8px 12px; border:1px solid #ddd; border-bottom:none;
+    border-top-left-radius:10px; border-top-right-radius:10px;
+    background:#f6f6f6; cursor:pointer; font-weight:600; color:#444;
+  }
+  .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
+
+  .dock {
+    position:fixed; right:10px; top:10px; z-index:1000;
+    width:min(92vw, 340px); max-height:80vh; overflow:auto;
+    display:grid; gap:10px; padding:10px;
+    background:var(--panel); border:1px solid #ddd; border-radius:12px; backdrop-filter: blur(4px);
+  }
+  .group {
+    border:1px solid #ddd; border-radius:10px; padding:8px; background:#fff;
+  }
+  .group h4 { margin:0 0 8px; font-size:14px; display:flex; align-items:center; gap:8px; }
+  .swatch { width:12px; height:12px; border-radius:50%; border:1px solid #999; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip {
+    user-select:none; padding:6px 10px; border:1px solid #bbb; border-radius:999px; background:#f7f7f7; cursor:grab;
+    font-weight:600;
+  }
+  .chip[draggable="true"]:active { cursor:grabbing; }
+  .blind-group h4 .swatch { background:var(--blind); }
+
+  /* Map pills */
+  .mk { display:grid; place-items:center; }
+  .pill {
+    min-width: 28px; height:28px; padding:0 8px; border-radius:14px; color:#fff; font-weight:800; font-size:13px;
+    display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,.35); transform:translateY(-4px); border:2px solid #fff;
+  }
+
+  /* Handle: big hit, tiny dot */
+  .handle-hit { width:32px; height:32px; border-radius:50%; background:transparent; display:grid; place-items:center; }
+  .handle-dot { width:4px; height:4px; border-radius:50%; background:currentColor; box-shadow:0 0 0 1.5px #fff; }
+
+  .dist-label {
+    background:#fff; padding:2px 6px; border-radius:10px; border:1px solid #ddd;
+    font-size:12px; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.15);
+  }
+
+  .muted { color:#666; font-size:12px; }
+</style>
+</head>
+<body>
+
+<!-- Trainer chooser -->
+<div class="overlay" id="trainerOverlay">
+  <div class="overlay-card">
+    <h3>Who are you?</h3>
+    <div class="overlay-actions">
+      <button class="btn primary" data-trainer="Scott">Scott</button>
+      <button class="btn primary" data-trainer="Cody">Cody</button>
+      <button class="btn primary" data-trainer="Brian">Brian</button>
+    </div>
+  </div>
+</div>
+
+<div class="hud">
+  <div class="row">
+    <h2 style="margin:0">GPS – Setups Map</h2>
+    <a id="changeUserLink" class="muted" href="#">change user</a>
+    <div id="ctx" class="muted">Loading…</div>
+  </div>
+
+  <div class="row">
+    <label>Day: <input type="date" id="dayPicker"></label>
+    <button class="btn ghost" id="todayBtn">Today</button>
+    <div class="tabs" id="tabs"></div>
+  </div>
+
+  <div class="row">
+    <input id="latIn" type="number" step="0.000001" placeholder="Lat" />
+    <input id="lngIn" type="number" step="0.000001" placeholder="Lng" />
+    <button class="btn" id="goBtn">Go</button>
+    <button class="btn" id="fitBtn">Fit All</button>
+    <label style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+      <input id="raysChk" type="checkbox" />
+      <span>Show trainer rays</span>
+    </label>
+  </div>
+  <div class="muted">Drag chips from the dock onto the map. Drag map pins to adjust. Marks have a directional arrow (drag the small dot).</div>
+</div>
+
+<!-- Dock with groups & unplaced items -->
+<div class="dock" id="dock">
+  <div class="muted">Fetching setups…</div>
+</div>
+
+<div id="map"></div>
+
+<script type="module">
+  /* ---------------- Firebase (v10) ---------------- */
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
+    collection, query, orderBy, deleteField      // 👈 add deleteField
+  } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+    authDomain: "task-tracker-73b77.firebaseapp.com",
+    projectId: "task-tracker-73b77",
+    storageBucket: "task-tracker-73b77.firebasestorage.app",
+    messagingSenderId: "795274673000",
+    appId: "1:795274673000:web:0ea07130e45c72384134dd",
+    measurementId: "G-VLW5KLY4FF"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+
+  /* ---------------- Utilities ---------------- */
+  const $ = s => document.querySelector(s);
+  function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+
+  const GROUP_BLUES = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)','var(--g4)'];
+
+  /* ---------------- Trainer picker ---------------- */
+  const overlay = $('#trainerOverlay');
+  const ctxEl   = $('#ctx');
+  $('#changeUserLink').addEventListener('click', (e)=> {
+    e.preventDefault();
+    const url = new URL(location.href); url.searchParams.delete('trainer');
+    history.replaceState(null,'',url.toString());
+    showTrainerPrompt();
+  });
+
+  let trainerId = (new URL(location.href)).searchParams.get('trainer') || '';
+  function setTrainer(name){
+    trainerId = name;
+    const url = new URL(location.href); url.searchParams.set('trainer', trainerId);
+    history.replaceState(null,'',url.toString());
+    ctxEl.textContent = `Trainer: ${trainerId}`;
+    boot();
+  }
+  function showTrainerPrompt(){
+    overlay.classList.add('open');
+    overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        overlay.classList.remove('open');
+        setTrainer(btn.dataset.trainer);
+      }, { once:true });
+    });
+  }
+  if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
+
+  /* ---------------- Date + setups tabs ---------------- */
+  const dayPicker = $('#dayPicker');
+  const todayBtn  = $('#todayBtn');
+  dayPicker.value = ymd(new Date());
+  todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
+  dayPicker.addEventListener('change', ()=> switchDay(dayPicker.value));
+  const tabsEl = $('#tabs');
+
+  let currentDateKey = dayPicker.value;
+  let setupsMeta = [];       // [{id,name,order}]
+  let activeSetupId = null;
+
+  const dayDocPath = () => doc(db, 'setups', trainerId, 'days', currentDateKey);
+  const setupsColl = () => collection(dayDocPath(), 'setups');
+  const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
+
+  /* ---------------- Map ---------------- */
+  const MAX_COMFORT_ZOOM = 17;
+  const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
+  let hasAutoCentered = false;
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:20, maxNativeZoom:17, attribution:'&copy; Esri, Maxar, Earthstar Geographics' }).addTo(map);
+  L.control.scale({imperial:true, metric:false}).addTo(map);
+  map.on('zoomend', renderAllArrows);
+
+  const markPins   = L.layerGroup().addTo(map);
+  const markLines  = L.layerGroup().addTo(map);
+  const markDots   = L.layerGroup().addTo(map);
+  const blindPins  = L.layerGroup().addTo(map);
+  const trainerLay = L.layerGroup().addTo(map);
+  const raysLayer  = L.layerGroup().addTo(map);
+  const distLabels = L.layerGroup().addTo(map);
+
+  function iconPill(text, colorCSS){
+    const html = `<div class="pill" style="background:${colorCSS}">${text}</div>`;
+    return L.divIcon({ className:'mk', html, iconSize:[28,28], iconAnchor:[14,24] });
+  }
+  const handleIcon = (colorCSS) => L.divIcon({
+    className:'mk',
+    html:`<div class="handle-hit"><div class="handle-dot" style="color:${colorCSS}"></div></div>`,
+    iconSize:[32,32], iconAnchor:[16,16]
+  });
+
+  // Geo utils
+  const Rm = 6371000;
+  const toRad = d => d*Math.PI/180, toDeg = r => r*180/Math.PI;
+  function distanceMeters(a,b){ return map.distance(a,b); }
+  function yards(m){ return m*1.09361; }
+  function fmtYards(m){ return `${Math.round(yards(m))} yd`; }
+  function bearing(a,b){
+    const φ1=toRad(a.lat), φ2=toRad(b.lat), λ1=toRad(a.lng), λ2=toRad(b.lng);
+    const y = Math.sin(λ2-λ1)*Math.cos(φ2);
+    const x = Math.cos(φ1)*sinφ2 - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+    return ((toDeg(Math.atan2(y,x))+360)%360);
+  }
+  function destPoint(start, brgDeg, distM){
+    const δ = distM / Rm, θ = toRad(brgDeg);
+    const φ1 = toRad(start.lat), λ1 = toRad(start.lng);
+    const sinφ1 = Math.sin(φ1), cosφ1 = Math.cos(φ1);
+    const sinδ = Math.sin(δ), cosδ = Math.cos(δ);
+    const sinφ2 = sinφ1*cosδ + cosφ1*sinδ*Math.cos(θ);
+    const φ2 = Math.asin(sinφ2);
+    const y = Math.sin(θ)*sinδ*cosφ1;
+    const x = cosδ - sinφ1*sinφ2;
+    const λ2 = λ1 + Math.atan2(y, x);
+    return L.latLng(toDeg(φ2), ((toDeg(λ2)+540)%360)-180);
+  }
+
+  const DEFAULT_ARROW_BRG = 315;  // ~10:30
+  const DEFAULT_ARROW_LEN = 100;  // meters
+  const MIN_ARROW_VISIBLE = 12;
+
+  function drawArrow(A, B, colorCSS){
+    L.polyline([A,B], { color: colorCSS, weight:4, opacity:0.95 }).addTo(markLines);
+    const z = map.getZoom();
+    const aPt = map.project(A, z), bPt = map.project(B, z);
+    const v = bPt.subtract(aPt); const len = Math.hypot(v.x, v.y); if (!len) return;
+    const ux=v.x/len, uy=v.y/len;
+    const headLen = 18, headAng = 32*Math.PI/180;
+    const lx = bPt.x - headLen*( ux*Math.cos(headAng) - uy*Math.sin(headAng) );
+    const ly = bPt.y - headLen*( uy*Math.cos(headAng) + ux*Math.sin(headAng) );
+    const rx = bPt.x - headLen*( ux*Math.cos(headAng) + uy*Math.sin(headAng) );
+    const ry = bPt.y - headLen*( uy*Math.cos(headAng) - ux*Math.sin(headAng) );
+    const L1 = map.unproject(L.point(lx,ly), z);
+    const L2 = map.unproject(L.point(rx,ry), z);
+    L.polyline([B,L1], { color: colorCSS, weight:4, opacity:0.95 }).addTo(markLines);
+    L.polyline([B,L2], { color: colorCSS, weight:4, opacity:0.95 }).addTo(markLines);
+  }
+
+  /* ---------------- State for active setup ---------------- */
+  let activeSetupData = { items:[], columns:{dock:[], cols:[]}, blinds:[], geo:{} };
+  let unsubSetups = null, unsubSetupDoc = null;
+
+  function renderTabs(){
+    tabsEl.innerHTML = '';
+    setupsMeta.sort((a,b)=>(a.order??0)-(b.order??0)).forEach((m, idx)=>{
+      const b = document.createElement('button');
+      b.className = 'tab' + (m.id===activeSetupId ? ' active' : '');
+      b.textContent = m.name || `Setup ${idx+1}`;
+      b.addEventListener('click', ()=> setActiveSetup(m.id));
+      tabsEl.appendChild(b);
+    });
+  }
+
+  // --- Re-draw all mark arrows at the current zoom ---
+  function renderAllArrows() {
+    markLines.clearLayers();
+    const marksPlaced = activeSetupData.geo?.marks || {};
+    const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
+    const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
+
+    activeSetupData.items.forEach(it => {
+      const g = marksPlaced[it.id]; if (!g) return;
+      const color = GROUP_BLUES[groupOf(it.id) % GROUP_BLUES.length];
+      const A = L.latLng(g.lat, g.lng);
+      const H = g.handle ? L.latLng(g.handle.lat, g.handle.lng)
+                         : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+      drawArrow(A, H, color);
+    });
+
+    renderRays();
+  }
+
+  /* ---------------- Dock building ---------------- */
+  function buildDock(){
+    const dock = $('#dock');
+    dock.innerHTML = '';
+
+    // Trainer section
+    const tBox = document.createElement('div');
+    tBox.className = 'group';
+    tBox.innerHTML = `<h4><span class="swatch" style="background:var(--trainer)"></span>Trainer</h4><div class="chips"></div>`;
+    const tChips = tBox.querySelector('.chips');
+    if (!activeSetupData.geo?.trainer) {
+      const tr = document.createElement('div');
+      tr.className='chip'; tr.draggable=true; tr.textContent='TR';
+      tr.dataset.type='trainer'; tr.dataset.id='trainer'; tr.dataset.color='var(--trainer)';
+      tChips.appendChild(tr);
+    }
+    dock.appendChild(tBox);
+
+    if (!activeSetupData.items.length && !activeSetupData.blinds.length) {
+      const empty = document.createElement('div');
+      empty.className='muted';
+      empty.textContent='This setup has no marks or blinds yet.';
+      dock.appendChild(empty);
+      // still wire any trainer chip
+      wireDockChips(dock);
+      return;
+    }
+
+    // Groups from columns.cols (array of {items:[id,...]})
+    const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
+    cols.forEach((col, gi) => {
+      const color = GROUP_BLUES[gi % GROUP_BLUES.length];
+      const box = document.createElement('div');
+      box.className = 'group';
+      box.innerHTML = `<h4><span class="swatch" style="background:${color}"></span>Group ${gi+1}</h4><div class="chips"></div>`;
+      const chips = box.querySelector('.chips');
+
+      (col.items||[]).forEach(id=>{
+        if (activeSetupData.geo?.marks?.[id]) return;   // already placed
+        const idx = activeSetupData.items.findIndex(i=>i.id===id);
+        const chip = document.createElement('div');
+        chip.className='chip'; chip.draggable=true; chip.textContent=`M${idx>=0?idx+1:'?'}`;
+        chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
+        chips.appendChild(chip);
+      });
+
+      if (chips.children.length) dock.appendChild(box);
+    });
+
+    // Un-grouped marks
+    const groupedIds = new Set(cols.flatMap(c => c.items||[]));
+    const ungroup = activeSetupData.items.filter(m => !groupedIds.has(m.id)).map(m => m.id);
+    if (ungroup.length){
+      const color = GROUP_BLUES[0];
+      const box = document.createElement('div');
+      box.className = 'group';
+      box.innerHTML = `<h4><span class="swatch" style="background:${color}"></span>Ungrouped Marks</h4><div class="chips"></div>`;
+      const chips = box.querySelector('.chips');
+      ungroup.forEach(id=>{
+        if (activeSetupData.geo?.marks?.[id]) return;
+        const idx = activeSetupData.items.findIndex(i=>i.id===id);
+        const chip = document.createElement('div');
+        chip.className='chip'; chip.draggable=true; chip.textContent=`M${idx+1}`;
+        chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
+        chips.appendChild(chip);
+      });
+      if (chips.children.length) dock.appendChild(box);
+    }
+
+    // Blinds (unplaced)
+    const bBox = document.createElement('div');
+    bBox.className = 'group blind-group';
+    bBox.innerHTML = `<h4><span class="swatch"></span>Blinds</h4><div class="chips"></div>`;
+    const bChips = bBox.querySelector('.chips');
+    (activeSetupData.blinds||[]).forEach((b,i)=>{
+      if (activeSetupData.geo?.blinds?.[b.id]) return;
+      const chip = document.createElement('div');
+      chip.className='chip'; chip.draggable=true; chip.textContent=`B${i+1}`;
+      chip.dataset.type='blind'; chip.dataset.id=b.id; chip.dataset.color=getComputedStyle(document.documentElement).getPropertyValue('--blind').trim();
+      bChips.appendChild(chip);
+    });
+    if (bChips.children.length) dock.appendChild(bBox);
+
+    // Wire drag
+    wireDockChips(dock);
+  }
+
+  function wireDockChips(container){
+    container.querySelectorAll('.chip').forEach(ch => {
+      ch.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({
+          type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color
+        }));
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+    });
+  }
+
+  // Map drop target
+  const mapEl = map.getContainer();
+  mapEl.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  mapEl.addEventListener('drop', async e => {
+    e.preventDefault();
+    const data = JSON.parse(e.dataTransfer.getData('text/plain')||'{}');
+    if (!data || !data.type) return;
+
+    const rect = mapEl.getBoundingClientRect();
+    const pt = L.point(e.clientX-rect.left, e.clientY-rect.top);
+    const ll = map.containerPointToLatLng(pt);
+
+    if (data.type === 'mark') {
+      const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+      await setDoc(setupDoc(), {
+        geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } }
+      }, { merge: true });
+    } else if (data.type === 'blind') {
+      await setDoc(setupDoc(), {
+        geo: { blinds: { [data.id]: { lat: ll.lat, lng: ll.lng } } }
+      }, { merge:true });
+    } else if (data.type === 'trainer') {
+      await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
+    }
+  });
+
+  /* ---------------- Render map from activeSetupData ---------------- */
+  function renderMap(){
+    markPins.clearLayers(); markLines.clearLayers(); markDots.clearLayers();
+    blindPins.clearLayers(); trainerLay.clearLayers(); raysLayer.clearLayers(); distLabels.clearLayers();
+
+    const geo = activeSetupData.geo || {};
+    const marksPlaced = geo.marks || {};
+    const blindsPlaced = geo.blinds || {};
+
+    // Trainer
+    if (geo.trainer){
+      const t = L.marker(geo.trainer, { draggable:true, autoPan:false, icon: iconPill('TR','var(--trainer)') })
+        .addTo(trainerLay)
+        .bindPopup('<div><strong>Trainer</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redockT">Redock</button></div></div>')
+        .on('dragend', async e => {
+          const ll = e.target.getLatLng();
+          await setDoc(setupDoc(), { geo: { trainer: { lat:ll.lat, lng:ll.lng } } }, { merge:true });
+        });
+
+      t.on('popupopen', ev=>{
+        ev.popup.getElement().querySelector('#redockT')?.addEventListener('click', async ()=>{
+          await setDoc(setupDoc(), { geo: { trainer: deleteField() } }, { merge:true });
+        });
+      });
+    }
+
+    // Helper: group color
+    const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
+    const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
+
+    // Marks
+    activeSetupData.items.forEach((it, idx) => {
+      const geoM = marksPlaced[it.id]; if (!geoM) return;
+      const gi = groupOf(it.id);
+      const color = GROUP_BLUES[gi % GROUP_BLUES.length];
+      const A = L.latLng(geoM.lat, geoM.lng);
+      let H = geoM.handle ? L.latLng(geoM.handle.lat, geoM.handle.lng) : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+
+      const base = L.marker(A, { draggable:true, autoPan:false, icon: iconPill(`M${idx+1}`, color) }).addTo(markPins);
+
+      let dragBrg = 0, dragDist = MIN_ARROW_VISIBLE;
+      base.on('dragstart', () => {
+        dragBrg = bearing(A, H);
+        dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE);
+      });
+      base.on('drag', e => {
+        const newA = e.target.getLatLng();
+        A.lat=newA.lat; A.lng=newA.lng;
+        H = destPoint(newA, dragBrg, dragDist);
+        dot.setLatLng(H);
+        redraw();
+      });
+      base.on('dragend', async e => {
+        const ll = e.target.getLatLng();
+        await setDoc(setupDoc(), { geo: { marks: { [it.id]: { lat: ll.lat, lng: ll.lng, handle: { lat:H.lat, lng:H.lng } } } } }, { merge:true });
+      });
+
+      const dot = L.marker(H, { draggable:true, autoPan:false, icon: handleIcon(color), zIndexOffset:1000 }).addTo(markDots);
+      dot.on('drag', e => { H = e.target.getLatLng(); redraw(); });
+      dot.on('dragend', async e => {
+        H = e.target.getLatLng();
+        await setDoc(setupDoc(), { geo: { marks: { [it.id]: { lat: A.lat, lng: A.lng, handle: { lat:H.lat, lng:H.lng } } } } }, { merge:true });
+      });
+
+      function redraw(){
+        markLines.clearLayers();
+        const marksPlaced2 = activeSetupData.geo?.marks || {};
+        activeSetupData.items.forEach(it2 => {
+          if (it2.id === it.id) return;
+          const g = marksPlaced2[it2.id]; if (!g) return;
+          const color2 = GROUP_BLUES[groupOf(it2.id) % GROUP_BLUES.length];
+          const A2 = L.latLng(g.lat, g.lng);
+          const H2 = g.handle ? L.latLng(g.handle.lat, g.handle.lng)
+                              : destPoint(A2, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+          drawArrow(A2, H2, color2);
+        });
+        drawArrow(A, H, color);
+        renderRays();
+      }
+
+      drawArrow(A, H, color);
+
+      // Redock (now uses deleteField)
+      base.bindPopup(`<div><strong>Mark M${idx+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redock">Redock</button></div></div>`);
+      base.on('popupopen', ev=>{
+        ev.popup.getElement().querySelector('#redock')?.addEventListener('click', async ()=>{
+          await setDoc(setupDoc(), { geo: { marks: { [it.id]: deleteField() } } }, { merge:true });
+        });
+      });
+    });
+
+    // Blinds
+    (activeSetupData.blinds||[]).forEach((b, i)=>{
+      const g = blindsPlaced[b.id]; if (!g) return;
+      const B = L.latLng(g.lat, g.lng);
+      const pin = L.marker(B, { draggable:true, autoPan:false, icon: iconPill(`B${i+1}`, 'var(--blind)') }).addTo(blindPins);
+      pin.on('dragend', async e=>{
+        const ll = e.target.getLatLng();
+        await setDoc(setupDoc(), { geo: { blinds: { [b.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
+      });
+      pin.bindPopup(`<div><strong>Blind B${i+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redockB">Redock</button></div></div>`);
+      pin.on('popupopen', ev=>{
+        ev.popup.getElement().querySelector('#redockB')?.addEventListener('click', async ()=>{
+          await setDoc(setupDoc(), { geo: { blinds: { [b.id]: deleteField() } } }, { merge:true });
+        });
+      });
+    });
+
+    renderRays();
+  }
+
+  function renderRays(){
+    raysLayer.clearLayers(); distLabels.clearLayers();
+    if (!$('#raysChk').checked) return;
+    const t = activeSetupData.geo?.trainer; if (!t) return;
+    const T = L.latLng(t.lat, t.lng);
+
+    function ray(toLL, colorCSS){
+      L.polyline([T,toLL], { color:'var(--ray)', weight:2, opacity:.85, dashArray:'6,6' }).addTo(raysLayer);
+      const mid = L.latLng((T.lat+toLL.lat)/2, (T.lng+toLL.lng)/2);
+      const yardsTxt = fmtYards(distanceMeters(T, toLL));
+      L.marker(mid, { icon: L.divIcon({ className:'mk', html:`<div class="dist-label" style="border-color:${colorCSS}">${yardsTxt}</div>` }), interactive:false })
+        .addTo(distLabels);
+    }
+
+    const marksPlaced = activeSetupData.geo?.marks || {};
+    const blindsPlaced = activeSetupData.geo?.blinds || {};
+    const cols = activeSetupData.columns?.cols || [];
+    const groupOf = (id)=>{ for(let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
+
+    activeSetupData.items.forEach(it=>{
+      const g = marksPlaced[it.id]; if (!g) return;
+      const color = GROUP_BLUES[groupOf(it.id) % GROUP_BLUES.length];
+      ray(L.latLng(g.lat, g.lng), color);
+    });
+    (activeSetupData.blinds||[]).forEach(b=>{
+      const g = blindsPlaced[b.id]; if (!g) return;
+      ray(L.latLng(g.lat, g.lng), 'var(--blind)');
+    });
+  }
+
+  /* ---------------- Listeners ---------------- */
+  async function attachSetupsListener(){
+    if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
+    const qy = query(setupsColl(), orderBy('order'));
+    unsubSetups = onSnapshot(qy, snap=>{
+      const arr=[]; snap.forEach(d=>{ const data=d.data()||{}; arr.push({ id:d.id, name:data.name||'Setup', order: typeof data.order==='number'?data.order:9999 }); });
+      setupsMeta = arr;
+      if (!activeSetupId && setupsMeta.length) activeSetupId = setupsMeta[0].id;
+      renderTabs();
+      attachSetupDocListener();
+    });
+  }
+
+  function attachSetupDocListener(){
+    if (!activeSetupId) return;
+    if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
+
+    unsubSetupDoc = onSnapshot(setupDoc(), snap=>{
+      const d = snap.data()||{};
+
+      // normalize columns shape from your setups page
+      let colsShape = d.columns || { dock:[], cols:[{items:[]},{items:[]}] };
+      if (Array.isArray(colsShape.cols) && colsShape.cols.every(el=>Array.isArray(el))) {
+        colsShape = {
+          dock: Array.isArray(colsShape.dock) ? colsShape.dock : [],
+          cols: colsShape.cols.map(a => ({ items: a.slice() }))
+        };
+      }
+
+      activeSetupData = {
+        items: Array.isArray(d.items) ? d.items.map(x => ({ id:x.id, dist: typeof x.dist==='number'?x.dist:0 })) : [],
+        columns: { dock: colsShape.dock||[], cols: colsShape.cols||[] },
+        blinds: Array.isArray(d.blinds) ? d.blinds.map(x => ({ id:x.id, dist: typeof x.dist==='number'?x.dist:0 })) : [],
+        geo: d.geo || {}
+      };
+
+      buildDock();
+      renderMap();
+      renderAllArrows();
+
+      // center exactly once per setup/day
+      if (!hasAutoCentered) {
+        const firstPlaced =
+          Object.values(activeSetupData.geo?.marks || {})[0] ||
+          Object.values(activeSetupData.geo?.blinds || {})[0] ||
+          activeSetupData.geo?.trainer;
+        if (firstPlaced) {
+          map.setView([firstPlaced.lat, firstPlaced.lng], 16);
+          hasAutoCentered = true;
+        }
+      }
+    });
+  }
+
+  async function setActiveSetup(id){
+    activeSetupId = id;
+    hasAutoCentered = false;
+    renderTabs();
+    attachSetupDocListener();
+  }
+
+  async function switchDay(key){
+    currentDateKey = key;
+    if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
+    if (unsubSetupDoc) { try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
+    setupsMeta=[]; activeSetupId=null; activeSetupData={ items:[], columns:{dock:[], cols:[]}, blinds:[], geo:{} };
+    renderTabs(); buildDock(); renderMap();
+    hasAutoCentered = false;
+    if (trainerId) attachSetupsListener();
+  }
+
+  /* ---------------- Misc UI ---------------- */
+  $('#goBtn').addEventListener('click', ()=>{
+    const la=parseFloat($('#latIn').value), ln=parseFloat($('#lngIn').value);
+    if (!Number.isFinite(la)||!Number.isFinite(ln) || la<-90||la>90||ln<-180||ln>180){ alert('Enter valid lat/lng'); return; }
+    const target=L.latLng(la,ln);
+    const z1=Math.min(MAX_COMFORT_ZOOM, Math.max(map.getZoom()+2, 14));
+    const z2=Math.min(MAX_COMFORT_ZOOM, Math.max(z1+2, 16));
+    map.flyTo(target, z1, { duration:0.8 });
+    setTimeout(()=> map.flyTo(target, z2, { duration:0.9 }), 850);
+  });
+
+  $('#fitBtn').addEventListener('click', ()=>{
+    const bounds = L.latLngBounds([]);
+    const g = activeSetupData.geo || {};
+    if (g.trainer) bounds.extend(g.trainer);
+    Object.values(g.marks||{}).forEach(v => bounds.extend(v));
+    Object.values(g.blinds||{}).forEach(v => bounds.extend(v));
+    if (bounds.isValid()) map.fitBounds(bounds, { padding:[30,30], maxZoom: MAX_COMFORT_ZOOM });
+  });
+
+  $('#raysChk').addEventListener('change', renderRays);
+
+  // Set trainer by long-press on map (2s)
+  let pressTimer=null;
+  map.on('mousedown', (e)=>{ pressTimer=setTimeout(async ()=>{ await setDoc(setupDoc(), { geo:{ trainer:{ lat:e.latlng.lat, lng:e.latlng.lng } } }, { merge:true }); }, 2000); });
+  map.on('mouseup', ()=> clearTimeout(pressTimer));
+  map.on('mouseout', ()=> clearTimeout(pressTimer));
+
+  /* ---------------- Boot ---------------- */
+  async function boot(){
+    if (!trainerId) return showTrainerPrompt();
+    ctxEl.textContent = `Trainer: ${trainerId}`;
+    await switchDay(dayPicker.value);
+  }
+  if (trainerId) boot(); else showTrainerPrompt();
+</script>
+</body>
+</html>
