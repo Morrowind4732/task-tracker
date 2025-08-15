@@ -3,31 +3,29 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Setups – Marks</title>
+<title>Setups – Marks & Blinds</title>
 <style>
-  :root { --gap: 12px; --chip-bg:#f7f7f7; --border:#ddd; }
+  :root { --gap: 12px; --chip-bg:#f7f7f7; --border:#ddd; --accent:#0b74ff; }
   body { font-family: system-ui, sans-serif; margin: 16px; background:#f5f5f5; }
   h1 { margin: 0 0 8px; }
   .muted { color:#666; font-size:12px; margin-top:2px; }
 
-  .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:8px; cursor:pointer; }
+  .title-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .mini-link { font-size:12px; color:var(--accent); text-decoration:underline; }
+  .mini-link:visited { color:var(--accent); }
+
+  .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:#0b74ff; border-color:#0b74ff; color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
 
   .section { border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; background:#fff; }
 
   /* Trainer picker overlay */
-  .overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.4);
-    display: none; align-items: center; justify-content: center; z-index: 99999;
-  }
-  .overlay.open { display: flex; }
-  .overlay-card {
-    background: #fff; padding: 18px; border-radius: 12px; min-width: 280px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.2); border: 1px solid #e5e5e5;
-  }
-  .overlay-card h3 { margin: 0 0 10px; }
-  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content: space-between; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
+  .overlay.open { display:flex; }
+  .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
+  .overlay-card h3 { margin:0 0 10px; }
+  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
 
   /* Tabs (browser style) */
   .tabs-bar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
@@ -39,12 +37,11 @@
   }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
   .tab:hover { background:#fdfdfd; }
-  .tab-add { margin-left:4px; }
 
-  /* Header row */
+  /* Header row (Marks) */
   .marks-head {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove (we keep 9 cols to match your latest) */
     gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
@@ -53,7 +50,7 @@
   /* Mark rows as cards */
   .mark-item {
     display:grid;
-    grid-template-columns: 100px 1fr repeat(9, 80px) 72px; /* label | slider | 9 opts | remove */
+    grid-template-columns: 100px 1fr repeat(9, 80px) 72px;
     gap:6px; align-items:center;
     background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
     margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
@@ -67,20 +64,20 @@
   .opt { display:flex; align-items:center; gap:8px; justify-content:center; }
   .opt span { display:none; font-size:13px; color:#333; }
 
-  /* Mobile tweaks */
+  /* Mobile tweaks for Marks */
   @media (max-width: 768px) {
     .marks-head { display:none; }
     .mark-item { grid-template-columns: repeat(3, 1fr); grid-auto-rows: auto; }
     .mark-label { grid-column: 1 / -1; }
     .opt-cell { text-align:left; }
     .opt { justify-content:flex-start; }
-    .opt span { display:inline; } /* show label text on phones */
+    .opt span { display:inline; }
     .slider-wrap { grid-column: 1 / -1; order: 99; }
   }
 
-  /* Board / chips */
+  /* Board / chips (Marks) */
   .board-head { display:flex; gap:8px; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; }
-  .board-controls { display:flex; gap:8px; align-items:center; }
+  .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .dock { display:flex; flex-wrap:wrap; gap:8px; padding:8px; border:1px dashed #cfcfcf; border-radius:10px; min-height:46px; }
   .board { display:grid; gap:var(--gap); margin-top:12px; } /* columns set via JS */
   .column { border:1px solid var(--border); border-radius:10px; min-height:140px; padding:8px; display:flex; flex-direction:column; gap:8px; background:#fff; }
@@ -90,20 +87,40 @@
   .chip { user-select:none; padding:8px 10px; border:1px solid #bbb; border-radius:999px; background:var(--chip-bg); font-size:14px; touch-action:none; cursor:grab; }
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow: 0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
-  
-  .title-row { display:flex; align-items:center; gap:10px; }
-.mini-link { font-size:12px; color:#0b74ff; text-decoration:underline; }
-.mini-link:visited { color:#0b74ff; }
 
+  /* === BLINDS === */
+  .blinds-head {
+    display:grid;
+    grid-template-columns: 120px 1fr repeat(5, 110px) 72px; /* label | slider | 5 opts | remove */
+    gap:6px; align-items:center;
+    font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
+  }
+  .blind-item {
+    display:grid;
+    grid-template-columns: 120px 1fr repeat(5, 110px) 72px;
+    gap:6px; align-items:center;
+    background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
+    margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .blind-label { font-weight:700; }
+
+  @media (max-width:768px){
+    .blinds-head { display:none; }
+    .blind-item { grid-template-columns: repeat(3, 1fr); grid-auto-rows:auto; }
+    .blind-label { grid-column: 1 / -1; }
+    .blind-item .opt-cell { text-align:left; }
+    .blind-item .opt { justify-content:flex-start; }
+    .blind-item .opt span { display:inline; }
+    .blind-slider { grid-column: 1 / -1; order: 99; }
+  }
 </style>
 </head>
 <body>
-<div class="title-row">
-  <h1>Setups – Marks</h1>
-  <a class="mini-link" href="https://morrowind4732.github.io/task-tracker/setups.html">change user</a>
-</div>
-<div class="muted" id="ctx">Loading…</div>
-
+  <div class="title-row">
+    <h1>Setups – Marks & Blinds</h1>
+    <a id="changeUserLink" class="mini-link" href="https://morrowind4732.github.io/task-tracker/setups.html">change user</a>
+  </div>
+  <div class="muted" id="ctx">Loading…</div>
 
   <!-- Trainer chooser overlay -->
   <div class="overlay" id="trainerOverlay">
@@ -117,7 +134,7 @@
     </div>
   </div>
 
-  <!-- Tabs -->
+  <!-- Tabs / day -->
   <div class="section">
     <div class="tabs-bar">
       <div class="board-controls" style="margin-right:auto;">
@@ -125,15 +142,15 @@
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
       <div class="tabs" id="tabs"></div>
-      <button class="btn ghost tab-add" id="addSetupBtn">+ Add Setup</button>
+      <button class="btn ghost" id="addSetupBtn">+ Add Setup</button>
     </div>
   </div>
 
-  <!-- Marks -->
+  <!-- MARKS -->
   <div class="section" id="marksContainer">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
       <strong>Marks</strong>
-      <button class="btn primary" id="addMarkBtn">+ Add</button>
+      <button class="btn primary" id="addMarkBtn">+ Add Mark</button>
     </div>
 
     <div class="marks-head">
@@ -152,10 +169,7 @@
     </div>
 
     <div class="marks-list" id="marksList"></div>
-  </div>
 
-  <!-- Board -->
-  <div class="section">
     <div class="board-head">
       <strong>Board</strong>
       <div class="board-controls">
@@ -164,8 +178,28 @@
     </div>
     <strong>Dock</strong>
     <div class="dock" id="dock"></div>
-
     <div class="board" id="board"><!-- dynamic columns --></div>
+  </div>
+
+  <!-- BLINDS -->
+  <div class="section" id="blindsContainer">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <strong>Blinds</strong>
+      <button class="btn primary" id="addBlindBtn">+ Add Blind</button>
+    </div>
+
+    <div class="blinds-head">
+      <div></div>
+      <div class="head-center">Distance</div>
+      <div class="head-center">Water</div>
+      <div class="head-center">Poison 1</div>
+      <div class="head-center">Poison 2</div>
+      <div class="head-center">Duck</div>
+      <div class="head-center">W Drill</div>
+      <div class="head-center">Remove</div>
+    </div>
+
+    <div class="blinds-list" id="blindsList"></div>
   </div>
 
   <div class="chip drag-ghost" id="ghost"></div>
@@ -191,59 +225,58 @@ const db = firebase.firestore();
 // ---------- UI refs ----------
 const ctxEl  = document.getElementById('ctx');
 const overlay = document.getElementById('trainerOverlay');
-overlay.addEventListener('click', (e) => {
-  // prevent closing when clicking card
-  if (e.target === overlay) e.stopPropagation();
+document.getElementById('changeUserLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  const url = new URL(location.href);
+  url.searchParams.delete('trainer');
+  history.replaceState(null, '', url.toString());
+  showTrainerPrompt();
 });
 
 // ---------- Date handling ----------
-function ymd(d){ const p = n => String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 const dayPicker = document.getElementById('dayPicker');
 const todayBtn  = document.getElementById('todayBtn');
-const localToday = new Date();
-dayPicker.value = ymd(localToday);
-todayBtn.addEventListener('click', () => { dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
+dayPicker.value = ymd(new Date());
+todayBtn.addEventListener('click', ()=>{ dayPicker.value = ymd(new Date()); switchDay(dayPicker.value); });
 let currentDateKey = dayPicker.value;
 
 // ---------- Trainer selection ----------
 const params = new URL(location.href).searchParams;
-let trainerId = params.get('trainer');     // e.g., "Scott", "Cody", "Brian"
-let trainerName = trainerId || '';         // display name; use same string so we don't break old docs
-
-function setTrainer(name) {
+let trainerId = params.get('trainer') || '';
+function setTrainer(name){
   trainerId = name;
-  trainerName = name;
-  ctxEl.textContent = `Trainer: ${trainerName}`;
-  // Put ?trainer=name in the URL without reloading
   const url = new URL(location.href);
   url.searchParams.set('trainer', trainerId);
   history.replaceState(null, '', url.toString());
-  // Start the app for this trainer
-  initForTrainer();
+  ctxEl.textContent = `Trainer: ${trainerId}`;
+  boot();
 }
-
-function showTrainerPrompt() {
+function showTrainerPrompt(){
   overlay.classList.add('open');
-  overlay.querySelectorAll('button[data-trainer]').forEach(btn => {
-    btn.addEventListener('click', () => {
+  overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
       overlay.classList.remove('open');
       setTrainer(btn.dataset.trainer);
     }, { once:true });
   });
 }
-
-// ---------- Firestore refs (depend on trainerId) ----------
-const dayDocPath = () => db.collection('setups').doc(trainerId).collection('days').doc(currentDateKey);
-const setupsColl = () => dayDocPath().collection('setups');
-const oldSingleDoc = () => dayDocPath().collection('configs').doc('marks'); // migration from old single-setup
-const setupDocRef = () => (activeSetupId ? setupsColl().doc(activeSetupId) : null);
+if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
 // ---------- Tabs state ----------
-let setupsMeta = [];  // [{id, name, order}]
+const tabsEl = document.getElementById('tabs');
+let setupsMeta = [];       // [{id, name, order}]
 let activeSetupId = null;
 
-// ---------- Setup-level state ----------
-let state = { items: [], columns: { dock: [], cols: [] } };
+// ---------- Setup-level state (Marks + Blinds) ----------
+/*
+  state = {
+    items:   [ {id, dist, options:{ ...marks flags... }} ],
+    columns: { dock:[], cols:[ {items:[]}, ... ] },
+    blinds:  [ {id, dist, options:{ water, poison1, poison2, duck, wDrill }} ]
+  }
+*/
+let state = { items: [], columns: { dock: [], cols: [] }, blinds: [] };
 
 // ---------- Snapshot control ----------
 let unsubSetups = null;          // listener for setups list
@@ -251,12 +284,11 @@ let unsubSetupDoc = null;        // listener for active setup
 let suppressSetupDocSnapshots = false;
 
 // ---------- DOM refs ----------
-const tabsEl = document.getElementById('tabs');
 const dock  = document.getElementById('dock');
 const board = document.getElementById('board');
 const ghost = document.getElementById('ghost');
 
-// ---------- Helpers ----------
+// ---------- Helpers (Marks) ----------
 const OPTION_KEYS = [
   { key:'handTossed',     label:'hand tossed' },
   { key:'shortCheckDown', label:'short check down' },
@@ -268,176 +300,146 @@ const OPTION_KEYS = [
   { key:'whiteCoat',      label:'white coat' },
   { key:'retire',         label:'retire' },
 ];
+// ---------- Helpers (Blinds) ----------
+const BLIND_OPTION_KEYS = [
+  { key:'water',   label:'Water' },
+  { key:'poison1', label:'Poison 1' },
+  { key:'poison2', label:'Poison 2' },
+  { key:'duck',    label:'Duck' },
+  { key:'wDrill',  label:'W Drill' },
+];
 
 function byId(id){ return state.items.find(i => i.id === id); }
 function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
 function makeId(){ return 'm_' + Math.random().toString(36).slice(2,9); }
 function clampToStep(v){ return Math.max(0, Math.min(400, Math.round(v/25)*25)); }
 
-// Base row label
-function markTextFrom(id){
-  const item = byId(id);
-  const idx = indexOfId(id);
-  const number = idx >= 0 ? (idx + 1) : '?';
-  const dist = item?.dist ?? 0;
-  return `#${number} - ${dist} yards`;
+// Labels
+function markTextFrom(id){ const item = byId(id); const idx = indexOfId(id); const number = idx >= 0 ? (idx + 1) : '?'; const dist = item?.dist ?? 0; return `#${number} - ${dist} yards`; }
+function optionsSummary(id){
+  const item = byId(id); if (!item || !item.options) return '';
+  return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
 }
-
-// Chip label = base + short flags (HT/GO/WC/RT)
 function chipTextFrom(id){
   const base = markTextFrom(id);
-  const item = byId(id);
-  if (!item) return base;
+  const item = byId(id); if (!item) return base;
   const o = item.options || {};
   const codes = [];
   if (o.handTossed) codes.push('HT');
   if (o.goBird)     codes.push('GO');
-  if (o.whiteCoat)  codes.push('WC'); // WC per your correction
+  if (o.whiteCoat)  codes.push('WC');
   if (o.retire)     codes.push('RT');
   return codes.length ? `${base} ${codes.join(' ')}` : base;
 }
 
-function optionsSummary(id){
-  const item = byId(id);
-  if (!item || !item.options) return '';
-  return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
-}
-
-function collectColItems() {
-  const out = [];
-  (state.columns.cols || []).forEach(c => (c?.items || []).forEach(id => out.push(id)));
-  return out;
-}
+// Columns helpers (Marks board)
+function collectColItems(){ const out=[]; (state.columns.cols||[]).forEach(c => (c?.items||[]).forEach(id => out.push(id))); return out; }
 function removeIdFromAll(id){
   state.columns.dock = state.columns.dock.filter(x => x !== id);
   state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(x => x !== id) }));
 }
-function ensureAllIdsPlaced() {
+function ensureAllIdsPlaced(){
   const placed = new Set([ ...state.columns.dock, ...collectColItems() ]);
   for (const it of state.items) if (!placed.has(it.id)) state.columns.dock.push(it.id);
   state.columns.dock = state.columns.dock.filter(id => byId(id));
   state.columns.cols = state.columns.cols.map(c => ({ items: (c.items || []).filter(id => byId(id)) }));
 }
-function ensureMinColumns(n=2) {
-  while (state.columns.cols.length < n) state.columns.cols.push({ items: [] });
-}
-function pruneTrailingEmptyColumns() {
-  while (state.columns.cols.length > 0 && (state.columns.cols[state.columns.cols.length-1].items || []).length === 0) {
-    state.columns.cols.pop();
-  }
-}
+function ensureMinColumns(n=2){ while (state.columns.cols.length < n) state.columns.cols.push({ items: [] }); }
+
+// ---------- Firestore refs ----------
+const dayDocPath = () => db.collection('setups').doc(trainerId).collection('days').doc(currentDateKey);
+const setupsColl = () => dayDocPath().collection('setups');
+const setupDocRef = () => (activeSetupId ? setupsColl().doc(activeSetupId) : null);
 
 // ---------- Save current setup ----------
-async function save() {
-  const ref = setupDocRef();
-  if (!ref) return;
+async function save(){
+  const ref = setupDocRef(); if (!ref) return;
   ensureAllIdsPlaced();
   await ref.set({
     name: currentSetupName(),
     order: currentSetupOrder(),
     items: state.items,
     columns: { dock: state.columns.dock, cols: state.columns.cols },
+    blinds: state.blinds,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
     dateKey: currentDateKey,
-    trainer: trainerId,
-    trainerName
+    trainer: trainerId
   }, { merge: true });
 }
 
 // ---------- Tabs UI ----------
-function currentSetupMeta() { return setupsMeta.find(s => s.id === activeSetupId) || null; }
-function currentSetupName() { return currentSetupMeta()?.name || 'Setup'; }
+function currentSetupMeta(){ return setupsMeta.find(s => s.id === activeSetupId) || null; }
+function currentSetupName(){ return currentSetupMeta()?.name || 'Setup'; }
 function currentSetupOrder(){ return currentSetupMeta()?.order ?? 1; }
 
-function renderTabs() {
+function renderTabs(){
   tabsEl.innerHTML = '';
-  setupsMeta
-    .sort((a,b) => (a.order ?? 0) - (b.order ?? 0))
-    .forEach(meta => {
-      const b = document.createElement('button');
-      b.className = 'tab' + (meta.id === activeSetupId ? ' active' : '');
-      b.textContent = meta.name || 'Setup';
-      b.addEventListener('click', () => {
-        if (meta.id !== activeSetupId) setActiveSetup(meta.id);
-      });
-      tabsEl.appendChild(b);
-    });
+  setupsMeta.sort((a,b)=>(a.order ?? 0)-(b.order ?? 0)).forEach((meta, i)=>{
+    const b = document.createElement('button');
+    b.className = 'tab' + (meta.id===activeSetupId ? ' active' : '');
+    b.textContent = meta.name || `Setup ${i+1}`;
+    b.addEventListener('click', ()=>{ if (meta.id !== activeSetupId) setActiveSetup(meta.id); });
+    tabsEl.appendChild(b);
+  });
 }
 
 // ---------- Setup collection listener ----------
-async function attachSetupsListener() {
-  if (unsubSetups) { try { unsubSetups(); } catch(e){} unsubSetups = null; }
-  unsubSetups = setupsColl().orderBy('order').onSnapshot(async snap => {
-    const list = [];
-    snap.forEach(doc => {
-      const d = doc.data() || {};
-      list.push({ id: doc.id, name: d.name || 'Setup', order: typeof d.order === 'number' ? d.order : 1 });
+async function attachSetupsListener(){
+  if (unsubSetups){ try{unsubSetups();}catch(e){} unsubSetups=null; }
+  unsubSetups = setupsColl().orderBy('order').onSnapshot(async snap=>{
+    const list=[];
+    snap.forEach(doc=>{
+      const d=doc.data()||{};
+      list.push({ id:doc.id, name:d.name||'Setup', order: typeof d.order==='number'?d.order:9999 });
     });
     setupsMeta = list;
-
-    if (setupsMeta.length === 0) {
-      // First time for this day – try to migrate old single doc
-      const old = await oldSingleDoc().get();
-      const order = 1;
+    if (setupsMeta.length===0){
+      // create first setup
       const newDoc = setupsColl().doc();
-      const setupData = old.exists ? {
-        name: 'Setup 1',
-        order,
-        items: Array.isArray(old.data().items) ? old.data().items : [],
-        columns: old.data().columns || { dock: [], cols: [{items:[]},{items:[]}] },
-        trainer: trainerId, trainerName, dateKey: currentDateKey,
+      await newDoc.set({
+        name:'Setup 1', order:1,
+        items:[], columns:{ dock:[], cols:[{items:[]},{items:[]}] },
+        blinds:[],
+        trainer:trainerId, dateKey: currentDateKey,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      } : {
-        name: 'Setup 1',
-        order,
-        items: [],
-        columns: { dock: [], cols: [{items:[]},{items:[]}] },
-        trainer: trainerId, trainerName, dateKey: currentDateKey,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      };
-      await newDoc.set(setupData);
-      setupsMeta = [{ id: newDoc.id, name: 'Setup 1', order }];
+      });
+      setupsMeta = [{ id:newDoc.id, name:'Setup 1', order:1 }];
     }
-
     renderTabs();
 
-    // Restore previously active tab (per trainer/day), or pick first
+    // pick active
     const lsKey = `activeSetup:${trainerId}:${currentDateKey}`;
     const wanted = localStorage.getItem(lsKey);
-    const exists = setupsMeta.some(s => s.id === wanted);
+    const exists = setupsMeta.some(s=>s.id===wanted);
     const firstId = setupsMeta[0]?.id;
     const nextActive = exists ? wanted : firstId;
-    if (nextActive && nextActive !== activeSetupId) setActiveSetup(nextActive, { fromList: true });
+    if (nextActive && nextActive !== activeSetupId) setActiveSetup(nextActive, { fromList:true });
   });
 }
 
 // ---------- Active setup doc listener ----------
-function setActiveSetup(id) {
+function setActiveSetup(id){
   activeSetupId = id;
   localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, id);
   renderTabs();
 
-  if (unsubSetupDoc) { try { unsubSetupDoc(); } catch(e){} unsubSetupDoc = null; }
-  state = { items: [], columns: { dock: [], cols: [] } };
-  renderAll(); // clear UI quickly
-  const ref = setupDocRef();
-  if (!ref) return;
+  if (unsubSetupDoc){ try{unsubSetupDoc();}catch(e){} unsubSetupDoc=null; }
+  state = { items: [], columns:{ dock:[], cols:[] }, blinds: [] };
+  renderAll();
 
-  unsubSetupDoc = ref.onSnapshot(async snap => {
-    if (suppressSetupDocSnapshots) return;
-
-    if (!snap.exists) {
-      // initialize this setup doc
-      state = { items: [], columns: { dock: [], cols: [{items:[]},{items:[]}] } };
+  const ref = setupDocRef(); if (!ref) return;
+  unsubSetupDoc = ref.onSnapshot(async snap=>{
+    if (!snap.exists){
+      state = { items: [], columns:{ dock:[], cols:[{items:[]},{items:[]}] }, blinds: [] };
       renderAll();
       suppressSetupDocSnapshots = true;
       await save().finally(()=>{ suppressSetupDocSnapshots=false; });
       return;
     }
+    const data = snap.data()||{};
 
-    const data = snap.data() || {};
-    // Items
-    state.items = Array.isArray(data.items) ? data.items.map(it => ({
+    // Items (Marks)
+    state.items = Array.isArray(data.items) ? data.items.map(it=>({
       id: it.id,
       dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
       options: Object.assign({
@@ -447,39 +449,46 @@ function setActiveSetup(id) {
       }, it.options || {})
     })) : [];
 
-    // Columns (normalize)
+    // Columns (Marks)
     let colsShape = data.columns;
     if (!colsShape) colsShape = { dock: [], cols: [{items:[]},{items:[]}] };
-    if (Array.isArray(colsShape.cols) && colsShape.cols.every(el => Array.isArray(el))) {
-      colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: colsShape.cols.map(a => ({ items: a.slice() })) };
+    if (Array.isArray(colsShape.cols) && colsShape.cols.every(el=>Array.isArray(el))){
+      colsShape = { dock:Array.isArray(colsShape.dock)?colsShape.dock:[], cols: colsShape.cols.map(a=>({items:a.slice()})) };
     } else if (Array.isArray(colsShape.col1)) {
       const legacyKeys = Object.keys(colsShape).filter(k=>k.startsWith('col')).sort((a,b)=>parseInt(a.replace('col',''))-parseInt(b.replace('col','')));
-      colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: legacyKeys.map(k => ({ items: Array.isArray(colsShape[k])? colsShape[k]:[] })) };
+      colsShape = { dock:Array.isArray(colsShape.dock)?colsShape.dock:[], cols: legacyKeys.map(k=>({items:Array.isArray(colsShape[k])?colsShape[k]:[]})) };
     }
-    state.columns = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: Array.isArray(colsShape.cols) ? colsShape.cols : [{items:[]},{items:[]}] };
-
+    state.columns = { dock: Array.isArray(colsShape.dock)?colsShape.dock:[], cols: Array.isArray(colsShape.cols)?colsShape.cols:[{items:[]},{items:[]}] };
     ensureMinColumns(2);
     ensureAllIdsPlaced();
+
+    // Blinds (NEW)
+    state.blinds = Array.isArray(data.blinds) ? data.blinds.map(bl=>({
+      id: bl.id,
+      dist: typeof bl.dist==='number' ? clampToStep(bl.dist) : 0,
+      options: Object.assign({
+        water:false, poison1:false, poison2:false, duck:false, wDrill:false
+      }, bl.options || {})
+    })) : [];
+
     renderAll();
   });
 }
 
 // ---------- Switch day ----------
-async function switchDay(key) {
+async function switchDay(key){
   currentDateKey = key;
-  // reset listeners/state
-  if (unsubSetups) { try { unsubSetups(); } catch(e){} unsubSetups = null; }
-  if (unsubSetupDoc) { try { unsubSetupDoc(); } catch(e){} unsubSetupDoc = null; }
+  if (unsubSetups){ try{unsubSetups();}catch{} unsubSetups=null; }
+  if (unsubSetupDoc){ try{unsubSetupDoc();}catch{} unsubSetupDoc=null; }
   setupsMeta = [];
   activeSetupId = null;
-  state = { items: [], columns: { dock: [], cols: [] } };
-  renderAll();
-  renderTabs();
-  await attachSetupsListener();
+  state = { items: [], columns:{ dock:[], cols:[] }, blinds: [] };
+  renderAll(); renderTabs();
+  if (trainerId) attachSetupsListener();
 }
-dayPicker.addEventListener('change', () => switchDay(dayPicker.value));
+dayPicker.addEventListener('change', ()=>switchDay(dayPicker.value));
 
-// ---------- UI: Marks ----------
+// ---------- UI: MARKS ----------
 function renderMarksList() {
   const marksList = document.getElementById('marksList');
   marksList.innerHTML = '';
@@ -495,12 +504,10 @@ function renderMarksList() {
     row.className = 'mark-item';
     row.dataset.id = item.id;
 
-    // Label
     const label = document.createElement('div');
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
 
-    // Slider
     const sliderWrap = document.createElement('div');
     sliderWrap.className = 'slider-wrap';
     const slider = document.createElement('input');
@@ -517,16 +524,12 @@ function renderMarksList() {
     slider.addEventListener('change', save);
     sliderWrap.appendChild(slider);
 
-    // Options
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
       cell.className = 'opt-cell';
-      const lab = document.createElement('label');
-      lab.className = 'opt';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.checked = !!item.options[key];
-      cb.title = optLabel;
+      const lab = document.createElement('label'); lab.className = 'opt';
+      const cb = document.createElement('input'); cb.type = 'checkbox';
+      cb.checked = !!item.options[key]; cb.title = optLabel;
       cb.addEventListener('change', async () => {
         item.options[key] = cb.checked;
         document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
@@ -540,7 +543,6 @@ function renderMarksList() {
       lab.append(cb, txt); cell.appendChild(lab); return cell;
     });
 
-    // Delete mark
     const del = document.createElement('button');
     del.className = 'btn'; del.textContent = 'Remove'; del.title = 'Remove mark';
     del.addEventListener('click', async () => {
@@ -555,17 +557,16 @@ function renderMarksList() {
     row.appendChild(sliderWrap);
     optCells.forEach(c => row.appendChild(c));
     row.appendChild(del);
+
     marksList.appendChild(row);
   });
 
-  // Refresh numbering
   marksList.querySelectorAll('.mark-label').forEach((el, idx) => {
     const id = state.items[idx]?.id;
     if (id) el.textContent = markTextFrom(id);
   });
 }
 
-// ---------- UI: Chips / Columns ----------
 function makeChip(id) {
   const chip = document.createElement('div');
   chip.className = 'chip';
@@ -576,11 +577,9 @@ function makeChip(id) {
   return chip;
 }
 function renderColumnsAndDock() {
-  // Dock
   dock.innerHTML = '';
   state.columns.dock.forEach(id => dock.appendChild(makeChip(id)));
 
-  // Columns
   board.innerHTML = '';
   const count = Math.max(1, state.columns.cols.length);
   board.style.gridTemplateColumns = `repeat(${count}, minmax(0, 1fr))`;
@@ -616,23 +615,85 @@ function renderColumnsAndDock() {
     board.appendChild(col);
   });
 }
-function renderAll(){ renderMarksList(); renderColumnsAndDock(); }
 
-// ---------- Drag & drop (chips) ----------
+// ---------- UI: BLINDS ----------
+function blindTextFromIndex(idx, dist){ return `#${idx+1} - ${dist} yards`; }
+
+function renderBlindsList(){
+  const blindsList = document.getElementById('blindsList');
+  blindsList.innerHTML = '';
+
+  state.blinds.forEach((blind, idx) => {
+    blind.options = Object.assign({
+      water:false, poison1:false, poison2:false, duck:false, wDrill:false
+    }, blind.options || {});
+
+    const row = document.createElement('div');
+    row.className = 'blind-item';
+    row.dataset.id = blind.id;
+
+    const label = document.createElement('div');
+    label.className = 'blind-label';
+    label.textContent = blindTextFromIndex(idx, blind.dist ?? 0);
+
+    const sliderWrap = document.createElement('div');
+    sliderWrap.className = 'blind-slider';
+    const slider = document.createElement('input');
+    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
+    slider.value = blind.dist ?? 0;
+    slider.addEventListener('input', () => {
+      blind.dist = clampToStep(Number(slider.value));
+      label.textContent = blindTextFromIndex(idx, blind.dist);
+    });
+    slider.addEventListener('change', save);
+    sliderWrap.appendChild(slider);
+
+    const optCells = BLIND_OPTION_KEYS.map(({key, label:optLabel}) => {
+      const cell = document.createElement('div');
+      cell.className = 'opt-cell';
+      const lab = document.createElement('label'); lab.className = 'opt';
+      const cb = document.createElement('input'); cb.type = 'checkbox';
+      cb.checked = !!blind.options[key]; cb.title = optLabel;
+      cb.addEventListener('change', async ()=>{
+        blind.options[key] = cb.checked;
+        suppressSetupDocSnapshots = true;
+        await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+      });
+      const txt = document.createElement('span'); txt.textContent = optLabel;
+      lab.append(cb, txt); cell.appendChild(lab); return cell;
+    });
+
+    const del = document.createElement('button');
+    del.className = 'btn'; del.textContent = 'Remove'; del.title = 'Remove blind';
+    del.addEventListener('click', async ()=>{
+      state.blinds = state.blinds.filter(b => b.id !== blind.id);
+      renderBlindsList();
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+    });
+
+    row.appendChild(label);
+    row.appendChild(sliderWrap);
+    optCells.forEach(c => row.appendChild(c));
+    row.appendChild(del);
+    blindsList.appendChild(row);
+  });
+
+  // refresh numbering after deletions
+  blindsList.querySelectorAll('.blind-label').forEach((el, i)=>{
+    const dist = state.blinds[i]?.dist ?? 0;
+    el.textContent = blindTextFromIndex(i, dist);
+  });
+}
+
+// ---------- Render all ----------
+function renderAll(){ renderMarksList(); renderColumnsAndDock(); renderBlindsList(); }
+
+// ---------- Drag & drop (chips for Marks) ----------
 let dragging = null, offsetX = 0, offsetY = 0, activePointerId = null;
 function setGhost(text, x, y) { ghost.textContent = text; ghost.style.transform = `translate(${x - offsetX}px, ${y - offsetY}px)`; }
 function containers() { return [ ...document.querySelectorAll('.column'), dock ]; }
-function nearestDropContainer(x, y) {
-  let best = null, bestDist = Infinity;
-  for (const t of containers()) {
-    const r = t.getBoundingClientRect();
-    if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
-    const cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2;
-    const d = Math.hypot(x - cx, y - cy);
-    if (d < bestDist) { best = t; bestDist = d; }
-  }
-  return best;
-}
+function nearestDropContainer(x, y) { let best=null, bestDist=Infinity; for (const t of containers()){ const r=t.getBoundingClientRect(); if (x<r.left||x>r.right||y<r.top||y>r.bottom) continue; const cx=(r.left+r.right)/2, cy=(r.top+r.bottom)/2; const d=Math.hypot(x-cx, y-cy); if (d<bestDist){ best=t; bestDist=d; } } return best; }
 function highlight(el, on) { el.classList.toggle('drop-hint', !!on); }
 function clearHighlights() { containers().forEach(c => highlight(c, false)); }
 function hideGhost() { ghost.style.transform = 'translate(-9999px,-9999px)'; ghost.textContent = ''; }
@@ -663,8 +724,9 @@ document.addEventListener('pointerup', async e => {
   const id = dragging.dataset.id;
   const t = nearestDropContainer(e.clientX, e.clientY);
   const oldParent = dragging.parentElement;
+
   if (!t) { oldParent.appendChild(dragging); endDragCleanup(); return; }
-  // Optimistic local update
+
   removeIdFromAll(id);
   if (t === dock) { state.columns.dock.push(id); dock.appendChild(dragging); }
   else {
@@ -673,11 +735,11 @@ document.addEventListener('pointerup', async e => {
     else { state.columns.dock.push(id); dock.appendChild(dragging); }
   }
   hideGhost(); dragging = null; activePointerId = null; document.body.style.cursor = '';
+
   suppressSetupDocSnapshots = true;
   try { await save(); }
   catch(err){
     console.error('Save failed after drop:', err);
-    // Revert UI
     removeIdFromAll(id);
     if (oldParent === dock) state.columns.dock.push(id);
     else {
@@ -695,7 +757,7 @@ document.addEventListener('pointercancel', () => {
   endDragCleanup();
 });
 
-// ---------- Add mark ----------
+// ---------- Buttons ----------
 document.getElementById('addMarkBtn').addEventListener('click', async () => {
   const id = makeId();
   state.items.push({
@@ -713,7 +775,6 @@ document.getElementById('addMarkBtn').addEventListener('click', async () => {
   await save().finally(()=>{ suppressSetupDocSnapshots=false; });
 });
 
-// ---------- Add column ----------
 document.getElementById('addColumnBtn').addEventListener('click', async () => {
   state.columns.cols.push({ items: [] });
   suppressSetupDocSnapshots = true;
@@ -721,35 +782,42 @@ document.getElementById('addColumnBtn').addEventListener('click', async () => {
   finally { suppressSetupDocSnapshots = false; renderColumnsAndDock(); }
 });
 
-// ---------- Add setup (tab) ----------
+document.getElementById('addBlindBtn').addEventListener('click', async () => {
+  const id = makeId();
+  state.blinds.push({
+    id,
+    dist: 0,
+    options: { water:false, poison1:false, poison2:false, duck:false, wDrill:false }
+  });
+  renderBlindsList();
+  suppressSetupDocSnapshots = true;
+  await save().finally(()=>{ suppressSetupDocSnapshots=false; });
+});
+
 document.getElementById('addSetupBtn').addEventListener('click', async () => {
   const nextOrder = (Math.max(0, ...setupsMeta.map(s => s.order || 0)) + 1) || 1;
   const nextIndex = (setupsMeta.length + 1);
   const name = `Setup ${nextIndex}`;
-  const docRef = setupsColl().doc();
-  await docRef.set({
+  const newDoc = setupsColl().doc();
+  await newDoc.set({
     name, order: nextOrder,
     items: [],
     columns: { dock: [], cols: [{items:[]},{items:[]}] },
-    trainer: trainerId, trainerName, dateKey: currentDateKey,
+    blinds: [],
+    trainer: trainerId, dateKey: currentDateKey,
     updatedAt: firebase.firestore.FieldValue.serverTimestamp()
   });
-  localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, docRef.id);
+  localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, newDoc.id);
 });
 
-// ---------- Boot logic ----------
-async function initForTrainer() {
-  ctxEl.textContent = `Trainer: ${trainerName}`;
+// ---------- Boot ----------
+async function boot(){
+  if (!trainerId) return showTrainerPrompt();
+  ctxEl.textContent = `Trainer: ${trainerId}`;
   await switchDay(currentDateKey);
 }
 
-// If trainer is already in URL, start; otherwise prompt
-if (trainerId && trainerId.trim()) {
-  trainerName = trainerId;
-  initForTrainer();
-} else {
-  showTrainerPrompt();
-}
+if (trainerId) boot(); else showTrainerPrompt();
 </script>
 </body>
 </html>
