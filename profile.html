@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Scoring</title>
 
-<!-- Chart area placeholder (no logic yet) -->
+<!-- Chart.js -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
@@ -65,7 +65,7 @@
   .divider { height:1px; background:#eee; margin:12px 0; }
   .board-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
 
-  /* NEW: header layout so Add Rerun stays right, pane tabs left on next row */
+  /* Scores header layout */
   .score-head{
     display:grid;
     grid-template-columns: 1fr auto; /* title left, rerun right */
@@ -75,6 +75,42 @@
   .score-head #scoresTitle { grid-column: 1 / 2; }
   .score-head #rerunBtn    { grid-column: 2 / 3; justify-self:end; }
   .score-head .mini-tabs   { grid-column: 1 / -1; justify-content:flex-start; }
+
+  /* Charts */
+  .chart-head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  .chart-range { display:flex; gap:12px; align-items:center; }
+  
+  /* --- Radial kennel navigator --- */
+.k-fab {
+  position: fixed; right:16px; bottom:16px;
+  width:56px; height:56px; border-radius:50%;
+  background: var(--accent); color:#fff; border:none;
+  box-shadow:0 8px 20px rgba(0,0,0,.25); font-size:22px;
+  cursor:pointer; z-index: 9998;
+}
+.k-overlay { position:fixed; inset:0; background:rgba(0,0,0,.25);
+  display:none; align-items:center; justify-content:center; z-index:9999; }
+.k-overlay.open { display:flex; }
+.k-wheel {
+  position: relative; width: 280px; height:280px; border-radius:50%;
+  background:#fff; border:1px solid var(--border);
+  box-shadow:0 12px 30px rgba(0,0,0,.25);
+}
+.k-center { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); text-align:center; }
+.k-center h4 { margin:0 0 4px; font-size:14px; }
+.k-center .muted { font-size:12px; color:#666; }
+
+.k-item {
+  position:absolute; width:130px; height:84px; border-radius:12px;
+  background:#fff; border:1px solid #ddd;
+  box-shadow:0 10px 18px rgba(0,0,0,.12);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:4px; text-align:center; padding:8px; cursor:pointer;
+}
+.k-item b { font-size:13px; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.k-item small { color:#666; font-size:11px; }
+.k-item:hover { border-color:#bbb; }
+
 </style>
 </head>
 <body>
@@ -106,9 +142,25 @@
       <div class="tabs" id="tabs"></div>
     </div>
   </div>
+  
+  
+  <button id="kennelFab" class="k-fab" title="Open kennel navigator">⇄</button>
+<div id="kennelOverlay" class="k-overlay" aria-hidden="true">
+  <div class="k-wheel">
+    <div class="k-center">
+      <h4 id="kCurName">—</h4>
+      <div class="muted" id="kCurSlot">R?C?</div>
+    </div>
+    <!-- items get injected by JS -->
+  </div>
+</div>
 
   <!-- Dog hero -->
   <div class="section" id="dogCard">Loading dog…</div>
+  
+  
+
+
 
   <!-- Scores -->
   <div class="section" id="scoresSection">
@@ -131,13 +183,18 @@
     </div>
   </div>
 
-  <!-- Charts placeholder -->
+  <!-- Charts -->
   <div class="section">
-    <strong>Charts (coming soon)</strong>
-    <div style="margin-top:8px">
-      <canvas id="chart1" height="120"></canvas>
-      <canvas id="chart2" height="120"></canvas>
+    <div class="chart-head">
+      <strong>Negatives over time</strong>
+      <div class="chart-range">
+        <label><input type="radio" name="negRange" value="7" checked> 7 Days</label>
+        <label><input type="radio" name="negRange" value="30"> 1 Month</label>
+      </div>
     </div>
+    <div class="muted" id="chartSubtitle" style="margin:6px 0 10px">Shows % of items where each negative occurred (marks + blinds).</div>
+    <canvas id="negativesChart" height="200"></canvas>
+    <div class="muted" id="chartMeta" style="margin-top:8px"></div>
   </div>
 
   <!-- Firebase (v10 modules) -->
@@ -145,7 +202,8 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
       getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
-      collection, query, orderBy, deleteDoc
+      collection, query, orderBy, deleteDoc,
+      collectionGroup, where, getDocs
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     /* ---------------- Firebase init ---------------- */
@@ -169,10 +227,10 @@
         .replace(/[\s_]+/g,'-').replace(/[^a-z0-9-]/g,'')
         .replace(/-{2,}/g,'-').replace(/^-+|-+$/g,'');
     }
+    function daysBackKey(n){ const d=new Date(); d.setDate(d.getDate()-n); return ymd(d); }
     const SAVE_DEBOUNCE_MS = 400;
 
     /* ---------------- Flags ---------------- */
-    // Marks flags (added "skipped")
     const FLAG_DEFS_MARKS = [
       { key:'headswing',       label:'Headswing' },
       { key:'shortCheckDown',  label:'Short Check Down' },
@@ -185,7 +243,6 @@
       { key:'break',           label:'Break' },
       { key:'skipped',         label:'Skipped' },
     ];
-    // Blinds flags
     const FLAG_DEFS_BLINDS = [
       { key:'poorInitial',     label:'Poor Initial' },
       { key:'scallop',         label:'Scallop' },
@@ -196,6 +253,14 @@
       { key:'failedDiversion', label:'Failed Diversion' },
       { key:'skipped',         label:'Skipped' },
     ];
+
+    // Unified map of flag -> label (marks labels take precedence where duplicated)
+    const FLAG_LABELS = (() => {
+      const map = {};
+      [...FLAG_DEFS_MARKS, ...FLAG_DEFS_BLINDS].forEach(f => { if (!map[f.key]) map[f.key] = f.label; });
+      return map;
+    })();
+    const ALL_FLAG_KEYS = Object.keys(FLAG_LABELS);
 
     /* ---------------- URL params (QR compatible) ---------------- */
     const params  = new URL(location.href).searchParams;
@@ -274,8 +339,7 @@
     let setupItemsMarks = [];
     let setupItemsBlinds = [];
 
-    // score state (now separated)
-    // { marks: {id:{score,flags}}, blinds: {id:{score,flags}} }
+    // score state
     let scores = { marks:{}, blinds:{} };
 
     // Debounced save
@@ -287,7 +351,7 @@
     const setupsColl = () => collection(dayDocPath(), "setups");
     const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
-    // Kennel slot → dog lookup (QR-based)
+    // Kennel slot → dog lookup
     const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
 
     // Dog-centric runs
@@ -321,7 +385,6 @@
         b.addEventListener('click', ()=>setActiveSetup(m.id, 'base'));
         tabsEl.appendChild(b);
 
-        // show rerun tab next to active setup if it exists or if you're on rerun
         if (m.id === activeSetupId && (rerunExists || activeRunId==='rerun')) {
           const r = document.createElement('button');
           r.className = 'tab rerun' + (activeRunId==='rerun' ? ' active':'');
@@ -428,7 +491,6 @@
         scoreList.appendChild(card);
       });
 
-      // Rerun button label
       rerunBtn.textContent = activeRunId==='rerun' ? 'Remove Rerun' : 'Add Rerun';
     }
 
@@ -484,10 +546,7 @@
         await Promise.all([
           setDoc(dogRunDoc(), payload, { merge:true }),
           setDoc(mirrorRunDoc(), payload, { merge:true }),
-          setDoc(ratingsDayDoc(), { // light daily doc remains
-            date: currentDateKey, trailer, sex, slotId,
-            lastScoredAt: serverTimestamp(), trainer: trainerId
-          }, { merge:true })
+          setDoc(ratingsDayDoc(), { date: currentDateKey, trailer, sex, slotId, lastScoredAt: serverTimestamp(), trainer: trainerId }, { merge:true })
         ]);
         saveStatus.textContent = 'Saved.';
         setTimeout(()=>saveStatus.textContent='', 800);
@@ -522,14 +581,16 @@
         }
         renderDogCard();
         if (trainerId) attachSetupsListener();
+        // Refresh chart (if dog changed)
+        updateNegativesChart(getRangeDays());
       });
     }
 
     async function attachSetupsListener(){
       if (!trainerId) return;
       if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups = null; }
-      const q = query(setupsColl(), orderBy('order'));
-      unsubSetups = onSnapshot(q, async (snap)=>{
+      const qy = query(setupsColl(), orderBy('order'));
+      unsubSetups = onSnapshot(qy, async (snap)=>{
         const arr = [];
         snap.forEach(d=>{
           const data = d.data()||{};
@@ -549,19 +610,13 @@
       const ref = setupDoc();
       unsubSetupDoc = onSnapshot(ref, (snap)=>{
         const data = snap.data()||{};
-        setupItemsMarks = Array.isArray(data.items)? data.items.map(it=>({
-          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
-        })) : [];
-        setupItemsBlinds = Array.isArray(data.blinds)? data.blinds.map(it=>({
-          id: it.id, dist: typeof it.dist==='number' ? it.dist : 0
-        })) : [];
+        setupItemsMarks = Array.isArray(data.items)? data.items.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
+        setupItemsBlinds = Array.isArray(data.blinds)? data.blinds.map(it=>({ id: it.id, dist: typeof it.dist==='number' ? it.dist : 0 })) : [];
         renderScoresUIFromCurrentItems();
       });
     }
 
-    // Adapt/migrate scores shape from doc data
     function normalizeScoresShape(data){
-      // Expecting {scores:{marks:{}, blinds:{}}}
       let out = { marks:{}, blinds:{} };
       if (data && data.scores) {
         const s = data.scores;
@@ -569,7 +624,6 @@
           out.marks  = s.marks  || {};
           out.blinds = s.blinds || {};
         } else {
-          // legacy flat map → treat as marks
           out.marks = s || {};
           out.blinds = {};
         }
@@ -580,7 +634,6 @@
     function attachRunListeners(){
       if (!dog.id || !activeSetupId) return;
 
-      // base run doc
       if (unsubScoreDocBase) { try{unsubScoreDocBase();}catch{} unsubScoreDocBase = null; }
       unsubScoreDocBase = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "base"), (snap)=>{
         if (activeRunId==='base') {
@@ -589,7 +642,6 @@
         }
       });
 
-      // rerun presence + data
       if (unsubScoreDocRerun) { try{unsubScoreDocRerun();}catch{} unsubScoreDocRerun = null; }
       unsubScoreDocRerun = onSnapshot( doc(db, "ratings", dog.id, "days", currentDateKey, "setups", activeSetupId, "runs", "rerun"), (snap)=>{
         rerunExists = snap.exists();
@@ -630,15 +682,255 @@
       renderScoresUI([]);
 
       if (trainerId) attachSetupsListener();
+      updateNegativesChart(getRangeDays()); // keep charts in sync with date changes
+    }
+
+    /* ---------------- Charts: Negatives % ---------------- */
+    const negativesCanvas = document.getElementById('negativesChart');
+    const chartMeta = document.getElementById('chartMeta');
+    let negativesChart = null;
+
+    function getRangeDays(){
+      const checked = document.querySelector('input[name="negRange"]:checked')?.value || '7';
+      return checked === '30' ? 30 : 7;
+    }
+    document.querySelectorAll('input[name="negRange"]').forEach(r =>
+      r.addEventListener('change', ()=> updateNegativesChart(getRangeDays()))
+    );
+
+    async function fetchRunsInRange(days){
+      if (!dog.id) return [];
+      const startKey = daysBackKey(days - 1);
+      const endKey   = ymd(new Date());
+
+      // Prefer an indexed collectionGroup query; fall back to client-side filter if needed
+      try {
+        const q = query(
+          collectionGroup(db, 'runs'),
+          where('dogId','==', dog.id),
+          where('dateKey','>=', startKey),
+          where('dateKey','<=', endKey)
+        );
+        const snap = await getDocs(q);
+        return snap.docs.map(d => d.data() || {});
+      } catch (e) {
+        console.warn('Indexed query failed (likely missing composite index). Falling back to broader fetch+filter.', e);
+        const q = query(collectionGroup(db, 'runs'), where('dogId','==', dog.id));
+        const snap = await getDocs(q);
+        return snap.docs.map(d => d.data() || {}).filter(r => r.dateKey >= startKey && r.dateKey <= endKey);
+      }
+    }
+
+    function aggregateNegatives(runDocs){
+      const counts = {};
+      ALL_FLAG_KEYS.forEach(k => counts[k] = 0);
+      let totalItems = 0;
+
+      for (const r of runDocs) {
+        const s = r.scores || {};
+        const buckets = [s.marks || {}, s.blinds || {}];
+        for (const bucket of buckets) {
+          for (const entry of Object.values(bucket)) {
+            totalItems += 1;
+            const flags = entry?.flags || {};
+            for (const key of ALL_FLAG_KEYS) {
+              if (flags[key]) counts[key] += 1;
+            }
+          }
+        }
+      }
+      return { counts, totalItems };
+    }
+
+    function renderNegativesChart(agg){
+      const keys = ALL_FLAG_KEYS;
+      const labels = keys.map(k => FLAG_LABELS[k]);
+      const total = agg.totalItems || 0;
+      const percents = keys.map(k => total ? +( (agg.counts[k] * 100) / total ).toFixed(1) : 0);
+
+      if (negativesChart) negativesChart.destroy();
+      negativesChart = new Chart(negativesCanvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: '% of items with issue',
+              data: percents
+            }
+          ]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          plugins: {
+            tooltip: {
+              callbacks: {
+                label: (ctx) => `${ctx.parsed.x}%`
+              }
+            },
+            legend: { display: false }
+          },
+          scales: {
+            x: { min: 0, max: 100, ticks: { callback: v => v + '%' } },
+            y: { ticks: { autoSkip: false } }
+          }
+        }
+      });
+
+      chartMeta.textContent =
+        total
+          ? `Based on ${total} item${total===1?'':'s'} (marks + blinds) in the selected window.`
+          : 'No runs in the selected window yet.';
+    }
+
+    async function updateNegativesChart(days){
+      const runs = await fetchRunsInRange(days);
+      const agg = aggregateNegatives(runs);
+      renderNegativesChart(agg);
     }
 
     /* ---------------- Boot ---------------- */
     async function boot(){
       if (!trainerId) return showTrainerPrompt();
       ctxEl.textContent = `Trainer: ${trainerId}`;
-      await switchDay(currentDateKey);
+      await switchDay(ymd(new Date()));
       attachDogListener();
+      updateNegativesChart(getRangeDays());
     }
+	
+	/* ========= Radial kennel navigator ========= */
+
+/** Parse "R2C3" -> { r:2, c:3 } */
+function parseRC(rc) {
+  const m = /^R(\d+)C(\d+)$/i.exec(rc||''); 
+  return m ? { r: +m[1], c: +m[2] } : { r: NaN, c: NaN };
+}
+/** Format {r,c} -> "R2C3" */
+function fmtRC(r,c){ return `R${r}C${c}`; }
+/** Make trailerLayouts collection key: "trailer-sex" (already have trailerNorm/sexNorm) */
+
+/** Build a map of slotNum ("R#C#") -> dogName for a side */
+async function fetchSlotsMap(sexNorm) {
+  const key = `${trailerNorm}-${sexNorm}`;
+  const snaps = await getDocs(collection(db, "trailerLayouts", key, "slots"));
+  const map = {};
+  snaps.forEach(d => {
+    // doc.id looks like "S_M_R1C1" or "C_F_R2C3" – last piece is the rc
+    const parts = d.id.split("_");
+    const rc = parts.slice(2).join("_"); // "R1C1"
+    const data = d.data() || {};
+    map[rc] = data.dogName || ""; // empty if unassigned
+  });
+  return map;
+}
+
+const overlayEl = document.getElementById('kennelOverlay');
+const wheelEl   = overlayEl.querySelector('.k-wheel');
+const fabEl     = document.getElementById('kennelFab');
+const kCurNameEl= document.getElementById('kCurName');
+const kCurSlotEl= document.getElementById('kCurSlot');
+
+let slotsMale=null, slotsFemale=null;
+let longPressTimer=null;
+
+/** Ensure both sides are loaded */
+async function ensureLayouts() {
+  if (!slotsMale)   slotsMale   = await fetchSlotsMap('male');
+  if (!slotsFemale) slotsFemale = await fetchSlotsMap('female');
+}
+
+/** Compute neighbor targets for current rc + sex */
+function neighbors(rc, sexNorm) {
+  const {r,c} = parseRC(rc);
+  const oppSex = sexNorm === 'male' ? 'female' : 'male';
+  return [
+    { key:'left',  label:'Left',   rc: fmtRC(r, c-1), sex:sexNorm },
+    { key:'right', label:'Right',  rc: fmtRC(r, c+1), sex:sexNorm },
+    { key:'up',    label:'Up',     rc: fmtRC(r-1, c), sex:sexNorm },
+    { key:'swap',  label:(oppSex==='female' ? 'Female' : 'Male'), rc: rc, sex:oppSex }
+  ];
+}
+
+/** Get name for rc on a side */
+function nameFor(rc, sexNorm) {
+  const map = (sexNorm==='male') ? slotsMale : slotsFemale;
+  return (map && rc in map && map[rc]) ? map[rc] : '— Empty —';
+}
+
+/** Open wheel centered, place four items with names */
+async function openWheel() {
+  await ensureLayouts();
+
+  // current context from URL
+  const rc = slotNum;          // you already have this in your script: e.g. "R2C3"
+  const sexN = sexNorm;        // lowercased sex from URL
+  const curName = dog?.name || nameFor(rc, sexN);
+
+  kCurNameEl.textContent = curName || 'Unassigned';
+  kCurSlotEl.textContent = rc;
+
+  // clear prior items
+  wheelEl.querySelectorAll('.k-item').forEach(n => n.remove());
+
+  const items = neighbors(rc, sexN).map(n => ({
+    ...n,
+    dogName: nameFor(n.rc, n.sex)
+  }));
+
+  // helper to make item button
+  function addItem(dx, dy, title, rc, sex, displayName){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'k-item';
+    btn.style.left = '50%';
+    btn.style.top  = '50%';
+    btn.style.transform = `translate(-50%,-50%) translate(${dx}px, ${dy}px)`;
+    btn.innerHTML = `<b>${displayName || '—'}</b><small>${title} · ${sex==='female'?'♀':'♂'} · ${rc}</small>`;
+    btn.addEventListener('click', ()=> {
+      // navigate by swapping URL params
+      const url = new URL(location.href);
+      url.searchParams.set('sex', sex);
+      url.searchParams.set('slot', rc);
+      location.href = url.toString();
+    });
+    wheelEl.appendChild(btn);
+  }
+
+  const R = 100; // radius from center
+  // Positions: left, right, up, swap at bottom
+  addItem(-R, 0,       'Left',  items[0].rc, items[0].sex, items[0].dogName);
+  addItem( R, 0,       'Right', items[1].rc, items[1].sex, items[1].dogName);
+  addItem( 0, -R,      'Up',    items[2].rc, items[2].sex, items[2].dogName);
+  addItem( 0,  R,      items[3].label, items[3].rc, items[3].sex, items[3].dogName);
+
+  overlayEl.classList.add('open');
+  overlayEl.setAttribute('aria-hidden', 'false');
+}
+
+/** Close wheel */
+function closeWheel(){
+  overlayEl.classList.remove('open');
+  overlayEl.setAttribute('aria-hidden', 'true');
+}
+
+/* FAB open */
+fabEl.addEventListener('click', openWheel);
+/* Click outside to close */
+overlayEl.addEventListener('click', (e)=> {
+  if (e.target === overlayEl) closeWheel();
+});
+
+/* Long press on dog card to open (mobile) */
+
+dogCard.addEventListener('pointerdown', () => {
+  longPressTimer = setTimeout(openWheel, 450);
+});
+['pointerup','pointerleave','pointercancel','dragstart'].forEach(ev=>{
+  dogCard.addEventListener(ev, ()=>{ clearTimeout(longPressTimer); });
+});
+/* ========= /radial ========= */
+
 
     if (trainerId) boot(); else showTrainerPrompt();
   </script>
