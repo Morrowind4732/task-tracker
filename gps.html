@@ -15,21 +15,17 @@
     --panel:#ffffffcc;
     --bg:#f5f5f5;
 
-    --hud-h: 0px;          /* set via JS on mobile */
+    /* populated by JS on mobile */
+    --hud-h: 0px;
 
-    /* 5 distinct blues (by group index 0..4) */
-    --g0:#0b74ff;
-    --g1:#2563eb;
-    --g2:#3b82f6;
-    --g3:#60a5fa;
-    --g4:#93c5fd;
-    --blind:#16a34a;
-    --trainer:#f97316;
+    /* blues by group index */
+    --g0:#0b74ff; --g1:#2563eb; --g2:#3b82f6; --g3:#60a5fa; --g4:#93c5fd;
+    --blind:#16a34a; --trainer:#f97316;
   }
 
   html, body { height:100%; margin:0; background:var(--bg); font-family:system-ui, sans-serif; }
 
-  /* Map fills viewport on desktop; on mobile we subtract HUD height so it lives outside the map. */
+  /* Map: full height on desktop; on mobile we subtract the HUD height */
   #map { height:100%; width:100%; }
   @supports (height: 100svh) { #map { height:100svh; } }
   @media (max-width: 820px) {
@@ -39,14 +35,13 @@
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
   .overlay.open { display:flex; }
   .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
-  .overlay-card h3 { margin:0 0 10px; }
   .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
   .btn.warn { border-color:#ef4444; color:#b91c1c; }
 
-  /* HUD: fixed overlay on desktop, becomes static block on mobile (sits above map) */
+  /* HUD: fixed overlay on desktop; becomes static block above the map on mobile */
   .hud {
     position:fixed; left:10px; top:10px; z-index:1000;
     display:grid; gap:8px; padding:10px;
@@ -54,12 +49,7 @@
     border:1px solid #ddd; border-radius:12px; max-width:min(92vw,520px);
   }
   @media (max-width: 820px) {
-    .hud {
-      position: static;
-      max-width: none;
-      margin: 10px;
-      backdrop-filter: none;
-    }
+    .hud { position:static; max-width:none; margin:10px; backdrop-filter:none; }
   }
 
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
@@ -71,20 +61,22 @@
   }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
 
+  /* Dock floats; on mobile it sits below the HUD height so it never covers the HUD */
   .dock {
     position:fixed; right:10px; top:10px; z-index:1000;
     width:min(92vw, 340px); max-height:80vh; overflow:auto;
     display:grid; gap:10px; padding:10px;
     background:var(--panel); border:1px solid #ddd; border-radius:12px; backdrop-filter: blur(4px);
   }
+  @media (max-width: 820px) {
+    body.hud-outside .dock { top: calc(10px + var(--hud-h)); }
+  }
+
   .group { border:1px solid #ddd; border-radius:10px; padding:8px; background:#fff; }
   .group h4 { margin:0 0 8px; font-size:14px; display:flex; align-items:center; gap:8px; }
   .swatch { width:12px; height:12px; border-radius:50%; border:1px solid #999; }
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
-  .chip {
-    user-select:none; padding:6px 10px; border:1px solid #bbb; border-radius:999px; background:#f7f7f7; cursor:grab;
-    font-weight:600;
-  }
+  .chip { user-select:none; padding:6px 10px; border:1px solid #bbb; border-radius:999px; background:#f7f7f7; cursor:grab; font-weight:600; }
   .chip[draggable="true"]:active { cursor:grabbing; }
   .blind-group h4 .swatch { background:var(--blind); }
 
@@ -103,15 +95,10 @@
     display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,.35); transform:translateY(-4px); border:2px solid #fff;
   }
 
-  /* Handle: big hit, tiny dot */
   .handle-hit { width:32px; height:32px; border-radius:50%; background:transparent; display:grid; place-items:center; }
   .handle-dot { width:4px; height:4px; border-radius:50%; background:currentColor; box-shadow:0 0 0 1.5px #fff; }
 
-  .dist-label {
-    background:#fff; padding:2px 6px; border-radius:10px; border:1px solid #ddd;
-    font-size:12px; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.15);
-  }
-
+  .dist-label { background:#fff; padding:2px 6px; border-radius:10px; border:1px solid #ddd; font-size:12px; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.15); }
   .muted { color:#666; font-size:12px; }
 </style>
 </head>
@@ -129,7 +116,7 @@
   </div>
 </div>
 
-<!-- HUD (moves outside the map on mobile just by being static) -->
+<!-- HUD -->
 <div class="hud" id="hud">
   <div class="row">
     <h2 style="margin:0">GPS – Setups Map</h2>
@@ -144,23 +131,16 @@
   </div>
 
   <div class="row">
-    <input id="latIn" type="number" step="0.000001" placeholder="Lat" />
-    <input id="lngIn" type="number" step="0.000001" placeholder="Lng" />
-    <button class="btn" id="goBtn">Go</button>
+    <button class="btn" id="locBtn">Locate Me</button>
     <button class="btn" id="fitBtn">Fit All</button>
-  </div>
-
-  <div class="row">
-    <label style="display:flex;align-items:center;gap:6px;">
+    <label style="display:flex;align-items:center;gap:6px;margin-left:auto;">
       <input id="raysChk" type="checkbox" />
       <span>Show trainer rays</span>
     </label>
   </div>
-
-  <div class="muted">Desktop: drag chips from the dock onto the map. Mobile: drag a chip with your finger, or tap a chip then tap the map. Drag map pins to adjust. Marks have a directional arrow (drag the small dot).</div>
 </div>
 
-<!-- Dock with groups & unplaced items -->
+<!-- Dock -->
 <div class="dock" id="dock">
   <div class="muted">Fetching setups…</div>
 </div>
@@ -190,15 +170,14 @@
   /* ---------------- Utilities ---------------- */
   const $ = s => document.querySelector(s);
   function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
-
   const GROUP_BLUES = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)','var(--g4)'];
 
-  /* Mobile placement state (tap-to-place) */
+  /* Mobile placement state */
   let pendingPlacement = null;
   function showPlacingMsg(what){ $('#ctx').textContent = `Placing ${what} — tap on the map`; $('#ctx').style.fontWeight='700'; }
   function clearPlacingMsg(){ $('#ctx').textContent = `Trainer: ${trainerId}`; $('#ctx').style.fontWeight='400'; }
 
-  /* ---------------- Trainer picker ---------------- */
+  /* Trainer picker */
   const overlay = $('#trainerOverlay');
   const ctxEl   = $('#ctx');
   $('#changeUserLink').addEventListener('click', (e)=> {
@@ -227,7 +206,7 @@
   }
   if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
-  /* ---------------- Date + setups tabs ---------------- */
+  /* Date + tabs */
   const dayPicker = $('#dayPicker');
   const todayBtn  = $('#todayBtn');
   dayPicker.value = ymd(new Date());
@@ -236,14 +215,14 @@
   const tabsEl = $('#tabs');
 
   let currentDateKey = dayPicker.value;
-  let setupsMeta = [];       // [{id,name,order}]
+  let setupsMeta = [];
   let activeSetupId = null;
 
   const dayDocPath = () => doc(db, 'setups', trainerId, 'days', currentDateKey);
   const setupsColl = () => collection(dayDocPath(), 'setups');
   const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
-  /* ---------------- Map ---------------- */
+  /* Map */
   const MAX_COMFORT_ZOOM = 17;
   const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
   let hasAutoCentered = false;
@@ -252,7 +231,6 @@
   L.control.scale({imperial:true, metric:false}).addTo(map);
   map.on('zoomend', renderAllArrows);
 
-  /* Layer order */
   const markLines  = L.layerGroup().addTo(map);
   const markPins   = L.layerGroup().addTo(map);
   const markDots   = L.layerGroup().addTo(map);
@@ -271,7 +249,7 @@
     iconSize:[32,32], iconAnchor:[16,16]
   });
 
-  // Geo utils
+  /* Geo utils */
   const Rm = 6371000;
   const toRad = d => d*Math.PI/180, toDeg = r => r*180/Math.PI;
   function distanceMeters(a,b){ return map.distance(a,b); }
@@ -317,7 +295,7 @@
     L.polyline([B,L2], { color: colorCSS, weight:4, opacity:0.95, interactive:false }).addTo(markLines);
   }
 
-  /* ---------------- State for active setup ---------------- */
+  /* State */
   let activeSetupData = { items:[], columns:{dock:[], cols:[]}, blinds:[], geo:{} };
   let unsubSetups = null, unsubSetupDoc = null;
 
@@ -347,8 +325,8 @@
     renderRays();
   }
 
-  /* ----- Desktop drag + Mobile touch drag + Mobile tap-to-place ----- */
-  let touchDrag = null;            // {data, ghost}
+  /* Desktop drag + Mobile touch drag + Tap-to-place */
+  let touchDrag = null;
   let justDidTouchDrop = false;
 
   function startTouchDrag(chip, data, touch){
@@ -358,30 +336,19 @@
     ghost.textContent = chip.textContent.trim();
     document.body.appendChild(ghost);
     positionGhost(ghost, touch.clientX, touch.clientY);
-
-    // pause map gestures while dragging
-    try {
-      map.dragging.disable(); map.touchZoom.disable(); map.boxZoom.disable(); map.doubleClickZoom.disable(); map.scrollWheelZoom.disable();
-    } catch {}
+    try { map.dragging.disable(); map.touchZoom.disable(); map.boxZoom.disable(); map.doubleClickZoom.disable(); map.scrollWheelZoom.disable(); } catch {}
     touchDrag = { data, ghost };
   }
-  function positionGhost(ghost, x, y){
-    ghost.style.left = x + 'px';
-    ghost.style.top  = y + 'px';
-  }
+  function positionGhost(ghost, x, y){ ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; }
   async function endTouchDrag(touch){
     if (!touchDrag) return;
     const { data, ghost } = touchDrag;
     touchDrag = null;
     ghost.remove();
-    try {
-      map.dragging.enable(); map.touchZoom.enable(); map.boxZoom.enable(); map.doubleClickZoom.enable(); map.scrollWheelZoom.enable();
-    } catch {}
-
+    try { map.dragging.enable(); map.touchZoom.enable(); map.boxZoom.enable(); map.doubleClickZoom.enable(); map.scrollWheelZoom.enable(); } catch {}
     const rect = map.getContainer().getBoundingClientRect();
     const inside = touch.clientX>=rect.left && touch.clientX<=rect.right && touch.clientY>=rect.top && touch.clientY<=rect.bottom;
     if (!inside) return;
-
     const pt = L.point(touch.clientX-rect.left, touch.clientY-rect.top);
     const ll = map.containerPointToLatLng(pt);
     await placeItem(data, ll);
@@ -391,45 +358,20 @@
   function wireDockChips(container){
     container.querySelectorAll('.chip').forEach(ch => {
       const data = { type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color };
-
-      // Desktop drag
-      ch.addEventListener('dragstart', e => {
-        e.dataTransfer.setData('text/plain', JSON.stringify(data));
-        e.dataTransfer.effectAllowed = 'copy';
-      });
-
-      // Touch drag
-      ch.addEventListener('touchstart', e => {
-        if (e.touches && e.touches[0]) {
-          e.preventDefault();
-          startTouchDrag(ch, data, e.touches[0]);
-        }
-      }, { passive:false });
-
-      // Tap-to-place fallback
+      ch.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', JSON.stringify(data)); e.dataTransfer.effectAllowed = 'copy'; });
+      ch.addEventListener('touchstart', e => { if (e.touches && e.touches[0]) { e.preventDefault(); startTouchDrag(ch, data, e.touches[0]); } }, { passive:false });
       ch.addEventListener('click', e => {
         if (justDidTouchDrop) { justDidTouchDrop=false; return; }
-        e.preventDefault();
-        pendingPlacement = data;
-        const label = ch.textContent.trim();
-        showPlacingMsg(label || (pendingPlacement.type==='trainer' ? 'TR' : 'Item'));
+        e.preventDefault(); pendingPlacement = data;
+        const label = ch.textContent.trim(); showPlacingMsg(label || (pendingPlacement.type==='trainer' ? 'TR' : 'Item'));
       }, { passive:true });
     });
   }
-
-  window.addEventListener('touchmove', e => {
-    if (!touchDrag) return;
-    e.preventDefault();
-    if (e.touches && e.touches[0]) positionGhost(touchDrag.ghost, e.touches[0].clientX, e.touches[0].clientY);
-  }, { passive:false });
-  window.addEventListener('touchend', e => {
-    if (!touchDrag) return;
-    const t = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : null;
-    if (t) endTouchDrag(t);
-  }, { passive:false });
+  window.addEventListener('touchmove', e => { if (!touchDrag) return; e.preventDefault(); if (e.touches && e.touches[0]) positionGhost(touchDrag.ghost, e.touches[0].clientX, e.touches[0].clientY); }, { passive:false });
+  window.addEventListener('touchend', e => { if (!touchDrag) return; const t = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : null; if (t) endTouchDrag(t); }, { passive:false });
   window.addEventListener('touchcancel', () => { if (touchDrag){ touchDrag.ghost.remove(); touchDrag=null; } }, { passive:true });
 
-  /* ---------------- Dock building ---------------- */
+  /* Dock building */
   function buildDock(){
     const dock = $('#dock');
     dock.innerHTML = '';
@@ -439,7 +381,7 @@
       return;
     }
 
-    // Trainer section (only if not placed)
+    // Trainer chip if not placed
     if (!activeSetupData.geo?.trainer){
       const tBox = document.createElement('div');
       tBox.className = 'group';
@@ -467,6 +409,7 @@
         chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
         chips.appendChild(chip);
       });
+
       if (chips.children.length) dock.appendChild(box);
     });
 
@@ -507,7 +450,6 @@
     wireDockChips(dock);
   }
 
-  // Shared placement function
   async function placeItem(data, ll){
     if (data.type === 'mark') {
       const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
@@ -519,7 +461,7 @@
     }
   }
 
-  // Desktop drop target
+  /* Desktop drop target */
   const mapEl = map.getContainer();
   mapEl.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
   mapEl.addEventListener('drop', async e => {
@@ -532,7 +474,7 @@
     await placeItem(data, ll);
   });
 
-  // Tap-to-place fallback
+  /* Tap-to-place fallback */
   map.on('click', async (e) => {
     if (!pendingPlacement) return;
     const ll = e.latlng;
@@ -541,7 +483,7 @@
   });
   window.addEventListener('keydown', (e)=>{ if (e.key==='Escape' && pendingPlacement){ pendingPlacement=null; clearPlacingMsg(); } });
 
-  /* ---------------- Render map from activeSetupData ---------------- */
+  /* Render map from activeSetupData */
   function renderMap(){
     markPins.clearLayers(); markLines.clearLayers(); markDots.clearLayers();
     blindPins.clearLayers(); trainerLay.clearLayers(); raysLayer.clearLayers(); distLabels.clearLayers();
@@ -567,7 +509,6 @@
       });
     }
 
-    // Helper: group color
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
 
@@ -582,10 +523,7 @@
       const base = L.marker(A, { draggable:true, autoPan:false, icon: iconPill(`M${idx+1}`, color) }).addTo(markPins);
 
       let dragBrg = 0, dragDist = MIN_ARROW_VISIBLE;
-      base.on('dragstart', () => {
-        dragBrg = bearing(A, H);
-        dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE);
-      });
+      base.on('dragstart', () => { dragBrg = bearing(A, H); dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE); });
       base.on('drag', e => {
         const newA = e.target.getLatLng();
         A.lat=newA.lat; A.lng=newA.lng;
@@ -682,7 +620,7 @@
     });
   }
 
-  /* ---------------- Listeners ---------------- */
+  /* Listeners: setups + docs */
   async function attachSetupsListener(){
     if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
     const qy = query(setupsColl(), orderBy('order'));
@@ -728,7 +666,6 @@
         }
       }
 
-      // update HUD height var when data causes wrap/growth (mobile)
       updateHudHeightVar();
     });
   }
@@ -750,17 +687,7 @@
     if (trainerId) attachSetupsListener();
   }
 
-  /* ---------------- Coordinates / Fit UI ---------------- */
-  $('#goBtn').addEventListener('click', ()=>{
-    const la=parseFloat($('#latIn').value), ln=parseFloat($('#lngIn').value);
-    if (!Number.isFinite(la)||!Number.isFinite(ln) || la<-90||la>90||ln<-180||ln>180){ alert('Enter valid lat/lng'); return; }
-    const target=L.latLng(la,ln);
-    const z1=Math.min(MAX_COMFORT_ZOOM, Math.max(map.getZoom()+2, 14));
-    const z2=Math.min(MAX_COMFORT_ZOOM, Math.max(z1+2, 16));
-    map.flyTo(target, z1, { duration:0.8 });
-    setTimeout(()=> map.flyTo(target, z2, { duration:0.9 }), 850);
-  });
-
+  /* Fit + Locate */
   $('#fitBtn').addEventListener('click', ()=>{
     const bounds = L.latLngBounds([]);
     const g = activeSetupData.geo || {};
@@ -770,15 +697,27 @@
     if (bounds.isValid()) map.fitBounds(bounds, { padding:[30,30], maxZoom: MAX_COMFORT_ZOOM });
   });
 
+  $('#locBtn').addEventListener('click', ()=>{
+    if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        const { latitude, longitude } = pos.coords;
+        map.flyTo([latitude, longitude], 16, { duration: 0.9 });
+      },
+      err => alert('Could not get your location'),
+      { enableHighAccuracy:true, timeout:10000, maximumAge:30000 }
+    );
+  });
+
   $('#raysChk').addEventListener('change', renderRays);
 
-  // Long-press on map (2s) -> set trainer
+  // Long-press to set trainer (desktop)
   let pressTimer=null;
   map.on('mousedown', (e)=>{ pressTimer=setTimeout(async ()=>{ await setDoc(setupDoc(), { geo:{ trainer:{ lat:e.latlng.lat, lng:e.latlng.lng } } }, { merge:true }); }, 2000); });
   map.on('mouseup', ()=> clearTimeout(pressTimer));
   map.on('mouseout', ()=> clearTimeout(pressTimer));
 
-  /* ---------------- HUD outside map on mobile ---------------- */
+  /* HUD outside map on mobile */
   const hudEl = document.getElementById('hud');
   function updateHudHeightVar(){
     const mobile = window.matchMedia('(max-width: 820px)').matches;
@@ -792,7 +731,7 @@
   updateHudHeightVar();
   if ('ResizeObserver' in window) new ResizeObserver(updateHudHeightVar).observe(hudEl);
 
-  /* ---------------- Boot ---------------- */
+  /* Boot */
   async function boot(){
     if (!trainerId) return showTrainerPrompt();
     ctxEl.textContent = `Trainer: ${trainerId}`;
