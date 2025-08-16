@@ -35,7 +35,7 @@
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
   .overlay.open { display:flex; }
   .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
-  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
+  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; flex-wrap:wrap; }
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
@@ -116,6 +116,17 @@
   </div>
 </div>
 
+<!-- Place-at-me chooser -->
+<div class="overlay" id="placeOverlay">
+  <div class="overlay-card">
+    <h3>Place at my location</h3>
+    <div id="placeList" class="overlay-actions"></div>
+    <div class="overlay-actions">
+      <button class="btn" id="placeCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- HUD -->
 <div class="hud" id="hud">
   <div class="row">
@@ -133,6 +144,7 @@
   <div class="row">
     <button class="btn" id="locBtn">Locate Me</button>
     <button class="btn" id="fitBtn">Fit All</button>
+    <button class="btn primary" id="placeBtn">Place at me</button>
     <label style="display:flex;align-items:center;gap:6px;margin-left:auto;">
       <input id="raysChk" type="checkbox" />
       <span>Show trainer rays</span>
@@ -179,7 +191,10 @@
 
   /* Trainer picker */
   const overlay = $('#trainerOverlay');
+  const placeOverlay = $('#placeOverlay');
   const ctxEl   = $('#ctx');
+  $('#placeCancel').addEventListener('click', ()=> placeOverlay.classList.remove('open'));
+
   $('#changeUserLink').addEventListener('click', (e)=> {
     e.preventDefault();
     const url = new URL(location.href); url.searchParams.delete('trainer');
@@ -223,7 +238,7 @@
   const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
   /* Map */
-  const MAX_COMFORT_ZOOM = 17;
+  const MAX_COMFORT_ZOOM = 19; // ⬅ bumped from 17
   const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
   let hasAutoCentered = false;
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -258,7 +273,7 @@
   function bearing(a,b){
     const φ1=toRad(a.lat), φ2=toRad(b.lat), λ1=toRad(a.lng), λ2=toRad(b.lng);
     const y = Math.sin(λ2-λ1)*Math.cos(φ2);
-    const x = Math.cos(φ1)*Math.sin(φ2) - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
+    const x = Math.cos(φ1)*sinφ2 - Math.sin(φ1)*Math.cos(φ2)*Math.cos(λ2-λ1);
     return ((toDeg(Math.atan2(y,x))+360)%360);
   }
   function destPoint(start, brgDeg, distM){
@@ -707,6 +722,70 @@
       err => alert('Could not get your location'),
       { enableHighAccuracy:true, timeout:10000, maximumAge:30000 }
     );
+  });
+
+  /* -------- Place at me -------- */
+  function getGPS(){
+    return new Promise((resolve, reject)=>{
+      if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+      navigator.geolocation.getCurrentPosition(
+        p => resolve({ lat:p.coords.latitude, lng:p.coords.longitude }),
+        err => reject(err),
+        { enableHighAccuracy:true, timeout:12000, maximumAge:5000 }
+      );
+    });
+  }
+
+  $('#placeBtn').addEventListener('click', ()=>{
+    const opts = [];
+
+    // Trainer if unplaced
+    if (!activeSetupData.geo?.trainer){
+      opts.push({ type:'trainer', id:'TR', label:'Trainer (TR)' });
+    }
+
+    // Marks (unplaced)
+    const marksPlaced = activeSetupData.geo?.marks || {};
+    (activeSetupData.items||[]).forEach((m, idx)=>{
+      if (!marksPlaced[m.id]) opts.push({ type:'mark', id:m.id, label:`Mark M${idx+1}` });
+    });
+
+    // Blinds (unplaced)
+    const blindsPlaced = activeSetupData.geo?.blinds || {};
+    (activeSetupData.blinds||[]).forEach((b, i)=>{
+      if (!blindsPlaced[b.id]) opts.push({ type:'blind', id:b.id, label:`Blind B${i+1}` });
+    });
+
+    if (!opts.length){ alert('Everything is already placed.'); return; }
+
+    const list = $('#placeList'); list.innerHTML = '';
+    opts.forEach(o=>{
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = o.label;
+      btn.addEventListener('click', async ()=>{
+        try{
+          btn.disabled = true; btn.textContent = 'Placing…';
+          const p = await getGPS();
+          if (o.type==='mark'){
+            const hLL = destPoint(p, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+            await setDoc(setupDoc(), { geo: { marks: { [o.id]: { lat:p.lat, lng:p.lng, handle:{ lat:hLL.lat, lng:hLL.lng } } } } }, { merge:true });
+          }else if (o.type==='blind'){
+            await setDoc(setupDoc(), { geo: { blinds: { [o.id]: { lat:p.lat, lng:p.lng } } } }, { merge:true });
+          }else if (o.type==='trainer'){
+            await setDoc(setupDoc(), { geo: { trainer: { lat:p.lat, lng:p.lng } } }, { merge:true });
+          }
+          placeOverlay.classList.remove('open');
+          map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration:0.6 });
+        }catch(e){
+          alert('Unable to get your location.');
+          btn.disabled = false; btn.textContent = o.label;
+        }
+      }, { once:true });
+      list.appendChild(btn);
+    });
+
+    placeOverlay.classList.add('open');
   });
 
   $('#raysChk').addEventListener('change', renderRays);
