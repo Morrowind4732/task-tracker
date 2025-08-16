@@ -15,26 +15,25 @@
     --panel:#ffffffcc;
     --bg:#f5f5f5;
 
-    /* map/footer sizing */
-    --coordbar-h: 0px;
+    --hud-h: 0px;          /* set via JS on mobile */
 
     /* 5 distinct blues (by group index 0..4) */
-    --g0:#0b74ff; /* blue-700 */
-    --g1:#2563eb; /* blue-600-ish */
-    --g2:#3b82f6; /* blue-500 */
-    --g3:#60a5fa; /* blue-400 */
-    --g4:#93c5fd; /* blue-300 */
-    --blind:#16a34a; /* green for blinds */
-    --trainer:#f97316; /* orange */
+    --g0:#0b74ff;
+    --g1:#2563eb;
+    --g2:#3b82f6;
+    --g3:#60a5fa;
+    --g4:#93c5fd;
+    --blind:#16a34a;
+    --trainer:#f97316;
   }
 
   html, body { height:100%; margin:0; background:var(--bg); font-family:system-ui, sans-serif; }
 
-  /* Map fills the viewport, except on mobile where we reserve space for the bottom coord bar */
-  #map { height: 100%; width: 100%; }
-  @supports (height: 100svh) { #map { height: 100svh; } }
+  /* Map fills viewport on desktop; on mobile we subtract HUD height so it lives outside the map. */
+  #map { height:100%; width:100%; }
+  @supports (height: 100svh) { #map { height:100svh; } }
   @media (max-width: 820px) {
-    body.has-footer #map { height: calc(100svh - var(--coordbar-h)); }
+    body.hud-outside #map { height: calc(100svh - var(--hud-h)); }
   }
 
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
@@ -47,12 +46,22 @@
   .btn.ghost { background:#fff; border-color:#ccc; }
   .btn.warn { border-color:#ef4444; color:#b91c1c; }
 
+  /* HUD: fixed overlay on desktop, becomes static block on mobile (sits above map) */
   .hud {
     position:fixed; left:10px; top:10px; z-index:1000;
     display:grid; gap:8px; padding:10px;
     background:var(--panel); backdrop-filter: blur(4px);
     border:1px solid #ddd; border-radius:12px; max-width:min(92vw,520px);
   }
+  @media (max-width: 820px) {
+    .hud {
+      position: static;
+      max-width: none;
+      margin: 10px;
+      backdrop-filter: none;
+    }
+  }
+
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .tabs { display:flex; gap:6px; flex-wrap:wrap; align-items:flex-end; }
   .tab {
@@ -68,9 +77,7 @@
     display:grid; gap:10px; padding:10px;
     background:var(--panel); border:1px solid #ddd; border-radius:12px; backdrop-filter: blur(4px);
   }
-  .group {
-    border:1px solid #ddd; border-radius:10px; padding:8px; background:#fff;
-  }
+  .group { border:1px solid #ddd; border-radius:10px; padding:8px; background:#fff; }
   .group h4 { margin:0 0 8px; font-size:14px; display:flex; align-items:center; gap:8px; }
   .swatch { width:12px; height:12px; border-radius:50%; border:1px solid #999; }
   .chips { display:flex; flex-wrap:wrap; gap:8px; }
@@ -80,6 +87,14 @@
   }
   .chip[draggable="true"]:active { cursor:grabbing; }
   .blind-group h4 .swatch { background:var(--blind); }
+
+  /* Touch-drag ghost for mobile */
+  .chip-ghost {
+    position: fixed; left:0; top:0; transform:translate(-50%,-50%);
+    padding:6px 10px; border:1px solid #bbb; border-radius:999px; background:#fff;
+    box-shadow:0 6px 18px rgba(0,0,0,.25);
+    z-index: 100000; pointer-events:none; font-weight:700;
+  }
 
   /* Map pills */
   .mk { display:grid; place-items:center; }
@@ -98,21 +113,6 @@
   }
 
   .muted { color:#666; font-size:12px; }
-
-  /* Bottom coordinate bar (outside the map) */
-  .coordbar {
-    display:none; /* only on mobile via JS */
-    background:#fff;
-    border-top:1px solid #ddd;
-    padding:8px 10px;
-  }
-  .coordbar .row { justify-content:space-between; }
-  .coordbar input { flex:1 1 40%; min-width:120px; }
-  .coordbar .btn { white-space:nowrap; }
-
-  @media (max-width: 820px) {
-    .coordbar { display:block; }
-  }
 </style>
 </head>
 <body>
@@ -129,7 +129,8 @@
   </div>
 </div>
 
-<div class="hud">
+<!-- HUD (moves outside the map on mobile just by being static) -->
+<div class="hud" id="hud">
   <div class="row">
     <h2 style="margin:0">GPS – Setups Map</h2>
     <a id="changeUserLink" class="muted" href="#">change user</a>
@@ -142,15 +143,13 @@
     <div class="tabs" id="tabs"></div>
   </div>
 
-  <!-- Coordinates row lives here on desktop; on phones we move it to #coordBar -->
-  <div class="row" id="coordRow">
+  <div class="row">
     <input id="latIn" type="number" step="0.000001" placeholder="Lat" />
     <input id="lngIn" type="number" step="0.000001" placeholder="Lng" />
     <button class="btn" id="goBtn">Go</button>
     <button class="btn" id="fitBtn">Fit All</button>
   </div>
 
-  <!-- Rays toggle stays in the HUD so it never collides with the dock -->
   <div class="row">
     <label style="display:flex;align-items:center;gap:6px;">
       <input id="raysChk" type="checkbox" />
@@ -158,7 +157,7 @@
     </label>
   </div>
 
-  <div class="muted">Desktop: drag chips from the dock onto the map. Mobile: tap a chip, then tap the map to place. Drag map pins to adjust. Marks have a directional arrow (drag the small dot).</div>
+  <div class="muted">Desktop: drag chips from the dock onto the map. Mobile: drag a chip with your finger, or tap a chip then tap the map. Drag map pins to adjust. Marks have a directional arrow (drag the small dot).</div>
 </div>
 
 <!-- Dock with groups & unplaced items -->
@@ -168,16 +167,11 @@
 
 <div id="map"></div>
 
-<!-- Bottom bar that will hold the coordinates row on phones -->
-<div id="coordBar" class="coordbar">
-  <!-- JS moves #coordRow in here on mobile and sets --coordbar-h so the map shrinks just enough -->
-</div>
-
 <script type="module">
   /* ---------------- Firebase (v10) ---------------- */
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
-    getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, serverTimestamp,
+    getFirestore, doc, setDoc, updateDoc, onSnapshot,
     collection, query, orderBy, deleteField
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
@@ -199,16 +193,10 @@
 
   const GROUP_BLUES = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)','var(--g4)'];
 
-  /* Mobile placement mode state */
+  /* Mobile placement state (tap-to-place) */
   let pendingPlacement = null;
-  function showPlacingMsg(what){
-    $('#ctx').textContent = `Placing ${what} — tap on the map`;
-    $('#ctx').style.fontWeight = '700';
-  }
-  function clearPlacingMsg(){
-    $('#ctx').textContent = `Trainer: ${trainerId}`;
-    $('#ctx').style.fontWeight = '400';
-  }
+  function showPlacingMsg(what){ $('#ctx').textContent = `Placing ${what} — tap on the map`; $('#ctx').style.fontWeight='700'; }
+  function clearPlacingMsg(){ $('#ctx').textContent = `Trainer: ${trainerId}`; $('#ctx').style.fontWeight='400'; }
 
   /* ---------------- Trainer picker ---------------- */
   const overlay = $('#trainerOverlay');
@@ -264,10 +252,10 @@
   L.control.scale({imperial:true, metric:false}).addTo(map);
   map.on('zoomend', renderAllArrows);
 
-  /* Layer order: arrows under pins, handle dots on top */
-  const markLines  = L.layerGroup().addTo(map);  // under
-  const markPins   = L.layerGroup().addTo(map);  // above
-  const markDots   = L.layerGroup().addTo(map);  // top
+  /* Layer order */
+  const markLines  = L.layerGroup().addTo(map);
+  const markPins   = L.layerGroup().addTo(map);
+  const markDots   = L.layerGroup().addTo(map);
   const blindPins  = L.layerGroup().addTo(map);
   const trainerLay = L.layerGroup().addTo(map);
   const raysLayer  = L.layerGroup().addTo(map);
@@ -308,15 +296,12 @@
     return L.latLng(toDeg(φ2), ((toDeg(λ2)+540)%360)-180);
   }
 
-  const DEFAULT_ARROW_BRG = 315;  // ~10:30
-  const DEFAULT_ARROW_LEN = 100;  // meters
+  const DEFAULT_ARROW_BRG = 315;
+  const DEFAULT_ARROW_LEN = 100;
   const MIN_ARROW_VISIBLE = 12;
 
-  /* Arrows are non-interactive so pins can always drag */
   function drawArrow(A, B, colorCSS){
-    // shaft
     L.polyline([A,B], { color: colorCSS, weight:4, opacity:0.95, interactive:false }).addTo(markLines);
-    // head
     const z = map.getZoom();
     const aPt = map.project(A, z), bPt = map.project(B, z);
     const v = bPt.subtract(aPt); const len = Math.hypot(v.x, v.y); if (!len) return;
@@ -347,46 +332,102 @@
     });
   }
 
-  // Re-draw all mark arrows at the current zoom
   function renderAllArrows() {
     markLines.clearLayers();
-
     const marksPlaced = activeSetupData.geo?.marks || {};
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
-
     activeSetupData.items.forEach(it => {
       const g = marksPlaced[it.id]; if (!g) return;
       const color = GROUP_BLUES[groupOf(it.id) % GROUP_BLUES.length];
       const A = L.latLng(g.lat, g.lng);
-      const H = g.handle ? L.latLng(g.handle.lat, g.handle.lng)
-                         : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+      const H = g.handle ? L.latLng(g.handle.lat, g.handle.lng) : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
       drawArrow(A, H, color);
     });
-
-    renderRays(); // keep the distance overlays in sync
+    renderRays();
   }
 
-  /* ----- helper to wire chips for desktop drag + mobile tap-to-place ----- */
+  /* ----- Desktop drag + Mobile touch drag + Mobile tap-to-place ----- */
+  let touchDrag = null;            // {data, ghost}
+  let justDidTouchDrop = false;
+
+  function startTouchDrag(chip, data, touch){
+    justDidTouchDrop = false;
+    const ghost = document.createElement('div');
+    ghost.className = 'chip-ghost';
+    ghost.textContent = chip.textContent.trim();
+    document.body.appendChild(ghost);
+    positionGhost(ghost, touch.clientX, touch.clientY);
+
+    // pause map gestures while dragging
+    try {
+      map.dragging.disable(); map.touchZoom.disable(); map.boxZoom.disable(); map.doubleClickZoom.disable(); map.scrollWheelZoom.disable();
+    } catch {}
+    touchDrag = { data, ghost };
+  }
+  function positionGhost(ghost, x, y){
+    ghost.style.left = x + 'px';
+    ghost.style.top  = y + 'px';
+  }
+  async function endTouchDrag(touch){
+    if (!touchDrag) return;
+    const { data, ghost } = touchDrag;
+    touchDrag = null;
+    ghost.remove();
+    try {
+      map.dragging.enable(); map.touchZoom.enable(); map.boxZoom.enable(); map.doubleClickZoom.enable(); map.scrollWheelZoom.enable();
+    } catch {}
+
+    const rect = map.getContainer().getBoundingClientRect();
+    const inside = touch.clientX>=rect.left && touch.clientX<=rect.right && touch.clientY>=rect.top && touch.clientY<=rect.bottom;
+    if (!inside) return;
+
+    const pt = L.point(touch.clientX-rect.left, touch.clientY-rect.top);
+    const ll = map.containerPointToLatLng(pt);
+    await placeItem(data, ll);
+    justDidTouchDrop = true;
+  }
+
   function wireDockChips(container){
     container.querySelectorAll('.chip').forEach(ch => {
+      const data = { type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color };
+
       // Desktop drag
       ch.addEventListener('dragstart', e => {
-        e.dataTransfer.setData('text/plain', JSON.stringify({
-          type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color
-        }));
+        e.dataTransfer.setData('text/plain', JSON.stringify(data));
         e.dataTransfer.effectAllowed = 'copy';
       });
 
-      // Mobile tap-to-place
+      // Touch drag
+      ch.addEventListener('touchstart', e => {
+        if (e.touches && e.touches[0]) {
+          e.preventDefault();
+          startTouchDrag(ch, data, e.touches[0]);
+        }
+      }, { passive:false });
+
+      // Tap-to-place fallback
       ch.addEventListener('click', e => {
+        if (justDidTouchDrop) { justDidTouchDrop=false; return; }
         e.preventDefault();
-        pendingPlacement = { type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color };
+        pendingPlacement = data;
         const label = ch.textContent.trim();
         showPlacingMsg(label || (pendingPlacement.type==='trainer' ? 'TR' : 'Item'));
       }, { passive:true });
     });
   }
+
+  window.addEventListener('touchmove', e => {
+    if (!touchDrag) return;
+    e.preventDefault();
+    if (e.touches && e.touches[0]) positionGhost(touchDrag.ghost, e.touches[0].clientX, e.touches[0].clientY);
+  }, { passive:false });
+  window.addEventListener('touchend', e => {
+    if (!touchDrag) return;
+    const t = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : null;
+    if (t) endTouchDrag(t);
+  }, { passive:false });
+  window.addEventListener('touchcancel', () => { if (touchDrag){ touchDrag.ghost.remove(); touchDrag=null; } }, { passive:true });
 
   /* ---------------- Dock building ---------------- */
   function buildDock(){
@@ -409,7 +450,7 @@
       dock.appendChild(tBox);
     }
 
-    // Groups from columns.cols (array of {items:[id,...]})
+    // Groups
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     cols.forEach((col, gi) => {
       const color = GROUP_BLUES[gi % GROUP_BLUES.length];
@@ -419,24 +460,17 @@
       const chips = box.querySelector('.chips');
 
       (col.items||[]).forEach(id=>{
-        // if placed already, skip from dock
         if (activeSetupData.geo?.marks?.[id]) return;
         const idx = activeSetupData.items.findIndex(i=>i.id===id);
-        const label = `M${idx>=0?idx+1:'?'}`;
         const chip = document.createElement('div');
-        chip.className = 'chip';
-        chip.draggable = true;
-        chip.textContent = label;
-        chip.dataset.type = 'mark';
-        chip.dataset.id = id;
-        chip.dataset.color = color;
+        chip.className='chip'; chip.draggable=true; chip.textContent=`M${idx>=0?idx+1:'?'}`;
+        chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
         chips.appendChild(chip);
       });
-
       if (chips.children.length) dock.appendChild(box);
     });
 
-    // Un-grouped marks (just in case)
+    // Ungrouped
     const groupedIds = new Set((Array.isArray(activeSetupData.columns?.cols)?activeSetupData.columns.cols:[]).flatMap(c => c.items||[]));
     const ungroup = activeSetupData.items.filter(m => !groupedIds.has(m.id)).map(m => m.id);
     if (ungroup.length){
@@ -456,7 +490,7 @@
       if (chips.children.length) dock.appendChild(box);
     }
 
-    // Blinds dock (unplaced)
+    // Blinds
     const bBox = document.createElement('div');
     bBox.className = 'group blind-group';
     bBox.innerHTML = `<h4><span class="swatch"></span>Blinds</h4><div class="chips"></div>`;
@@ -470,22 +504,11 @@
     });
     if (bChips.children.length) dock.appendChild(bBox);
 
-    // Wire drag + mobile tap
     wireDockChips(dock);
   }
 
-  // Map: desktop drop target
-  const mapEl = map.getContainer();
-  mapEl.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
-  mapEl.addEventListener('drop', async e => {
-    e.preventDefault();
-    const data = JSON.parse(e.dataTransfer.getData('text/plain')||'{}');
-    if (!data || !data.id || !data.type) return;
-
-    const rect = mapEl.getBoundingClientRect();
-    const pt = L.point(e.clientX-rect.left, e.clientY-rect.top);
-    const ll = map.containerPointToLatLng(pt);
-
+  // Shared placement function
+  async function placeItem(data, ll){
     if (data.type === 'mark') {
       const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
       await setDoc(setupDoc(), { geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
@@ -494,28 +517,27 @@
     } else if (data.type === 'trainer') {
       await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
     }
+  }
+
+  // Desktop drop target
+  const mapEl = map.getContainer();
+  mapEl.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  mapEl.addEventListener('drop', async e => {
+    e.preventDefault();
+    const data = JSON.parse(e.dataTransfer.getData('text/plain')||'{}');
+    if (!data || !data.id || !data.type) return;
+    const rect = mapEl.getBoundingClientRect();
+    const pt = L.point(e.clientX-rect.left, e.clientY-rect.top);
+    const ll = map.containerPointToLatLng(pt);
+    await placeItem(data, ll);
   });
 
-  // Mobile tap-to-place fallback
+  // Tap-to-place fallback
   map.on('click', async (e) => {
     if (!pendingPlacement) return;
     const ll = e.latlng;
-
-    try {
-      if (pendingPlacement.type === 'mark') {
-        const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
-        await setDoc(setupDoc(), {
-          geo: { marks: { [pendingPlacement.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } }
-        }, { merge:true });
-      } else if (pendingPlacement.type === 'blind') {
-        await setDoc(setupDoc(), { geo: { blinds: { [pendingPlacement.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
-      } else if (pendingPlacement.type === 'trainer') {
-        await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
-      }
-    } finally {
-      pendingPlacement = null;
-      clearPlacingMsg();
-    }
+    try { await placeItem(pendingPlacement, ll); }
+    finally { pendingPlacement = null; clearPlacingMsg(); }
   });
   window.addEventListener('keydown', (e)=>{ if (e.key==='Escape' && pendingPlacement){ pendingPlacement=null; clearPlacingMsg(); } });
 
@@ -540,16 +562,16 @@
 
       t.on('popupopen', ev=>{
         ev.popup.getElement().querySelector('#delTrainer')?.addEventListener('click', async ()=>{
-          await setDoc(setupDoc(), { geo: { trainer: null } }, { merge:true });
+          try { await updateDoc(setupDoc(), { 'geo.trainer': deleteField() }); } catch(err){ alert('Could not redock trainer'); }
         }, { once:true });
       });
     }
 
-    // Helper: find group index for a mark id
+    // Helper: group color
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
 
-    // Marks on map
+    // Marks
     activeSetupData.items.forEach((it, idx) => {
       const geoM = marksPlaced[it.id]; if (!geoM) return;
       const gi = groupOf(it.id);
@@ -557,7 +579,6 @@
       const A = L.latLng(geoM.lat, geoM.lng);
       let H = geoM.handle ? L.latLng(geoM.handle.lat, geoM.handle.lng) : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
 
-      // base marker (live-follow arrow while dragging)
       const base = L.marker(A, { draggable:true, autoPan:false, icon: iconPill(`M${idx+1}`, color) }).addTo(markPins);
 
       let dragBrg = 0, dragDist = MIN_ARROW_VISIBLE;
@@ -577,7 +598,6 @@
         await setDoc(setupDoc(), { geo: { marks: { [it.id]: { lat: ll.lat, lng: ll.lng, handle: { lat:H.lat, lng:H.lng } } } } }, { merge:true });
       });
 
-      // handle dot
       const dot = L.marker(H, { draggable:true, autoPan:false, icon: handleIcon(color), zIndexOffset:1000 }).addTo(markDots);
       dot.on('drag', e => { H = e.target.getLatLng(); redraw(); });
       dot.on('dragend', async e => {
@@ -585,7 +605,6 @@
         await setDoc(setupDoc(), { geo: { marks: { [it.id]: { lat: A.lat, lng: A.lng, handle: { lat:H.lat, lng:H.lng } } } } }, { merge:true });
       });
 
-      // arrow draw for this mark, but keep others visible too
       function redraw(){
         markLines.clearLayers();
         const mp = activeSetupData.geo?.marks || {};
@@ -603,25 +622,20 @@
 
       drawArrow(A, H, color);
 
-      // popup with “Redock” (delete only this mark’s field)
       base.bindPopup(`<div><strong>Mark M${idx+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redock">Redock</button></div></div>`);
       base.on('popupopen', ev=>{
         ev.popup.getElement().querySelector('#redock')?.addEventListener('click', async ()=>{
-          try {
-            await updateDoc(setupDoc(), { [`geo.marks.${it.id}`]: deleteField() });
-          } catch (err) {
-            console.error('Redock mark failed:', err);
-            alert('Could not redock this mark.');
-          }
+          try { await updateDoc(setupDoc(), { [`geo.marks.${it.id}`]: deleteField() }); }
+          catch(err){ alert('Could not redock this mark'); }
         }, { once:true });
       });
     });
 
-    // Blinds on map
+    // Blinds
     (activeSetupData.blinds||[]).forEach((b, i)=>{
       const g = blindsPlaced[b.id]; if (!g) return;
       const B = L.latLng(g.lat, g.lng);
-      const pin = L.marker(B, { draggable:true, autoPan:false,  icon: iconPill(`B${i+1}`, 'var(--blind)') }).addTo(blindPins);
+      const pin = L.marker(B, { draggable:true, autoPan:false, icon: iconPill(`B${i+1}`, 'var(--blind)') }).addTo(blindPins);
       pin.on('dragend', async e=>{
         const ll = e.target.getLatLng();
         await setDoc(setupDoc(), { geo: { blinds: { [b.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
@@ -629,17 +643,12 @@
       pin.bindPopup(`<div><strong>Blind B${i+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redockB">Redock</button></div></div>`);
       pin.on('popupopen', ev=>{
         ev.popup.getElement().querySelector('#redockB')?.addEventListener('click', async ()=>{
-          try {
-            await updateDoc(setupDoc(), { [`geo.blinds.${b.id}`]: deleteField() });
-          } catch (err) {
-            console.error('Redock blind failed:', err);
-            alert('Could not redock this blind.');
-          }
+          try { await updateDoc(setupDoc(), { [`geo.blinds.${b.id}`]: deleteField() }); }
+          catch(err){ alert('Could not redock this blind'); }
         }, { once:true });
       });
     });
 
-    // trainer rays
     renderRays();
   }
 
@@ -692,14 +701,9 @@
 
     unsubSetupDoc = onSnapshot(setupDoc(), snap=>{
       const d = snap.data()||{};
-
-      // normalize columns shape from your setups page
       let colsShape = d.columns || { dock:[], cols:[{items:[]},{items:[]}] };
       if (Array.isArray(colsShape.cols) && colsShape.cols.every(el=>Array.isArray(el))) {
-        colsShape = {
-          dock: Array.isArray(colsShape.dock) ? colsShape.dock : [],
-          cols: colsShape.cols.map(a => ({ items: a.slice() }))
-        };
+        colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: colsShape.cols.map(a => ({ items: a.slice() })) };
       }
 
       activeSetupData = {
@@ -713,18 +717,19 @@
       renderMap();
       renderAllArrows();
 
-      // center exactly once per setup/day
       if (!hasAutoCentered) {
         const firstPlaced =
           Object.values(activeSetupData.geo?.marks || {})[0] ||
           Object.values(activeSetupData.geo?.blinds || {})[0] ||
           activeSetupData.geo?.trainer;
-
         if (firstPlaced) {
           map.setView([firstPlaced.lat, firstPlaced.lng], 16);
           hasAutoCentered = true;
         }
       }
+
+      // update HUD height var when data causes wrap/growth (mobile)
+      updateHudHeightVar();
     });
   }
 
@@ -773,42 +778,19 @@
   map.on('mouseup', ()=> clearTimeout(pressTimer));
   map.on('mouseout', ()=> clearTimeout(pressTimer));
 
-  /* ---------------- Move coord row below map on phones ---------------- */
-  const coordRow = $('#coordRow');
-  const coordBar = $('#coordBar');
-
-  function placeCoordsRow(){
+  /* ---------------- HUD outside map on mobile ---------------- */
+  const hudEl = document.getElementById('hud');
+  function updateHudHeightVar(){
     const mobile = window.matchMedia('(max-width: 820px)').matches;
-    if (mobile) {
-      if (coordRow.parentElement !== coordBar) coordBar.appendChild(coordRow);
-      document.body.classList.add('has-footer');
-      // update --coordbar-h so map shrinks exactly to leave the bar outside
-      requestAnimationFrame(()=> {
-        document.documentElement.style.setProperty('--coordbar-h', coordBar.offsetHeight + 'px');
-      });
-    } else {
-      if (coordRow.parentElement !== document.querySelector('.hud')) {
-        // put back near the rays toggle (before it looks best)
-        const hud = document.querySelector('.hud');
-        const raysRow = $('#raysChk').closest('.row');
-        hud.insertBefore(coordRow, raysRow);
-      }
-      document.body.classList.remove('has-footer');
-      document.documentElement.style.setProperty('--coordbar-h', '0px');
-    }
-  }
-  window.addEventListener('resize', placeCoordsRow);
-  placeCoordsRow();
-
-  // keep the css var fresh if the bar wraps to 2 lines
-  if ('ResizeObserver' in window) {
-    const ro = new ResizeObserver(()=> {
-      if (document.body.classList.contains('has-footer')) {
-        document.documentElement.style.setProperty('--coordbar-h', coordBar.offsetHeight + 'px');
-      }
+    if (!mobile) { document.body.classList.remove('hud-outside'); document.documentElement.style.setProperty('--hud-h','0px'); return; }
+    document.body.classList.add('hud-outside');
+    requestAnimationFrame(()=> {
+      document.documentElement.style.setProperty('--hud-h', hudEl.offsetHeight + 'px');
     });
-    ro.observe(coordBar);
   }
+  window.addEventListener('resize', updateHudHeightVar);
+  updateHudHeightVar();
+  if ('ResizeObserver' in window) new ResizeObserver(updateHudHeightVar).observe(hudEl);
 
   /* ---------------- Boot ---------------- */
   async function boot(){
