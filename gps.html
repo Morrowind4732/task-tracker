@@ -223,7 +223,7 @@
   const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
   /* Map */
-  const MAX_COMFORT_ZOOM = 17;
+  const MAX_COMFORT_ZOOM = 19;
   const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
   let hasAutoCentered = false;
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -741,3 +741,4 @@
 </script>
 </body>
 </html>
+
