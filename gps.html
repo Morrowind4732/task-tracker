@@ -15,43 +15,39 @@
     --panel:#ffffffcc;
     --bg:#f5f5f5;
 
-    /* populated by JS on mobile */
-    --hud-h: 0px;
-
-    /* blues by group index */
+    /* 5 distinct blues (by group index 0..4) */
     --g0:#0b74ff; --g1:#2563eb; --g2:#3b82f6; --g3:#60a5fa; --g4:#93c5fd;
     --blind:#16a34a; --trainer:#f97316;
+
+    /* draggable sizing (tweak if you ever want) */
+    --pill-h: 28px;
+    --pill-font: 13px;
+    --pill-padx: 8px;
+    --handle-hit: 32px;
+    --handle-dot: 4px;
   }
 
   html, body { height:100%; margin:0; background:var(--bg); font-family:system-ui, sans-serif; }
-
-  /* Map: full height on desktop; on mobile we subtract the HUD height */
   #map { height:100%; width:100%; }
   @supports (height: 100svh) { #map { height:100svh; } }
-  @media (max-width: 820px) {
-    body.hud-outside #map { height: calc(100svh - var(--hud-h)); }
-  }
 
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:99999; }
   .overlay.open { display:flex; }
   .overlay-card { background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2); }
-  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:space-between; }
+  .overlay-card h3 { margin:0 0 10px; }
+  .overlay-actions { display:flex; gap:10px; margin-top:12px; justify-content:flex-start; flex-wrap:wrap; }
   .btn { appearance:none; border:1px solid #bbb; background:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   .btn.ghost { background:#fff; border-color:#ccc; }
   .btn.warn { border-color:#ef4444; color:#b91c1c; }
 
-  /* HUD: fixed overlay on desktop; becomes static block above the map on mobile */
+  /* HUD is now a floating panel (decoupled from map) */
   .hud {
     position:fixed; left:10px; top:10px; z-index:1000;
     display:grid; gap:8px; padding:10px;
     background:var(--panel); backdrop-filter: blur(4px);
-    border:1px solid #ddd; border-radius:12px; max-width:min(92vw,520px);
+    border:1px solid #ddd; border-radius:12px; max-width:min(92vw,720px);
   }
-  @media (max-width: 820px) {
-    .hud { position:static; max-width:none; margin:10px; backdrop-filter:none; }
-  }
-
   .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .tabs { display:flex; gap:6px; flex-wrap:wrap; align-items:flex-end; }
   .tab {
@@ -60,18 +56,15 @@
     background:#f6f6f6; cursor:pointer; font-weight:600; color:#444;
   }
   .tab.active { background:#fff; color:#111; box-shadow:0 -1px 0 #fff inset; }
+  .muted { color:#666; font-size:12px; }
 
-  /* Dock floats; on mobile it sits below the HUD height so it never covers the HUD */
+  /* Dock floats on the right */
   .dock {
     position:fixed; right:10px; top:10px; z-index:1000;
     width:min(92vw, 340px); max-height:80vh; overflow:auto;
     display:grid; gap:10px; padding:10px;
     background:var(--panel); border:1px solid #ddd; border-radius:12px; backdrop-filter: blur(4px);
   }
-  @media (max-width: 820px) {
-    body.hud-outside .dock { top: calc(10px + var(--hud-h)); }
-  }
-
   .group { border:1px solid #ddd; border-radius:10px; padding:8px; background:#fff; }
   .group h4 { margin:0 0 8px; font-size:14px; display:flex; align-items:center; gap:8px; }
   .swatch { width:12px; height:12px; border-radius:50%; border:1px solid #999; }
@@ -80,26 +73,24 @@
   .chip[draggable="true"]:active { cursor:grabbing; }
   .blind-group h4 .swatch { background:var(--blind); }
 
-  /* Touch-drag ghost for mobile */
-  .chip-ghost {
-    position: fixed; left:0; top:0; transform:translate(-50%,-50%);
-    padding:6px 10px; border:1px solid #bbb; border-radius:999px; background:#fff;
-    box-shadow:0 6px 18px rgba(0,0,0,.25);
-    z-index: 100000; pointer-events:none; font-weight:700;
-  }
-
-  /* Map pills */
+  /* Map pills (sized from vars) */
   .mk { display:grid; place-items:center; }
   .pill {
-    min-width: 28px; height:28px; padding:0 8px; border-radius:14px; color:#fff; font-weight:800; font-size:13px;
-    display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,.35); transform:translateY(-4px); border:2px solid #fff;
+    min-width: var(--pill-h);
+    height: var(--pill-h);
+    padding: 0 var(--pill-padx);
+    border-radius: calc(var(--pill-h) / 2);
+    color:#fff; font-weight:800; font-size:var(--pill-font);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 2px 8px rgba(0,0,0,.35); transform:translateY(-4px); border:2px solid #fff;
   }
+  .handle-hit { width:var(--handle-hit); height:var(--handle-hit); border-radius:50%; background:transparent; display:grid; place-items:center; }
+  .handle-dot { width:var(--handle-dot); height:var(--handle-dot); border-radius:50%; background:currentColor; box-shadow:0 0 0 1.5px #fff; }
 
-  .handle-hit { width:32px; height:32px; border-radius:50%; background:transparent; display:grid; place-items:center; }
-  .handle-dot { width:4px; height:4px; border-radius:50%; background:currentColor; box-shadow:0 0 0 1.5px #fff; }
-
-  .dist-label { background:#fff; padding:2px 6px; border-radius:10px; border:1px solid #ddd; font-size:12px; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.15); }
-  .muted { color:#666; font-size:12px; }
+  .dist-label {
+    background:#fff; padding:2px 6px; border-radius:10px; border:1px solid #ddd;
+    font-size:12px; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.15);
+  }
 </style>
 </head>
 <body>
@@ -116,8 +107,19 @@
   </div>
 </div>
 
-<!-- HUD -->
-<div class="hud" id="hud">
+<!-- Place-at-me chooser -->
+<div class="overlay" id="placeOverlay">
+  <div class="overlay-card">
+    <h3>Place at my location</h3>
+    <div id="placeList" class="overlay-actions"></div>
+    <div class="overlay-actions">
+      <button class="btn" id="placeCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- HUD (slim) -->
+<div class="hud">
   <div class="row">
     <h2 style="margin:0">GPS – Setups Map</h2>
     <a id="changeUserLink" class="muted" href="#">change user</a>
@@ -131,8 +133,9 @@
   </div>
 
   <div class="row">
-    <button class="btn" id="locBtn">Locate Me</button>
+    <button class="btn" id="gpsBtn">GPS</button>
     <button class="btn" id="fitBtn">Fit All</button>
+    <button class="btn primary" id="placeMeBtn">Place at me</button>
     <label style="display:flex;align-items:center;gap:6px;margin-left:auto;">
       <input id="raysChk" type="checkbox" />
       <span>Show trainer rays</span>
@@ -140,7 +143,7 @@
   </div>
 </div>
 
-<!-- Dock -->
+<!-- Dock with groups & unplaced items -->
 <div class="dock" id="dock">
   <div class="muted">Fetching setups…</div>
 </div>
@@ -151,8 +154,8 @@
   /* ---------------- Firebase (v10) ---------------- */
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
-    getFirestore, doc, setDoc, updateDoc, onSnapshot,
-    collection, query, orderBy, deleteField
+    getFirestore, doc, setDoc, onSnapshot,
+    collection, query, orderBy
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -170,15 +173,30 @@
   /* ---------------- Utilities ---------------- */
   const $ = s => document.querySelector(s);
   function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+  const cssNum = (name, fallback) => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+
   const GROUP_BLUES = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)','var(--g4)'];
 
-  /* Mobile placement state */
+  /* Mobile placement mode state */
   let pendingPlacement = null;
-  function showPlacingMsg(what){ $('#ctx').textContent = `Placing ${what} — tap on the map`; $('#ctx').style.fontWeight='700'; }
-  function clearPlacingMsg(){ $('#ctx').textContent = `Trainer: ${trainerId}`; $('#ctx').style.fontWeight='400'; }
+  function showPlacingMsg(what){
+    $('#ctx').textContent = `Placing ${what} — tap on the map`;
+    $('#ctx').style.fontWeight = '700';
+  }
+  function clearPlacingMsg(){
+    $('#ctx').textContent = `Trainer: ${trainerId}`;
+    $('#ctx').style.fontWeight = '400';
+  }
 
-  /* Trainer picker */
+  /* ---------------- Trainer picker ---------------- */
   const overlay = $('#trainerOverlay');
+  const placeOverlay = $('#placeOverlay');
+  $('#placeCancel').addEventListener('click', ()=> placeOverlay.classList.remove('open'));
+
   const ctxEl   = $('#ctx');
   $('#changeUserLink').addEventListener('click', (e)=> {
     e.preventDefault();
@@ -206,7 +224,7 @@
   }
   if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
-  /* Date + tabs */
+  /* ---------------- Date + setups tabs ---------------- */
   const dayPicker = $('#dayPicker');
   const todayBtn  = $('#todayBtn');
   dayPicker.value = ymd(new Date());
@@ -215,15 +233,15 @@
   const tabsEl = $('#tabs');
 
   let currentDateKey = dayPicker.value;
-  let setupsMeta = [];
+  let setupsMeta = [];       // [{id,name,order}]
   let activeSetupId = null;
 
   const dayDocPath = () => doc(db, 'setups', trainerId, 'days', currentDateKey);
   const setupsColl = () => collection(dayDocPath(), 'setups');
   const setupDoc   = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
-  /* Map */
-  const MAX_COMFORT_ZOOM = 19;
+  /* ---------------- Map ---------------- */
+  const MAX_COMFORT_ZOOM = 19;   // ⬅️ raised from 17 to 19
   const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
   let hasAutoCentered = false;
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -231,6 +249,7 @@
   L.control.scale({imperial:true, metric:false}).addTo(map);
   map.on('zoomend', renderAllArrows);
 
+  /* Layers (arrows under pins, handle dots on top) */
   const markLines  = L.layerGroup().addTo(map);
   const markPins   = L.layerGroup().addTo(map);
   const markDots   = L.layerGroup().addTo(map);
@@ -240,16 +259,24 @@
   const distLabels = L.layerGroup().addTo(map);
 
   function iconPill(text, colorCSS){
-    const html = `<div class="pill" style="background:${colorCSS}">${text}</div>`;
-    return L.divIcon({ className:'mk', html, iconSize:[28,28], iconAnchor:[14,24] });
+    const pillH = cssNum('--pill-h', 28);
+    return L.divIcon({
+      className:'mk',
+      html:`<div class="pill" style="background:${colorCSS}">${text}</div>`,
+      iconSize:[pillH,pillH],
+      iconAnchor:[Math.round(pillH/2), Math.round(pillH*0.85)]
+    });
   }
-  const handleIcon = (colorCSS) => L.divIcon({
-    className:'mk',
-    html:`<div class="handle-hit"><div class="handle-dot" style="color:${colorCSS}"></div></div>`,
-    iconSize:[32,32], iconAnchor:[16,16]
-  });
+  const handleIcon = (colorCSS) => {
+    const hit = cssNum('--handle-hit', 32);
+    return L.divIcon({
+      className:'mk',
+      html:`<div class="handle-hit"><div class="handle-dot" style="color:${colorCSS}"></div></div>`,
+      iconSize:[hit,hit], iconAnchor:[Math.round(hit/2), Math.round(hit/2)]
+    });
+  };
 
-  /* Geo utils */
+  // Geo utils
   const Rm = 6371000;
   const toRad = d => d*Math.PI/180, toDeg = r => r*180/Math.PI;
   function distanceMeters(a,b){ return map.distance(a,b); }
@@ -274,8 +301,8 @@
     return L.latLng(toDeg(φ2), ((toDeg(λ2)+540)%360)-180);
   }
 
-  const DEFAULT_ARROW_BRG = 315;
-  const DEFAULT_ARROW_LEN = 100;
+  const DEFAULT_ARROW_BRG = 315;  // ~10:30
+  const DEFAULT_ARROW_LEN = 100;  // meters
   const MIN_ARROW_VISIBLE = 12;
 
   function drawArrow(A, B, colorCSS){
@@ -295,7 +322,7 @@
     L.polyline([B,L2], { color: colorCSS, weight:4, opacity:0.95, interactive:false }).addTo(markLines);
   }
 
-  /* State */
+  /* ---------------- State for active setup ---------------- */
   let activeSetupData = { items:[], columns:{dock:[], cols:[]}, blinds:[], geo:{} };
   let unsubSetups = null, unsubSetupDoc = null;
 
@@ -310,12 +337,13 @@
     });
   }
 
+  // Re-draw all mark arrows at the current zoom
   function renderAllArrows() {
     markLines.clearLayers();
     const marksPlaced = activeSetupData.geo?.marks || {};
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
-    activeSetupData.items.forEach(it => {
+    activeSetupData.items.forEach((it, idx) => {
       const g = marksPlaced[it.id]; if (!g) return;
       const color = GROUP_BLUES[groupOf(it.id) % GROUP_BLUES.length];
       const A = L.latLng(g.lat, g.lng);
@@ -325,53 +353,26 @@
     renderRays();
   }
 
-  /* Desktop drag + Mobile touch drag + Tap-to-place */
-  let touchDrag = null;
-  let justDidTouchDrop = false;
-
-  function startTouchDrag(chip, data, touch){
-    justDidTouchDrop = false;
-    const ghost = document.createElement('div');
-    ghost.className = 'chip-ghost';
-    ghost.textContent = chip.textContent.trim();
-    document.body.appendChild(ghost);
-    positionGhost(ghost, touch.clientX, touch.clientY);
-    try { map.dragging.disable(); map.touchZoom.disable(); map.boxZoom.disable(); map.doubleClickZoom.disable(); map.scrollWheelZoom.disable(); } catch {}
-    touchDrag = { data, ghost };
-  }
-  function positionGhost(ghost, x, y){ ghost.style.left = x + 'px'; ghost.style.top = y + 'px'; }
-  async function endTouchDrag(touch){
-    if (!touchDrag) return;
-    const { data, ghost } = touchDrag;
-    touchDrag = null;
-    ghost.remove();
-    try { map.dragging.enable(); map.touchZoom.enable(); map.boxZoom.enable(); map.doubleClickZoom.enable(); map.scrollWheelZoom.enable(); } catch {}
-    const rect = map.getContainer().getBoundingClientRect();
-    const inside = touch.clientX>=rect.left && touch.clientX<=rect.right && touch.clientY>=rect.top && touch.clientY<=rect.bottom;
-    if (!inside) return;
-    const pt = L.point(touch.clientX-rect.left, touch.clientY-rect.top);
-    const ll = map.containerPointToLatLng(pt);
-    await placeItem(data, ll);
-    justDidTouchDrop = true;
-  }
-
+  /* ----- helper to wire chips for desktop drag + mobile tap-to-place ----- */
   function wireDockChips(container){
     container.querySelectorAll('.chip').forEach(ch => {
-      const data = { type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color };
-      ch.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', JSON.stringify(data)); e.dataTransfer.effectAllowed = 'copy'; });
-      ch.addEventListener('touchstart', e => { if (e.touches && e.touches[0]) { e.preventDefault(); startTouchDrag(ch, data, e.touches[0]); } }, { passive:false });
+      // Desktop drag
+      ch.addEventListener('dragstart', e => {
+        e.dataTransfer.setData('text/plain', JSON.stringify({
+          type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color
+        }));
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      // Mobile tap-to-place
       ch.addEventListener('click', e => {
-        if (justDidTouchDrop) { justDidTouchDrop=false; return; }
-        e.preventDefault(); pendingPlacement = data;
-        const label = ch.textContent.trim(); showPlacingMsg(label || (pendingPlacement.type==='trainer' ? 'TR' : 'Item'));
+        e.preventDefault();
+        pendingPlacement = { type: ch.dataset.type, id: ch.dataset.id, color: ch.dataset.color, label: ch.textContent.trim() };
+        showPlacingMsg(pendingPlacement.label || (pendingPlacement.type==='trainer' ? 'TR' : 'Item'));
       }, { passive:true });
     });
   }
-  window.addEventListener('touchmove', e => { if (!touchDrag) return; e.preventDefault(); if (e.touches && e.touches[0]) positionGhost(touchDrag.ghost, e.touches[0].clientX, e.touches[0].clientY); }, { passive:false });
-  window.addEventListener('touchend', e => { if (!touchDrag) return; const t = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : null; if (t) endTouchDrag(t); }, { passive:false });
-  window.addEventListener('touchcancel', () => { if (touchDrag){ touchDrag.ghost.remove(); touchDrag=null; } }, { passive:true });
 
-  /* Dock building */
+  /* ---------------- Dock building ---------------- */
   function buildDock(){
     const dock = $('#dock');
     dock.innerHTML = '';
@@ -381,7 +382,7 @@
       return;
     }
 
-    // Trainer chip if not placed
+    // Trainer chip (only if not placed)
     if (!activeSetupData.geo?.trainer){
       const tBox = document.createElement('div');
       tBox.className = 'group';
@@ -392,7 +393,7 @@
       dock.appendChild(tBox);
     }
 
-    // Groups
+    // Groups from columns.cols
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     cols.forEach((col, gi) => {
       const color = GROUP_BLUES[gi % GROUP_BLUES.length];
@@ -404,16 +405,20 @@
       (col.items||[]).forEach(id=>{
         if (activeSetupData.geo?.marks?.[id]) return;
         const idx = activeSetupData.items.findIndex(i=>i.id===id);
+        const label = `M${idx>=0?idx+1:'?'}`;
         const chip = document.createElement('div');
-        chip.className='chip'; chip.draggable=true; chip.textContent=`M${idx>=0?idx+1:'?'}`;
-        chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
+        chip.className = 'chip';
+        chip.draggable = true;
+        chip.textContent = label;
+        chip.dataset.type = 'mark';
+        chip.dataset.id = id;
+        chip.dataset.color = color;
         chips.appendChild(chip);
       });
-
       if (chips.children.length) dock.appendChild(box);
     });
 
-    // Ungrouped
+    // Un-grouped marks (safety net)
     const groupedIds = new Set((Array.isArray(activeSetupData.columns?.cols)?activeSetupData.columns.cols:[]).flatMap(c => c.items||[]));
     const ungroup = activeSetupData.items.filter(m => !groupedIds.has(m.id)).map(m => m.id);
     if (ungroup.length){
@@ -433,7 +438,7 @@
       if (chips.children.length) dock.appendChild(box);
     }
 
-    // Blinds
+    // Blinds dock (unplaced)
     const bBox = document.createElement('div');
     bBox.className = 'group blind-group';
     bBox.innerHTML = `<h4><span class="swatch"></span>Blinds</h4><div class="chips"></div>`;
@@ -447,10 +452,22 @@
     });
     if (bChips.children.length) dock.appendChild(bBox);
 
+    // Wire drag + mobile tap
     wireDockChips(dock);
   }
 
-  async function placeItem(data, ll){
+  // Map: desktop drop target
+  const mapEl = map.getContainer();
+  mapEl.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  mapEl.addEventListener('drop', async e => {
+    e.preventDefault();
+    const data = JSON.parse(e.dataTransfer.getData('text/plain')||'{}');
+    if (!data || !data.id || !data.type) return;
+
+    const rect = mapEl.getBoundingClientRect();
+    const pt = L.point(e.clientX-rect.left, e.clientY-rect.top);
+    const ll = map.containerPointToLatLng(pt);
+
     if (data.type === 'mark') {
       const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
       await setDoc(setupDoc(), { geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
@@ -459,31 +476,29 @@
     } else if (data.type === 'trainer') {
       await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
     }
-  }
-
-  /* Desktop drop target */
-  const mapEl = map.getContainer();
-  mapEl.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
-  mapEl.addEventListener('drop', async e => {
-    e.preventDefault();
-    const data = JSON.parse(e.dataTransfer.getData('text/plain')||'{}');
-    if (!data || !data.id || !data.type) return;
-    const rect = mapEl.getBoundingClientRect();
-    const pt = L.point(e.clientX-rect.left, e.clientY-rect.top);
-    const ll = map.containerPointToLatLng(pt);
-    await placeItem(data, ll);
   });
 
-  /* Tap-to-place fallback */
+  // Mobile tap-to-place fallback
   map.on('click', async (e) => {
     if (!pendingPlacement) return;
     const ll = e.latlng;
-    try { await placeItem(pendingPlacement, ll); }
-    finally { pendingPlacement = null; clearPlacingMsg(); }
+    try {
+      if (pendingPlacement.type === 'mark') {
+        const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+        await setDoc(setupDoc(), { geo: { marks: { [pendingPlacement.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
+      } else if (pendingPlacement.type === 'blind') {
+        await setDoc(setupDoc(), { geo: { blinds: { [pendingPlacement.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
+      } else if (pendingPlacement.type === 'trainer') {
+        await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
+      }
+    } finally {
+      pendingPlacement = null;
+      clearPlacingMsg();
+    }
   });
   window.addEventListener('keydown', (e)=>{ if (e.key==='Escape' && pendingPlacement){ pendingPlacement=null; clearPlacingMsg(); } });
 
-  /* Render map from activeSetupData */
+  /* ---------------- Render map from activeSetupData ---------------- */
   function renderMap(){
     markPins.clearLayers(); markLines.clearLayers(); markDots.clearLayers();
     blindPins.clearLayers(); trainerLay.clearLayers(); raysLayer.clearLayers(); distLabels.clearLayers();
@@ -501,18 +516,18 @@
           const ll = e.target.getLatLng();
           await setDoc(setupDoc(), { geo: { trainer: { lat:ll.lat, lng:ll.lng } } }, { merge:true });
         });
-
       t.on('popupopen', ev=>{
         ev.popup.getElement().querySelector('#delTrainer')?.addEventListener('click', async ()=>{
-          try { await updateDoc(setupDoc(), { 'geo.trainer': deleteField() }); } catch(err){ alert('Could not redock trainer'); }
-        }, { once:true });
+          await setDoc(setupDoc(), { geo: { trainer: null } }, { merge:true });
+        });
       });
     }
 
+    // Helper: find group index for a mark id
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
 
-    // Marks
+    // Marks on map
     activeSetupData.items.forEach((it, idx) => {
       const geoM = marksPlaced[it.id]; if (!geoM) return;
       const gi = groupOf(it.id);
@@ -521,9 +536,11 @@
       let H = geoM.handle ? L.latLng(geoM.handle.lat, geoM.handle.lng) : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
 
       const base = L.marker(A, { draggable:true, autoPan:false, icon: iconPill(`M${idx+1}`, color) }).addTo(markPins);
-
       let dragBrg = 0, dragDist = MIN_ARROW_VISIBLE;
-      base.on('dragstart', () => { dragBrg = bearing(A, H); dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE); });
+      base.on('dragstart', () => {
+        dragBrg = bearing(A, H);
+        dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE);
+      });
       base.on('drag', e => {
         const newA = e.target.getLatLng();
         A.lat=newA.lat; A.lng=newA.lng;
@@ -560,16 +577,18 @@
 
       drawArrow(A, H, color);
 
+      // popup with “Redock”
       base.bindPopup(`<div><strong>Mark M${idx+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redock">Redock</button></div></div>`);
       base.on('popupopen', ev=>{
         ev.popup.getElement().querySelector('#redock')?.addEventListener('click', async ()=>{
-          try { await updateDoc(setupDoc(), { [`geo.marks.${it.id}`]: deleteField() }); }
-          catch(err){ alert('Could not redock this mark'); }
-        }, { once:true });
+          const upd = { ...(activeSetupData.geo?.marks||{}) };
+          delete upd[it.id];
+          await setDoc(setupDoc(), { geo: { marks: upd } }, { merge:true });
+        });
       });
     });
 
-    // Blinds
+    // Blinds on map
     (activeSetupData.blinds||[]).forEach((b, i)=>{
       const g = blindsPlaced[b.id]; if (!g) return;
       const B = L.latLng(g.lat, g.lng);
@@ -581,9 +600,10 @@
       pin.bindPopup(`<div><strong>Blind B${i+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redockB">Redock</button></div></div>`);
       pin.on('popupopen', ev=>{
         ev.popup.getElement().querySelector('#redockB')?.addEventListener('click', async ()=>{
-          try { await updateDoc(setupDoc(), { [`geo.blinds.${b.id}`]: deleteField() }); }
-          catch(err){ alert('Could not redock this blind'); }
-        }, { once:true });
+          const upd = { ...(activeSetupData.geo?.blinds||{}) };
+          delete upd[b.id];
+          await setDoc(setupDoc(), { geo: { blinds: upd } }, { merge:true });
+        });
       });
     });
 
@@ -620,7 +640,7 @@
     });
   }
 
-  /* Listeners: setups + docs */
+  /* ---------------- Listeners ---------------- */
   async function attachSetupsListener(){
     if (unsubSetups) { try{unsubSetups();}catch{} unsubSetups=null; }
     const qy = query(setupsColl(), orderBy('order'));
@@ -639,6 +659,8 @@
 
     unsubSetupDoc = onSnapshot(setupDoc(), snap=>{
       const d = snap.data()||{};
+
+      // normalize columns shape
       let colsShape = d.columns || { dock:[], cols:[{items:[]},{items:[]}] };
       if (Array.isArray(colsShape.cols) && colsShape.cols.every(el=>Array.isArray(el))) {
         colsShape = { dock: Array.isArray(colsShape.dock) ? colsShape.dock : [], cols: colsShape.cols.map(a => ({ items: a.slice() })) };
@@ -665,8 +687,6 @@
           hasAutoCentered = true;
         }
       }
-
-      updateHudHeightVar();
     });
   }
 
@@ -687,7 +707,27 @@
     if (trainerId) attachSetupsListener();
   }
 
-  /* Fit + Locate */
+  /* ---------------- GPS helpers + buttons ---------------- */
+  function getGPS(){
+    return new Promise((resolve, reject)=>{
+      if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+      navigator.geolocation.getCurrentPosition(
+        pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        err => reject(err),
+        { enableHighAccuracy:true, timeout:12000, maximumAge:5000 }
+      );
+    });
+  }
+
+  // Center on GPS
+  $('#gpsBtn').addEventListener('click', async ()=>{
+    try{
+      const p = await getGPS();
+      map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration:0.8 });
+    }catch(e){ alert('Unable to get your location.'); }
+  });
+
+  // Fit all items
   $('#fitBtn').addEventListener('click', ()=>{
     const bounds = L.latLngBounds([]);
     const g = activeSetupData.geo || {};
@@ -697,41 +737,70 @@
     if (bounds.isValid()) map.fitBounds(bounds, { padding:[30,30], maxZoom: MAX_COMFORT_ZOOM });
   });
 
-  $('#locBtn').addEventListener('click', ()=>{
-    if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        const { latitude, longitude } = pos.coords;
-        map.flyTo([latitude, longitude], 16, { duration: 0.9 });
-      },
-      err => alert('Could not get your location'),
-      { enableHighAccuracy:true, timeout:10000, maximumAge:30000 }
-    );
+  // ---- PLACE AT ME ----
+  $('#placeMeBtn').addEventListener('click', ()=>{
+    // Build list of unassigned
+    const opts = [];
+
+    // Trainer if unplaced
+    if (!activeSetupData.geo?.trainer){
+      opts.push({ type:'trainer', id:'TR', label:'Trainer (TR)' });
+    }
+
+    // Marks (unplaced)
+    const marksPlaced = activeSetupData.geo?.marks || {};
+    (activeSetupData.items||[]).forEach((m, idx)=>{
+      if (!marksPlaced[m.id]) opts.push({ type:'mark', id:m.id, label:`Mark M${idx+1}` });
+    });
+
+    // Blinds (unplaced)
+    const blindsPlaced = activeSetupData.geo?.blinds || {};
+    (activeSetupData.blinds||[]).forEach((b, i)=>{
+      if (!blindsPlaced[b.id]) opts.push({ type:'blind', id:b.id, label:`Blind B${i+1}` });
+    });
+
+    if (!opts.length){ alert('Everything is already placed.'); return; }
+
+    // Populate overlay
+    const list = $('#placeList'); list.innerHTML = '';
+    opts.forEach(o=>{
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.textContent = o.label;
+      btn.addEventListener('click', async ()=>{
+        try{
+          btn.disabled = true; btn.textContent = 'Placing…';
+          const p = await getGPS();
+          if (o.type==='mark'){
+            const hLL = destPoint(p, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+            await setDoc(setupDoc(), { geo: { marks: { [o.id]: { lat:p.lat, lng:p.lng, handle:{ lat:hLL.lat, lng:hLL.lng } } } } }, { merge:true });
+          }else if (o.type==='blind'){
+            await setDoc(setupDoc(), { geo: { blinds: { [o.id]: { lat:p.lat, lng:p.lng } } } }, { merge:true });
+          }else if (o.type==='trainer'){
+            await setDoc(setupDoc(), { geo: { trainer: { lat:p.lat, lng:p.lng } } }, { merge:true });
+          }
+          placeOverlay.classList.remove('open');
+          map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration:0.6 });
+        }catch(e){
+          alert('Unable to get your location.');
+          btn.disabled = false; btn.textContent = o.label;
+        }
+      }, { once:true });
+      list.appendChild(btn);
+    });
+
+    placeOverlay.classList.add('open');
   });
 
   $('#raysChk').addEventListener('change', renderRays);
 
-  // Long-press to set trainer (desktop)
+  // Set trainer by long-press on map (2s)
   let pressTimer=null;
   map.on('mousedown', (e)=>{ pressTimer=setTimeout(async ()=>{ await setDoc(setupDoc(), { geo:{ trainer:{ lat:e.latlng.lat, lng:e.latlng.lng } } }, { merge:true }); }, 2000); });
   map.on('mouseup', ()=> clearTimeout(pressTimer));
   map.on('mouseout', ()=> clearTimeout(pressTimer));
 
-  /* HUD outside map on mobile */
-  const hudEl = document.getElementById('hud');
-  function updateHudHeightVar(){
-    const mobile = window.matchMedia('(max-width: 820px)').matches;
-    if (!mobile) { document.body.classList.remove('hud-outside'); document.documentElement.style.setProperty('--hud-h','0px'); return; }
-    document.body.classList.add('hud-outside');
-    requestAnimationFrame(()=> {
-      document.documentElement.style.setProperty('--hud-h', hudEl.offsetHeight + 'px');
-    });
-  }
-  window.addEventListener('resize', updateHudHeightVar);
-  updateHudHeightVar();
-  if ('ResizeObserver' in window) new ResizeObserver(updateHudHeightVar).observe(hudEl);
-
-  /* Boot */
+  /* ---------------- Boot ---------------- */
   async function boot(){
     if (!trainerId) return showTrainerPrompt();
     ctxEl.textContent = `Trainer: ${trainerId}`;
@@ -741,4 +810,3 @@
 </script>
 </body>
 </html>
-
