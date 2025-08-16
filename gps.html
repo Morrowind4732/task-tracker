@@ -19,7 +19,13 @@
     --hud-h: 0px;
 
     /* blues by group index */
-    --g0:#0b74ff; --g1:#2563eb; --g2:#3b82f6; --g3:#60a5fa; --g4:#93c5fd;
+    /* blues by group index – higher contrast for groups 1 & 2 */
+--g0:#0061ff;   /* Group 1: bright azure */
+--g1:#0a2a88;   /* Group 2: deep royal/navy */
+--g2:#3b82f6;
+--g3:#60a5fa;
+--g4:#93c5fd;
+
     --blind:#16a34a; --trainer:#f97316;
   }
 
@@ -93,6 +99,7 @@
   .pill {
     min-width: 28px; height:28px; padding:0 8px; border-radius:14px; color:#fff; font-weight:800; font-size:13px;
     display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(0,0,0,.35); transform:translateY(-4px); border:2px solid #fff;
+	white-space: nowrap;
   }
 
   .handle-hit { width:32px; height:32px; border-radius:50%; background:transparent; display:grid; place-items:center; }
@@ -105,6 +112,9 @@
   white-space: nowrap;      /* NEW: don't wrap "199 yd" */
   line-height: 1.1;         /* NEW: tidy vertical spacing */
 }
+
+.title-link { color: inherit; text-decoration: underline; }
+
 
   .muted { color:#666; font-size:12px; }
 </style>
@@ -152,7 +162,10 @@
 <!-- HUD -->
 <div class="hud" id="hud">
   <div class="row">
-    <h2 style="margin:0">GPS – Setups Map</h2>
+<h2 style="margin:0">
+  GPS – <a id="setupsLink" class="title-link" href="#">Setups</a> Map
+</h2>
+
     <a id="changeUserLink" class="muted" href="#">change user</a>
     <div id="ctx" class="muted">Loading…</div>
   </div>
@@ -206,9 +219,22 @@
   const $ = s => document.querySelector(s);
   function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
   const GROUP_BLUES = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)','var(--g4)'];
+  
+// Qualifier -> suffix; priority: RT > WT > HT
+function qualSuffix(mark){
+  const o = mark?.options || {};
+  if (o.retire)     return ' RT';
+  if (o.whiteCoat)  return ' WC';
+  if (o.handTossed) return ' HT';
+  if (o.goBird) return ' GO';
+  
+  return '';
+}
+
 
 /* ---- UI scale knob (0.7 = smaller, 1 = current, 1.3 = larger) ---- */
 const PILL_SCALE = 0.5;   // try 0.85 first on phone
+const SETUPS_URL = 'https://morrowind4732.github.io/task-tracker/setups.html';
 
 
   /* Mobile placement state */
@@ -222,21 +248,31 @@ const PILL_SCALE = 0.5;   // try 0.85 first on phone
   const ctxEl   = $('#ctx');
   $('#placeCancel').addEventListener('click', ()=> placeOverlay.classList.remove('open'));
 
-  $('#changeUserLink').addEventListener('click', (e)=> {
-    e.preventDefault();
-    const url = new URL(location.href); url.searchParams.delete('trainer');
-    history.replaceState(null,'',url.toString());
-    showTrainerPrompt();
-  });
+
 
   let trainerId = (new URL(location.href)).searchParams.get('trainer') || '';
+  updateSetupsLink();
+  
+  $('#changeUserLink').addEventListener('click', (e)=> {
+  e.preventDefault();
+  const url = new URL(location.href);
+  url.searchParams.delete('trainer');
+  history.replaceState(null,'',url.toString());
+  trainerId = '';
+  updateSetupsLink();
+  showTrainerPrompt();
+});
+
+  
   function setTrainer(name){
     trainerId = name;
     const url = new URL(location.href); url.searchParams.set('trainer', trainerId);
     history.replaceState(null,'',url.toString());
     ctxEl.textContent = `Trainer: ${trainerId}`;
+	updateSetupsLink();
     boot();
   }
+  
   function showTrainerPrompt(){
     overlay.classList.add('open');
     overlay.querySelectorAll('button[data-trainer]').forEach(btn=>{
@@ -339,12 +375,18 @@ function checkForObjectivesAndPrompt(docExists){
 
   /* Map */
   const MAX_COMFORT_ZOOM = 19; // ⬅ bumped from 17
+  
+const START_ZOOM_PLACED = 17;
   const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
   let hasAutoCentered = false;
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
     { maxZoom:20, maxNativeZoom:17, attribution:'&copy; Esri, Maxar, Earthstar Geographics' }).addTo(map);
   L.control.scale({imperial:true, metric:false}).addTo(map);
   map.on('zoomend', renderAllArrows);
+
+const distPane = map.createPane('distPane');
+distPane.style.zIndex = 650;          // above markerPane (600), below popupPane (700)
+distPane.style.pointerEvents = 'none';
 
   const markLines  = L.layerGroup().addTo(map);
   const markPins   = L.layerGroup().addTo(map);
@@ -355,31 +397,72 @@ function checkForObjectivesAndPrompt(docExists){
   const distLabels = L.layerGroup().addTo(map);
 
   function iconPill(text, colorCSS){
-  const H       = Math.round(28 * PILL_SCALE);                // height
-  const PADX    = Math.round(8 * PILL_SCALE);                 // left/right padding
-  const FZ      = Math.max(11, Math.round(13 * PILL_SCALE));  // font size
-  const BORDER  = Math.max(1, Math.round(2 * PILL_SCALE));    // white ring thickness
-  const lift    = Math.round(-4 * PILL_SCALE);                // visual “lift” (negative = up)
-  const anchorY = Math.max(0, H - Math.round(4 * PILL_SCALE)); // keep bottom edge near point
+  const H       = Math.round(28 * PILL_SCALE);
+  const PADX    = Math.round(8  * PILL_SCALE);
+  const FZ      = Math.max(11, Math.round(13 * PILL_SCALE));
+  const BORDER  = Math.max(1,  Math.round( 2 * PILL_SCALE));
+  const lift    = Math.round(-4 * PILL_SCALE);
+  const anchorY = Math.max(0, H - Math.round(4 * PILL_SCALE));
 
   const html = `<div class="pill"
-                      style="
-                        background:${colorCSS};
-                        height:${H}px; min-width:${H}px; padding:0 ${PADX}px;
-                        font-size:${FZ}px; border-width:${BORDER}px;
-                        border-radius:${Math.round(H/2)}px;
-                        transform:translateY(${lift}px)
-                      ">
+                  style="
+                    background:${colorCSS};
+                    height:${H}px; padding:0 ${PADX}px;
+                    font-size:${FZ}px; border-width:${BORDER}px;
+                    border-radius:${Math.round(H/2)}px;
+                    display:inline-flex; align-items:center; justify-content:center;
+                    white-space:nowrap;
+                    transform:translateY(${lift}px)
+                  ">
                   ${text}
                 </div>`;
 
+  // Let CSS decide width initially; we'll measure and correct on 'add'
   return L.divIcon({
     className: 'mk',
     html,
-    iconSize: [H, H],                       // keep hitbox in sync
-    iconAnchor: [Math.round(H/2), anchorY]  // anchor near visual tip
+    iconSize: null,                          // <-- no fixed width
+    iconAnchor: [Math.round(H/2), anchorY],  // provisional; fixed after measure
   });
 }
+
+
+function updateSetupsLink() {
+  const a = document.getElementById('setupsLink');
+  if (!a) return;
+  const url = new URL(SETUPS_URL);
+  if (trainerId) url.searchParams.set('trainer', trainerId);
+  a.href = url.toString();
+}
+
+
+  /* pill size helper */
+function sizeMarkerPill(marker) {
+  marker.on('add', () => {
+    if (marker.__sized) return;        // guard so we don't loop after setIcon()
+    const el = marker._icon;
+    if (!el) return;
+
+    // keep the marker icon interactive (your existing fix)
+    el.style.pointerEvents = 'auto';
+
+    const pill = el.querySelector('.pill');
+    const w = (pill?.offsetWidth) || 0;
+    if (!w) return;
+
+    const H       = Math.round(28 * PILL_SCALE);
+    const anchorY = Math.max(0, H - Math.round(4 * PILL_SCALE));
+
+    marker.__sized = true;
+    marker.setIcon(L.divIcon({
+      className: 'mk',
+      html: el.innerHTML,                 // same pill HTML
+      iconSize: [w, H],                   // <-- exact width
+      iconAnchor: [Math.round(w/2), anchorY],
+    }));
+  });
+}
+
 
   const handleIcon = (colorCSS) => {
   const HS  = Math.round(32 * PILL_SCALE);                // handle hit area
@@ -555,7 +638,9 @@ function checkForObjectivesAndPrompt(docExists){
         if (activeSetupData.geo?.marks?.[id]) return;
         const idx = activeSetupData.items.findIndex(i=>i.id===id);
         const chip = document.createElement('div');
-        chip.className='chip'; chip.draggable=true; chip.textContent=`M${idx>=0?idx+1:'?'}`;
+        chip.className='chip'; chip.draggable=true; const suffix = idx >= 0 ? qualSuffix(activeSetupData.items[idx]) : '';
+chip.textContent = `M${idx >= 0 ? idx+1 : '?'}${suffix}`;
+
         chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
         chips.appendChild(chip);
       });
@@ -576,7 +661,9 @@ function checkForObjectivesAndPrompt(docExists){
         if (activeSetupData.geo?.marks?.[id]) return;
         const idx = activeSetupData.items.findIndex(i=>i.id===id);
         const chip = document.createElement('div');
-        chip.className='chip'; chip.draggable=true; chip.textContent=`M${idx+1}`;
+        chip.className='chip'; chip.draggable=true; const suffix = idx >= 0 ? qualSuffix(activeSetupData.items[idx]) : '';
+chip.textContent = `M${idx >= 0 ? idx+1 : '?'}${suffix}`;
+
         chip.dataset.type='mark'; chip.dataset.id=id; chip.dataset.color=color;
         chips.appendChild(chip);
       });
@@ -662,64 +749,100 @@ function checkForObjectivesAndPrompt(docExists){
     const cols = Array.isArray(activeSetupData.columns?.cols) ? activeSetupData.columns.cols : [];
     const groupOf = (id)=>{ for (let i=0;i<cols.length;i++){ if ((cols[i].items||[]).includes(id)) return i; } return 0; };
 
-    // Marks
-    activeSetupData.items.forEach((it, idx) => {
-      const geoM = marksPlaced[it.id]; if (!geoM) return;
-      const gi = groupOf(it.id);
-      const color = GROUP_BLUES[gi % GROUP_BLUES.length];
-      const A = L.latLng(geoM.lat, geoM.lng);
-      let H = geoM.handle ? L.latLng(geoM.handle.lat, geoM.handle.lng) : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+   // Marks
+activeSetupData.items.forEach((it, idx) => {
+  const geoM = marksPlaced[it.id]; if (!geoM) return;
+  const gi = groupOf(it.id);
+  const color = GROUP_BLUES[gi % GROUP_BLUES.length];
+  const A = L.latLng(geoM.lat, geoM.lng);
+  let H = geoM.handle ? L.latLng(geoM.handle.lat, geoM.handle.lng) : destPoint(A, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
 
-      const base = L.marker(A, { draggable:true, autoPan:false, riseOnHover:true, zIndexOffset:500, icon: iconPill(`M${idx+1}`, color) }).addTo(markPins);
-base.on('add', () => { if (base._icon) base._icon.style.pointerEvents = 'auto'; });
+  // label with qualifier suffix
+  const label = `M${idx+1}${qualSuffix(it)}`;
 
+  const base = L.marker(A, {
+    draggable:true,
+    autoPan:false,
+    riseOnHover:true,
+    zIndexOffset:500,
+    icon: iconPill(label, color)
+  }).addTo(markPins);
+  sizeMarkerPill(base);
 
-      let dragBrg = 0, dragDist = MIN_ARROW_VISIBLE;
-      base.on('dragstart', () => { dragBrg = bearing(A, H); dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE); });
-      base.on('drag', e => {
-        const newA = e.target.getLatLng();
-        A.lat=newA.lat; A.lng=newA.lng;
-        H = destPoint(newA, dragBrg, dragDist);
-        dot.setLatLng(H);
-        redraw();
-      });
-      base.on('dragend', async e => {
-        const ll = e.target.getLatLng();
-        await setDoc(setupDoc(), { geo: { marks: { [it.id]: { lat: ll.lat, lng: ll.lng, handle: { lat:H.lat, lng:H.lng } } } } }, { merge:true });
-      });
+  // keep the marker icon interactive (fix for some Leaflet builds)
+  base.on('add', () => { if (base._icon) base._icon.style.pointerEvents = 'auto'; });
 
-      const dot = L.marker(H, { draggable:true, autoPan:false, icon: handleIcon(color), zIndexOffset:1000 }).addTo(markDots);
-      dot.on('drag', e => { H = e.target.getLatLng(); redraw(); });
-      dot.on('dragend', async e => {
-        H = e.target.getLatLng();
-        await setDoc(setupDoc(), { geo: { marks: { [it.id]: { lat: A.lat, lng: A.lng, handle: { lat:H.lat, lng:H.lng } } } } }, { merge:true });
-      });
+  let dragBrg = 0, dragDist = MIN_ARROW_VISIBLE;
+  base.on('dragstart', () => {
+    dragBrg = bearing(A, H);
+    dragDist = Math.max(distanceMeters(A, H), MIN_ARROW_VISIBLE);
+  });
+  base.on('drag', e => {
+    const newA = e.target.getLatLng();
+    A.lat=newA.lat; A.lng=newA.lng;
+    H = destPoint(newA, dragBrg, dragDist);
+    dot.setLatLng(H);
+    redraw();
+  });
+  base.on('dragend', async e => {
+    const ll = e.target.getLatLng();
+    await setDoc(setupDoc(), {
+      geo: { marks: { [it.id]: { lat: ll.lat, lng: ll.lng, handle: { lat:H.lat, lng:H.lng } } } }
+    }, { merge:true });
+  });
 
-      function redraw(){
-        markLines.clearLayers();
-        const mp = activeSetupData.geo?.marks || {};
-        activeSetupData.items.forEach(it2 => {
-          if (it2.id === it.id) return;
-          const g = mp[it2.id]; if (!g) return;
-          const color2 = GROUP_BLUES[groupOf(it2.id) % GROUP_BLUES.length];
-          const A2 = L.latLng(g.lat, g.lng);
-          const H2 = g.handle ? L.latLng(g.handle.lat, g.handle.lng) : destPoint(A2, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
-          drawArrow(A2, H2, color2);
-        });
-        drawArrow(A, H, color);
-        renderRays();
-      }
+  const dot = L.marker(H, {
+    draggable:true,
+    autoPan:false,
+    icon: handleIcon(color),
+    zIndexOffset:1000
+  }).addTo(markDots);
 
-      drawArrow(A, H, color);
+  dot.on('drag', e => { H = e.target.getLatLng(); redraw(); });
+  dot.on('dragend', async e => {
+    H = e.target.getLatLng();
+    await setDoc(setupDoc(), {
+      geo: { marks: { [it.id]: { lat: A.lat, lng: A.lng, handle: { lat:H.lat, lng:H.lng } } } }
+    }, { merge:true });
+  });
 
-      base.bindPopup(`<div><strong>Mark M${idx+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redock">Redock</button></div></div>`);
-      base.on('popupopen', ev=>{
-        ev.popup.getElement().querySelector('#redock')?.addEventListener('click', async ()=>{
-          try { await updateDoc(setupDoc(), { [`geo.marks.${it.id}`]: deleteField() }); }
-          catch(err){ alert('Could not redock this mark'); }
-        }, { once:true });
-      });
+  function redraw(){
+    markLines.clearLayers();
+    const mp = activeSetupData.geo?.marks || {};
+    activeSetupData.items.forEach(it2 => {
+      if (it2.id === it.id) return;
+      const g = mp[it2.id]; if (!g) return;
+      const color2 = GROUP_BLUES[groupOf(it2.id) % GROUP_BLUES.length];
+      const A2 = L.latLng(g.lat, g.lng);
+      const H2 = g.handle ? L.latLng(g.handle.lat, g.handle.lng) : destPoint(A2, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+      drawArrow(A2, H2, color2);
     });
+    drawArrow(A, H, color);
+    renderRays();
+  }
+
+  drawArrow(A, H, color);
+
+  base.bindPopup(
+    `<div>
+       <strong>Mark ${label}</strong>
+       <div class="row" style="margin-top:6px;">
+         <button class="btn warn" id="redock">Redock</button>
+       </div>
+     </div>`
+  );
+
+  base.on('popupopen', ev=>{
+    ev.popup.getElement().querySelector('#redock')?.addEventListener('click', async ()=>{
+      try {
+        await updateDoc(setupDoc(), { [`geo.marks.${it.id}`]: deleteField() });
+      } catch(err){
+        alert('Could not redock this mark');
+      }
+    }, { once:true });
+  });
+});
+
 
     // Blinds
     (activeSetupData.blinds||[]).forEach((b, i)=>{
@@ -752,8 +875,16 @@ base.on('add', () => { if (base._icon) base._icon.style.pointerEvents = 'auto'; 
       L.polyline([T,toLL], { color:'var(--ray)', weight:2, opacity:.85, dashArray:'6,6', interactive:false }).addTo(raysLayer);
       const mid = L.latLng((T.lat+toLL.lat)/2, (T.lng+toLL.lng)/2);
       const yardsTxt = fmtYards(distanceMeters(T, toLL));
-      L.marker(mid, { icon: L.divIcon({ className:'mk', html:`<div class="dist-label" style="border-color:${colorCSS}">${yardsTxt}</div>` }), interactive:false })
-        .addTo(distLabels);
+      L.marker(mid, {
+  pane: 'distPane',
+  icon: L.divIcon({
+    className: 'mk',
+    html: `<div class="dist-label" style="border-color:${colorCSS}">${yardsTxt}</div>`
+  }),
+  interactive: false,
+  zIndexOffset: 10000 // (optional) belt-and-suspenders
+}).addTo(distLabels);
+
     }
 
     const marksPlaced = activeSetupData.geo?.marks || {};
@@ -797,7 +928,8 @@ base.on('add', () => { if (base._icon) base._icon.style.pointerEvents = 'auto'; 
       }
 
       activeSetupData = {
-        items: Array.isArray(d.items) ? d.items.map(x => ({ id:x.id, dist: typeof x.dist==='number'?x.dist:0 })) : [],
+        items: Array.isArray(d.items) ? d.items.map(x => ({ ...x, id: x.id, dist: typeof x.dist==='number' ? x.dist : 0 })) : [],
+
         columns: { dock: colsShape.dock||[], cols: colsShape.cols||[] },
         blinds: Array.isArray(d.blinds) ? d.blinds.map(x => ({ id:x.id, dist: typeof x.dist==='number'?x.dist:0 })) : [],
         geo: d.geo || {}
@@ -820,7 +952,7 @@ checkForObjectivesAndPrompt(docExists); // ⬅️ call this after activeSetupDat
           Object.values(activeSetupData.geo?.blinds || {})[0] ||
           activeSetupData.geo?.trainer;
         if (firstPlaced) {
-          map.setView([firstPlaced.lat, firstPlaced.lng], 16);
+          map.setView([firstPlaced.lat, firstPlaced.lng], Math.min(MAX_COMFORT_ZOOM, START_ZOOM_PLACED));
           hasAutoCentered = true;
         }
       }
@@ -905,7 +1037,8 @@ function applyPlaceOffset(ll){
     // Marks (unplaced)
     const marksPlaced = activeSetupData.geo?.marks || {};
     (activeSetupData.items||[]).forEach((m, idx)=>{
-      if (!marksPlaced[m.id]) opts.push({ type:'mark', id:m.id, label:`Mark M${idx+1}` });
+      if (!marksPlaced[m.id]) opts.push({ type:'mark', id:m.id, label:`Mark M${idx+1}${qualSuffix(m)}` });
+
     });
 
     // Blinds (unplaced)
@@ -968,6 +1101,8 @@ map.on('mousedown', (e) => {
 });
 map.on('mouseup',  () => clearTimeout(pressTimer));
 map.on('mouseout', () => clearTimeout(pressTimer));
+
+
 
 
   /* HUD outside map on mobile */
