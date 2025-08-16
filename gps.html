@@ -487,6 +487,101 @@ function sizeMarkerPill(marker) {
   function distanceMeters(a,b){ return map.distance(a,b); }
   function yards(m){ return m*1.09361; }
   function fmtYards(m){ return `${Math.round(yards(m))} yd`; }
+  
+ // ---- Distance writers (yards) ----
+const DEBUG_DIST = true;
+const dlog  = (...a) => DEBUG_DIST && console.log('[DIST]', ...a);
+const dwarn = (...a) => DEBUG_DIST && console.warn('[DIST]', ...a);
+
+function yardsBetween(ll1, ll2){
+  const meters = distanceMeters(ll1, ll2);
+  const yardsV = yards(meters);
+  dlog('yardsBetween()', { ll1, ll2, meters, yards: yardsV, rounded: Math.round(yardsV) });
+  return Math.round(yardsV);
+}
+
+// mark: update items[].dist for one id
+async function writeMarkDistance(id, A){
+  const t = activeSetupData.geo?.trainer;
+  const docPath = `setups/${trainerId}/days/${currentDateKey}/setups/${activeSetupId}`;
+  if (!t) { dwarn('writeMarkDistance: no trainer — skipping', { id, docPath }); return; }
+
+  const T   = L.latLng(t.lat, t.lng);
+  const yds = yardsBetween(T, A);
+
+  const before = activeSetupData.items || [];
+  const idx    = before.findIndex(it => it.id === id);
+  if (idx === -1) dwarn('writeMarkDistance: mark id not found in items[]', { id, itemIds: before.map(i=>i.id) });
+
+  const items = before.map(it => it.id === id ? ({ ...it, dist: yds }) : it);
+
+  dlog('writeMarkDistance -> setDoc', {
+    docPath, id, trainer:T, A, yds,
+    itemsCount: items.length, updatedIndex: idx
+  });
+
+  await setDoc(setupDoc(), { items }, { merge:true });
+  dlog('writeMarkDistance: DONE', { id, yds });
+}
+
+// blind: update blinds[].dist for one id
+async function writeBlindDistance(id, B){
+  const t = activeSetupData.geo?.trainer;
+  const docPath = `setups/${trainerId}/days/${currentDateKey}/setups/${activeSetupId}`;
+  if (!t) { dwarn('writeBlindDistance: no trainer — skipping', { id, docPath }); return; }
+
+  const T   = L.latLng(t.lat, t.lng);
+  const yds = yardsBetween(T, B);
+
+  const before = activeSetupData.blinds || [];
+  const idx    = before.findIndex(b => b.id === id);
+  if (idx === -1) dwarn('writeBlindDistance: blind id not found in blinds[]', { id, blindIds: before.map(b=>b.id) });
+
+  const blinds = before.map(b => b.id === id ? ({ ...b, dist: yds }) : b);
+
+  dlog('writeBlindDistance -> setDoc', {
+    docPath, id, trainer:T, B, yds,
+    blindsCount: blinds.length, updatedIndex: idx
+  });
+
+  await setDoc(setupDoc(), { blinds }, { merge:true });
+  dlog('writeBlindDistance: DONE', { id, yds });
+}
+
+// trainer moved/placed: recompute all distances
+async function writeAllDistancesFromTrainer(T){
+  const docPath = `setups/${trainerId}/days/${currentDateKey}/setups/${activeSetupId}`;
+  dlog('writeAllDistancesFromTrainer: recomputing', {
+    docPath, trainer:T,
+    itemsBefore: (activeSetupData.items||[]).length,
+    blindsBefore: (activeSetupData.blinds||[]).length
+  });
+
+  const items = (activeSetupData.items||[]).map(it => {
+    const g = activeSetupData.geo?.marks?.[it.id];
+    if (!g) return it;
+    const A = L.latLng(g.lat, g.lng);
+    return { ...it, dist: yardsBetween(T, A) };
+  });
+
+  const blinds = (activeSetupData.blinds||[]).map(b => {
+    const g = activeSetupData.geo?.blinds?.[b.id];
+    if (!g) return b;
+    const B = L.latLng(g.lat, g.lng);
+    return { ...b, dist: yardsBetween(T, B) };
+  });
+
+  dlog('writeAllDistancesFromTrainer -> setDoc (preview first few)', {
+    items: items.slice(0,5).map(i => ({ id:i.id, dist:i.dist })),
+    blinds: blinds.slice(0,5).map(b => ({ id:b.id, dist:b.dist }))
+  });
+
+  await setDoc(setupDoc(), { items, blinds }, { merge:true });
+  dlog('writeAllDistancesFromTrainer: DONE');
+}
+
+
+  
  function bearing(a,b){
   const φ1=toRad(a.lat), φ2=toRad(b.lat), λ1=toRad(a.lng), λ2=toRad(b.lng);
   const y = Math.sin(λ2-λ1)*Math.cos(φ2);
@@ -687,16 +782,20 @@ chip.textContent = `M${idx >= 0 ? idx+1 : '?'}${suffix}`;
     wireDockChips(dock);
   }
 
-  async function placeItem(data, ll){
-    if (data.type === 'mark') {
-      const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
-      await setDoc(setupDoc(), { geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
-    } else if (data.type === 'blind') {
-      await setDoc(setupDoc(), { geo: { blinds: { [data.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
-    } else if (data.type === 'trainer') {
-      await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
-    }
+async function placeItem(data, ll){
+  if (data.type === 'mark') {
+    const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
+    await setDoc(setupDoc(), { geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
+    await writeMarkDistance(data.id, L.latLng(ll.lat, ll.lng));           // <—
+  } else if (data.type === 'blind') {
+    await setDoc(setupDoc(), { geo: { blinds: { [data.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
+    await writeBlindDistance(data.id, L.latLng(ll.lat, ll.lng));          // <—
+  } else if (data.type === 'trainer') {
+    await setDoc(setupDoc(), { geo: { trainer: { lat: ll.lat, lng: ll.lng } } }, { merge:true });
+    await writeAllDistancesFromTrainer(L.latLng(ll.lat, ll.lng));         // <—
   }
+}
+
 
   /* Desktop drop target */
   const mapEl = map.getContainer();
@@ -737,6 +836,7 @@ chip.textContent = `M${idx >= 0 ? idx+1 : '?'}${suffix}`;
         .on('dragend', async e => {
           const ll = e.target.getLatLng();
           await setDoc(setupDoc(), { geo: { trainer: { lat:ll.lat, lng:ll.lng } } }, { merge:true });
+		  await writeAllDistancesFromTrainer(L.latLng(ll.lat, ll.lng));
         });
 
       t.on('popupopen', ev=>{
@@ -784,12 +884,15 @@ activeSetupData.items.forEach((it, idx) => {
     dot.setLatLng(H);
     redraw();
   });
-  base.on('dragend', async e => {
-    const ll = e.target.getLatLng();
-    await setDoc(setupDoc(), {
-      geo: { marks: { [it.id]: { lat: ll.lat, lng: ll.lng, handle: { lat:H.lat, lng:H.lng } } } }
-    }, { merge:true });
-  });
+base.on('dragend', async e => {
+  const ll = e.target.getLatLng();
+  await setDoc(setupDoc(), {
+    geo: { marks: { [it.id]: { lat: ll.lat, lng: ll.lng, handle: { lat:H.lat, lng:H.lng } } } }
+  }, { merge:true });
+
+  await writeMarkDistance(it.id, L.latLng(ll.lat, ll.lng));   // <— add this
+});
+
 
   const dot = L.marker(H, {
     draggable:true,
@@ -852,6 +955,7 @@ activeSetupData.items.forEach((it, idx) => {
       pin.on('dragend', async e=>{
         const ll = e.target.getLatLng();
         await setDoc(setupDoc(), { geo: { blinds: { [b.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
+		await writeBlindDistance(b.id, L.latLng(ll.lat, ll.lng)); 
       });
       pin.bindPopup(`<div><strong>Blind B${i+1}</strong><div class="row" style="margin-top:6px;"><button class="btn warn" id="redockB">Redock</button></div></div>`);
       pin.on('popupopen', ev=>{
@@ -934,6 +1038,16 @@ activeSetupData.items.forEach((it, idx) => {
         blinds: Array.isArray(d.blinds) ? d.blinds.map(x => ({ id:x.id, dist: typeof x.dist==='number'?x.dist:0 })) : [],
         geo: d.geo || {}
       };
+	  
+	  if (DEBUG_DIST) {
+  console.log('[DIST] snapshot -> activeSetupData',
+    {
+      items: (activeSetupData.items||[]).map(i => ({ id:i.id, dist:i.dist })),
+      blinds: (activeSetupData.blinds||[]).map(b => ({ id:b.id, dist:b.dist })),
+      hasTrainer: !!activeSetupData.geo?.trainer
+    }
+  );
+}
 
       buildDock();
       renderMap();
@@ -1060,20 +1174,8 @@ function applyPlaceOffset(ll){
           const p = await getGPS();
 const P = applyPlaceOffset(p);
 
-if (o.type==='mark'){
-  const hLL = destPoint(P, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
-  await setDoc(setupDoc(), {
-    geo: { marks: { [o.id]: { lat:P.lat, lng:P.lng, handle:{ lat:hLL.lat, lng:hLL.lng } } } }
-  }, { merge:true });
-}else if (o.type==='blind'){
-  await setDoc(setupDoc(), {
-    geo: { blinds: { [o.id]: { lat:P.lat, lng:P.lng } } }
-  }, { merge:true });
-}else if (o.type==='trainer'){
-  await setDoc(setupDoc(), {
-    geo: { trainer: { lat:P.lat, lng:P.lng } }
-  }, { merge:true });
-}
+await placeItem(o, L.latLng(P.lat, P.lng));   // uses your distance writers
+
 
           placeOverlay.classList.remove('open');
           map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration:0.6 });
@@ -1095,9 +1197,11 @@ let pressTimer = null;
 map.on('mousedown', (e) => {
   const t = e.originalEvent?.target;
   if (t && (t.closest?.('.leaflet-marker-icon') || t.closest?.('.handle-hit'))) return; // don't hijack marker drags
-  pressTimer = setTimeout(async () => {
-    await setDoc(setupDoc(), { geo: { trainer: { lat: e.latlng.lat, lng: e.latlng.lng } } }, { merge: true });
-  }, 2000);
+pressTimer = setTimeout(async () => {
+  await setDoc(setupDoc(), { geo: { trainer: { lat: e.latlng.lat, lng: e.latlng.lng } } }, { merge: true });
+  await writeAllDistancesFromTrainer(e.latlng);                            // <— add this
+}, 20000);
+
 });
 map.on('mouseup',  () => clearTimeout(pressTimer));
 map.on('mouseout', () => clearTimeout(pressTimer));
