@@ -42,17 +42,17 @@
 
   /* Header row (Marks) */
   .marks-head {
-    /* remove column | label | slider | 9 opts */
-    grid-template-columns: 72px 100px 1fr repeat(9, 80px);
-    display:grid; gap:6px; align-items:center;
+  /* remove | label | distance | 9 opts */
+  grid-template-columns: 72px 140px 100px repeat(9, 80px);
+  display:grid; gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
   .head-center { text-align:center; }
 
   /* Mark rows as cards */
   .mark-item {
-    /* remove column | label | slider | 9 opts */
-    grid-template-columns: 72px 100px 1fr repeat(9, 80px);
+  /* remove column | label | slider | 9 opts */
+  grid-template-columns: 72px 100px 1fr repeat(9, 80px);
     display:grid; gap:6px; align-items:center;
     background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
     margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
@@ -90,16 +90,16 @@
   .drag-ghost { position:fixed; left:0; top:0; pointer-events:none; transform:translate(-9999px,-9999px); z-index:9999; opacity:.95; box-shadow: 0 4px 14px rgba(0,0,0,0.15); background:#fff; }
   .drop-hint { outline:2px dashed #0b74ff; outline-offset:-4px; }
 
-  /* === BLINDS === */
-  .blinds-head {
-    /* remove | label | slider | 5 opts */
-    grid-template-columns: 72px 120px 1fr repeat(5, 110px);
+ .blinds-head {
+  /* remove | label | distance | 5 opts */
+  grid-template-columns: 72px 140px 100px repeat(5, 110px);
     display:grid; gap:6px; align-items:center;
     font-size:12px; color:#444; font-weight:600; margin-bottom:8px;
   }
   .blind-item {
-    /* remove | label | slider | 5 opts */
-    grid-template-columns: 72px 120px 1fr repeat(5, 110px);
+  /* remove | label | slider | 5 opts */
+  grid-template-columns: 72px 120px 1fr repeat(5, 110px);
+
     display:grid; gap:6px; align-items:center;
     background:#fafafa; padding:10px; border:1px solid #ddd; border-radius:10px;
     margin-bottom:12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
@@ -116,6 +116,18 @@
     .blind-item .opt span { display:inline; }
     .blind-slider { grid-column: 1 / -1; order: 99; }
   }
+  
+  .dist-cell { font-weight:600; color:#111; }
+.blind-dist { font-weight:600; color:#111; }
+
+/* mobile */
+@media (max-width: 768px) {
+  .dist-cell { grid-column: 1 / -1; order: 98; }
+}
+@media (max-width: 768px) {
+  .blind-dist { grid-column: 1 / -1; order: 98; }
+}
+
 </style>
 </head>
 <body>
@@ -205,6 +217,11 @@
 
     <div class="blinds-list" id="blindsList"></div>
   </div>
+  
+  <div class="section" style="display:flex; justify-content:flex-end;">
+  <button id="goToMapBtn" class="btn primary">Go To Map</button>
+</div>
+
 
   <div class="chip drag-ghost" id="ghost"></div>
 
@@ -316,10 +333,20 @@ const BLIND_OPTION_KEYS = [
 function byId(id){ return state.items.find(i => i.id === id); }
 function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
 function makeId(){ return 'm_' + Math.random().toString(36).slice(2,9); }
-function clampToStep(v){ return Math.max(0, Math.min(400, Math.round(v/25)*25)); }
+function fmtYardsExact(y){
+  return (typeof y === 'number' && isFinite(y)) ? `${Math.round(y)} yards` : '—';
+}
+
 
 // Labels
-function markTextFrom(id){ const item = byId(id); const idx = indexOfId(id); const number = idx >= 0 ? (idx + 1) : '?'; const dist = item?.dist ?? 0; return `#${number} - ${dist} yards`; }
+function markTextFrom(id){
+  const item = byId(id);
+  const idx = indexOfId(id);
+  const number = idx >= 0 ? (idx + 1) : '?';
+  const dist = (item && typeof item.dist === 'number') ? Math.round(item.dist) : 0;
+  return `#${number} - ${dist} yards`;
+}
+
 function optionsSummary(id){
   const item = byId(id); if (!item || !item.options) return '';
   return OPTION_KEYS.filter(o => !!item.options[o.key]).map(o => o.label).join(', ');
@@ -448,7 +475,7 @@ function setActiveSetup(id){
     // ----- Items (Marks)
     state.items = Array.isArray(data.items) ? data.items.map(it => ({
       id: it.id,
-      dist: typeof it.dist === 'number' ? clampToStep(it.dist) : 0,
+      dist: typeof it.dist === 'number' ? Math.round(it.dist) : 0,
       options: Object.assign({
         handTossed:false, shortCheckDown:false, punchBird:false,
         noOff:false, walkUp:false, waterMark:false,
@@ -476,7 +503,8 @@ function setActiveSetup(id){
     // ----- Blinds
     state.blinds = Array.isArray(data.blinds) ? data.blinds.map(bl => ({
       id: bl.id,
-      dist: typeof bl.dist==='number' ? clampToStep(bl.dist) : 0,
+     dist: typeof bl.dist==='number' ? Math.round(bl.dist) : 0,
+
       options: Object.assign({
         water:false, poison1:false, poison2:false, duck:false, wDrill:false
       }, bl.options || {})
@@ -532,21 +560,10 @@ function renderMarksList() {
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
 
-    const sliderWrap = document.createElement('div');
-    sliderWrap.className = 'slider-wrap';
-    const slider = document.createElement('input');
-    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
-    slider.value = item.dist;
-    slider.addEventListener('input', () => {
-      item.dist = clampToStep(Number(slider.value));
-      label.textContent = markTextFrom(item.id);
-      document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
-        c.textContent = chipTextFrom(item.id);
-        const sum = optionsSummary(item.id); c.title = sum || '';
-      });
-    });
-    slider.addEventListener('change', save);
-    sliderWrap.appendChild(slider);
+   const distCell = document.createElement('div');
+distCell.className = 'dist-cell';
+distCell.textContent = fmtYardsExact(item.dist);
+
 
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
@@ -568,10 +585,11 @@ function renderMarksList() {
     });
 
     // Append in new order: delete first, then label, slider, then options
-    row.appendChild(del);
-    row.appendChild(label);
-    row.appendChild(sliderWrap);
-    optCells.forEach(c => row.appendChild(c));
+row.appendChild(del);
+row.appendChild(label);
+row.appendChild(distCell);
+optCells.forEach(c => row.appendChild(c));
+
 
     marksList.appendChild(row);
   });
@@ -632,7 +650,10 @@ function renderColumnsAndDock() {
 }
 
 // ---------- UI: BLINDS ----------
-function blindTextFromIndex(idx, dist){ return `#${idx+1} - ${dist} yards`; }
+function blindTextFromIndex(idx, dist){
+  const d = (typeof dist === 'number') ? Math.round(dist) : 0;
+  return `#${idx+1} - ${d} yards`;
+}
 
 function renderBlindsList(){
   const blindsList = document.getElementById('blindsList');
@@ -660,17 +681,10 @@ function renderBlindsList(){
     label.className = 'blind-label';
     label.textContent = blindTextFromIndex(idx, blind.dist ?? 0);
 
-    const sliderWrap = document.createElement('div');
-    sliderWrap.className = 'blind-slider';
-    const slider = document.createElement('input');
-    slider.type = 'range'; slider.min = 0; slider.max = 400; slider.step = 25;
-    slider.value = blind.dist ?? 0;
-    slider.addEventListener('input', () => {
-      blind.dist = clampToStep(Number(slider.value));
-      label.textContent = blindTextFromIndex(idx, blind.dist);
-    });
-    slider.addEventListener('change', save);
-    sliderWrap.appendChild(slider);
+    const distCell = document.createElement('div');
+distCell.className = 'blind-dist';
+distCell.textContent = fmtYardsExact(blind.dist);
+
 
     const optCells = BLIND_OPTION_KEYS.map(({key, label:optLabel}) => {
       const cell = document.createElement('div');
@@ -688,10 +702,11 @@ function renderBlindsList(){
     });
 
     // New order: delete first, then label, slider, options
-    row.appendChild(del);
-    row.appendChild(label);
-    row.appendChild(sliderWrap);
-    optCells.forEach(c => row.appendChild(c));
+row.appendChild(del);
+row.appendChild(label);
+row.appendChild(distCell);
+optCells.forEach(c => row.appendChild(c));
+
 
     blindsList.appendChild(row);
   });
@@ -876,6 +891,12 @@ document.getElementById('deleteSetupBtn').addEventListener('click', async () => 
   }
 });
 
+const GPS_URL = 'https://morrowind4732.github.io/task-tracker/gps.html';
+document.getElementById('goToMapBtn')?.addEventListener('click', () => {
+  const url = new URL(GPS_URL);
+  if (trainerId) url.searchParams.set('trainer', trainerId);
+  location.href = url.toString();
+});
 
 
 // ---------- Boot ----------
