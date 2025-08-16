@@ -98,7 +98,14 @@
   .handle-hit { width:32px; height:32px; border-radius:50%; background:transparent; display:grid; place-items:center; }
   .handle-dot { width:4px; height:4px; border-radius:50%; background:currentColor; box-shadow:0 0 0 1.5px #fff; }
 
-  .dist-label { background:#fff; padding:2px 6px; border-radius:10px; border:1px solid #ddd; font-size:12px; color:#111; box-shadow:0 1px 4px rgba(0,0,0,.15); }
+  .dist-label {
+  background:#fff; padding:2px 6px; border-radius:10px;
+  border:1px solid #ddd; font-size:12px; color:#111;
+  box-shadow:0 1px 4px rgba(0,0,0,.15);
+  white-space: nowrap;      /* NEW: don't wrap "199 yd" */
+  line-height: 1.1;         /* NEW: tidy vertical spacing */
+}
+
   .muted { color:#666; font-size:12px; }
 </style>
 </head>
@@ -115,6 +122,21 @@
     </div>
   </div>
 </div>
+
+<!-- No-setup prompt -->
+<div class="overlay" id="noSetupOverlay">
+  <div class="overlay-card">
+    <h3>No setup for this day</h3>
+    <p id="noSetupMsg" class="muted" style="margin:8px 0 0">
+      <!-- filled by JS -->
+    </p>
+    <div class="overlay-actions">
+      <button class="btn primary" id="createSetupYes">Yes</button>
+      <button class="btn" id="createSetupNo">No</button>
+    </div>
+  </div>
+</div>
+
 
 <!-- Place-at-me chooser -->
 <div class="overlay" id="placeOverlay">
@@ -164,7 +186,8 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
     getFirestore, doc, setDoc, updateDoc, onSnapshot,
-    collection, query, orderBy, deleteField
+    collection, query, orderBy, deleteField,
+    getDocs, limit
   } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
   const firebaseConfig = {
@@ -223,6 +246,79 @@ const PILL_SCALE = 0.5;   // try 0.85 first on phone
       }, { once:true });
     });
   }
+  
+  
+  // --- "No setup / No objectives" overlay wiring ---
+const noSetupOverlay = document.getElementById('noSetupOverlay');
+const noSetupMsg     = document.getElementById('noSetupMsg');
+const noSetupTitleEl = noSetupOverlay.querySelector('h3');
+
+document.getElementById('createSetupNo').addEventListener('click', () => {
+  noSetupOverlay.classList.remove('open');
+});
+document.getElementById('createSetupYes').addEventListener('click', () => {
+  const url = new URL('https://morrowind4732.github.io/task-tracker/setups.html');
+  url.searchParams.set('trainer', trainerId || '');
+  location.href = url.toString();
+});
+
+/** Helper to open the overlay with custom text */
+function promptToSetups(title, msg) {
+  noSetupTitleEl.textContent = title;
+  noSetupMsg.textContent = msg;
+  noSetupOverlay.classList.add('open');
+}
+
+// Avoid nagging: only prompt once per trainer+day per load
+const promptedNoSetup       = new Set(); // “no setups at all” check
+const promptedNoObjectives  = new Set(); // “blank setup (no marks/blinds)” check
+
+/** Primary check: does any setup doc exist for this trainer/day? */
+async function checkForSetupAndPrompt(){
+  if (!trainerId) return;
+  const key = `${trainerId}|${currentDateKey}`;
+  if (promptedNoSetup.has(key)) return;
+
+  try {
+    const snap = await getDocs(query(setupsColl(), limit(1)));
+    if (snap.empty) {
+      promptToSetups(
+        'No setup for this day',
+        `No setup found for ${trainerId} on ${currentDateKey}. Create one now?`
+      );
+    }
+  } catch (e) {
+    console.warn('checkForSetupAndPrompt failed:', e);
+  } finally {
+    promptedNoSetup.add(key);
+  }
+}
+
+/** Secondary check: setup exists but no marks/blinds (dock OR map) */
+function checkForObjectivesAndPrompt(docExists){
+  if (!trainerId || !docExists) return;
+  const key = `${trainerId}|${currentDateKey}`;
+  if (promptedNoObjectives.has(key)) return;
+
+  const hasConfigured =
+    (activeSetupData.items?.length || 0) > 0 ||
+    (activeSetupData.blinds?.length || 0) > 0;
+
+  const hasPlaced =
+    Object.keys(activeSetupData.geo?.marks  || {}).length > 0 ||
+    Object.keys(activeSetupData.geo?.blinds || {}).length > 0;
+
+  if (!hasConfigured && !hasPlaced) {
+    promptToSetups(
+      'No objectives yet',
+      `No marks or blinds found for ${trainerId} on ${currentDateKey}. Go to the setup page to add objectives?`
+    );
+    promptedNoObjectives.add(key);
+  }
+}
+
+
+  
   if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
   /* Date + tabs */
@@ -710,6 +806,13 @@ base.on('add', () => { if (base._icon) base._icon.style.pointerEvents = 'auto'; 
       buildDock();
       renderMap();
       renderAllArrows();
+	  
+	  const docExists = snap.exists();  // add this at the top of the callback
+
+// ... your existing code that sets activeSetupData, buildDock(), renderMap(), etc.
+
+checkForObjectivesAndPrompt(docExists); // ⬅️ call this after activeSetupData is ready
+
 
       if (!hasAutoCentered) {
         const firstPlaced =
@@ -741,6 +844,7 @@ base.on('add', () => { if (base._icon) base._icon.style.pointerEvents = 'auto'; 
     renderTabs(); buildDock(); renderMap();
     hasAutoCentered = false;
     if (trainerId) attachSetupsListener();
+	if (trainerId) checkForSetupAndPrompt();
   }
 
   /* Fit + Locate */
