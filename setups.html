@@ -172,7 +172,7 @@
     <div class="marks-head">
       <div class="head-center">Remove</div>
       <div></div>
-      <div class="head-center">Distance</div>
+      
       <div class="head-center">hand tossed</div>
       <div class="head-center">short check down</div>
       <div class="head-center">punch bird</div>
@@ -560,9 +560,7 @@ function renderMarksList() {
     label.className = 'mark-label';
     label.textContent = markTextFrom(item.id);
 
-   const distCell = document.createElement('div');
-distCell.className = 'dist-cell';
-distCell.textContent = fmtYardsExact(item.dist);
+
 
 
     const optCells = OPTION_KEYS.map(({key, label:optLabel}) => {
@@ -587,7 +585,6 @@ distCell.textContent = fmtYardsExact(item.dist);
     // Append in new order: delete first, then label, slider, then options
 row.appendChild(del);
 row.appendChild(label);
-row.appendChild(distCell);
 optCells.forEach(c => row.appendChild(c));
 
 
@@ -704,7 +701,6 @@ distCell.textContent = fmtYardsExact(blind.dist);
     // New order: delete first, then label, slider, options
 row.appendChild(del);
 row.appendChild(label);
-row.appendChild(distCell);
 optCells.forEach(c => row.appendChild(c));
 
 
