@@ -375,9 +375,9 @@ function checkForObjectivesAndPrompt(docExists){
 
   /* Map */
   const MAX_COMFORT_ZOOM = 19; // ⬅ bumped from 17
-  const FIT_MIN_ZOOM = 15;          // don’t zoom out past this
-const FIT_PADDING  = [30, 30];    // pixels of padding around the fit
-const FIT_MAX_CLUSTER_KM = 5;     // ignore points farther than this from the cluster center
+  const FIT_MIN_ZOOM = 18;          // don’t zoom out past this
+const FIT_PADDING  = [20, 20];    // pixels of padding around the fit
+const FIT_MAX_CLUSTER_KM = 1;     // ignore points farther than this from the cluster center
 
 const START_ZOOM_PLACED = 18;
   const map = L.map('map', { maxZoom: MAX_COMFORT_ZOOM }).setView([39.5,-98.35], 5);
@@ -1101,9 +1101,11 @@ $('#fitBtn').addEventListener('click', ()=>{
   const g = activeSetupData.geo || {};
   const raw = [];
 
-  const add = (p) => { if (p && typeof p.lat !== 'undefined' && typeof p.lng !== 'undefined') {
-    raw.push({ lat: +p.lat, lng: +p.lng });
-  }};
+  const add = (p) => {
+    if (p && typeof p.lat !== 'undefined' && typeof p.lng !== 'undefined') {
+      raw.push({ lat: +p.lat, lng: +p.lng });
+    }
+  };
 
   add(g.trainer);
   Object.values(g.marks  || {}).forEach(m => add({ lat: m.lat, lng: m.lng })); // ignore handles for fit
@@ -1114,25 +1116,35 @@ $('#fitBtn').addEventListener('click', ()=>{
   if (!pts.length) return;
 
   if (pts.length === 1) {
-    map.flyTo(pts[0], Math.min(MAX_COMFORT_ZOOM, Math.max(FIT_MIN_ZOOM, START_ZOOM_PLACED)), { duration: 0.45 });
+    map.flyTo(pts[0], Math.min(MAX_COMFORT_ZOOM, START_ZOOM_PLACED), { duration: 0.45 });
     return;
   }
 
-  const bounds = L.latLngBounds(pts);
-  const computed   = map.getBoundsZoom(bounds, true, L.point(FIT_PADDING[0], FIT_PADDING[1]));
-  const targetZoom = Math.max(FIT_MIN_ZOOM, Math.min(MAX_COMFORT_ZOOM, computed));
+  const bounds  = L.latLngBounds(pts);
+  const padding = L.point(FIT_PADDING[0], FIT_PADDING[1]);
 
-  // Helpful debug so you can verify it’s using the new logic
-  console.log('[FIT]', {
-    rawCount: raw.length,
-    usedCount: pts.length,
-    targetZoom,
-    boundsSW: bounds.getSouthWest(),
-    boundsNE: bounds.getNorthEast()
+  // base zoom that fits with padding
+  const zFit   = map.getBoundsZoom(bounds, true, padding);
+  const center = bounds.getCenter();
+
+  // try one level tighter (but cap at max)
+  const zTry = Math.min(MAX_COMFORT_ZOOM, zFit + 1);
+
+  // check that all points still fit at zTry with the same padding
+  const size  = map.getSize();
+  const halfW = size.x / 2 - padding.x;
+  const halfH = size.y / 2 - padding.y;
+  const cPx   = map.project(center, zTry);
+
+  const fitsAtZTry = pts.every(p => {
+    const px = map.project(p, zTry);
+    return Math.abs(px.x - cPx.x) <= halfW && Math.abs(px.y - cPx.y) <= halfH;
   });
 
-  map.flyToBounds(bounds, { padding: FIT_PADDING, maxZoom: targetZoom, duration: 0.45 });
+  const zTarget = fitsAtZTry ? zTry : zFit;
+  map.flyTo(center, zTarget, { duration: 0.45 });
 });
+
 
 
 
