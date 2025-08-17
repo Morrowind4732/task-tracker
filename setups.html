@@ -193,6 +193,15 @@
 .mark-label { grid-column: 1 / -1; }
 
 
+.meta-row {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+}
+.meta-field { display:flex; align-items:center; gap:6px; }
+.meta-field input {
+  padding:8px 10px; border:1px solid #bbb; border-radius:10px; font-size:14px;
+}
+
+
 </style>
 </head>
 <body>
@@ -226,6 +235,29 @@
       <button class="btn ghost danger" id="deleteSetupBtn">– Delete Setup</button>
     </div>
   </div>
+  
+  <!-- SETUP META: location + name -->
+<div class="section" id="setupMeta">
+  <div class="meta-row">
+    <button class="btn" id="getLocBtn">Get Location</button>
+    <label class="meta-field">
+      <span>Name:</span>
+      <input id="setupName" type="text" placeholder="Enter setup name" />
+    </label>
+  </div>
+</div>
+
+<!-- Nearby setups chooser -->
+<div class="overlay" id="nearbyOverlay">
+  <div class="overlay-card">
+    <h3>Are you repeating any of these setups?</h3>
+    <div id="nearbyList" class="overlay-actions"></div>
+    <div class="overlay-actions">
+      <button class="btn" id="nearbyCancel">No</button>
+    </div>
+  </div>
+</div>
+
 
   <!-- MARKS -->
   <div class="section" id="marksContainer">
@@ -504,21 +536,45 @@ async function save(){
   }, { merge: true });
 }
 
+const nameInput = document.getElementById('setupName');
+
+async function updateSetupName(newName){
+  const ref = setupDocRef(); if (!ref) return;
+  await ref.set({ name: newName }, { merge:true });
+  // reflect locally so the active tab text updates immediately
+  const m = setupsMeta.find(s => s.id === activeSetupId);
+  if (m) { m.name = newName; renderTabs(); }
+}
+
+nameInput.addEventListener('input', debounce(e => {
+  updateSetupName((e.target.value || '').trim());
+}, 400));
+
+function syncNameInputWithActive(){
+  nameInput.value = currentSetupName() || '';
+}
+
+
 // ---------- Tabs UI ----------
 function currentSetupMeta(){ return setupsMeta.find(s => s.id === activeSetupId) || null; }
-function currentSetupName(){ return currentSetupMeta()?.name || 'Setup'; }
+function currentSetupName(){ return currentSetupMeta()?.name ?? ''; }
 function currentSetupOrder(){ return currentSetupMeta()?.order ?? 1; }
 
 function renderTabs(){
   tabsEl.innerHTML = '';
-  setupsMeta.sort((a,b)=>(a.order ?? 0)-(b.order ?? 0)).forEach((meta, i)=>{
-    const b = document.createElement('button');
-    b.className = 'tab' + (meta.id===activeSetupId ? ' active' : '');
-    b.textContent = meta.name || `Setup ${i+1}`;
-    b.addEventListener('click', ()=>{ if (meta.id !== activeSetupId) setActiveSetup(meta.id); });
-    tabsEl.appendChild(b);
-  });
+  setupsMeta
+    .sort((a,b)=>(a.order ?? 0)-(b.order ?? 0))
+    .forEach((meta, i)=>{
+      const b = document.createElement('button');
+      b.className = 'tab' + (meta.id===activeSetupId ? ' active' : '');
+      // show fallback only for the label
+      const label = (meta.name && meta.name.trim()) ? meta.name : `Setup ${i+1}`;
+      b.textContent = label;
+      b.addEventListener('click', ()=>{ if (meta.id !== activeSetupId) setActiveSetup(meta.id); });
+      tabsEl.appendChild(b);
+    });
 }
+
 
 // ---------- Setup collection listener ----------
 async function attachSetupsListener(){
@@ -527,7 +583,13 @@ async function attachSetupsListener(){
     const list=[];
     snap.forEach(doc=>{
       const d=doc.data()||{};
-      list.push({ id:doc.id, name:d.name||'Setup', order: typeof d.order==='number'?d.order:9999 });
+      list.push({
+  id: doc.id,
+  // keep the raw value; empty string is allowed
+  name: (typeof d.name === 'string') ? d.name : '',
+  order: (typeof d.order === 'number') ? d.order : 9999
+});
+
     });
     setupsMeta = list;
     if (setupsMeta.length===0){
@@ -543,6 +605,8 @@ async function attachSetupsListener(){
       setupsMeta = [{ id:newDoc.id, name:'Setup 1', order:1 }];
     }
     renderTabs();
+	syncNameInputWithActive();
+
 
     // pick active
     const lsKey = `activeSetup:${trainerId}:${currentDateKey}`;
@@ -559,6 +623,7 @@ function setActiveSetup(id){
   activeSetupId = id;
   localStorage.setItem(`activeSetup:${trainerId}:${currentDateKey}`, id);
   renderTabs();
+  syncNameInputWithActive();
 
   if (unsubSetupDoc){ try{unsubSetupDoc();}catch(e){} unsubSetupDoc=null; }
   state = { items: [], columns:{ dock:[], cols:[] }, blinds: [] };
@@ -1008,12 +1073,219 @@ document.getElementById('deleteSetupBtn').addEventListener('click', async () => 
   }
 });
 
+
+
+// Helpers for locations for naming
+function metersBetween(a, b){
+  const R = 6371000;
+  const φ1 = a.lat * Math.PI/180, φ2 = b.lat * Math.PI/180;
+  const Δφ = (b.lat - a.lat) * Math.PI/180;
+  const Δλ = (b.lng - a.lng) * Math.PI/180;
+  const s = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+function debounce(fn, ms){
+  let t=null;
+  return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn(...args), ms); };
+}
+
+
 const GPS_URL = 'https://morrowind4732.github.io/task-tracker/gps.html';
 document.getElementById('goToMapBtn')?.addEventListener('click', () => {
   const url = new URL(GPS_URL);
   if (trainerId) url.searchParams.set('trainer', trainerId);
   location.href = url.toString();
 });
+
+function dateKeysLastNDays(n){
+  const out = [];
+  const start = new Date(currentDateKey || ymd(new Date()));
+  for (let i = 0; i < n; i++){
+    const d = new Date(start);
+    d.setDate(d.getDate() - i);
+    out.push( ymd(d) );
+  }
+  return out;
+}
+
+// fetch setups for a given dayKey and map to {id, name, loc, dateKey}
+async function fetchDaySetupsWithLoc(dayKey){
+  const coll = db.collection('setups').doc(trainerId)
+                 .collection('days').doc(dayKey).collection('setups');
+  const snap = await coll.get();
+  const arr = [];
+  snap.forEach(doc => {
+    const d = doc.data() || {};
+    if (d && d.loc && typeof d.loc.lat === 'number' && typeof d.loc.lng === 'number'){
+      arr.push({ id: doc.id, name: d.name || 'Setup', loc: d.loc, dateKey: dayKey });
+    }
+  });
+  return arr;
+}
+
+// Fast: single query across all days using collectionGroup
+async function recentNearbySetups(centerLL, days = 60, withinMeters = 20){
+  const start = new Date();
+  start.setDate(start.getDate() - days);
+  const startKey = ymd(start);
+
+  const q = db
+    .collectionGroup('setups')
+    .where('trainer', '==', trainerId)
+    .where('dateKey', '>=', startKey)
+    .orderBy('dateKey', 'desc')
+    .limit(1000);
+
+  const snap = await q.get();
+
+  const results = [];
+  snap.forEach(doc => {
+    const d = doc.data() || {};
+    const loc = d.loc;
+    if (!loc || typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
+    if (doc.id === activeSetupId) return;
+
+    const dist = metersBetween(centerLL, { lat: loc.lat, lng: loc.lng });
+    if (dist <= withinMeters) {
+      results.push({
+        id: doc.id,
+        name: (typeof d.name === 'string' && d.name.trim()) ? d.name : 'Setup',
+        loc,
+        dateKey: d.dateKey || '',
+        dist
+      });
+    }
+  });
+
+  results.sort((a,b) => a.dist - b.dist);
+  return results;
+}
+
+
+async function recentNearbySetupsSlow(centerLL, days = 60, withinMeters = 20){
+  function dateKeysLastNDays(n){
+    const out = [];
+    const start = new Date();
+    for (let i = 0; i < n; i++){
+      const d = new Date(start);
+      d.setDate(d.getDate() - i);
+      out.push( ymd(d) );
+    }
+    return out;
+  }
+
+  async function fetchDaySetupsWithLoc(dayKey){
+    const coll = db.collection('setups').doc(trainerId)
+                   .collection('days').doc(dayKey).collection('setups');
+    const snap = await coll.get();
+    const arr = [];
+    snap.forEach(doc => {
+      const d = doc.data() || {};
+      if (d && d.loc && typeof d.loc.lat === 'number' && typeof d.loc.lng === 'number'){
+        arr.push({ id: doc.id, name: d.name || 'Setup', loc: d.loc, dateKey: dayKey });
+      }
+    });
+    return arr;
+  }
+
+  const keys = dateKeysLastNDays(days);
+  const all = [];
+  for (const k of keys){
+    const day = await fetchDaySetupsWithLoc(k);
+    all.push(...day);
+  }
+  return all
+    .filter(s => s.id !== activeSetupId)
+    .map(s => ({ ...s, dist: metersBetween(centerLL, s.loc) }))
+    .filter(s => s.dist <= withinMeters)
+    .sort((a,b) => a.dist - b.dist);
+}
+
+
+
+const getLocBtn = document.getElementById('getLocBtn');
+const nearbyOverlay = document.getElementById('nearbyOverlay');
+const nearbyList = document.getElementById('nearbyList');
+document.getElementById('nearbyCancel').addEventListener('click', () => {
+  nearbyOverlay.classList.remove('open');
+});
+
+function getGPS(){
+  return new Promise((resolve, reject)=>{
+    if (!navigator.geolocation) return reject(new Error('Geolocation not supported'));
+    navigator.geolocation.getCurrentPosition(
+      p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      err => reject(err),
+      { enableHighAccuracy:true, timeout:12000, maximumAge:5000 }
+    );
+  });
+}
+
+getLocBtn.addEventListener('click', async () => {
+  if (!trainerId || !activeSetupId) { alert('Pick a trainer and setup first.'); return; }
+
+  // A) Get GPS (isolated error message)
+  let ll;
+  try {
+    ll = await getGPS();
+  } catch (e) {
+    console.error('GPS error', e);
+    alert('Unable to read your GPS. Check location permissions and try again.');
+    return;
+  }
+
+  // B) Save location
+  try {
+    await setupDocRef().set({
+      loc: ll,
+      // optional: keep a GeoPoint too for future geo features
+      locGeo: new firebase.firestore.GeoPoint(ll.lat, ll.lng)
+    }, { merge: true });
+  } catch (e) {
+    console.error('Save location error', e);
+    alert('Could not save the location. Check your connection and try again.');
+    return;
+  }
+
+  // C) Nearby lookup with graceful fallback
+  let near = [];
+  try {
+    near = await recentNearbySetups(ll, 60, 20); // fast, collectionGroup
+  } catch (e) {
+    console.warn('Fast nearby lookup failed, falling back to slow scan...', e);
+    // If it’s a missing index (FAILED_PRECONDITION), console will show the build-index link.
+    try {
+      near = await recentNearbySetupsSlow(ll, 60, 20); // slow, per-day scan
+    } catch (e2) {
+      console.error('Slow fallback also failed', e2);
+      alert('Location saved. Could not search nearby setups right now.');
+      return;
+    }
+  }
+
+  if (!near.length){
+    alert('Location saved. No nearby setups in the last 60 days.');
+    return;
+  }
+
+  // Show overlay with suggestions
+  nearbyList.innerHTML = '';
+  near.forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'btn primary';
+    b.textContent = `${s.name}  (${s.dateKey})`;
+    b.addEventListener('click', async () => {
+      nameInput.value = s.name;
+      await updateSetupName(s.name);
+      nearbyOverlay.classList.remove('open');
+    }, { once:true });
+    nearbyList.appendChild(b);
+  });
+  nearbyOverlay.classList.add('open');
+});
+
+
 
 
 // ---------- Boot ----------
