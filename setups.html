@@ -134,6 +134,25 @@
   box-sizing: border-box; /* ensures padding/border don’t overflow */
 }
 
+/* Tag chips */
+.tag-row { display:flex; flex-wrap:wrap; gap:8px; }
+.tag {
+  appearance:none; border:1px solid #ccc; background:#fff;
+  padding:6px 10px; border-radius:999px; cursor:pointer;
+  font-size:14px; line-height:1; transition:.15s ease;
+}
+.tag:hover { border-color:#bbb; }
+.tag.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color:#fff;
+  box-shadow: 0 2px 8px rgba(11,116,255,.25);
+}
+
+/* Optional: compact the card when using chips */
+.mark-item .tag-row, .blind-item .tag-row { margin-top: 6px; }
+
+
 </style>
 </head>
 <body>
@@ -175,20 +194,7 @@
       <button class="btn primary" id="addMarkBtn">+ Add Mark</button>
     </div>
 
-    <div class="marks-head">
-      <div class="head-center">Remove</div>
-      <div></div>
-      
-      <div class="head-center">hand tossed</div>
-      <div class="head-center">short check down</div>
-      <div class="head-center">punch bird</div>
-      <div class="head-center">no off</div>
-      <div class="head-center">walk up</div>
-      <div class="head-center">water mark</div>
-      <div class="head-center">go bird</div>
-      <div class="head-center">white coat</div>
-      <div class="head-center">retire</div>
-    </div>
+
 
     <div class="marks-list" id="marksList"></div>
 
@@ -210,16 +216,7 @@
       <button class="btn primary" id="addBlindBtn">+ Add Blind</button>
     </div>
 
-    <div class="blinds-head">
-      <div class="head-center">Remove</div>
-      <div></div>
-      <div class="head-center">Distance</div>
-      <div class="head-center">Water</div>
-      <div class="head-center">Poison 1</div>
-      <div class="head-center">Poison 2</div>
-      <div class="head-center">Duck</div>
-      <div class="head-center">W Drill</div>
-    </div>
+
 
     <div class="blinds-list" id="blindsList"></div>
   </div>
@@ -336,6 +333,39 @@ const BLIND_OPTION_KEYS = [
   { key:'duck',    label:'Duck' },
   { key:'wDrill',  label:'W Drill' },
 ];
+
+function renderTagRow(container, item, optionDefs) {
+  const row = document.createElement('div');
+  row.className = 'tag-row';
+
+  optionDefs.forEach(({key, label}) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tag' + (item.options?.[key] ? ' on' : '');
+    btn.textContent = label;
+
+    btn.addEventListener('click', async () => {
+      item.options[key] = !item.options[key];
+      btn.classList.toggle('on', !!item.options[key]);
+
+      // keep chips & tooltips in sync
+      if (item.id) {
+        document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
+          c.textContent = chipTextFrom(item.id);
+          const sum = optionsSummary(item.id); c.title = sum || '';
+        });
+      }
+
+      suppressSetupDocSnapshots = true;
+      await save().finally(()=>{ suppressSetupDocSnapshots = false; });
+    });
+
+    row.appendChild(btn);
+  });
+
+  container.appendChild(row);
+}
+
 
 function byId(id){ return state.items.find(i => i.id === id); }
 function indexOfId(id){ return state.items.findIndex(i => i.id === id); }
@@ -592,8 +622,8 @@ function renderMarksList() {
     // Append in new order: delete first, then label, slider, then options
 row.appendChild(del);
 row.appendChild(label);
-optCells.forEach(c => row.appendChild(c));
 
+renderTagRow(row, item, OPTION_KEYS);
 
     marksList.appendChild(row);
   });
@@ -708,8 +738,7 @@ distCell.textContent = fmtYardsExact(blind.dist);
     // New order: delete first, then label, slider, options
 row.appendChild(del);
 row.appendChild(label);
-optCells.forEach(c => row.appendChild(c));
-
+renderTagRow(row, blind, BLIND_OPTION_KEYS);
 
     blindsList.appendChild(row);
   });
