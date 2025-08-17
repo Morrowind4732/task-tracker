@@ -152,6 +152,32 @@
 /* Optional: compact the card when using chips */
 .mark-item .tag-row, .blind-item .tag-row { margin-top: 6px; }
 
+.tag-row { display: grid; gap: 8px; margin-top: 6px; }
+.tag-group {
+  display: flex; gap: 8px;
+  flex-wrap: nowrap;         /* keep a single line per group */
+  overflow-x: auto;          /* scroll if it ever overflows */
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;       /* nicer scroll affordance on iOS */
+}
+
+/* pill look (matches your chip vibe) */
+.tag-chip {
+  user-select: none;
+  padding: 6px 10px;
+  border: 1px solid #bbb;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tag-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #eaf2ff;
+  font-weight: 700;
+}
+
+
 
 </style>
 </head>
@@ -334,37 +360,64 @@ const BLIND_OPTION_KEYS = [
   { key:'wDrill',  label:'W Drill' },
 ];
 
-function renderTagRow(container, item, optionDefs) {
+// Marks: 3 rows (edit these to taste)
+const MARK_TAG_GROUPS = [
+  // Row 1
+  ['handTossed', 'whiteCoat', 'retire'],
+  // Row 2
+  ['goBird', 'noOff', 'walkUp'],
+  // Row 3
+  ['waterMark', 'shortCheckDown', 'punchBird']
+];
+
+
+// Blinds: example groups
+const BLIND_TAG_GROUPS = [
+  ['water','duck'],        // Row 1
+  ['poison1','poison2'],   // Row 2
+  ['wDrill']               // Row 3
+];
+
+// quick map of key -> label (reuse your existing OPTION_KEYS / BLIND_OPTION_KEYS)
+const LABELS = Object.fromEntries([
+  ...OPTION_KEYS.map(o => [o.key, o.label]),
+  ...BLIND_OPTION_KEYS.map(o => [o.key, o.label])
+]);
+
+
+function makeTagChip(obj, key, saveFn){
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = 'tag-chip';
+  chip.textContent = LABELS[key] || key;
+  chip.setAttribute('aria-pressed', obj.options?.[key] ? 'true' : 'false');
+
+  chip.addEventListener('click', async () => {
+    obj.options = obj.options || {};
+    const next = !(obj.options[key]);
+    obj.options[key] = next;
+    chip.setAttribute('aria-pressed', next ? 'true' : 'false');
+    await saveFn?.();
+  });
+
+  return chip;
+}
+
+function renderTagRow(container, obj, GROUPS, saveFn){
   const row = document.createElement('div');
   row.className = 'tag-row';
 
-  optionDefs.forEach(({key, label}) => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'tag' + (item.options?.[key] ? ' on' : '');
-    btn.textContent = label;
-
-    btn.addEventListener('click', async () => {
-      item.options[key] = !item.options[key];
-      btn.classList.toggle('on', !!item.options[key]);
-
-      // keep chips & tooltips in sync
-      if (item.id) {
-        document.querySelectorAll(`.chip[data-id="${item.id}"]`).forEach(c => {
-          c.textContent = chipTextFrom(item.id);
-          const sum = optionsSummary(item.id); c.title = sum || '';
-        });
-      }
-
-      suppressSetupDocSnapshots = true;
-      await save().finally(()=>{ suppressSetupDocSnapshots = false; });
-    });
-
-    row.appendChild(btn);
+  GROUPS.forEach(keys => {
+    const g = document.createElement('div');
+    g.className = 'tag-group';
+    keys.forEach(k => g.appendChild(makeTagChip(obj, k, saveFn)));
+    row.appendChild(g);
   });
 
   container.appendChild(row);
+  return row;
 }
+
 
 
 function byId(id){ return state.items.find(i => i.id === id); }
@@ -623,8 +676,15 @@ function renderMarksList() {
 row.appendChild(del);
 row.appendChild(label);
 
-renderTagRow(row, item, OPTION_KEYS);
-
+renderTagRow(
+  row,
+  item,
+  MARK_TAG_GROUPS,
+  async () => {                       // save on toggle
+    suppressSetupDocSnapshots = true;
+    try { await save(); } finally { suppressSetupDocSnapshots = false; }
+  }
+);
     marksList.appendChild(row);
   });
 
@@ -738,7 +798,16 @@ distCell.textContent = fmtYardsExact(blind.dist);
     // New order: delete first, then label, slider, options
 row.appendChild(del);
 row.appendChild(label);
-renderTagRow(row, blind, BLIND_OPTION_KEYS);
+renderTagRow(
+  row,
+  blind,
+  BLIND_TAG_GROUPS,
+  async () => {
+    suppressSetupDocSnapshots = true;
+    try { await save(); } finally { suppressSetupDocSnapshots = false; }
+  }
+);
+
 
     blindsList.appendChild(row);
   });
