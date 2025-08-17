@@ -177,6 +177,20 @@
   font-weight: 700;
 }
 
+/* Make each tag row take the full width of the mark card */
+.tag-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  overflow: visible;      /* no horizontal scrollbar */
+}
+
+.tag-row + .tag-row { margin-top: 8px; } /* spacing between rows */
+
+/* Optional: simplify the card grid so it's just [delete] [content] */
+.mark-item { grid-template-columns: 72px 1fr; }
+.mark-label { grid-column: 1 / -1; }
 
 
 </style>
@@ -406,6 +420,7 @@ function makeTagChip(obj, key, saveFn){
 function renderTagRow(container, obj, GROUPS, saveFn){
   const row = document.createElement('div');
   row.className = 'tag-row';
+  row.style.gridColumn = '1 / -1';   // <-- ensure full-width
 
   GROUPS.forEach(keys => {
     const g = document.createElement('div');
@@ -417,6 +432,7 @@ function renderTagRow(container, obj, GROUPS, saveFn){
   container.appendChild(row);
   return row;
 }
+
 
 
 
