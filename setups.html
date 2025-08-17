@@ -128,6 +128,12 @@
   .blind-dist { grid-column: 1 / -1; order: 98; }
 }
 
+.btn.block {
+  display: block;
+  width: 100%;
+  box-sizing: border-box; /* ensures padding/border don’t overflow */
+}
+
 </style>
 </head>
 <body>
@@ -219,7 +225,8 @@
   </div>
   
   <div class="section" style="display:flex; justify-content:flex-end;">
-  <button id="goToMapBtn" class="btn primary">Go To Map</button>
+  <button id="goToMapBtn" class="btn primary block cta">Go To Map</button>
+
 </div>
 
 
