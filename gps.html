@@ -117,6 +117,8 @@
 
 
   .muted { color:#666; font-size:12px; }
+  #fitBtn { display: none !important; }
+
 </style>
 </head>
 <body>
@@ -1297,6 +1299,9 @@ map.on('mouseout', () => clearTimeout(pressTimer));
   window.addEventListener('resize', updateHudHeightVar);
   updateHudHeightVar();
   if ('ResizeObserver' in window) new ResizeObserver(updateHudHeightVar).observe(hudEl);
+
+document.getElementById('fitBtn').style.display = 'none';
+
 
   /* Boot */
   async function boot(){
