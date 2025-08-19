@@ -60,7 +60,7 @@
     background:radial-gradient(ellipse at center, #fff, #f4f4f4 60%);
     border:1px solid #e6e6e6;
     box-shadow:0 18px 60px rgba(0,0,0,.28);
-    overflow:visible; /* let buttons extend past circle */
+    overflow:visible;
   }
 
   .wheel-title {
@@ -92,6 +92,42 @@
     .center-btn { width:132px; height:132px; }
     .rad-btn { min-width:132px; height:46px; }
   }
+  
+  /* === RADIAL KENNEL NAVIGATOR === */
+  .k-fab {
+    position: fixed; right:16px; bottom:16px;
+    width:56px; height:56px; border-radius:50%;
+    background: var(--accent); color:#fff; border:none;
+    box-shadow:0 8px 20px rgba(0,0,0,.25); font-size:22px;
+    cursor:pointer; z-index: 9998;
+  }
+  .k-overlay { position:fixed; inset:0; background:rgba(0,0,0,.25);
+    display:none; align-items:center; justify-content:center; z-index:9999; }
+  .k-overlay.open { display:flex; }
+  .k-wheel {
+    position: relative; width: 280px; height:280px; border-radius:50%;
+    background:#fff; border:1px solid var(--border);
+    box-shadow:0 12px 30px rgba(0,0,0,.25);
+  }
+  .k-center { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); text-align:center; }
+  .k-center h4 { margin:0 0 4px; font-size:14px; }
+  .k-center .muted { font-size:12px; color:#666; }
+
+  .k-item {
+    position:absolute; width:130px; height:84px; border-radius:12px;
+    background:#fff; border:1px solid #ddd;
+    box-shadow:0 10px 18px rgba(0,0,0,.12);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:4px; text-align:center; padding:8px; cursor:pointer;
+  }
+  .k-item b { font-size:13px; max-width:120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .k-item small { color:#666; font-size:11px; }
+  .k-item:hover { border-color:#bbb; }
+
+  /* slider row bits */
+  .slider-label { font-weight:700; color:#333; min-width:72px; }
+  .nudge { width:36px; height:36px; border-radius:8px; border:1px solid #bbb; background:#fff; font-weight:800; line-height:1; cursor:pointer; }
+  .nudge:active { transform: translateY(1px); }
 </style>
 </head>
 <body>
@@ -112,6 +148,21 @@
       </div>
     </div>
   </div>
+  
+  <!-- Start-slot fallback -->
+  <div class="overlay" id="startFallbackOverlay" aria-hidden="true">
+    <div class="overlay-card">
+      <h3>Pick a starting slot</h3>
+      <div class="muted">No dog detected. Jump to <b>R2C1</b> for <b id="startTrainerName">—</b>:</div>
+      <div class="overlay-actions">
+        <button class="btn primary" id="startMaleBtn">♂ Male R2C1</button>
+        <button class="btn primary" id="startFemaleBtn">♀ Female R2C1</button>
+      </div>
+      <div class="overlay-actions">
+        <button class="btn ghost" id="startCancelBtn">Cancel</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Date / Tabs -->
   <div class="section">
@@ -121,6 +172,18 @@
         <button class="btn ghost" id="todayBtn">Today</button>
       </div>
       <div class="tabs" id="tabs"></div>
+    </div>
+  </div>
+  
+  <!-- FAB + radial overlay -->
+  <button id="kennelFab" class="k-fab" title="Open kennel navigator">⇄</button>
+  <div id="kennelOverlay" class="k-overlay" aria-hidden="true">
+    <div class="k-wheel">
+      <div class="k-center">
+        <h4 id="kCurName">—</h4>
+        <div class="muted" id="kCurSlot">R?C?</div>
+      </div>
+      <!-- items injected by JS -->
     </div>
   </div>
 
@@ -161,7 +224,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
     import {
       getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp,
-      collection, query, orderBy, collectionGroup, where, getDocs
+      collection, query, orderBy, getDocs
     } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
     /* ---------------- Firebase init ---------------- */
@@ -187,31 +250,64 @@
     }
     const SAVE_DEBOUNCE_MS = 400;
 
-    // Full labels
+    /* ===== Flags ===== */
     const FLAG_DEFS_MARKS = [
-      { key:'headswing',       label:'Headswing' },
-      { key:'shortCheckDown',  label:'Short Check Down' },
-      { key:'overran',         label:'Overran' },
       { key:'bigHunt',         label:'Big Hunt' },
+      { key:'marginalHunt',    label:'Marginal Hunt' },
+      { key:'overran',         label:'Overran' },
+      { key:'shortCheckDown',  label:'Short Checkdown' },
+      { key:'backSideOfGun',   label:'Backside of Gun' },
+
       { key:'handled',         label:'Handled' },
       { key:'castRefusal',     label:'Cast Refusal' },
-      { key:'sitOnWhistle',    label:'Sit On Whistle' },
-      { key:'backSideOfGun',   label:'Back Side of Gun' },
-      { key:'break',           label:'Break' },
-      { key:'skipped',         label:'Skipped' },
-    ];
-    const FLAG_DEFS_BLINDS = [
+      { key:'sitOnWhistle',    label:'Sit on Whistle' },
+      { key:'didntMark',       label:"Didn't Mark" },
       { key:'poorInitial',     label:'Poor Initial' },
-      { key:'scallop',         label:'Scallop' },
-      { key:'castRefusal',     label:'Cast Refusal' },
-      { key:'pickedUpPoison',  label:'Picked Up Poison' },
-      { key:'hunted',          label:'Hunted' },
-      { key:'ignoredWhistle',  label:'Ignored Whistle' },
-      { key:'failedDiversion', label:'Failed Diversion' },
-      { key:'skipped',         label:'Skipped' },
+
+      { key:'headswing',       label:'Headswing' },
+      { key:'break',           label:'Broke' },
+      { key:'switched',        label:'Switched' },
+      { key:'noGo',            label:'No-Go' },
+
+      { key:'pickedUpPoison',  label:'Poison Pick Up' },
+      { key:'noPickUp',        label:'No Pick Up' },
+      { key:'stoodOut',        label:'Stood Out' },
+      { key:'popped',          label:'Popped' },
     ];
 
-    /* ---------------- URL params (QR compatible) ---------------- */
+    const FLAG_DEFS_BLINDS = [
+      { key:'bigHunt',         label:'Big Hunt' },
+      { key:'marginalHunt',    label:'Marginal Hunt' },
+      { key:'overran',         label:'Overran' },
+      { key:'shortCheckDown',  label:'Short Checkdown' },
+      { key:'backSideOfGun',   label:'Backside of Gun' },
+
+      { key:'handled',         label:'Handled' },
+      { key:'castRefusal',     label:'Cast Refusal' },
+      { key:'sitOnWhistle',    label:'Sit on Whistle' },
+      { key:'didntMark',       label:"Didn't Mark" },
+      { key:'poorInitial',     label:'Poor Initial' },
+
+      { key:'headswing',       label:'Headswing' },
+      { key:'break',           label:'Broke' },
+      { key:'switched',        label:'Switched' },
+      { key:'noGo',            label:'No-Go' },
+
+      { key:'pickedUpPoison',  label:'Poison Pick Up' },
+      { key:'noPickUp',        label:'No Pick Up' },
+      { key:'stoodOut',        label:'Stood Out' },
+      { key:'popped',          label:'Popped' },
+    ];
+
+    /* Desired cross layout (always visible) */
+    const FLAG_LAYOUT = {
+      up:    ['bigHunt','marginalHunt','overran','shortCheckDown','backSideOfGun'],
+      down:  ['handled','castRefusal','sitOnWhistle','didntMark','poorInitial'],
+      left:  ['headswing','break','switched','noGo'],
+      right: ['pickedUpPoison','noPickUp','stoodOut','popped'],
+    };
+
+    /* ---------------- URL params ---------------- */
     const params  = new URL(location.href).searchParams;
     const trailer = (params.get('trailer')||'').trim();
     const sex     = (params.get('sex')||'').trim();
@@ -221,6 +317,7 @@
     const trailerPrefix = trailerNorm.charAt(0).toUpperCase();
     const sexPrefix     = sexNorm.charAt(0).toUpperCase();
     const slotId        = `${trailerPrefix}_${sexPrefix}_${slotNum}`;
+    const QR_MISSING = (!trailer || !sex || !slotNum);
 
     /* ---------------- Trainer picker ---------------- */
     const overlayPick = document.getElementById('trainerOverlay');
@@ -252,6 +349,50 @@
     }
     if (trainerId) ctxEl.textContent = `Trainer: ${trainerId}`;
 
+    /* ---- Start-slot fallback ---- */
+    const startOverlayEl   = document.getElementById('startFallbackOverlay');
+    const startTrainerName = document.getElementById('startTrainerName');
+    const startMaleBtn     = document.getElementById('startMaleBtn');
+    const startFemaleBtn   = document.getElementById('startFemaleBtn');
+    const startCancelBtn   = document.getElementById('startCancelBtn');
+    let offeredStart = false;
+
+    function openStartFallback(){
+      if (!trainerId){ showTrainerPrompt(); return; }
+      startTrainerName.textContent = trainerId;
+      startOverlayEl.classList.add('open');
+      startOverlayEl.setAttribute('aria-hidden','false');
+    }
+    function closeStartFallback(){
+      startOverlayEl.classList.remove('open');
+      startOverlayEl.setAttribute('aria-hidden','true');
+    }
+    function offerStartOnce(){
+      if (offeredStart) return;
+      offeredStart = true;
+      openStartFallback();
+    }
+
+    startMaleBtn?.addEventListener('click', ()=>{
+      const url = new URL(location.href);
+      url.searchParams.set('trainer', trainerId);
+      url.searchParams.set('trailer', slug(trainerId));
+      url.searchParams.set('sex', 'male');
+      url.searchParams.set('slot', 'R2C1');
+      location.href = url.toString();
+    });
+    startFemaleBtn?.addEventListener('click', ()=>{
+      const url = new URL(location.href);
+      url.searchParams.set('trainer', trainerId);
+      url.searchParams.set('trailer', slug(trainerId));
+      url.searchParams.set('sex', 'female');
+      url.searchParams.set('slot', 'R2C1');
+      location.href = url.toString();
+    });
+    startCancelBtn?.addEventListener('click', closeStartFallback);
+    startOverlayEl?.addEventListener('click', (e)=>{ if (e.target===startOverlayEl) closeStartFallback(); });
+    /* ---- /Start-slot fallback ---- */
+
     /* ---------------- Day + setups tabs ---------------- */
     const dayPicker = document.getElementById('dayPicker');
     const todayBtn  = document.getElementById('todayBtn');
@@ -273,7 +414,6 @@
     let unsubSetupDoc = null;
     let unsubScoreDoc = null;
 
-    // Debounced save
     let saveTimer = null;
     function scheduleSave(){ clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, SAVE_DEBOUNCE_MS); }
 
@@ -283,7 +423,7 @@
     const setupDocRef  = () => (activeSetupId ? doc(setupsColl(), activeSetupId) : null);
 
     // Kennel slot → dog lookup
-    const slotRef = doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId);
+    const slotRef = !QR_MISSING ? doc(db, "trailerLayouts", `${trailerNorm}-${sexNorm}`, "slots", slotId) : null;
 
     // Dog-centric runs
     const ratingsDayDoc = () => doc(db, "ratings", dog.id, "days", currentDateKey);
@@ -391,10 +531,10 @@
 
     /* ---------------- Dog & boot ---------------- */
     async function attachDogListener(){
-      if (!trailer || !sex || !slotNum) {
-        dogCard.textContent = "Missing trailer, sex, or slot in URL.";
-        return;
+      if (QR_MISSING) {
+        document.getElementById('dogCard').textContent = "No QR context detected — choose a starting slot.";
       }
+
       onSnapshot(slotRef, async (snap)=>{
         let profileData = null;
         dog = { id:null, name:null, profile:null, photo:null };
@@ -412,7 +552,7 @@
           }
         }
         renderDogCard();
-        attachScoresListener(); // ensure we watch the right doc when dog appears
+        attachScoresListener();
       });
     }
 
@@ -457,28 +597,49 @@
 
         const flagBtn = document.createElement('button');
         flagBtn.className = 'btn flag-btn';
-        flagBtn.textContent = 'Flags';
-        flagBtn.addEventListener('click', ()=> openRadialFor(item.id, defs, bucket));
-
+        flagBtn.textContent = '🚩';
+        flagBtn.setAttribute('aria-label','Flags');
+        flagBtn.title = 'Flags';
+        flagBtn.addEventListener('click', ()=> openRadialFor(item.id, defs));
         head.append(title, flagBtn);
 
         const sliderRow = document.createElement('div');
         sliderRow.className = 'slider-row';
+
+        const sliderId = `score-${activePane}-${item.id}`;
+
+        const labelEl = document.createElement('label');
+        labelEl.className = 'slider-label';
+        labelEl.htmlFor = sliderId;
+        labelEl.textContent = activePane==='marks' ? 'Mark Rating:' : 'Blind Rating:';
+
+        const minusBtn = document.createElement('button');
+        minusBtn.type = 'button'; minusBtn.className = 'nudge'; minusBtn.setAttribute('aria-label','Decrease by 0.5'); minusBtn.textContent = '−';
+
         const slider = document.createElement('input');
-        slider.type = 'range'; slider.min='0'; slider.max='10'; slider.step='0.5';
+        slider.id = sliderId; slider.type = 'range'; slider.min = '0'; slider.max = '10'; slider.step = '0.5';
         const cur = bucket[item.id]?.score ?? 0;
         slider.value = String(cur);
-        const out = document.createElement('div');
-        out.className = 'slider-val';
-        out.textContent = Number(cur).toFixed(1);
-        slider.addEventListener('input', ()=>{
-          const val = Number(slider.value);
-          out.textContent = val.toFixed(1);
-          (bucket[item.id] ||= { score:0, flags:{} }).score = val;
-          scheduleSave();
-        });
-        sliderRow.append(slider, out);
 
+        const plusBtn = document.createElement('button');
+        plusBtn.type = 'button'; plusBtn.className = 'nudge'; plusBtn.setAttribute('aria-label','Increase by 0.5'); plusBtn.textContent = '+';
+
+        const out = document.createElement('div');
+        out.className = 'slider-val'; out.textContent = Number(cur).toFixed(1);
+
+        function apply(val){
+          const snapped = Math.max(0, Math.min(10, Math.round(val*2)/2));
+          slider.value = String(snapped);
+          out.textContent = snapped.toFixed(1);
+          (bucket[item.id] ||= { score:0, flags:{} }).score = snapped;
+          scheduleSave();
+        }
+
+        slider.addEventListener('input', ()=> apply(parseFloat(slider.value)));
+        minusBtn.addEventListener('click', ()=> apply(parseFloat(slider.value) - 0.5));
+        plusBtn.addEventListener('click',  ()=> apply(parseFloat(slider.value) + 0.5));
+
+        sliderRow.append(labelEl, minusBtn, slider, plusBtn, out);
         card.append(head, sliderRow);
         scoreList.appendChild(card);
       });
@@ -526,40 +687,36 @@
       }
     }
 
-    /* ---------------- Radial menu (CROSS layout) ---------------- */
+    /* ---------------- Radial menu (CROSS layout, ALWAYS VISIBLE) ---------------- */
     const radial = document.getElementById('radialOverlay');
     const wheelEl = document.getElementById('wheel');
     const wheelTitle = document.getElementById('wheelTitle');
     const centerCancel = document.getElementById('centerCancel');
 
-    let currentRadial = { id:null, defs:null, bucket:null };
+    let currentRadial = { id:null, paneKey:null };
 
-    function openRadialFor(itemId, defs, bucket){
-      currentRadial = { id:itemId, defs, bucket };
+    function openRadialFor(itemId, defs){
+      currentRadial = { id:itemId, paneKey: activePane };
       wheelTitle.textContent = `${activePane==='marks'?'Marks':'Blinds'} — Flags`;
 
       // clear old buttons
       [...wheelEl.querySelectorAll('.rad-btn')].forEach(n => n.remove());
 
-      // build position buckets: top(4), bottom(4), left(1), right(1)
-      const top    = defs.slice(0,4);
-      const bottom = defs.slice(4,8);
-      const left   = defs[8] ? [defs[8]] : [];
-      const right  = defs[9] ? [defs[9]] : [];
+      // Only render keys that exist in this pane's defs
+      const allowed = new Set(defs.map(d=>d.key));
+      const labelFor = (k) => (defs.find(d=>d.key===k)?.label) || k;
+      const fromKeys = (keys) => keys.filter(k=>allowed.has(k)).map(k => ({ key:k, label: labelFor(k) }));
 
-      const created = {
-        top: top.map(makeBtn),
-        bottom: bottom.map(makeBtn),
-        left: left.map(makeBtn),
-        right: right.map(makeBtn)
-      };
+      const top    = fromKeys(FLAG_LAYOUT.up).map(makeBtn);
+      const bottom = fromKeys(FLAG_LAYOUT.down).map(makeBtn);
+      const left   = fromKeys(FLAG_LAYOUT.left).map(makeBtn);
+      const right  = fromKeys(FLAG_LAYOUT.right).map(makeBtn);
 
-      // position after inserted (so widths are known)
       requestAnimationFrame(()=>{
-        created.top.forEach((b,i)=> placeButton(b, 'top', i));
-        created.bottom.forEach((b,i)=> placeButton(b, 'bottom', i));
-        created.left.forEach((b)=> placeButton(b, 'left'));
-        created.right.forEach((b)=> placeButton(b, 'right'));
+        top.forEach((b,i)=> placeButton(b, 'top', i));
+        bottom.forEach((b,i)=> placeButton(b, 'bottom', i));
+        left.forEach((b,i)=> placeButton(b, 'left', i));
+        right.forEach((b,i)=> placeButton(b, 'right', i));
       });
 
       radial.classList.add('open');
@@ -569,12 +726,17 @@
         const b = document.createElement('button');
         b.className = 'rad-btn';
         b.textContent = fd.label;
-        const isOn = !!(bucket[itemId]?.flags?.[fd.key]);
-        if (isOn) b.classList.add('active');
+
+        const paneKey = currentRadial.paneKey;
+        const liveBucket = (scores[paneKey] ||= {});
+        const entry = (liveBucket[itemId] ||= { score:0, flags:{} });
+        if (entry.flags?.[fd.key]) b.classList.add('active');
+
         b.addEventListener('click', ()=>{
-          (bucket[itemId] ||= { score:0, flags:{} });
-          bucket[itemId].flags[fd.key] = !bucket[itemId].flags[fd.key];
-          b.classList.toggle('active', !!bucket[itemId].flags[fd.key]);
+          const lb = (scores[paneKey] ||= {});
+          const e  = (lb[itemId] ||= { score: entry.score || 0, flags: entry.flags || {} });
+          e.flags[fd.key] = !e.flags[fd.key];
+          b.classList.toggle('active', !!e.flags[fd.key]);
           scheduleSave();
         });
         wheelEl.appendChild(b);
@@ -582,32 +744,36 @@
       }
     }
 
-    // CROSS layout: 4 stack up at 12, 4 stack down at 6, 1 left, 1 right (pushed out)
+    // Cross layout placement with multi-stacks on left/right (always visible)
     function placeButton(el, spot, index = 0) {
       const W = wheelEl.clientWidth, H = wheelEl.clientHeight;
       const cx = W / 2, cy = H / 2;
 
-      const VSPACE = 8;     // vertical gap between stacked buttons
-      const R_TOP = 86;     // distance to first top button (closest to center)
-      const R_BOTTOM = 86;  // distance to first bottom button
-      const R_SIDE = 160;   // push side buttons outward to avoid overlap
+      const VSPACE = 8;
+      const R_TOP = 86;
+      const R_BOTTOM = 86;
+      const R_SIDE = 100;
 
       const w = el.offsetWidth, h = el.offsetHeight;
 
+      const offForIndex = (i) => { if (i===0) return 0; const k = Math.ceil(i/2); return (i%2===1 ? -k : k); };
+
       if (spot === 'left') {
+        const dy = offForIndex(index) * (h + VSPACE);
         el.style.left = (cx - R_SIDE - w) + 'px';
-        el.style.top  = (cy - h / 2) + 'px';
+        el.style.top  = (cy - h/2 + dy) + 'px';
       } else if (spot === 'right') {
+        const dy = offForIndex(index) * (h + VSPACE);
         el.style.left = (cx + R_SIDE) + 'px';
-        el.style.top  = (cy - h / 2) + 'px';
+        el.style.top  = (cy - h/2 + dy) + 'px';
       } else if (spot === 'top') {
-        const baseY = cy - R_TOP - h/2; // first at 12 o'clock
+        const baseY = cy - R_TOP - h/2;
         el.style.left = (cx - w/2) + 'px';
-        el.style.top  = (baseY - index * (h + VSPACE)) + 'px'; // stack upward
+        el.style.top  = (baseY - index * (h + VSPACE)) + 'px';
       } else if (spot === 'bottom') {
-        const baseY = cy + R_BOTTOM - h/2; // first at 6 o'clock
+        const baseY = cy + R_BOTTOM - h/2;
         el.style.left = (cx - w/2) + 'px';
-        el.style.top  = (baseY + index * (h + VSPACE)) + 'px'; // stack downward
+        el.style.top  = (baseY + index * (h + VSPACE)) + 'px';
       }
     }
 
@@ -618,13 +784,186 @@
       radial.setAttribute('aria-hidden','true');
     }
 
+    /* ========= RADIAL KENNEL NAVIGATOR (unchanged) ========= */
+    /** Parse "R2C3" or "R2C3H" -> { r:2, c:3, half:true? } */
+    function parseRC(rc) { const m=/^R(\d+)C(\d+)(H)?$/i.exec(rc||''); return m?{r:+m[1],c:+m[2],half:!!m[3]}:{r:NaN,c:NaN,half:false}; }
+    function fmtRC(r,c,half=false){ return `R${r}C${c}${half?'H':''}`; }
+    const clamp = (v,min,max)=>Math.max(min,Math.min(max,v));
+
+    async function fetchSlotsMap(sexN) {
+      const key = `${trailerNorm}-${sexN}`;
+      const snaps = await getDocs(collection(db, "trailerLayouts", key, "slots"));
+      const map = {};
+      snaps.forEach(d => { const rc = d.id.split("_").slice(2).join("_"); map[rc] = (d.data() || {}).dogName || ""; });
+      return map;
+    }
+
+    function boundsFromMap(map){
+      let maxR = 1, maxC = 1;
+      Object.keys(map||{}).forEach(k=>{
+        const m = /^R(\d+)C(\d+)/i.exec(k);
+        if (m){ maxR = Math.max(maxR, +m[1]); maxC = Math.max(maxC, +m[2]); }
+      });
+      return { maxR, maxC };
+    }
+
+    const overlayEl = document.getElementById('kennelOverlay');
+    const kWheelEl = document.querySelector('#kennelOverlay .k-wheel');
+    const fabEl     = document.getElementById('kennelFab');
+    const kCurNameEl= document.getElementById('kCurName');
+    const kCurSlotEl= document.getElementById('kCurSlot');
+
+    let slotsMale=null, slotsFemale=null;
+    let maleBounds={maxR:2,maxC:8}, femaleBounds={maxR:2,maxC:8};
+    let longPressTimer=null;
+
+    async function ensureLayouts() {
+      if (!slotsMale)   { slotsMale   = await fetchSlotsMap('male');   maleBounds   = boundsFromMap(slotsMale); }
+      if (!slotsFemale) { slotsFemale = await fetchSlotsMap('female'); femaleBounds = boundsFromMap(slotsFemale); }
+    }
+
+    function lookupName(rc, sexN){
+      if (!rc) return { name: '— Empty —', rcUsed: '' };
+      const map = (sexN==='male') ? slotsMale : slotsFemale;
+      const first = map?.[rc] || "";
+      if (first) return { name:first, rcUsed:rc };
+      const rcH = rc.endsWith('H') ? rc : (rc + 'H');
+      const second = map?.[rcH] || "";
+      return { name: (second || '— Empty —'), rcUsed: (second ? rcH : rc) };
+    }
+
+    function mirrorRC(rc, toSex){
+      const { r, c } = parseRC(rc);
+      const b = (toSex==='female') ? femaleBounds : maleBounds;
+      const mc = b.maxC || 1;
+      const mirroredC = clamp(mc - c + 1, 1, mc);
+      return fmtRC(clamp(r,1,b.maxR||1), mirroredC);
+    }
+
+    const LOOKAHEAD_STEPS = 3;
+
+    function isOccupiedInfo(rc, sexN){
+      const info = lookupName(rc, sexN);
+      return (info.name && info.name !== '— Empty —') ? info : null;
+    }
+
+    function findNextOccupied(rc, sexN, dir, maxSteps){
+      const { r, c } = parseRC(rc);
+      const b = (sexN==='male') ? maleBounds : femaleBounds;
+      let stepR = 0, stepC = 0;
+      if (dir==='left')  stepC = -1;
+      if (dir==='right') stepC =  1;
+      if (dir==='up')    stepR = -1;
+      if (dir==='down')  stepR =  1;
+
+      for (let k = 1; k <= maxSteps; k++){
+        const r2 = r + stepR*k, c2 = c + stepC*k;
+        if (r2 < 1 || r2 > b.maxR || c2 < 1 || c2 > b.maxC) break;
+        const info = isOccupiedInfo(fmtRC(r2, c2), sexN);
+        if (info) return { rcUsed: info.rcUsed, dogName: info.name, sex: sexN, label: dir[0].toUpperCase()+dir.slice(1) };
+      }
+      return null;
+    }
+
+    function neighbors(rc, sexN) {
+      const { r } = parseRC(rc);
+      const sameBounds = (sexN==='male') ? maleBounds : femaleBounds;
+      const opp = (sexN==='male') ? 'female' : 'male';
+
+      const leftOpt  = findNextOccupied(rc, sexN, 'left',  LOOKAHEAD_STEPS);
+      const rightOpt = findNextOccupied(rc, sexN, 'right', LOOKAHEAD_STEPS);
+      const upOpt = (r > 1) ? findNextOccupied(rc, sexN, 'up', 1) : null;
+
+      let bottom;
+      if (r < sameBounds.maxR) {
+        const downOpt = findNextOccupied(rc, sexN, 'down', 1);
+        if (downOpt) bottom = { key:'down', ...downOpt };
+        else         bottom = { key:'swap', label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex: opp };
+      } else {
+        bottom = { key:'swap', label:(opp==='female'?'Female':'Male'), rc: mirrorRC(rc, opp), sex: opp };
+      }
+
+      const out = [];
+      if (leftOpt)  out.push({ key:'left',  ...leftOpt  });
+      if (rightOpt) out.push({ key:'right', ...rightOpt });
+      if (upOpt)    out.push({ key:'up',    ...upOpt    });
+      out.push(bottom);
+      return out;
+    }
+
+    async function openWheel() {
+      await ensureLayouts();
+
+      const rc = slotNum;
+      const sexN = sexNorm;
+      const curr = lookupName(rc, sexN);
+      const curName = (dog && dog.name) ? dog.name : curr.name;
+
+      kCurNameEl.textContent = curName || 'Unassigned';
+      kCurSlotEl.textContent = curr.rcUsed;
+
+      kWheelEl.querySelectorAll('.k-item').forEach(n => n.remove());
+
+      const options = {};
+      neighbors(rc, sexN).forEach(n => {
+        const baseRc = n.rcUsed ?? n.rc;
+        const info = (n.dogName && baseRc)
+          ? { name: n.dogName, rcUsed: baseRc }
+          : lookupName(baseRc, n.sex);
+
+        if (info.rcUsed === curr.rcUsed && n.sex === sexN) return;
+        options[n.key] = { ...n, rcUsed: info.rcUsed, dogName: info.name, label: n.label };
+      });
+
+      function placeButton(dx, dy, opt, fallbackLabel) {
+        if (!opt) return;
+        const title = opt.label || fallbackLabel;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'k-item';
+        btn.style.left = '50%';
+        btn.style.top  = '50%';
+        btn.style.transform = `translate(-50%,-50%) translate(${dx}px, ${dy}px)`;
+        btn.innerHTML = `<b>${opt.dogName || '—'}</b><small>${title} · ${opt.sex==='female'?'♀':'♂'} · ${opt.rcUsed}</small>`;
+        btn.addEventListener('click', () => {
+          const url = new URL(location.href);
+          url.searchParams.set('sex', opt.sex);
+          url.searchParams.set('slot', opt.rcUsed);
+          location.href = url.toString();
+        });
+        kWheelEl.appendChild(btn);
+      }
+
+      const R = 100;
+      placeButton(-R, 0, options.left,  'Left');
+      placeButton( R, 0, options.right, 'Right');
+      placeButton( 0,-R, options.up,    'Up');
+      placeButton( 0, R, options.down || options.swap, (options.down?.label) || (options.swap?.label) || 'Down');
+
+      overlayEl.classList.add('open');
+      overlayEl.setAttribute('aria-hidden', 'false');
+    }
+
+    function closeWheel(){
+      overlayEl.classList.remove('open');
+      overlayEl.setAttribute('aria-hidden', 'true');
+    }
+
+    document.getElementById('kennelFab').addEventListener('click', openWheel);
+    overlayEl.addEventListener('click', (e)=> { if (e.target === overlayEl) closeWheel(); });
+    dogCard.addEventListener('pointerdown', () => { longPressTimer = setTimeout(openWheel, 450); });
+    ['pointerup','pointerleave','pointercancel','dragstart'].forEach(ev=>{
+      dogCard.addEventListener(ev, ()=>{ clearTimeout(longPressTimer); });
+    });
+    /* ========= /RADIAL ========= */
+
     /* ---------------- Boot ---------------- */
     async function boot(){
       if (!trainerId) return showTrainerPrompt();
       ctxEl.textContent = `Trainer: ${trainerId}`;
+      if (QR_MISSING) { offerStartOnce(); return; }
       await switchDay(ymd(new Date()));
-      await attachDogListener();
-      if (trainerId) attachSetupsListener();
+      attachDogListener();
     }
 
     if (trainerId) boot(); else showTrainerPrompt();
