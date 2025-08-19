@@ -137,6 +137,44 @@
   </div>
   <div class="muted" id="ctx">Loading…</div>
 
+
+<!-- Context setup overlay (trainer → trailer → sex) -->
+<div class="overlay" id="ctxOverlay" aria-hidden="true">
+  <div class="overlay-card" style="background:#fff; padding:18px; border-radius:12px; min-width:300px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2);">
+    <h3 id="ctxStepTitle" style="margin:0 0 12px;">Who are you?</h3>
+
+    <!-- Step 1: Trainer -->
+    <div id="ctxStepTrainer" class="ctx-step">
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn primary" data-ctx-trainer="Scott">Scott</button>
+        <button class="btn primary" data-ctx-trainer="Cody">Cody</button>
+        <button class="btn primary" data-ctx-trainer="Brian">Brian</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Trailer -->
+    <div id="ctxStepTrailer" class="ctx-step" style="display:none;">
+      <div class="muted" style="margin-bottom:8px;">Pick the trailer:</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn" data-ctx-trailer="scott">Scott's Trailer</button>
+        <button class="btn" data-ctx-trailer="cody">Cody's Trailer</button>
+        <button class="btn" data-ctx-trailer="brian">Brian's Trailer</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Sex -->
+    <div id="ctxStepSex" class="ctx-step" style="display:none;">
+      <div class="muted" style="margin-bottom:8px;">Which side of trailer?</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button class="btn" data-ctx-sex="male">Male</button>
+        <button class="btn" data-ctx-sex="female">Female</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
   <!-- Trainer chooser overlay -->
   <div class="overlay" id="trainerOverlay">
     <div style="background:#fff; padding:18px; border-radius:12px; min-width:280px; border:1px solid #e5e5e5; box-shadow:0 10px 30px rgba(0,0,0,.2);">
@@ -323,12 +361,10 @@
     const overlayPick = document.getElementById('trainerOverlay');
     const changeUserLink = document.getElementById('changeUserLink');
     changeUserLink.addEventListener('click', (e) => {
-      e.preventDefault();
-      const url = new URL(location.href);
-      url.searchParams.delete('trainer');
-      history.replaceState(null, '', url.toString());
-      showTrainerPrompt();
-    });
+  e.preventDefault();
+  showCtxStep('trainer');   // start at trainer step
+});
+
     function showTrainerPrompt(){
       overlayPick.classList.add('open');
       overlayPick.querySelectorAll('button[data-trainer]').forEach(btn=>{
@@ -783,6 +819,80 @@
       radial.classList.remove('open');
       radial.setAttribute('aria-hidden','true');
     }
+	
+	/* ========= Context Wizard (trainer/trailer/sex) ========= */
+const ctxOverlay     = document.getElementById('ctxOverlay');
+const ctxStepTitle   = document.getElementById('ctxStepTitle');
+const ctxSteps = {
+  trainer: document.getElementById('ctxStepTrainer'),
+  trailer: document.getElementById('ctxStepTrailer'),
+  sex:     document.getElementById('ctxStepSex'),
+};
+
+// Helper to build a URL with one param changed
+function urlWith(k, v){
+  const url = new URL(location.href);
+  if (v == null || v === '') url.searchParams.delete(k);
+  else url.searchParams.set(k, v);
+  return url;
+}
+
+function showCtxStep(name){
+  Object.values(ctxSteps).forEach(el => el.style.display = 'none');
+  ctxSteps[name].style.display = 'block';
+  ctxStepTitle.textContent =
+    name === 'trainer' ? 'Who are you?' :
+    name === 'trailer' ? 'Pick the trailer' :
+    'Which side of trailer?';
+  ctxOverlay.classList.add('open');
+  ctxOverlay.setAttribute('aria-hidden','false');
+}
+
+function closeCtxOverlay(){
+  ctxOverlay.classList.remove('open');
+  ctxOverlay.setAttribute('aria-hidden','true');
+}
+
+/** Open starting at the first missing piece (ignoring slot) */
+function openCtxOverlay(){
+  const missing = !trainerId ? 'trainer' : (!trailer ? 'trailer' : (!sex ? 'sex' : null));
+  if (!missing) return;
+  showCtxStep(missing);
+}
+
+ctxOverlay.addEventListener('click', (e)=>{ if (e.target === ctxOverlay) closeCtxOverlay(); });
+
+// Step handlers
+document.querySelectorAll('[data-ctx-trainer]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const v = btn.dataset.ctxTrainer;              // Scott/Cody/Brian
+    trainerId = v;
+    history.replaceState(null, '', urlWith('trainer', v).toString());
+    ctxEl.textContent = `Trainer: ${trainerId}`;
+    if (!trailer) showCtxStep('trailer');
+    else if (!sex) showCtxStep('sex');
+    else closeCtxOverlay();
+  });
+});
+
+document.querySelectorAll('[data-ctx-trailer]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const v = btn.dataset.ctxTrailer;              // scott/cody/brian (slug)
+    history.replaceState(null, '', urlWith('trailer', v).toString());
+    if (!sex) showCtxStep('sex'); else closeCtxOverlay();
+  });
+});
+
+document.querySelectorAll('[data-ctx-sex]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const v = btn.dataset.ctxSex;                  // male/female
+    const url = urlWith('sex', v);
+    // Finalize: reload so all consts (like slotId, QR_MISSING) recompute cleanly.
+    location.href = url.toString();
+  });
+});
+/* ========= /Context Wizard ========= */
+
 
     /* ========= RADIAL KENNEL NAVIGATOR (unchanged) ========= */
     /** Parse "R2C3" or "R2C3H" -> { r:2, c:3, half:true? } */
@@ -966,7 +1076,12 @@
       attachDogListener();
     }
 
-    if (trainerId) boot(); else showTrainerPrompt();
+    if (trainerId && trailer && sex) {
+  boot();
+} else {
+  openCtxOverlay();
+}
+
   </script>
 </body>
 </html>
