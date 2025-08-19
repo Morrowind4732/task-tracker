@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Scoring V2</title>
+<title>Ratings</title>
 
 <style>
   :root { --gap:12px; --border:#ddd; --chip-bg:#f5f5f7; --accent:#0b74ff; }
@@ -178,6 +178,49 @@
 @media (max-width: 420px) {
   .score-card { padding-right: 80px; }
 }
+
+/* Keep the rating controls on ONE line */
+.score-card .slider-row{
+  display: grid;
+  grid-template-columns: max-content 48px 1fr 48px max-content; /* label | − | slider | + | value */
+  align-items: center;
+  column-gap: 12px;
+}
+
+/* prevent label/value from breaking */
+.score-card .slider-label,
+.score-card .slider-val{ white-space: nowrap; }
+
+/* slider should take all leftover width */
+.score-card .slider-row input[type="range"]{
+  width: 100%;
+  min-width: 0;  /* critical so it can shrink */
+}
+
+/* make the +/- consistent and compact */
+.score-card .nudge{
+  width: 48px; height: 48px;  /* tweak if you want larger/smaller */
+  border-radius: 10px;
+}
+
+/* Bold, tabular numeric readout */
+.score-card .slider-val{
+  font-weight: 800;                 /* ← bold number */
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* If you want to *force* one line even on tiny screens, keep this.
+   If you prefer to wrap on very small phones, remove this block. */
+@media (max-width: 420px){
+  .score-card .slider-row{
+    grid-template-columns: max-content 40px 1fr 40px max-content;
+  }
+}
+
+/* add anywhere in your <style> */
+.hero img { display:none; }
+
 
 </style>
 </head>
@@ -851,7 +894,7 @@ startFemaleBtn?.addEventListener('click', ()=>{
       const VSPACE = 8;
       const R_TOP = 86;
       const R_BOTTOM = 86;
-      const R_SIDE = 100;
+      const R_SIDE = 73;
 
       const w = el.offsetWidth, h = el.offsetHeight;
 
