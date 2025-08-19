@@ -5,19 +5,28 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Voice Flag Tester</title>
 <style>
-  :root{--accent:#0b74ff;--bg:#f6f7fb;--card:#fff;--muted:#667085;--border:#e4e7ec;}
+  :root{
+    --accent:#0b74ff; --bg:#f6f7fb; --card:#fff; --muted:#667085; --border:#e4e7ec;
+    --danger:#ef4444; --ok:#16a34a;
+  }
+  * { box-sizing: border-box; }
   body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#101828;}
   header{padding:20px 24px 8px;}
-  h1{margin:0 0 6px;font-size:32px;letter-spacing:.2px}
+  h1{margin:0 0 6px;font-size:28px;letter-spacing:.2px}
   .sub{color:var(--muted);font-size:14px}
-  .wrap{padding:0 24px 24px;max-width:1100px}
+  .wrap{padding:0 24px 24px;max-width:1100px;margin:0 auto}
   .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
   .items{display:flex;flex-direction:column;gap:14px}
   .row{display:grid;grid-template-columns:minmax(160px,260px) 1fr auto;gap:14px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:14px;background:#fafafa}
   .kind{font-size:12px;font-weight:800;color:#344054}
   .title{font-size:16px;font-weight:800}
-  .chips{display:flex;gap:8px;flex-wrap:wrap}
-  .chip{border:1px solid #d0d5dd;background:#fff;border-radius:999px;padding:6px 10px;font-size:13px;user-select:none}
+  /* FLAGS AREA → responsive columns */
+  .chips{
+    display:grid; gap:8px;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    align-items:start;
+  }
+  .chip{border:1px solid #d0d5dd;background:#fff;border-radius:999px;padding:6px 10px;font-size:13px;user-select:none;display:block}
   .chip.on{background:#eef4ff;border-color:#c7d7fe}
   .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .mic{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#fff;border:1px solid #d0d5dd;cursor:pointer;font-weight:700}
@@ -25,21 +34,47 @@
   .row.listening .mic{border-color:#ffb4b4;box-shadow:0 0 0 4px rgba(255,59,48,.12)}
   .row.listening .mic .dot{background:#ff3b30;animation:pulse 1s infinite alternate}
   @keyframes pulse{from{transform:scale(.9)}to{transform:scale(1.2)}}
-  input[type=range]{width:240px}
+  input[type=range]{width:220px}
   .score{font-weight:800;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
-  .tiny{color:var(--muted);font-size:12px}
-  .bar{display:flex;gap:10px;align-items:center;padding:0 24px 12px}
+  .bar{display:flex;gap:10px;align-items:center;padding:0 24px 12px;flex-wrap:wrap}
   .status{color:var(--muted);font-weight:700}
   .btn{appearance:none;border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.ghost{background:#fff}
+  .btn.small{padding:6px 8px;border-radius:8px;font-size:12px}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:#fff;font-size:12px}
+  .pill.ok{border-color:#c7f1d9;background:#ecfdf5;color:#065f46}
+  .pill.bad{border-color:#ffd5d5;background:#fff1f1;color:#7f1d1d}
+
+  /* Overlay (missed phrases) */
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+  .overlay.open{display:flex;}
+  .sheet{width:min(720px,100%);max-height:86vh;overflow:auto;background:#fff;border-radius:16px;border:1px solid var(--border);box-shadow:0 20px 50px rgba(0,0,0,.25)}
+  .sheet-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border)}
+  .sheet-body{padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+  .missed-item{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;border:1px solid #ececec;background:#fafafa;padding:10px;border-radius:12px}
+  .missed-meta{display:flex;flex-direction:column;gap:4px}
+  .missed-phrase{font-weight:800}
+  .missed-row{color:#475467;font-size:12px}
+  .missed-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .sheet-foot{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end}
+  .hint{color:#475467;font-size:12px}
+
+  /* Overlay (master log) */
+  .log-list{display:flex;flex-direction:column;gap:8px}
+  .log-item{display:flex;justify-content:space-between;align-items:center;border:1px solid #ececec;background:#fafafa;padding:10px;border-radius:10px}
+  .count{font-variant-numeric:tabular-nums;font-weight:800}
 </style>
 </head>
 <body>
   <header>
     <h1>Voice Flag Tester</h1>
-    <div class="sub">Click a row’s 🎤 to speak; that utterance applies only to that row. You can say multiple flags and a score in one go.</div>
+    <div class="sub">Click a row’s 🎤; that utterance applies only to that row. Say multiple flags and a score in one go.</div>
   </header>
+
   <div class="bar">
     <button id="clearBtn" class="btn">Clear all</button>
+    <button id="viewLogBtn" class="btn ghost">Unassigned Log</button>
     <div id="status" class="status">Status: idle</div>
   </div>
 
@@ -50,46 +85,98 @@
 
     <div class="card" style="margin-top:12px">
       <strong>Say things like…</strong>
-      <ul class="tiny">
+      <ul class="sub" style="margin:6px 0 0 18px">
         <li>“flag big hunt and overran, rating seven point five”</li>
         <li>“remove didn’t mark and poor initial, increase by point five”</li>
         <li>“clear flags, score 6”</li>
         <li>“7.5” (just a number sets the score)</li>
       </ul>
-      <div class="tiny">
-        Flags: Big Hunt, Marginal Hunt, Overran, Short Checkdown, Backside of Gun, Handled, Cast Refusal, Sit on Whistle, Didn’t Mark, Poor Initial, Headswing, Broke, Switched, No-Go, Poison Pick Up, No Pick Up, Stood Out, Popped.
+    </div>
+  </div>
+
+  <!-- Missed phrases overlay -->
+  <div id="missedOverlay" class="overlay" aria-hidden="true">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div><strong>Unassigned phrases</strong></div>
+        <div class="hint">These didn’t map to flags. Tap 🎤 to retry or apply a suggestion.</div>
+      </div>
+      <div id="missedList" class="sheet-body"></div>
+      <div class="sheet-foot">
+        <button class="btn" id="missedClose">Close</button>
+        <button class="btn ghost" id="missedClear">Dismiss all</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Master log overlay -->
+  <div id="logOverlay" class="overlay" aria-hidden="true">
+    <div class="sheet">
+      <div class="sheet-head">
+        <div><strong>Unassigned phrases – log</strong></div>
+        <div class="hint">Kept in localStorage to spot trends. Clear anytime.</div>
+      </div>
+      <div id="logList" class="sheet-body log-list"></div>
+      <div class="sheet-foot">
+        <button class="btn" id="logClose">Close</button>
+        <button class="btn danger" style="border-color:#fca5a5;color:#7f1d1d" id="logClear">Clear log</button>
       </div>
     </div>
   </div>
 
 <script>
-/* ---------------- Flag dictionary with generous patterns ---------------- */
+/* ---------------- Flag dictionary & variants (for positioning/fuzzy) ---------------- */
 const FLAGS = [
-  { key:'bigHunt',        label:'Big Hunt',         rx:[/big\s*hunt/] },
-  { key:'marginalHunt',   label:'Marginal Hunt',    rx:[/marginal\s*hunt/] },
-  { key:'overran',        label:'Overran',          rx:[/\boverran\b|\bover[-\s]?ran\b|\bover[-\s]?run\b/] },
-  { key:'shortCheckDown', label:'Short Checkdown',  rx:[/short\s*check\s*down|short\s*checkdown/] },
-  { key:'backSideOfGun',  label:'Backside of Gun',  rx:[/back\s*side\s*of\s*gun|backside\s*of\s*gun/] },
+  { key:'bigHunt',        label:'Big Hunt',         variants:['big hunt'] },
+  { key:'marginalHunt',   label:'Marginal Hunt',    variants:['marginal hunt'] },
+  { key:'overran',        label:'Overran',          variants:['overran','over run','over-run','over run'] },
+  { key:'shortCheckDown', label:'Short Checkdown',  variants:['short checkdown','short check down'] },
+  { key:'backSideOfGun',  label:'Backside of Gun',  variants:['backside of gun','back side of gun'] },
 
-  { key:'handled',        label:'Handled',          rx:[/\bhandled?\b/] },
-  { key:'castRefusal',    label:'Cast Refusal',     rx:[/cast\s*refusal/] },
-  { key:'sitOnWhistle',   label:'Sit on Whistle',   rx:[/sit\s*on\s*whistle/] },
-  { key:'didntMark',      label:"Didn't Mark",      rx:[/didn'?t\s*mark|didnt\s*mark/] }, // apostrophe optional
-  { key:'poorInitial',    label:'Poor Initial',     rx:[/poor\s*initial/] },
+  { key:'handled',        label:'Handled',          variants:['handled'] },
+  { key:'castRefusal',    label:'Cast Refusal',     variants:['cast refusal'] },
+  { key:'sitOnWhistle',   label:'Sit on Whistle',   variants:['sit on whistle'] },
+  { key:'didntMark',      label:"Didn't Mark",      variants:["didn't mark",'didnt mark'] },
+  { key:'poorInitial',    label:'Poor Initial',     variants:['poor initial'] },
 
-  { key:'headswing',      label:'Headswing',        rx:[/head\s*swing|headswing/] },
-  { key:'break',          label:'Broke',            rx:[/\bbroke?\b|\bbreak\b/] },
-  { key:'switched',       label:'Switched',         rx:[/\bswitch(?:ed|)\b/] },
-  { key:'noGo',           label:'No-Go',            rx:[/\bno[-\s]?go\b/] },
+  { key:'headswing',      label:'Headswing',        variants:['headswing','head swing'] },
+  { key:'break',          label:'Broke',            variants:['broke','break'] },
+  { key:'switched',       label:'Switched',         variants:['switched','switch'] },
+  { key:'noGo',           label:'No-Go',            variants:['no go','no-go'] },
 
-  { key:'pickedUpPoison', label:'Poison Pick Up',   rx:[/poison\s*pick\s*up|picked\s*up\s*poison/] },
-  { key:'noPickUp',       label:'No Pick Up',       rx:[/\bno\s*pick\s*up\b|\bno\s*pickup\b/] },
-  { key:'stoodOut',       label:'Stood Out',        rx:[/stood\s*out/] },
-  { key:'popped',         label:'Popped',           rx:[/\bpopped?\b/] },
+  { key:'pickedUpPoison', label:'Poison Pick Up',   variants:['poison pick up','picked up poison'] },
+  { key:'noPickUp',       label:'No Pick Up',       variants:['no pick up','no pickup'] },
+  { key:'stoodOut',       label:'Stood Out',        variants:['stood out'] },
+  { key:'popped',         label:'Popped',           variants:['popped'] },
 ];
 const FLAG_MAP = Object.fromEntries(FLAGS.map(f=>[f.key,f]));
 
-/* ---------------- Demo data ---------------- */
+/* Regex bundle for fast detection (multi-match) */
+const FLAG_RX = {
+  bigHunt:        [/big\s*hunt/gi],
+  marginalHunt:   [/marginal\s*hunt/gi],
+  overran:        [/\boverran\b/gi, /\bover[-\s]?run\b/gi],
+  shortCheckDown: [/short\s*check\s*down/gi, /short\s*checkdown/gi],
+  backSideOfGun:  [/back\s*side\s*of\s*gun/gi, /backside\s*of\s*gun/gi],
+
+  handled:        [/\bhandled?\b/gi],
+  castRefusal:    [/cast\s*refusal/gi],
+  sitOnWhistle:   [/sit\s*on\s*whistle/gi],
+  didntMark:      [/didn'?t\s*mark/gi],
+  poorInitial:    [/poor\s*initial/gi],
+
+  headswing:      [/head\s*swing/gi, /\bheadswing\b/gi],
+  break:          [/\bbroke?\b/gi, /\bbreak\b/gi],
+  switched:       [/\bswitch(?:ed|)\b/gi],
+  noGo:           [/\bno[-\s]?go\b/gi],
+
+  pickedUpPoison: [/poison\s*pick\s*up/gi, /picked\s*up\s*poison/gi],
+  noPickUp:       [/\bno\s*pick\s*up\b/gi, /\bno\s*pickup\b/gi],
+  stoodOut:       [/stood\s*out/gi],
+  popped:         [/\bpopped?\b/gi],
+};
+
+/* ---------------- Demo items ---------------- */
 const items = [
   { id:'m1', kind:'Mark',  title:'#1 — 78 yards',  score:0, flags:{} },
   { id:'m2', kind:'Mark',  title:'#2 — 49 yards',  score:0, flags:{} },
@@ -109,7 +196,6 @@ function chip(key,on){
   el.textContent=FLAG_MAP[key].label;
   return el;
 }
-
 function renderRow(it){
   const row=document.createElement('div'); row.className='row'; row.id='row-'+it.id;
 
@@ -133,14 +219,12 @@ function renderRow(it){
   row.append(left,mid,right);
   itemsEl.appendChild(row);
 }
-
 function renderAll(){ itemsEl.innerHTML=''; items.forEach(renderRow); }
 renderAll();
 
 /* ---------------- Speech engine ---------------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec=null, activeId=null;
-
+let rec=null, activeId=null, activeFix=null; // activeFix = { itemId, phrase, suggestKey }
 if (SR){
   rec=new SR(); rec.lang='en-US'; rec.interimResults=false; rec.continuous=false;
   rec.onstart=()=>setStatus('listening…');
@@ -148,18 +232,41 @@ if (SR){
   rec.onend=()=>{ setStatus('idle'); endListen(); };
   rec.onresult=e=>{
     const tx=[...e.results].map(r=>r[0].transcript).join(' ').trim();
-    if (activeId) applyTranscript(activeId, tx);
+    if (activeFix){
+      // targeted retry: apply to its row, then remove if matched suggestion or any flag detected
+      const before = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
+      applyTranscript(activeFix.itemId, tx);
+      const after = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
+      const changed = diffFlags(before, after);
+      const matchedSuggestion = changed.added.includes(activeFix.suggestKey) || changed.toggled.includes(activeFix.suggestKey);
+      if (matchedSuggestion || (changed.added.length + changed.toggled.length) > 0) {
+        removeMissed(activeFix.itemId, activeFix.phrase);
+        renderMissedOverlay();
+      }
+      activeFix=null;
+    } else if (activeId) {
+      applyTranscript(activeId, tx);
+    }
   };
 }else{
   setStatus('Speech API not supported in this browser.');
 }
-
 function setStatus(s){ statusEl.textContent='Status: '+s; }
 function startListeningFor(id){
   if(!rec){ alert('Speech API not supported'); return; }
   try{ rec.abort(); }catch{}
+  activeFix=null;
   activeId=id;
   document.querySelectorAll('.row').forEach(r=>r.classList.toggle('listening', r.id==='row-'+id));
+  rec.start();
+}
+function startFixListening(itemId, phrase, suggestKey){
+  if(!rec){ alert('Speech API not supported'); return; }
+  try{ rec.abort(); }catch{}
+  activeId=null;
+  activeFix={ itemId, phrase, suggestKey };
+  document.querySelectorAll('.row').forEach(r=>r.classList.remove('listening'));
+  document.getElementById('row-'+itemId)?.classList.add('listening');
   rec.start();
 }
 function endListen(){
@@ -167,28 +274,24 @@ function endListen(){
   document.querySelectorAll('.row').forEach(r=>r.classList.remove('listening'));
 }
 
-/* ---------------- NLP: numbers & intents (multi-flag) ---------------- */
+/* ---------------- NLP core ---------------- */
+function normalize(s){
+  return String(s||'')
+    .toLowerCase()
+    .replace(/[’‘']/g,"'")
+    .replace(/[^a-z0-9.\s-]/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
 const NUM_WORDS = {
   zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
   eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19,
   twenty:20, half:0.5
 };
-
-function normalize(s){
-  return String(s||'')
-    .toLowerCase()
-    .replace(/[’‘']/g,"'")         // unify apostrophes
-    .replace(/[^a-z0-9.\s-]/g,' ') // drop punctuation (keep dot)
-    .replace(/\s+/g,' ')
-    .trim();
-}
-
 function wordsToNumber(s){
   s=normalize(s);
   if(/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
-
   const tok=s.split(/\s+/);
-  // “seven point five”
   const i=tok.indexOf('point');
   if(i>-1){
     const A=tok.slice(0,i).join(' ');
@@ -199,63 +302,130 @@ function wordsToNumber(s){
   if(s in NUM_WORDS) return NUM_WORDS[s];
   return NaN;
 }
-
 function quant05(n){ return Math.max(0, Math.min(10, Math.round(n*2)/2)); }
 
-function detectFlags(tx){
+function detectFlagsMulti(tx){
   const found=new Set();
-  FLAGS.forEach(f=>{ if(f.rx.some(rx=>rx.test(tx))) found.add(f.key); });
-  return [...found];
+  const hits=[]; // {key,start,end}
+  for (const f of FLAGS){
+    for (const rx of (FLAG_RX[f.key] || [])){
+      rx.lastIndex = 0;
+      let m;
+      while ((m = rx.exec(tx)) !== null){
+        found.add(f.key);
+      }
+    }
+    // position by variants (first occurrence)
+    let best=null;
+    for (const v of f.variants){
+      const ix = tx.indexOf(v);
+      if (ix>=0 && (best==null || ix<best.start)){
+        best = {start:ix, end:ix+v.length};
+      }
+    }
+    if (best) hits.push({ key:f.key, start:best.start, end:best.end });
+  }
+  hits.sort((a,b)=>a.start-b.start);
+  return { keys:[...found], hits };
 }
 
-/* Parse one utterance → { add:Set, remove:Set, toggle:Set, clearAll:bool, score:number|null, adjust:+/- } */
+/* Parse utterance → intents + missed phrases (between hits) */
 function parseUtterance(raw){
-  const tx=normalize(raw);
-
+  const tx = normalize(raw);
   const intents={ add:new Set(), remove:new Set(), toggle:new Set(), clearAll:false, score:null, adjust:0 };
   if(/\bclear\s+flags?\b/.test(tx)) intents.clearAll=true;
 
-  const keys=detectFlags(tx);
-  const isRemove=/\b(remove|clear|unset|delete)\b/.test(tx);
-  const isAdd=/\b(add|flag|set)\b/.test(tx);
-  keys.forEach(k=>{
-    if(isRemove) intents.remove.add(k);
-    else if(isAdd) intents.add.add(k);
-    else intents.toggle.add(k); // default = toggle
-  });
-
-  // score: explicit “rating/score/set … <num>”
+  // score explicit
   let m=tx.match(/\b(?:rating|score|set|make)\b(?:\s*(?:it|to|at))?\s+([a-z0-9.\s-]+)(?!.*\b(?:by)\b)/);
-  if(m){
-    const n=wordsToNumber(m[1].trim());
-    if(Number.isFinite(n)) intents.score = quant05(n);
-  }else{
-    // bare number only? (no “increase by” or “decrease by” present)
-    if(/^\d+(\.\d+)?$/.test(tx) || (wordsToNumber(tx), Number.isFinite(wordsToNumber(tx)))){
-      const n=wordsToNumber(tx);
-      if(Number.isFinite(n)) intents.score=quant05(n);
+  if(m){ const n=wordsToNumber(m[1].trim()); if(Number.isFinite(n)) intents.score=quant05(n); }
+  else {
+    if(/^\d+(\.\d+)?$/.test(tx) || Number.isFinite(wordsToNumber(tx))){
+      const n=wordsToNumber(tx); if(Number.isFinite(n)) intents.score=quant05(n);
     }
   }
-
   // adjustments
   const inc=tx.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
   const dec=tx.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
-  if(inc && !dec){
-    const amt = inc[2] ? (Number.isFinite(wordsToNumber(inc[2])) ? wordsToNumber(inc[2]) : parseFloat(inc[2])) : 0.5;
-    intents.adjust += Number.isFinite(amt) ? amt : 0.5;
-  }
-  if(dec && !inc){
-    const amt = dec[2] ? (Number.isFinite(wordsToNumber(dec[2])) ? wordsToNumber(dec[2]) : parseFloat(dec[2])) : 0.5;
-    intents.adjust -= Number.isFinite(amt) ? amt : 0.5;
+  if(inc && !dec){ const amt = inc[2] ? (Number.isFinite(wordsToNumber(inc[2])) ? wordsToNumber(inc[2]) : parseFloat(inc[2])) : 0.5; intents.adjust += Number.isFinite(amt) ? amt : 0.5; }
+  if(dec && !inc){ const amt = dec[2] ? (Number.isFinite(wordsToNumber(dec[2])) ? wordsToNumber(dec[2]) : parseFloat(dec[2])) : 0.5; intents.adjust -= Number.isFinite(amt) ? amt : 0.5; }
+
+  // flags + hit spans
+  const { keys, hits } = detectFlagsMulti(tx);
+  const isRemove=/\b(remove|clear|unset|delete)\b/.test(tx);
+  const isAdd=/\b(add|flag|set)\b/.test(tx);
+  for (const k of keys){
+    if(isRemove) intents.remove.add(k);
+    else if(isAdd) intents.add.add(k);
+    else intents.toggle.add(k);
   }
 
-  return intents;
+  // infer "missed between known hits"
+  const missed = (hits.length>=2) ? inferMissedSegments(tx, hits) : [];
+  return { intents, missed, hits, keys };
 }
 
-/* ---------------- Apply to row (multi actions in one go) ---------------- */
+/* Heuristic: segments between detected flags that still have meaningful tokens */
+const STOPWORDS = /\b(?:and|then|uh|um|a|an|the|please|flag|set|add|remove|clear|by|to|at|score|rating|make|plus|minus|up|down|of)\b/gi;
+function cleanSegment(seg){
+  return seg.replace(/[^a-z0-9.\s-]/g,' ').replace(/\s+/g,' ').replace(STOPWORDS,' ').replace(/\s+/g,' ').trim();
+}
+function inferMissedSegments(tx, hits){
+  const out=[];
+  for (let i=0;i<hits.length-1;i++){
+    const a=hits[i], b=hits[i+1];
+    if (b.start <= a.end) continue;
+    const raw = tx.slice(a.end, b.start);
+    const cleaned = cleanSegment(raw);
+    if (cleaned && /[a-z]/.test(cleaned)){
+      // suggest likely flag via fuzzy
+      const suggestion = bestSuggestion(cleaned);
+      out.push({ raw: cleaned, suggestKey: suggestion?.key || null, suggestLabel: suggestion?.label || null,
+                 leftKey: a.key, rightKey: b.key });
+    }
+  }
+  return dedupeMissed(out);
+}
+function dedupeMissed(arr){
+  const seen=new Set(); const out=[];
+  for (const x of arr){
+    const k=x.raw.toLowerCase();
+    if(seen.has(k)) continue;
+    seen.add(k); out.push(x);
+  }
+  return out;
+}
+
+/* Fuzzy suggestion (Levenshtein) to nearest canonical phrase */
+function lev(a,b){
+  const m=a.length,n=b.length; const dp=Array.from({length:m+1},()=>Array(n+1).fill(0));
+  for(let i=0;i<=m;i++) dp[i][0]=i;
+  for(let j=0;j<=n;j++) dp[0][j]=j;
+  for(let i=1;i<=m;i++){
+    for(let j=1;j<=n;j++){
+      const cost = a[i-1]===b[j-1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i-1][j]+1, dp[i][j-1]+1, dp[i-1][j-1]+cost);
+    }
+  }
+  return dp[m][n];
+}
+function bestSuggestion(seg){
+  let best=null; const s=seg.toLowerCase();
+  for (const f of FLAGS){
+    for (const v of f.variants){
+      const d = lev(s, v);
+      const sim = 1 - d / Math.max(s.length, v.length);
+      if (!best || sim > best.sim) best = { key:f.key, label:f.label, sim };
+    }
+  }
+  return (best && best.sim >= 0.55) ? best : null; // threshold
+}
+
+/* ---------------- Apply to row, then surface missed overlay + logging ---------------- */
+function quantClamp(n){ return Math.max(0, Math.min(10, n)); }
+
 function applyTranscript(itemId, raw){
   const it=items.find(x=>x.id===itemId); if(!it) return;
-  const intents=parseUtterance(raw);
+  const { intents, missed } = parseUtterance(raw);
 
   if(intents.clearAll) it.flags = {};
 
@@ -265,10 +435,19 @@ function applyTranscript(itemId, raw){
 
   if(Number.isFinite(intents.score)) it.score=intents.score;
   if(intents.adjust!==0) it.score=quant05(it.score + intents.adjust);
+  it.score = quantClamp(it.score);
 
   syncRow(it);
-}
 
+  if (missed.length){
+    // build per-row missed items and log phrases
+    for (const m of missed){
+      addMissed(itemId, it.title, m.raw, m.suggestKey, m.suggestLabel);
+      logUnassigned(m.raw);
+    }
+    renderMissedOverlay();
+  }
+}
 function syncRow(it){
   const row=document.getElementById('row-'+it.id);
   if(!row) return;
@@ -279,10 +458,114 @@ function syncRow(it){
     ch.classList.toggle('on', !!it.flags[k]);
   });
 }
+function snapshotFlags(it){
+  const on = Object.entries(it.flags||{}).filter(([k,v])=>!!v).map(([k])=>k);
+  return { on: new Set(on) };
+}
+function diffFlags(before, after){
+  const b=[...before.on], a=[...after.on];
+  const added = a.filter(k=>!before.on.has(k));
+  const removed = b.filter(k=>!new Set(a).has(k));
+  // treat simple toggles as added for our purposes:
+  return { added, removed, toggled: added };
+}
+
+/* ---------------- Missed overlay state ---------------- */
+const missedOverlay = document.getElementById('missedOverlay');
+const missedListEl = document.getElementById('missedList');
+document.getElementById('missedClose').addEventListener('click', ()=> closeMissed());
+document.getElementById('missedClear').addEventListener('click', ()=> { missedItems.length=0; renderMissedOverlay(); });
+
+let missedItems = []; // { itemId, rowTitle, phrase, suggestKey?, suggestLabel? }
+function addMissed(itemId, rowTitle, phrase, suggestKey, suggestLabel){
+  const key = `${itemId}||${phrase.toLowerCase()}`;
+  if (missedItems.some(x => `${x.itemId}||${x.phrase.toLowerCase()}`===key)) return;
+  missedItems.push({ itemId, rowTitle, phrase, suggestKey, suggestLabel });
+}
+function removeMissed(itemId, phrase){
+  missedItems = missedItems.filter(x => !(x.itemId===itemId && x.phrase.toLowerCase()===phrase.toLowerCase()));
+}
+function openMissed(){ missedOverlay.classList.add('open'); missedOverlay.setAttribute('aria-hidden','false'); }
+function closeMissed(){ missedOverlay.classList.remove('open'); missedOverlay.setAttribute('aria-hidden','true'); }
+
+function renderMissedOverlay(){
+  missedListEl.innerHTML = '';
+  if (!missedItems.length){ closeMissed(); return; }
+
+  for (const m of missedItems){
+    const row = document.createElement('div'); row.className='missed-item';
+    const meta = document.createElement('div'); meta.className='missed-meta';
+    meta.innerHTML = `
+      <div class="missed-phrase">${m.phrase}</div>
+      <div class="missed-row">Row: ${m.rowTitle}</div>
+      ${m.suggestLabel ? `<div class="hint">Did you mean <b>${m.suggestLabel}</b>?</div>` : ''}
+    `;
+    const actions = document.createElement('div'); actions.className='missed-actions';
+    const mic = document.createElement('button'); mic.className='btn small'; mic.innerHTML='🎤 Say again';
+    mic.addEventListener('click', ()=> startFixListening(m.itemId, m.phrase, m.suggestKey||null));
+    actions.appendChild(mic);
+
+    if (m.suggestKey){
+      const quick = document.createElement('button'); quick.className='btn small primary';
+      quick.textContent = `✓ Apply ${m.suggestLabel}`;
+      quick.addEventListener('click', ()=>{
+        const it = items.find(x=>x.id===m.itemId); if (!it) return;
+        it.flags[m.suggestKey] = true;
+        syncRow(it);
+        removeMissed(m.itemId, m.phrase);
+        renderMissedOverlay();
+      });
+      actions.appendChild(quick);
+    }
+
+    const dismiss = document.createElement('button'); dismiss.className='btn small';
+    dismiss.textContent='Dismiss';
+    dismiss.addEventListener('click', ()=>{ removeMissed(m.itemId, m.phrase); renderMissedOverlay(); });
+    actions.appendChild(dismiss);
+
+    row.append(meta, actions);
+    missedListEl.appendChild(row);
+  }
+  openMissed();
+}
+
+/* ---------------- Master unassigned log (localStorage) ---------------- */
+const LOG_KEY = 'speech_unassigned_log_v1';
+function readLog(){ try{ return JSON.parse(localStorage.getItem(LOG_KEY)||'[]'); }catch{return[];} }
+function writeLog(arr){ localStorage.setItem(LOG_KEY, JSON.stringify(arr)); }
+function logUnassigned(phrase){
+  const p = phrase.toLowerCase();
+  const arr = readLog();
+  const idx = arr.findIndex(x=>x.phrase===p);
+  if (idx>=0){ arr[idx].count += 1; arr[idx].last = Date.now(); }
+  else { arr.push({ phrase:p, count:1, last:Date.now() }); }
+  writeLog(arr);
+}
+function clearLog(){ writeLog([]); }
+function renderLog(){
+  const listEl = document.getElementById('logList');
+  listEl.innerHTML='';
+  const arr = readLog().sort((a,b)=>b.count-a.count);
+  if (!arr.length){
+    const empty = document.createElement('div'); empty.className='hint'; empty.textContent='No data yet.';
+    listEl.appendChild(empty); return;
+  }
+  arr.forEach(x=>{
+    const row = document.createElement('div'); row.className='log-item';
+    const left = document.createElement('div'); left.innerHTML = `<strong>${x.phrase}</strong>`;
+    const right = document.createElement('div'); right.innerHTML = `<span class="count">${x.count}</span>`;
+    row.append(left, right); listEl.appendChild(row);
+  });
+}
+const logOverlay = document.getElementById('logOverlay');
+document.getElementById('viewLogBtn').addEventListener('click', ()=>{ renderLog(); logOverlay.classList.add('open'); });
+document.getElementById('logClose').addEventListener('click', ()=> logOverlay.classList.remove('open'));
+document.getElementById('logClear').addEventListener('click', ()=>{ clearLog(); renderLog(); });
 
 /* ---------------- Clear all ---------------- */
 document.getElementById('clearBtn').addEventListener('click',()=>{
   items.forEach(it=>{ it.flags={}; it.score=0; syncRow(it); });
+  missedItems.length=0; renderMissedOverlay();
   setStatus('cleared');
 });
 </script>
