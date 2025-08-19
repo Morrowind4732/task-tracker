@@ -201,6 +201,9 @@
   padding:8px 10px; border:1px solid #bbb; border-radius:10px; font-size:14px;
 }
 
+.ctas { display:flex; flex-direction:column; gap:8px; }
+.ctas .btn { width:100%; box-sizing:border-box; }
+
 
 </style>
 </head>
@@ -294,7 +297,11 @@
   </div>
   
   <div class="section" style="display:flex; justify-content:flex-end;">
+  <div class="section ctas">
   <button id="goToMapBtn" class="btn primary block cta">Go To Map</button>
+  <button id="goToScoresBtn" class="btn block">Go To Scores</button>
+</div>
+
 
 </div>
 
@@ -1202,6 +1209,14 @@ async function recentNearbySetupsSlow(centerLL, days = 60, withinMeters = 20){
     .sort((a,b) => a.dist - b.dist);
 }
 
+	const SCORES_URL = 'https://morrowind4732.github.io/task-tracker/profile.html';
+
+document.getElementById('goToScoresBtn')?.addEventListener('click', () => {
+  const url = new URL(SCORES_URL);
+  if (trainerId) url.searchParams.set('trainer', trainerId); // optional, matches your Map button
+  location.href = url.toString();
+});
+
 
 
 const getLocBtn = document.getElementById('getLocBtn');
@@ -1299,3 +1314,4 @@ if (trainerId) boot(); else showTrainerPrompt();
 </script>
 </body>
 </html>
+
