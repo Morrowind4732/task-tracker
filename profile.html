@@ -128,6 +128,57 @@
   .slider-label { font-weight:700; color:#333; min-width:72px; }
   .nudge { width:36px; height:36px; border-radius:8px; border:1px solid #bbb; background:#fff; font-weight:800; line-height:1; cursor:pointer; }
   .nudge:active { transform: translateY(1px); }
+  
+  /* Keep everything inside the light-grey card */
+.score-card {
+  position: relative;          /* anchor for the flag */
+  overflow: hidden;            /* no bleed */
+  padding-right: 72px;         /* room for the flag on the right */
+}
+
+/* Put the red flag INSIDE the card, top-right */
+.flag-btn {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  /* optional “red FAB” look */
+  background: #FFFFFF;
+  color: #fff;
+  border: none;
+  box-shadow: 0 6px 18px rgba(239,68,68,.35);
+}
+
+/* Avoid title running under the flag */
+.score-header { padding-right: 56px; }
+
+/* Prevent the slider row from overflowing on narrow screens */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;             /* allow wrapping on very small widths */
+}
+
+/* Let the range actually shrink in a flex row */
+.slider-row input[type="range"] {
+  flex: 1 1 160px;             /* grow and shrink, but not below ~160px */
+  min-width: 0;                /* critical for Chrome Android */
+}
+
+/* Keep the readout inside */
+.slider-val { flex: 0 0 52px; }
+
+/* A little extra padding for very narrow phones */
+@media (max-width: 420px) {
+  .score-card { padding-right: 80px; }
+}
+
 </style>
 </head>
 <body>
@@ -360,10 +411,17 @@
     /* ---------------- Trainer picker ---------------- */
     const overlayPick = document.getElementById('trainerOverlay');
     const changeUserLink = document.getElementById('changeUserLink');
-    changeUserLink.addEventListener('click', (e) => {
+changeUserLink.addEventListener('click', (e) => {
   e.preventDefault();
-  showCtxStep('trainer');   // start at trainer step
+  const url = new URL(location.href);
+  ['trainer','trailer','sex','slot'].forEach(k => url.searchParams.delete(k));
+  history.replaceState(null, '', url.toString());
+  trainerId = '';
+ offeredStart = false;          // <-- allow R2C1 prompt again
+  showCtxStep('trainer');   
 });
+
+
 
     function showTrainerPrompt(){
       overlayPick.classList.add('open');
@@ -410,21 +468,26 @@
     }
 
     startMaleBtn?.addEventListener('click', ()=>{
-      const url = new URL(location.href);
-      url.searchParams.set('trainer', trainerId);
-      url.searchParams.set('trailer', slug(trainerId));
-      url.searchParams.set('sex', 'male');
-      url.searchParams.set('slot', 'R2C1');
-      location.href = url.toString();
-    });
-    startFemaleBtn?.addEventListener('click', ()=>{
-      const url = new URL(location.href);
-      url.searchParams.set('trainer', trainerId);
-      url.searchParams.set('trailer', slug(trainerId));
-      url.searchParams.set('sex', 'female');
-      url.searchParams.set('slot', 'R2C1');
-      location.href = url.toString();
-    });
+  const url = new URL(location.href);
+  const curTrailer = (url.searchParams.get('trailer') || '').trim();
+  url.searchParams.set('trainer', trainerId);
+  url.searchParams.set('trailer', curTrailer || slug(trainerId));
+  url.searchParams.set('sex', 'male');
+  url.searchParams.set('slot', 'R2C1');
+  location.href = url.toString();
+});
+
+startFemaleBtn?.addEventListener('click', ()=>{
+  const url = new URL(location.href);
+  const curTrailer = (url.searchParams.get('trailer') || '').trim();
+  url.searchParams.set('trainer', trainerId);
+  url.searchParams.set('trailer', curTrailer || slug(trainerId));
+  url.searchParams.set('sex', 'female');
+  url.searchParams.set('slot', 'R2C1');
+  location.href = url.toString();
+});
+
+
     startCancelBtn?.addEventListener('click', closeStartFallback);
     startOverlayEl?.addEventListener('click', (e)=>{ if (e.target===startOverlayEl) closeStartFallback(); });
     /* ---- /Start-slot fallback ---- */
@@ -855,42 +918,61 @@ function closeCtxOverlay(){
 
 /** Open starting at the first missing piece (ignoring slot) */
 function openCtxOverlay(){
-  const missing = !trainerId ? 'trainer' : (!trailer ? 'trailer' : (!sex ? 'sex' : null));
+  const sp = new URL(location.href).searchParams;
+  const missing =
+    !trainerId         ? 'trainer' :
+    !sp.get('trailer') ? 'trailer' :
+    !sp.get('sex')     ? 'sex'     : null;
+
   if (!missing) return;
   showCtxStep(missing);
 }
+
 
 ctxOverlay.addEventListener('click', (e)=>{ if (e.target === ctxOverlay) closeCtxOverlay(); });
 
 // Step handlers
 document.querySelectorAll('[data-ctx-trainer]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
-    const v = btn.dataset.ctxTrainer;              // Scott/Cody/Brian
+    const v = btn.dataset.ctxTrainer;       // Scott / Cody / Brian
     trainerId = v;
     history.replaceState(null, '', urlWith('trainer', v).toString());
     ctxEl.textContent = `Trainer: ${trainerId}`;
-    if (!trailer) showCtxStep('trailer');
-    else if (!sex) showCtxStep('sex');
-    else closeCtxOverlay();
+
+    const sp = new URL(location.href).searchParams;   // <- live params
+    const curTrailer = sp.get('trailer') || '';
+    const curSex     = sp.get('sex') || '';
+
+    if (!curTrailer)      showCtxStep('trailer');
+    else if (!curSex)     showCtxStep('sex');
+    else                  closeCtxOverlay();
   });
 });
+
+
 
 document.querySelectorAll('[data-ctx-trailer]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
-    const v = btn.dataset.ctxTrailer;              // scott/cody/brian (slug)
+    const v = btn.dataset.ctxTrailer;  // scott/cody/brian
     history.replaceState(null, '', urlWith('trailer', v).toString());
-    if (!sex) showCtxStep('sex'); else closeCtxOverlay();
+
+    const curSex = (new URL(location.href)).searchParams.get('sex') || ''; // <- live
+    if (!curSex) showCtxStep('sex'); else closeCtxOverlay();
   });
 });
 
+
 document.querySelectorAll('[data-ctx-sex]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
-    const v = btn.dataset.ctxSex;                  // male/female
-    const url = urlWith('sex', v);
-    // Finalize: reload so all consts (like slotId, QR_MISSING) recompute cleanly.
-    location.href = url.toString();
+    const v = btn.dataset.ctxSex; // male / female
+    history.replaceState(null, '', urlWith('sex', v).toString());
+
+    // Close the wizard and ask for the starting slot
+    closeCtxOverlay();
+    openStartFallback();  // shows the “Male R2C1 / Female R2C1” overlay
   });
 });
+
 /* ========= /Context Wizard ========= */
 
 
