@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>speech.html – Voice Flag Tester</title>
+<style>
+  :root{ --accent:#0b74ff; --border:#ddd; --muted:#666; }
+  body{ font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; margin:16px; background:#f6f7f9; color:#111; }
+  h1{ margin:0 0 6px; }
+  .muted{ color:var(--muted); font-size:12px; }
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+
+  .btn{ appearance:none; border:1px solid #bbb; background:#fff; padding:10px 14px; border-radius:12px; cursor:pointer; }
+  .btn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn.danger{ border-color:#ef4444; color:#b91c1c; }
+  .btn:disabled{ opacity:.55; cursor:not-allowed; }
+
+  .section{ background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px; margin-top:14px; }
+
+  .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .card{ position:relative; background:#fafafa; border:1px solid #e3e3e3; border-radius:12px; padding:12px; cursor:pointer; }
+  .card.active{ outline:3px solid rgba(11,116,255,.3); background:#fff; }
+  .card h3{ margin:0 0 6px; }
+  .flags{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chip{ user-select:none; padding:6px 10px; border:1px solid #bbb; border-radius:999px; background:#fff; font-size:13px; }
+  .chip.on{ background:#0b74ff; color:#fff; border-color:#0b74ff; box-shadow:0 2px 8px rgba(11,116,255,.2); }
+  .rating{ display:flex; align-items:center; gap:10px; margin-top:8px; }
+  .rating output{ font-weight:800; font-size:22px; min-width:46px; text-align:right; }
+
+  .toolbar{ display:flex; gap:10px; align-items:center; }
+  .pill{ display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border:1px solid var(--border); background:#fff; border-radius:999px; }
+  .pill.good{ border-color:#10b981; }
+  .pill.bad{ border-color:#ef4444; }
+  .transcript{ min-height:1.5lh; }
+
+  .help ul{ margin:.3rem 0 .6rem 1.2rem; }
+  .kbd{ background:#eee; border:1px solid #ddd; border-bottom-color:#ccc; padding:2px 6px; border-radius:6px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+</style>
+</head>
+<body>
+  <h1>Voice Flag Tester</h1>
+  <div class="muted">Test voice commands to toggle flags and set ratings on an “active” item.</div>
+
+  <div class="section">
+    <div class="toolbar">
+      <button id="micBtn" class="btn primary">🎤 Start</button>
+      <button id="clearBtn" class="btn">Clear transcript</button>
+      <span id="status" class="pill">Status: idle</span>
+      <label class="pill">Active:
+        <select id="activeSelect"></select>
+      </label>
+      <span class="muted">Tip: hold <span class="kbd">Space</span> to talk</span>
+    </div>
+    <div id="transcript" class="transcript pill" style="display:inline-block; margin-top:10px;">&nbsp;</div>
+    <div id="parseOut" class="pill" style="display:none; margin-left:8px;"></div>
+  </div>
+
+  <div class="section">
+    <strong>Items</strong>
+    <div class="cards" id="cards"></div>
+  </div>
+
+  <div class="section help">
+    <strong>Try saying…</strong>
+    <ul>
+      <li><em>“flag big hunt and overran”</em></li>
+      <li><em>“remove big hunt”</em>, <em>“clear flags”</em></li>
+      <li><em>“set rating seven point five”</em>, <em>“rating 6”</em></li>
+      <li><em>“increase by point five”</em>, <em>“decrease by one”</em></li>
+    </ul>
+    <div class="muted">
+      Recognized flags: Big Hunt, Marginal Hunt, Overran, Short Checkdown, Backside of Gun, Handled, Cast Refusal, Sit on Whistle, Didn’t Mark, Poor Initial, Headswing, Broke, Switched, No-Go, Poison Pick Up, No Pick Up, Stood Out, Popped.
+    </div>
+  </div>
+
+<script>
+/* ================== Demo data & UI ================== */
+const FLAG_DEFS = [
+  { key:'bigHunt',        label:'Big Hunt',        aka:['big hunt','large hunt'] },
+  { key:'marginalHunt',   label:'Marginal Hunt',   aka:['marginal hunt','small hunt'] },
+  { key:'overran',        label:'Overran',         aka:['over ran','over run'] },
+  { key:'shortCheckDown', label:'Short Checkdown', aka:['short checkdown','short check down','checkdown'] },
+  { key:'backSideOfGun',  label:'Backside of Gun', aka:['backside of gun','back side of gun','back of gun'] },
+
+  { key:'handled',        label:'Handled',         aka:['handle','handled'] },
+  { key:'castRefusal',    label:'Cast Refusal',    aka:['refused cast','refusal','cast refusal'] },
+  { key:'sitOnWhistle',   label:'Sit on Whistle',  aka:['sit on whistle','sat on whistle','sit whistle'] },
+  { key:'didntMark',      label:"Didn't Mark",     aka:["didn't mark",'did not mark','no mark'] },
+  { key:'poorInitial',    label:'Poor Initial',    aka:['poor initial','bad initial','bad initial line'] },
+
+  { key:'headswing',      label:'Headswing',       aka:['head swing','head-swing','headswing'] },
+  { key:'break',          label:'Broke',           aka:['broke','break','breaking'] },
+  { key:'switched',       label:'Switched',        aka:['switch','switched'] },
+  { key:'noGo',           label:'No-Go',           aka:['no go','no-go',"didn't go",'did not go'] },
+
+  { key:'pickedUpPoison', label:'Poison Pick Up',  aka:['poison pickup','picked up poison','poison pick up'] },
+  { key:'noPickUp',       label:'No Pick Up',      aka:['no pickup','no pick up','did not pick up',"didn't pick up"] },
+  { key:'stoodOut',       label:'Stood Out',       aka:['stood out','stand out','stood-out'] },
+  { key:'popped',         label:'Popped',          aka:['pop','popped'] },
+];
+
+// Precompile patterns for fast matching
+const PHRASE_TO_KEY = [];
+for (const f of FLAG_DEFS) {
+  for (const p of [f.label, ...(f.aka||[])]) {
+    PHRASE_TO_KEY.push([p.toLowerCase(), f.key]);
+  }
+}
+PHRASE_TO_KEY.sort((a,b)=>b[0].length - a[0].length); // longest first to avoid partial overlap
+
+// Demo items
+const items = [
+  mkItem('Mark 1', 78),
+  mkItem('Mark 2', 49),
+  mkItem('Blind 1', 120),
+];
+function mkItem(title, dist){ return { id: crypto.randomUUID(), title, dist, rating:0, flags:{} }; }
+
+const cardsEl = document.getElementById('cards');
+const activeSelect = document.getElementById('activeSelect');
+let activeId = items[0].id;
+
+function renderAll(){
+  activeSelect.innerHTML = '';
+  items.forEach((it, idx)=>{
+    const opt = document.createElement('option');
+    opt.value = it.id; opt.textContent = `${it.title} — ${it.dist}y`;
+    if (it.id === activeId) opt.selected = true;
+    activeSelect.appendChild(opt);
+  });
+
+  cardsEl.innerHTML = '';
+  items.forEach(it=>{
+    const card = document.createElement('div');
+    card.className = 'card' + (it.id===activeId?' active':'');
+
+    const h3 = document.createElement('h3');
+    h3.textContent = `${it.title} — ${it.dist} yards`;
+    card.appendChild(h3);
+
+    const rating = document.createElement('div');
+    rating.className = 'rating';
+    rating.innerHTML = `
+      <label>Rating:</label>
+      <input type="range" min="0" max="10" step="0.5" value="${it.rating}" />
+      <output>${Number(it.rating).toFixed(1)}</output>
+    `;
+    const rng = rating.querySelector('input');
+    const out = rating.querySelector('output');
+    rng.addEventListener('input', ()=>{
+      it.rating = Number(rng.value);
+      out.textContent = it.rating.toFixed(1);
+    });
+    card.appendChild(rating);
+
+    const flags = document.createElement('div');
+    flags.className = 'flags';
+    for (const f of FLAG_DEFS){
+      const chip = document.createElement('button');
+      chip.type='button';
+      chip.className = 'chip' + (it.flags[f.key]?' on':'');
+      chip.textContent = f.label;
+      chip.addEventListener('click', ()=>{
+        it.flags[f.key] = !it.flags[f.key];
+        chip.classList.toggle('on', !!it.flags[f.key]);
+      });
+      flags.appendChild(chip);
+    }
+    card.appendChild(flags);
+
+    card.addEventListener('click', ()=>{ activeId = it.id; renderAll(); });
+    cardsEl.appendChild(card);
+  });
+}
+activeSelect.addEventListener('change', (e)=>{ activeId = e.target.value; renderAll(); });
+renderAll();
+
+function getActive(){ return items.find(i=>i.id===activeId); }
+
+/* ================== Speech setup ================== */
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+const micBtn   = document.getElementById('micBtn');
+const clearBtn = document.getElementById('clearBtn');
+const statusEl = document.getElementById('status');
+const transcriptEl = document.getElementById('transcript');
+const parseOut = document.getElementById('parseOut');
+
+let rec = null;
+let listening = false;
+
+function setStatus(s, ok=null){
+  statusEl.textContent = `Status: ${s}`;
+  statusEl.classList.toggle('good', ok===true);
+  statusEl.classList.toggle('bad', ok===false);
+}
+function appendTranscript(t){
+  transcriptEl.textContent = t || ' ';
+}
+function showParse(summary, ok=true){
+  parseOut.style.display = 'inline-flex';
+  parseOut.textContent = summary;
+  parseOut.classList.toggle('good', ok===true);
+  parseOut.classList.toggle('bad', ok===false);
+}
+
+if (!SpeechRec){
+  setStatus('speech API unavailable', false);
+  micBtn.disabled = true;
+  transcriptEl.textContent = 'Your browser does not support Web Speech Recognition. Try Chrome or Edge.';
+} else {
+  rec = new SpeechRec();
+  rec.continuous = false;
+  rec.interimResults = true;
+  rec.lang = 'en-US';
+
+  rec.onstart   = ()=>{ listening = true; micBtn.textContent='🛑 Stop'; setStatus('listening…'); };
+  rec.onend     = ()=>{ listening = false; micBtn.textContent='🎤 Start'; setStatus('idle'); };
+  rec.onerror   = (e)=>{ setStatus(`error: ${e.error}`, false); };
+
+  let live = '';
+  rec.onresult = (ev) => {
+  let finalText = '';
+  let interim   = '';
+
+  for (let i = ev.resultIndex; i < ev.results.length; i++) {
+    const r = ev.results[i];
+    if (r.isFinal) {
+      finalText += r[0].transcript;
+    } else {
+      interim += r[0].transcript;
+    }
+  }
+
+  const live = (finalText || interim || '').trim();
+  transcriptEl.textContent = live || ' ';
+
+  if (finalText) {
+    const res = parseAndApply(live);
+    showParse(res.summary, res.ok);
+    renderAll();
+  }
+};
+
+}
+
+micBtn.addEventListener('click', ()=>{
+  if (!rec) return;
+  if (!listening) { parseOut.style.display='none'; transcriptEl.textContent=' '; rec.start(); }
+  else rec.stop();
+});
+clearBtn.addEventListener('click', ()=>{ transcriptEl.textContent=' '; parseOut.style.display='none'; });
+
+/* Press & hold Space to talk */
+let spaceHeld = false;
+window.addEventListener('keydown', (e)=>{
+  if (e.code==='Space' && !spaceHeld && !listening && rec){
+    spaceHeld = true; e.preventDefault();
+    parseOut.style.display='none'; transcriptEl.textContent=' ';
+    rec.start();
+  }
+});
+window.addEventListener('keyup', (e)=>{
+  if (e.code==='Space' && spaceHeld && rec){
+    spaceHeld=false; e.preventDefault();
+    if (listening) rec.stop();
+  }
+});
+
+/* ================== Parser ================== */
+function normalize(s){
+  return s.toLowerCase()
+    .replace(/[“”‘’]/g,'"')
+    .replace(/[^\w\s\.\-]/g,' ')   // remove punctuation but keep dot & hyphen
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+// map common number words to numeric values
+const WORD_NUM = {
+  zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+  eleven:11, twelve:12
+};
+function parseNumberWords(s){
+  // examples: "seven point five", "6.5", "six", "point five"
+  s = s.trim();
+  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+
+  const parts = s.split(' ');
+  let val = 0, seenAny=false;
+  for (let i=0;i<parts.length;i++){
+    const w = parts[i];
+    if (w==='point' || w==='dot'){
+      const frac = WORD_NUM[parts[i+1]] ?? parseInt(parts[i+1],10);
+      if (!isNaN(frac)) { val += (frac/10); seenAny=true; }
+      break;
+    }
+    const n = WORD_NUM[w];
+    if (typeof n==='number'){ val = val*10 + n; seenAny=true; }
+  }
+  return seenAny ? val : NaN;
+}
+
+function parseAndApply(raw){
+  const t = normalize(raw);
+  const item = getActive();
+  if (!item) return { ok:false, summary:'no active item' };
+
+  // Commands: clear/remove, add/flag/toggle, rating set/increase/decrease
+  let changed = false;
+  let acted   = [];
+
+  // clear all flags
+  if (/^(clear|reset)\s+flags?$/.test(t)){
+    item.flags = {};
+    changed = true; acted.push('cleared all flags');
+  }
+
+  // rating absolute
+  let m = t.match(/\b(?:set|rate|rating)\s+(?:to\s+)?([a-z0-9\.\s-]+)\b/);
+  if (m){
+    const num = parseNumberWords(m[1]);
+    if (!isNaN(num)){
+      const clamped = Math.max(0, Math.min(10, Math.round(num*2)/2));
+      item.rating = clamped;
+      changed = true; acted.push(`rating → ${clamped.toFixed(1)}`);
+    }
+  }
+  // rating relative
+  m = t.match(/\b(?:increase|up|raise|decrease|down|lower|minus|plus|add|subtract)\s+(?:by\s+)?([a-z0-9\.\s-]+)\b/);
+  if (m){
+    const deltaRaw = parseNumberWords(m[1]);
+    if (!isNaN(deltaRaw)){
+      const sign = /\b(decrease|down|lower|minus|subtract)\b/.test(t) ? -1 : 1;
+      const next = Math.max(0, Math.min(10, Math.round((item.rating + sign*deltaRaw)*2)/2));
+      item.rating = next;
+      changed = true; acted.push(`rating → ${next.toFixed(1)}`);
+    }
+  }
+
+  // find phrases for flags; mark removal if preceded by remove/clear/off within 2 words
+  let added=[], removed=[];
+  let working = t;
+
+  for (const [phrase, key] of PHRASE_TO_KEY){
+    const re = new RegExp(`\\b${escapeRegex(phrase)}\\b`, 'g');
+    let match;
+    while ((match = re.exec(working)) !== null){
+      const before = working.slice(Math.max(0, match.index-20), match.index).trim();
+      const isRemove = /\b(remove|clear|unset|turn off|switch off|disable|unflag)\b/.test(before);
+      if (isRemove){
+        if (item.flags[key]) { item.flags[key]=false; removed.push(phrase); changed=true; }
+      } else {
+        if (!item.flags[key]) { item.flags[key]=true; added.push(phrase); changed=true; }
+      }
+    }
+  }
+
+  if (added.length)   acted.push(`+ ${added.map(humanize).join(', ')}`);
+  if (removed.length) acted.push(`− ${removed.map(humanize).join(', ')}`);
+
+  return {
+    ok: changed,
+    summary: changed ? `Applied to ${item.title}: ${acted.join(' • ')}` : 'No actionable phrases detected'
+  };
+}
+
+function humanize(s){ return s.replace(/\b\w/g, c=>c.toUpperCase()); }
+function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
+</script>
+</body>
+</html>
