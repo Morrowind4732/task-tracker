@@ -5,327 +5,284 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Voice Flag Tester</title>
 <style>
-  :root { --accent:#0b74ff; --bg:#f6f7fb; --card:#fff; --muted:#667085; --border:#e4e7ec; }
-  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:#101828; }
-  header{ padding:20px 24px 8px; }
-  h1{ margin:0 0 6px; font-size:34px; letter-spacing:.2px; }
-  .sub{ color:var(--muted); font-size:14px; }
-  .bar{ display:flex; gap:10px; align-items:center; padding:12px 24px; }
-  .btn{ appearance:none; border:1px solid var(--border); background:#fff; color:#101828; padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:650; }
-  .btn.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
-  .btn.ghost{ background:#fff; }
-  .status{ color:var(--muted); font-weight:600; }
-  .wrap{ padding:0 24px 24px; max-width:1100px; }
-
-  .card{ background:var(--card); border:1px solid var(--border); border-radius:16px; padding:14px; box-shadow:0 1px 2px rgba(16,24,40,.04); }
-  .items{ display:flex; flex-direction:column; gap:14px; }
-  .row{ display:grid; grid-template-columns: minmax(120px, 260px) 1fr auto; gap:14px; align-items:center; padding:12px; border:1px solid var(--border); border-radius:14px; background:#fafafa; position:relative; }
-  .kind{ font-size:13px; font-weight:700; color:#344054; }
-  .title{ font-size:16px; font-weight:800; }
-  .chips{ display:flex; gap:8px; flex-wrap:wrap; }
-  .chip{ border:1px solid #d0d5dd; background:#fff; border-radius:999px; padding:6px 10px; font-size:13px; user-select:none; }
-  .chip.on{ background:#eef4ff; border-color:#c7d7fe; }
-  .controls{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  .score{ font-weight:800; min-width:44px; text-align:right; font-variant-numeric:tabular-nums; }
-  input[type="range"]{ width:240px; }
-  .mic{ display:inline-flex; align-items:center; gap:8px; padding:10px 12px; border-radius:999px; background:#fff; border:1px solid #d0d5dd; cursor:pointer; font-weight:700; }
-  .mic .dot{ width:10px; height:10px; border-radius:50%; background:#94a3b8; }
-  .row.listening .mic{ border-color:#ffb4b4; box-shadow:0 0 0 4px rgba(255,59,48,.12); }
-  .row.listening .mic .dot{ background:#ff3b30; animation:pulse 1s infinite alternate; }
-  @keyframes pulse{ from{ transform:scale(.9);} to{ transform:scale(1.2);} }
-
-  .hint{ margin-top:16px; }
-  .hint ul{ margin:8px 0 0 20px; }
-  .muted{ color:var(--muted); }
-
-  .pill{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; border:1px dashed #d0d5dd; color:#475467; }
-  kbd{ background:#111; color:#fff; padding:2px 6px; border-radius:6px; font-weight:700; }
-
-  .footer{ margin-top:18px; font-size:12px; color:#667085; }
+  :root{--accent:#0b74ff;--bg:#f6f7fb;--card:#fff;--muted:#667085;--border:#e4e7ec;}
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#101828;}
+  header{padding:20px 24px 8px;}
+  h1{margin:0 0 6px;font-size:32px;letter-spacing:.2px}
+  .sub{color:var(--muted);font-size:14px}
+  .wrap{padding:0 24px 24px;max-width:1100px}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .items{display:flex;flex-direction:column;gap:14px}
+  .row{display:grid;grid-template-columns:minmax(160px,260px) 1fr auto;gap:14px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:14px;background:#fafafa}
+  .kind{font-size:12px;font-weight:800;color:#344054}
+  .title{font-size:16px;font-weight:800}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{border:1px solid #d0d5dd;background:#fff;border-radius:999px;padding:6px 10px;font-size:13px;user-select:none}
+  .chip.on{background:#eef4ff;border-color:#c7d7fe}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .mic{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#fff;border:1px solid #d0d5dd;cursor:pointer;font-weight:700}
+  .mic .dot{width:10px;height:10px;border-radius:50%;background:#94a3b8}
+  .row.listening .mic{border-color:#ffb4b4;box-shadow:0 0 0 4px rgba(255,59,48,.12)}
+  .row.listening .mic .dot{background:#ff3b30;animation:pulse 1s infinite alternate}
+  @keyframes pulse{from{transform:scale(.9)}to{transform:scale(1.2)}}
+  input[type=range]{width:240px}
+  .score{font-weight:800;min-width:44px;text-align:right;font-variant-numeric:tabular-nums}
+  .tiny{color:var(--muted);font-size:12px}
+  .bar{display:flex;gap:10px;align-items:center;padding:0 24px 12px}
+  .status{color:var(--muted);font-weight:700}
+  .btn{appearance:none;border:1px solid var(--border);background:#fff;padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:700}
 </style>
 </head>
 <body>
   <header>
     <h1>Voice Flag Tester</h1>
-    <div class="sub">Click a row’s 🎤 to speak; commands affect only that row.</div>
+    <div class="sub">Click a row’s 🎤 to speak; that utterance applies only to that row. You can say multiple flags and a score in one go.</div>
   </header>
-
   <div class="bar">
-    <button id="clearBtn" class="btn">Clear all flags & scores</button>
-    <div class="status" id="status">Status: idle</div>
-    <span class="pill">Tip: say a number to set the score (e.g., <b>7</b>, <b>6.5</b>, or “<b>seven point five</b>”)</span>
+    <button id="clearBtn" class="btn">Clear all</button>
+    <div id="status" class="status">Status: idle</div>
   </div>
 
   <div class="wrap">
     <div class="card">
-      <div class="items" id="items"></div>
+      <div id="items" class="items"></div>
     </div>
 
-    <div class="card hint">
-      <strong>Try saying…</strong>
-      <ul>
-        <li><em>“flag big hunt and overran”</em></li>
-        <li><em>“remove big hunt”, “clear flags”</em></li>
-        <li><em>“7.5”</em> or <em>“seven point five”</em> (sets score)</li>
-        <li><em>“rating six”, “score 8”</em></li>
-        <li><em>“increase by point five”, “decrease by one”</em></li>
+    <div class="card" style="margin-top:12px">
+      <strong>Say things like…</strong>
+      <ul class="tiny">
+        <li>“flag big hunt and overran, rating seven point five”</li>
+        <li>“remove didn’t mark and poor initial, increase by point five”</li>
+        <li>“clear flags, score 6”</li>
+        <li>“7.5” (just a number sets the score)</li>
       </ul>
-      <div class="muted" style="margin-top:8px;">
-        Recognized flags: Big Hunt, Marginal Hunt, Overran, Short Checkdown, Backside of Gun, Handled, Cast Refusal, Sit on Whistle, Didn’t Mark, Poor Initial, Headswing, Broke, Switched, No-Go, Poison Pick Up, No Pick Up, Stood Out, Popped.
+      <div class="tiny">
+        Flags: Big Hunt, Marginal Hunt, Overran, Short Checkdown, Backside of Gun, Handled, Cast Refusal, Sit on Whistle, Didn’t Mark, Poor Initial, Headswing, Broke, Switched, No-Go, Poison Pick Up, No Pick Up, Stood Out, Popped.
       </div>
     </div>
-
-    <div class="footer">Requires Chrome (Web Speech API). On desktop, HTTPS or <code>localhost</code> is recommended.</div>
   </div>
 
 <script>
-/* ---------------- Flag definitions & synonyms ---------------- */
-const FLAG_DEFS = [
-  { key:'bigHunt',        label:'Big Hunt',         pats:[/big\s+hunt/] },
-  { key:'marginalHunt',   label:'Marginal Hunt',    pats:[/marginal\s+hunt/] },
-  { key:'overran',        label:'Overran',          pats:[/overran|over[-\s]?run/] },
-  { key:'shortCheckDown', label:'Short Checkdown',  pats:[/short\s+check\s*down|short\s+checkdown/] },
-  { key:'backSideOfGun',  label:'Backside of Gun',  pats:[/back\s*side\s+of\s+gun|backside\s+of\s+gun/] },
+/* ---------------- Flag dictionary with generous patterns ---------------- */
+const FLAGS = [
+  { key:'bigHunt',        label:'Big Hunt',         rx:[/big\s*hunt/] },
+  { key:'marginalHunt',   label:'Marginal Hunt',    rx:[/marginal\s*hunt/] },
+  { key:'overran',        label:'Overran',          rx:[/\boverran\b|\bover[-\s]?ran\b|\bover[-\s]?run\b/] },
+  { key:'shortCheckDown', label:'Short Checkdown',  rx:[/short\s*check\s*down|short\s*checkdown/] },
+  { key:'backSideOfGun',  label:'Backside of Gun',  rx:[/back\s*side\s*of\s*gun|backside\s*of\s*gun/] },
 
-  { key:'handled',        label:'Handled',          pats:[/handled?/] },
-  { key:'castRefusal',    label:'Cast Refusal',     pats:[/cast\s+refusal/] },
-  { key:'sitOnWhistle',   label:'Sit on Whistle',   pats:[/sit\s+on\s+whistle/] },
-  { key:'didntMark',      label:"Didn't Mark",      pats:[/didn'?t\s+mark/] },   // ← apostrophe optional
-  { key:'poorInitial',    label:'Poor Initial',     pats:[/poor\s+initial/] },
+  { key:'handled',        label:'Handled',          rx:[/\bhandled?\b/] },
+  { key:'castRefusal',    label:'Cast Refusal',     rx:[/cast\s*refusal/] },
+  { key:'sitOnWhistle',   label:'Sit on Whistle',   rx:[/sit\s*on\s*whistle/] },
+  { key:'didntMark',      label:"Didn't Mark",      rx:[/didn'?t\s*mark|didnt\s*mark/] }, // apostrophe optional
+  { key:'poorInitial',    label:'Poor Initial',     rx:[/poor\s*initial/] },
 
-  { key:'headswing',      label:'Headswing',        pats:[/head\s*swing|headswing/] },
-  { key:'break',          label:'Broke',            pats:[/\bbroke?\b|break/] },
-  { key:'switched',       label:'Switched',         pats:[/switch(ed)?/] },
-  { key:'noGo',           label:'No-Go',            pats:[/\bno[-\s]?go\b/] },
+  { key:'headswing',      label:'Headswing',        rx:[/head\s*swing|headswing/] },
+  { key:'break',          label:'Broke',            rx:[/\bbroke?\b|\bbreak\b/] },
+  { key:'switched',       label:'Switched',         rx:[/\bswitch(?:ed|)\b/] },
+  { key:'noGo',           label:'No-Go',            rx:[/\bno[-\s]?go\b/] },
 
-  { key:'pickedUpPoison', label:'Poison Pick Up',   pats:[/poison\s+pick\s*up|picked\s+up\s+poison/] },
-  { key:'noPickUp',       label:'No Pick Up',       pats:[/\bno\s+pick\s*up\b|no\s+pickup/] },
-  { key:'stoodOut',       label:'Stood Out',        pats:[/stood\s+out/] },
-  { key:'popped',         label:'Popped',           pats:[/popped?/] },
+  { key:'pickedUpPoison', label:'Poison Pick Up',   rx:[/poison\s*pick\s*up|picked\s*up\s*poison/] },
+  { key:'noPickUp',       label:'No Pick Up',       rx:[/\bno\s*pick\s*up\b|\bno\s*pickup\b/] },
+  { key:'stoodOut',       label:'Stood Out',        rx:[/stood\s*out/] },
+  { key:'popped',         label:'Popped',           rx:[/\bpopped?\b/] },
+];
+const FLAG_MAP = Object.fromEntries(FLAGS.map(f=>[f.key,f]));
+
+/* ---------------- Demo data ---------------- */
+const items = [
+  { id:'m1', kind:'Mark',  title:'#1 — 78 yards',  score:0, flags:{} },
+  { id:'m2', kind:'Mark',  title:'#2 — 49 yards',  score:0, flags:{} },
+  { id:'m3', kind:'Mark',  title:'#3 — 143 yards', score:0, flags:{} },
+  { id:'b1', kind:'Blind', title:'#1 — 120 yards', score:0, flags:{} },
+  { id:'b2', kind:'Blind', title:'#2 — 95 yards',  score:0, flags:{} },
 ];
 
-const FLAG_BY_KEY = Object.fromEntries(FLAG_DEFS.map(d=>[d.key,d]));
-
-/* ---------------- Demo items ---------------- */
-const itemsState = [
-  { id:'m1', kind:'Mark',  title:'#1 – 78 yards', score:0, flags:{} },
-  { id:'m2', kind:'Mark',  title:'#2 – 49 yards', score:0, flags:{} },
-  { id:'m3', kind:'Mark',  title:'#3 – 143 yards', score:0, flags:{} },
-  { id:'b1', kind:'Blind', title:'#1 – 120 yards', score:0, flags:{} },
-  { id:'b2', kind:'Blind', title:'#2 – 95 yards', score:0, flags:{} },
-];
-
-/* ---------------- Rendering ---------------- */
-const itemsEl  = document.getElementById('items');
+/* ---------------- UI ---------------- */
+const itemsEl = document.getElementById('items');
 const statusEl = document.getElementById('status');
 
-function chip(key, on){
-  const span = document.createElement('span');
-  span.className = 'chip' + (on ? ' on' : '');
-  span.textContent = FLAG_BY_KEY[key].label;
-  span.dataset.key = key;
-  return span;
+function chip(key,on){
+  const el=document.createElement('span');
+  el.className='chip'+(on?' on':'');
+  el.dataset.key=key;
+  el.textContent=FLAG_MAP[key].label;
+  return el;
 }
 
-function renderRow(item){
-  const row = document.createElement('div');
-  row.className = 'row';
-  row.id = `row-${item.id}`;
+function renderRow(it){
+  const row=document.createElement('div'); row.className='row'; row.id='row-'+it.id;
 
-  const left = document.createElement('div');
-  const kind = document.createElement('div'); kind.className = 'kind'; kind.textContent = item.kind;
-  const title = document.createElement('div'); title.className = 'title'; title.textContent = item.title;
-  left.append(kind, title);
+  const left=document.createElement('div');
+  left.innerHTML=`<div class="kind">${it.kind}</div><div class="title">${it.title}</div>`;
 
-  const mid  = document.createElement('div');
-  const chips = document.createElement('div'); chips.className = 'chips';
-  FLAG_DEFS.forEach(d => chips.appendChild(chip(d.key, !!item.flags[d.key])));
+  const mid=document.createElement('div');
+  const chips=document.createElement('div'); chips.className='chips';
+  FLAGS.forEach(f=> chips.appendChild(chip(f.key, !!it.flags[f.key])));
   mid.appendChild(chips);
 
-  const right = document.createElement('div'); right.className = 'controls';
-  const mic = document.createElement('button');
-  mic.type='button'; mic.className='mic'; mic.innerHTML = '<span class="dot"></span> 🎤 Listen';
-  mic.addEventListener('click', ()=> startListeningFor(item.id));
-  const slider = document.createElement('input');
-  slider.type='range'; slider.min='0'; slider.max='10'; slider.step='0.5'; slider.value=item.score;
-  slider.addEventListener('input', ()=>{ item.score = +slider.value; scoreOut.textContent = item.score.toFixed(1); });
-  const scoreOut = document.createElement('div'); scoreOut.className='score'; scoreOut.textContent = item.score.toFixed(1);
-  right.append(mic, slider, scoreOut);
+  const right=document.createElement('div'); right.className='controls';
+  const mic=document.createElement('button'); mic.type='button'; mic.className='mic';
+  mic.innerHTML='<span class="dot"></span> 🎤 Listen';
+  mic.addEventListener('click',()=>startListeningFor(it.id));
+  const slider=document.createElement('input'); slider.type='range'; slider.min='0'; slider.max='10'; slider.step='0.5'; slider.value=it.score;
+  slider.addEventListener('input',()=>{ it.score=+slider.value; score.textContent=it.score.toFixed(1); });
+  const score=document.createElement('div'); score.className='score'; score.textContent=it.score.toFixed(1);
+  right.append(mic,slider,score);
 
-  row.append(left, mid, right);
+  row.append(left,mid,right);
   itemsEl.appendChild(row);
 }
 
-function renderAll(){
-  itemsEl.innerHTML = '';
-  itemsState.forEach(renderRow);
-}
+function renderAll(){ itemsEl.innerHTML=''; items.forEach(renderRow); }
 renderAll();
 
-/* ---------------- Speech recognition helpers ---------------- */
-const SpeechReco = window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition = null;
-let activeItemId = null;
+/* ---------------- Speech engine ---------------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec=null, activeId=null;
 
-if (SpeechReco){
-  recognition = new SpeechReco();
-  recognition.lang = 'en-US';
-  recognition.interimResults = false;
-  recognition.continuous = false;
-
-  recognition.onstart = () => setStatus('listening…');
-  recognition.onerror = (e) => { setStatus('error: '+(e.error||'unknown')); stopRowState(); };
-  recognition.onend   = () => { setStatus('idle'); stopRowState(); };
-  recognition.onresult= (e) => {
-    const tx = [...e.results].map(r=>r[0].transcript).join(' ').trim();
-    if (activeItemId) handleTranscript(activeItemId, tx);
+if (SR){
+  rec=new SR(); rec.lang='en-US'; rec.interimResults=false; rec.continuous=false;
+  rec.onstart=()=>setStatus('listening…');
+  rec.onerror=e=>{ setStatus('error: '+(e.error||'unknown')); endListen(); };
+  rec.onend=()=>{ setStatus('idle'); endListen(); };
+  rec.onresult=e=>{
+    const tx=[...e.results].map(r=>r[0].transcript).join(' ').trim();
+    if (activeId) applyTranscript(activeId, tx);
   };
-} else {
+}else{
   setStatus('Speech API not supported in this browser.');
 }
 
-function setStatus(msg){ statusEl.textContent = 'Status: ' + msg; }
-
-function startListeningFor(itemId){
-  if (!recognition) { alert('Speech API not supported'); return; }
-  try { recognition.abort(); } catch {}
-  activeItemId = itemId;
-  document.querySelectorAll('.row').forEach(r => r.classList.toggle('listening', r.id === 'row-'+itemId));
-  recognition.start();
+function setStatus(s){ statusEl.textContent='Status: '+s; }
+function startListeningFor(id){
+  if(!rec){ alert('Speech API not supported'); return; }
+  try{ rec.abort(); }catch{}
+  activeId=id;
+  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('listening', r.id==='row-'+id));
+  rec.start();
 }
-function stopRowState(){
-  activeItemId = null;
-  document.querySelectorAll('.row').forEach(r => r.classList.remove('listening'));
+function endListen(){
+  activeId=null;
+  document.querySelectorAll('.row').forEach(r=>r.classList.remove('listening'));
 }
 
-/* ---------------- NLP: numbers & commands ---------------- */
-const wordToNum = {
-  'zero':0,'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,'eight':8,'nine':9,'ten':10,
-  'half':0.5,'point five':0.5
+/* ---------------- NLP: numbers & intents (multi-flag) ---------------- */
+const NUM_WORDS = {
+  zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+  eleven:11, twelve:12, thirteen:13, fourteen:14, fifteen:15, sixteen:16, seventeen:17, eighteen:18, nineteen:19,
+  twenty:20, half:0.5
 };
-
-function wordsToNumber(s){
-  // Simple parser for “seven point five”, “six”, “6.5”
-  s = normalize(s);
-  if (/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
-  // tokens
-  const t = s.split(/\s+/);
-  // “seven point five”
-  const iPoint = t.indexOf('point');
-  if (iPoint > -1){
-    const a = t.slice(0, iPoint).join(' ');
-    const b = t.slice(iPoint+1).join(' ');
-    const int = wordToNum[a] ?? NaN;
-    const dec = wordToNum[b] ?? NaN;
-    if (!isNaN(int) && !isNaN(dec)) return +(int + '.' + (dec*10|0));
-  }
-  // “half”
-  if (s === 'half') return 0.5;
-  // single word number
-  if (s in wordToNum) return wordToNum[s];
-  return NaN;
-}
-
-function quantize05(n){
-  if (!isFinite(n)) return 0;
-  const q = Math.round(n*2)/2;
-  return Math.max(0, Math.min(10, q));
-}
 
 function normalize(s){
   return String(s||'')
     .toLowerCase()
-    .replace(/[’‘']/g,"'")       // unify apostrophes
-    .replace(/[^\w\.\s-]/g,' ')  // drop punctuation (keep dot for 6.5)
+    .replace(/[’‘']/g,"'")         // unify apostrophes
+    .replace(/[^a-z0-9.\s-]/g,' ') // drop punctuation (keep dot)
     .replace(/\s+/g,' ')
     .trim();
 }
 
-/* Find all flags mentioned in transcript */
-function findFlagKeys(tx){
-  const keys = [];
-  for (const d of FLAG_DEFS){
-    if (d.pats.some(rx => rx.test(tx))) keys.push(d.key);
+function wordsToNumber(s){
+  s=normalize(s);
+  if(/^\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+
+  const tok=s.split(/\s+/);
+  // “seven point five”
+  const i=tok.indexOf('point');
+  if(i>-1){
+    const A=tok.slice(0,i).join(' ');
+    const B=tok.slice(i+1).join(' ');
+    const ia=NUM_WORDS[A]; const ib=NUM_WORDS[B];
+    if(Number.isFinite(ia) && Number.isFinite(ib)) return +(ia + '.' + Math.round(ib*10));
   }
-  return [...new Set(keys)];
+  if(s in NUM_WORDS) return NUM_WORDS[s];
+  return NaN;
 }
 
-/* ---------------- Apply a transcript to an item ---------------- */
-function handleTranscript(itemId, raw){
-  const row = document.getElementById('row-'+itemId);
-  const item = itemsState.find(i => i.id === itemId);
-  if (!item) return;
+function quant05(n){ return Math.max(0, Math.min(10, Math.round(n*2)/2)); }
 
-  let tx = normalize(raw);
-
-  // 1) Number-only or “rating/score <num>” → set exact score
-  if (/^\d+(\.\d+)?$/.test(tx)){
-    item.score = quantize05(parseFloat(tx));
-    syncRow(item);
-    return;
-  }
-  const ratingMatch = tx.match(/\b(?:rating|score|set|make)\s+(?:to\s+)?([a-z0-9.\s-]+)$/);
-  if (ratingMatch){
-    const n = wordsToNumber(ratingMatch[1].trim());
-    if (!isNaN(n)){ item.score = quantize05(n); syncRow(item); return; }
-  }
-
-  // 2) Adjustments: increase/decrease by X (supports words)
-  const inc = tx.match(/\b(increase|raise|up)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
-  const dec = tx.match(/\b(decrease|lower|down)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
-  if (inc && !dec){
-    const amt = inc[2] ? (wordsToNumber(inc[2]) || parseFloat(inc[2])) : 0.5;
-    item.score = quantize05(item.score + (isFinite(amt)? amt : 0.5));
-    syncRow(item); return;
-  }
-  if (dec && !inc){
-    const amt = dec[2] ? (wordsToNumber(dec[2]) || parseFloat(dec[2])) : 0.5;
-    item.score = quantize05(item.score - (isFinite(amt)? amt : 0.5));
-    syncRow(item); return;
-  }
-
-  // 3) Clear all flags
-  if (/\bclear\s+flags?\b/.test(tx)){
-    item.flags = {};
-    syncRow(item); return;
-  }
-
-  // 4) Add/remove/toggle flags found in text
-  const keys = findFlagKeys(tx);
-  if (keys.length){
-    const isRemove = /\b(remove|clear|unset)\b/.test(tx);
-    const isAdd    = /\b(add|flag|set)\b/.test(tx);
-    keys.forEach(k => {
-      if (isRemove) item.flags[k] = false;
-      else if (isAdd) item.flags[k] = true;
-      else item.flags[k] = !item.flags[k]; // toggle by default
-    });
-    syncRow(item); return;
-  }
-
-  // 5) Fallback: if the whole phrase is a number word (e.g., “seven”), set score
-  const n2 = wordsToNumber(tx);
-  if (!isNaN(n2)){ item.score = quantize05(n2); syncRow(item); return; }
-
-  // Nothing matched; just stop visual state
-  syncRow(item);
+function detectFlags(tx){
+  const found=new Set();
+  FLAGS.forEach(f=>{ if(f.rx.some(rx=>rx.test(tx))) found.add(f.key); });
+  return [...found];
 }
 
-/* ---------------- Sync UI for a row ---------------- */
-function syncRow(item){
-  const row = document.getElementById('row-'+item.id);
-  if (!row) return;
-  row.querySelector('input[type="range"]').value = item.score;
-  row.querySelector('.score').textContent = item.score.toFixed(1);
-  row.querySelectorAll('.chip').forEach(ch => {
-    const k = ch.dataset.key;
-    ch.classList.toggle('on', !!item.flags[k]);
+/* Parse one utterance → { add:Set, remove:Set, toggle:Set, clearAll:bool, score:number|null, adjust:+/- } */
+function parseUtterance(raw){
+  const tx=normalize(raw);
+
+  const intents={ add:new Set(), remove:new Set(), toggle:new Set(), clearAll:false, score:null, adjust:0 };
+  if(/\bclear\s+flags?\b/.test(tx)) intents.clearAll=true;
+
+  const keys=detectFlags(tx);
+  const isRemove=/\b(remove|clear|unset|delete)\b/.test(tx);
+  const isAdd=/\b(add|flag|set)\b/.test(tx);
+  keys.forEach(k=>{
+    if(isRemove) intents.remove.add(k);
+    else if(isAdd) intents.add.add(k);
+    else intents.toggle.add(k); // default = toggle
+  });
+
+  // score: explicit “rating/score/set … <num>”
+  let m=tx.match(/\b(?:rating|score|set|make)\b(?:\s*(?:it|to|at))?\s+([a-z0-9.\s-]+)(?!.*\b(?:by)\b)/);
+  if(m){
+    const n=wordsToNumber(m[1].trim());
+    if(Number.isFinite(n)) intents.score = quant05(n);
+  }else{
+    // bare number only? (no “increase by” or “decrease by” present)
+    if(/^\d+(\.\d+)?$/.test(tx) || (wordsToNumber(tx), Number.isFinite(wordsToNumber(tx)))){
+      const n=wordsToNumber(tx);
+      if(Number.isFinite(n)) intents.score=quant05(n);
+    }
+  }
+
+  // adjustments
+  const inc=tx.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
+  const dec=tx.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
+  if(inc && !dec){
+    const amt = inc[2] ? (Number.isFinite(wordsToNumber(inc[2])) ? wordsToNumber(inc[2]) : parseFloat(inc[2])) : 0.5;
+    intents.adjust += Number.isFinite(amt) ? amt : 0.5;
+  }
+  if(dec && !inc){
+    const amt = dec[2] ? (Number.isFinite(wordsToNumber(dec[2])) ? wordsToNumber(dec[2]) : parseFloat(dec[2])) : 0.5;
+    intents.adjust -= Number.isFinite(amt) ? amt : 0.5;
+  }
+
+  return intents;
+}
+
+/* ---------------- Apply to row (multi actions in one go) ---------------- */
+function applyTranscript(itemId, raw){
+  const it=items.find(x=>x.id===itemId); if(!it) return;
+  const intents=parseUtterance(raw);
+
+  if(intents.clearAll) it.flags = {};
+
+  intents.add.forEach(k => it.flags[k]=true);
+  intents.remove.forEach(k => it.flags[k]=false);
+  intents.toggle.forEach(k => it.flags[k]=!it.flags[k]);
+
+  if(Number.isFinite(intents.score)) it.score=intents.score;
+  if(intents.adjust!==0) it.score=quant05(it.score + intents.adjust);
+
+  syncRow(it);
+}
+
+function syncRow(it){
+  const row=document.getElementById('row-'+it.id);
+  if(!row) return;
+  row.querySelector('input[type=range]').value=it.score;
+  row.querySelector('.score').textContent=it.score.toFixed(1);
+  row.querySelectorAll('.chip').forEach(ch=>{
+    const k=ch.dataset.key;
+    ch.classList.toggle('on', !!it.flags[k]);
   });
 }
 
-/* ---------------- Clear button ---------------- */
-document.getElementById('clearBtn').addEventListener('click', ()=>{
-  itemsState.forEach(it => { it.score = 0; it.flags = {}; syncRow(it); });
+/* ---------------- Clear all ---------------- */
+document.getElementById('clearBtn').addEventListener('click',()=>{
+  items.forEach(it=>{ it.flags={}; it.score=0; syncRow(it); });
   setStatus('cleared');
 });
 </script>
