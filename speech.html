@@ -112,6 +112,46 @@
 .flagBtn,
 .peek { touch-action: none; } /* prevent native gestures during hold */
 
+/* --- Large, swipeable stage showing 1 Mark + 1 Blind --- */
+.items { display:none; }            /* hide old list view on this test page */
+.stage {
+  display: grid;
+  gap: 14px;
+}
+.pane {
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:16px;
+  box-shadow:0 1px 2px rgba(16,24,40,.04);
+  padding:16px;
+  min-height: 36vh;                 /* nice big touch target area */
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  touch-action: pan-y;              /* allow vertical scrolling; we handle horizontal */
+}
+.pane-head .kind { font-size:14px; font-weight:800; color:#475467; }
+.pane-head .title{ font-size:24px; font-weight:900; margin-top:2px; }
+
+.pane-controls{ display:flex; align-items:center; gap:12px; flex-wrap:wrap }
+.mic.big { font-size:18px; padding:12px 14px; }
+.score.big { font-size:24px; font-weight:900; min-width:56px; text-align:right; }
+
+.navBtn{
+  appearance:none; border:1px solid var(--border); background:#fff;
+  width:46px; height:46px; border-radius:12px; cursor:pointer; font-size:20px; font-weight:800;
+}
+.navBtn:active{ transform:translateY(1px); }
+
+.pager{ margin-left:auto; display:flex; gap:6px; align-items:center }
+.dot{ width:8px; height:8px; border-radius:50%; background:#d0d5dd }
+.dot.on{ background:#0b74ff }
+
+/* Stretch the range to breathe on mobile */
+.pane input[type=range]{
+  flex:1 1 240px; min-width:180px;
+}
+
   
 </style>
 </head>
@@ -130,6 +170,8 @@
   <div class="wrap">
     <div class="card">
       <div id="items" class="items"></div>
+	  <div id="stage" class="stage" aria-live="polite"></div>
+
     </div>
 
     <div class="card" style="margin-top:12px">
@@ -301,6 +343,15 @@ const items = [
 const itemsEl = document.getElementById('items');
 const statusEl = document.getElementById('status');
 
+// --- Stage (carousel) refs/state ---
+const stageEl = document.getElementById('stage');
+let idxMark  = +(localStorage.getItem('idxMark')  || 0);
+let idxBlind = +(localStorage.getItem('idxBlind') || 0);
+
+function clamp(i, len){ if(len<=0) return 0; return (i%len+len)%len; }
+function saveIdx(){ localStorage.setItem('idxMark', idxMark); localStorage.setItem('idxBlind', idxBlind); }
+
+
 function chip(key,on){
   const el=document.createElement('span');
   el.className='chip'+(on?' on':'');
@@ -341,7 +392,137 @@ setupFlagPeek(flagBtn, it.id);
   itemsEl.appendChild(row);
 }
 function renderAll(){ itemsEl.innerHTML=''; items.forEach(renderRow); }
+
+function renderStage(){
+  const marks  = items.filter(it=>it.kind==='Mark');
+  const blinds = items.filter(it=>it.kind==='Blind');
+  if (!stageEl) return;
+
+  idxMark  = clamp(idxMark,  marks.length);
+  idxBlind = clamp(idxBlind, blinds.length);
+
+  stageEl.innerHTML = '';
+  stageEl.appendChild(renderPane('Mark',  marks[idxMark],  marks.length,  'mark'));
+  stageEl.appendChild(renderPane('Blind', blinds[idxBlind], blinds.length, 'blind'));
+}
+
+function renderPane(label, it, total, type){
+  const pane = document.createElement('div');
+  pane.className = 'pane';
+  pane.dataset.type = type;
+
+  const head = document.createElement('div');
+  head.className = 'pane-head';
+  head.innerHTML = `
+    <div class="kind">${label}</div>
+    <div class="title">${it ? it.title : '—'}</div>
+  `;
+
+  const ctrls = document.createElement('div');
+  ctrls.className = 'pane-controls';
+
+  const prev = document.createElement('button');
+  prev.className = 'navBtn';
+  prev.title = 'Previous';
+  prev.textContent = '⟵';
+
+  const next = document.createElement('button');
+  next.className = 'navBtn';
+  next.title = 'Next';
+  next.textContent = '⟶';
+
+  const flagBtn = document.createElement('button');
+  flagBtn.type='button';
+  flagBtn.className='flagBtn';
+  flagBtn.title='Hold to view flags • Swipe down to clear';
+  flagBtn.textContent='🚩';
+
+  const mic = document.createElement('button');
+  mic.type='button';
+  mic.className='mic big';
+  mic.innerHTML='<span class="dot"></span> 🎤 Listen';
+
+  const range = document.createElement('input');
+  range.type='range'; range.min='0'; range.max='10'; range.step='0.5';
+  range.value = it ? it.score : 0;
+
+  const score = document.createElement('div');
+  score.className='score big';
+  score.textContent = (it ? it.score : 0).toFixed(1);
+
+  const pager = document.createElement('div');
+  pager.className = 'pager';
+  if (total > 1){
+    for(let i=0;i<total;i++){
+      const d=document.createElement('div'); d.className='dot'+(i=== (type==='mark'?idxMark:idxBlind) ? ' on' : '');
+      pager.appendChild(d);
+    }
+  }
+
+  // attach logic only if item exists
+  if (it){
+    // speech
+    mic.addEventListener('click', ()=> startListeningFor(it.id));
+    // flags peek
+    setupFlagPeek(flagBtn, it.id);
+    // slider
+    range.addEventListener('input', ()=>{
+      it.score = +range.value;
+      score.textContent = it.score.toFixed(1);
+    });
+
+    // nav
+    prev.addEventListener('click', ()=>{
+      if (type==='mark'){ idxMark = clamp(idxMark-1, total); }
+      else { idxBlind = clamp(idxBlind-1, total); }
+      saveIdx(); renderStage();
+    });
+    next.addEventListener('click', ()=>{
+      if (type==='mark'){ idxMark = clamp(idxMark+1, total); }
+      else { idxBlind = clamp(idxBlind+1, total); }
+      saveIdx(); renderStage();
+    });
+
+    // swipe (left/right) on the whole pane
+    attachSwipeX(pane, 60, () => { // swipe left → next
+      if (type==='mark'){ idxMark = clamp(idxMark+1, total); }
+      else { idxBlind = clamp(idxBlind+1, total); }
+      saveIdx(); renderStage();
+    }, () => { // swipe right → prev
+      if (type==='mark'){ idxMark = clamp(idxMark-1, total); }
+      else { idxBlind = clamp(idxBlind-1, total); }
+      saveIdx(); renderStage();
+    });
+  }
+
+  ctrls.append(prev, flagBtn, mic, range, score, next, pager);
+  pane.append(head, ctrls);
+  return pane;
+}
+
+function attachSwipeX(el, threshold, onLeft, onRight){
+  let pid=null, sx=0, dx=0;
+  el.addEventListener('pointerdown', (e)=>{
+    pid=e.pointerId; sx=e.clientX; dx=0;
+    el.setPointerCapture?.(pid);
+  });
+  el.addEventListener('pointermove', (e)=>{
+    if(e.pointerId!==pid) return;
+    dx = e.clientX - sx;
+  });
+  const end = (e)=>{
+    if(e.pointerId!==pid) return;
+    if (dx <= -threshold) onLeft?.();
+    else if (dx >= threshold) onRight?.();
+    pid=null; dx=0;
+  };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+
+
 renderAll();
+renderStage();
 
 
 // --- Peek overlay state/refs ---
@@ -401,6 +582,8 @@ function clearAllFlags(itemId){
   if(!it) return;
   it.flags = {};
   syncRow(it);
+  renderStage();
+
   fillPeek(itemId);
   pullZone.classList.add('cleared');
   pullLabel.textContent = 'Cleared';
