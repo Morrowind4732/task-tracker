@@ -340,6 +340,76 @@ html.overlay-open, body.overlay-open { overflow: hidden; }
   };
   if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
   const db = firebase.firestore();
+  
+  // ---------- Run context (trainer/day/setup) ----------
+let currentTrainer = 'Scott';                   // default
+let currentDateKey = null;
+let currentSetupId = null;
+let currentSetupOrder = 1;
+
+// Build a reference to the score "run" doc for a dog
+function runDocRef(dogName){
+  if (!dogName || !currentSetupId || !currentTrainer || !currentDateKey) return null;
+  return db.collection('setups').doc(currentTrainer)
+           .collection('days').doc(currentDateKey)
+           .collection('setups').doc(currentSetupId)
+           .collection('scores').doc(dogName)
+           .collection('runs').doc('current'); // one doc per day/setup/dog
+}
+
+// Tiny debounce helper + per-item debouncers
+function debounce(fn, ms=350){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+const saveDebouncers = {};
+function debouncedSaver(itemId){
+  if (!saveDebouncers[itemId]){
+    saveDebouncers[itemId] = debounce(async ()=>{
+      const dogName = selectedDog;
+      const ref = runDocRef(dogName);
+      if (!ref) return;
+      const it = items.find(x=>x.id===itemId);
+      if (!it) return;
+
+      // Persist score + flags for this one item
+      const payload = { score: it.score || 0, flags: it.flags || {} };
+      await ref.set({
+        trainer: currentTrainer,
+        dateKey: currentDateKey,
+        setupId: currentSetupId,
+        setupOrder: currentSetupOrder,
+        // tip: if you need a numeric "handles" count later, add it alongside
+        items: { [itemId]: payload },
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    }, 350);
+  }
+  return saveDebouncers[itemId];
+}
+
+// Load this dog's saved scores/flags into our in-memory `items` and re-render
+async function loadDogRun(dogName){
+  const ref = runDocRef(dogName);
+  if (!ref) return;
+  const snap = await ref.get();
+  if (!snap.exists) return;
+
+  const data = snap.data() || {};
+  const saved = data.items || {};
+  let changed = false;
+
+  items.forEach(it => {
+    const s = saved[it.id];
+    if (s){
+      if (typeof s.score === 'number') { it.score = quant05(s.score); changed = true; }
+      if (s.flags && typeof s.flags === 'object') {
+        it.flags = Object.assign({}, it.flags, s.flags);
+        changed = true;
+      }
+    }
+  });
+
+  if (changed){ renderAll(); renderStage(); }
+}
+
 
 
 
@@ -444,14 +514,7 @@ const FLAG_RX = {
 };
 
 /* ---------------- Demo items ---------------- */
-const items = [
-  { id:'m1', kind:'Mark',  title:'#1 — 78 yards',  score:0, flags:{} },
-  { id:'m2', kind:'Mark',  title:'#2 — 49 yards',  score:0, flags:{} },
-  { id:'m3', kind:'Mark',  title:'#3 — 143 yards', score:0, flags:{} },
-  { id:'b1', kind:'Blind', title:'#1 — 120 yards', score:0, flags:{} },
-  { id:'b2', kind:'Blind', title:'#2 — 95 yards',  score:0, flags:{} },
-];
-
+let items = [];
 /* ---------------- UI ---------------- */
 const itemsEl = document.getElementById('items');
 const statusEl = document.getElementById('status');
@@ -460,6 +523,98 @@ const statusEl = document.getElementById('status');
 const stageEl = document.getElementById('stage');
 let idxMark  = +(localStorage.getItem('idxMark')  || 0);
 let idxBlind = +(localStorage.getItem('idxBlind') || 0);
+
+// ------- Helpers for today + formatting -------
+function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+function yards(n){ return (typeof n==='number' && isFinite(n)) ? Math.round(n) : 0; }
+
+// Build our speech-page item objects from setups doc
+function buildSpeechItemsFromSetupDoc(data){
+  const out = [];
+  const marks  = Array.isArray(data.items)  ? data.items  : [];
+  const blinds = Array.isArray(data.blinds) ? data.blinds : [];
+
+  marks.forEach((m, i) => {
+    out.push({
+      id: m.id || `m_${i+1}`,
+      kind: 'Mark',
+      title: `#${i+1} — ${yards(m.dist)} yards`,
+      score: 0,
+      flags: {}
+    });
+  });
+
+  blinds.forEach((b, i) => {
+    out.push({
+      id: b.id || `b_${i+1}`,
+      kind: 'Blind',
+      title: `#${i+1} — ${yards(b.dist)} yards`,
+      score: 0,
+      flags: {}
+    });
+  });
+
+  return out;
+}
+
+// Reset stage so new data doesn't inherit old panes
+function resetStage(){
+  idxMark = 0; idxBlind = 0;
+  try {
+    localStorage.setItem('idxMark', '0');
+    localStorage.setItem('idxBlind', '0');
+  } catch {}
+  stageEl.innerHTML = '';   // remove previous .pane-slot(s)
+  itemsEl.innerHTML = '';   // clear old rows list
+}
+
+// Load today's Setup N for a trainer (defaults: Scott / 1)
+async function loadTodaysSetup({ trainer='Scott', setupOrder=1 } = {}){
+const dateKey = ymd(new Date());
+currentDateKey = dateKey;          
+
+  setStatus(`Loading ${trainer} – ${dateKey} (Setup ${setupOrder})…`);
+
+  const dayColl = db.collection('setups').doc(trainer)
+                    .collection('days').doc(dateKey)
+                    .collection('setups');
+
+  const snap = await dayColl.orderBy('order').get();
+  if (snap.empty){
+    setStatus('No setups found for today. Using empty list.');
+    resetStage();
+    items = [];
+    renderAll();
+    renderStage();
+    return;
+  }
+
+  // choose requested order if present, else first doc
+let chosen = snap.docs[0];
+if (setupOrder > 1){
+  const found = snap.docs.find(d => (d.data()?.order ?? 0) === setupOrder);
+  if (found) chosen = found;
+}
+currentTrainer = trainer;                  // <— add
+currentSetupId = chosen.id;                // <— add
+currentSetupOrder = setupOrder || 1;       // <— add
+
+
+  const data = chosen.data() || {};
+  items = buildSpeechItemsFromSetupDoc(data);
+
+  resetStage();
+  renderAll();
+  renderStage();
+if (selectedDog) { loadDogRun(selectedDog).catch(console.error); }
+  const m = items.filter(x=>x.kind==='Mark').length;
+  const b = items.filter(x=>x.kind==='Blind').length;
+  setStatus(`Loaded ${trainer} – ${dateKey} • ${m} marks / ${b} blinds`);
+}
+
+// (optional) expose for console testing
+window.loadTodaysSetup = loadTodaysSetup;
+
 
 function clamp(i, len){ if(len<=0) return 0; return (i%len+len)%len; }
 function saveIdx(){ localStorage.setItem('idxMark', idxMark); localStorage.setItem('idxBlind', idxBlind); }
@@ -497,7 +652,7 @@ mic.innerHTML='<span class="dot"></span> 🎤 Listen';
   mic.addEventListener('click',()=>startListeningFor(it.id));
   
   const slider=document.createElement('input'); slider.type='range'; slider.min='0'; slider.max='10'; slider.step='0.5'; slider.value=it.score;
-  slider.addEventListener('input',()=>{ it.score=+slider.value; score.textContent=it.score.toFixed(1); });
+  slider.addEventListener('input',()=>{ it.score=+slider.value; score.textContent=it.score.toFixed(1);debouncedSaver(it.id)();});
   const score=document.createElement('div'); score.className='score'; score.textContent=it.score.toFixed(1);
  right.append(flagBtn, mic, slider, score);
 
@@ -631,11 +786,92 @@ flagBtn.textContent='🚩';
     range.addEventListener('input', ()=>{
   it.score = +range.value;
   score.textContent = it.score.toFixed(1);
+  debouncedSaver(it.id)();  
 });
 range.addEventListener('pointerdown', (e)=> e.stopPropagation());
 
 
-    
+  // ------- Helpers for today + formatting -------
+function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+function yards(n){ return (typeof n==='number' && isFinite(n)) ? Math.round(n) : 0; }
+
+// Build our speech-page item objects from setups doc
+function buildSpeechItemsFromSetupDoc(data){
+  const out = [];
+
+  // Marks
+  const marks = Array.isArray(data.items) ? data.items : [];
+  marks.forEach((m, i) => {
+    out.push({
+      id: m.id || `m_${i+1}`,
+      kind: 'Mark',
+      title: `#${i+1} — ${yards(m.dist)} yards`,
+      score: 0,
+      flags: {}
+    });
+  });
+
+  // Blinds
+  const blinds = Array.isArray(data.blinds) ? data.blinds : [];
+  blinds.forEach((b, i) => {
+    out.push({
+      id: b.id || `b_${i+1}`,
+      kind: 'Blind',
+      title: `#${i+1} — ${yards(b.dist)} yards`,
+      score: 0,
+      flags: {}
+    });
+  });
+
+  return out;
+}
+
+// Reset stage so new data doesn't inherit old panes
+function resetStage(){
+  idxMark = 0; idxBlind = 0;
+  try {
+    localStorage.setItem('idxMark', '0');
+    localStorage.setItem('idxBlind', '0');
+  } catch {}
+  stageEl.innerHTML = '';   // remove previous .pane-slot(s)
+  itemsEl.innerHTML = '';   // clear old rows list
+}
+
+// Load today's Setup 1 for a trainer (defaults: Scott / first-by-order)
+async function loadTodaysSetup({ trainer='Scott', setupOrder=1 } = {}){
+  const dateKey = ymd(new Date());
+  setStatus(`Loading ${trainer} – ${dateKey} (Setup ${setupOrder})…`);
+
+  const dayDoc = db.collection('setups').doc(trainer)
+                   .collection('days').doc(dateKey)
+                   .collection('setups');
+
+  // get the first by order (or fall back to first doc if order missing)
+  const snap = await dayDoc.orderBy('order').get();
+  if (snap.empty){
+    setStatus('No setups found for today. Using empty list.');
+    resetStage();
+    items = [];
+
+    return;
+  }
+
+  // pick by requested order if present, else just the first
+  let chosen = snap.docs[0];
+  if (setupOrder > 1){
+    const found = snap.docs.find(d => (d.data()?.order ?? 0) === setupOrder);
+    if (found) chosen = found;
+  }
+
+  const data = chosen.data() || {};
+  const built = buildSpeechItemsFromSetupDoc(data);
+
+  resetStage();
+  items = built;
+
+  setStatus(`Loaded ${trainer} – ${dateKey} • ${items.filter(x=>x.kind==='Mark').length} marks / ${items.filter(x=>x.kind==='Blind').length} blinds`);
+}
+  
 
 
     // swipe (left/right) on the whole pane
@@ -661,15 +897,20 @@ function attachSwipeX(el, threshold, onLeft, onRight){
   let pid=null, sx=0, dx=0, ignore=false;
 
   el.addEventListener('pointerdown', (e)=>{
-    // If the pointer starts on a score slider, do NOT arm swipe.
-    if (e.target.closest('input[type="range"]')) {
-      ignore = true; pid=null; sx=0; dx=0;
-      return; // let the slider keep full control
-    }
-    ignore = false;
-    pid = e.pointerId; sx = e.clientX; dx = 0;
-    el.setPointerCapture?.(pid);
-  });
+  const t = e.target;
+  // bail out if the gesture started on any interactive control
+  const isInteractive = t && typeof t.closest === 'function' &&
+    (t.closest('input[type="range"]') || t.closest('.mic') || t.closest('.flagBtn'));
+  if (isInteractive) {
+    ignore = true; pid=null; sx=0; dx=0;
+    return; // let mic/flag/slider handle it; do NOT capture
+  }
+
+  ignore = false;
+  pid = e.pointerId; sx = e.clientX; dx = 0;
+  el.setPointerCapture?.(pid);
+});
+
 
   el.addEventListener('pointermove', (e)=>{
     if (ignore || e.pointerId!==pid) return;
@@ -689,8 +930,12 @@ function attachSwipeX(el, threshold, onLeft, onRight){
 
 
 
-renderAll();
+renderAll();          // safe no-op while empty
 renderStage();
+loadTodaysSetup({ trainer: 'Scott', setupOrder: 1 }).catch(err=>{
+  console.error(err);
+  setStatus('Failed to load today’s setup.');
+});
 
 
 // --- Peek overlay state/refs ---
@@ -715,6 +960,11 @@ peekOverlay.addEventListener('pointermove', (e)=>{
   updatePull(y - peekHold.startY);
 }, { passive: true });
 
+document.addEventListener('dog:selected', (e)=>{
+  // when the user picks a dog, pull their saved scores/flags for the current setup
+  loadDogRun(e.detail.name).catch(console.error);
+});
+
 
 // Global safety net: if the button loses the pointerup, still close
 const closeFromDoc = (e)=>{
@@ -731,7 +981,9 @@ document.addEventListener('pointercancel', closeFromDoc, { capture:true });
 // Suppress long-press context menu and text selection on the flag + overlay
 ['contextmenu', 'selectstart'].forEach(evt => {
   document.addEventListener(evt, (e) => {
-    if (e.target.closest('.flagBtn') || e.target.closest('#peekOverlay')) {
+    const t = e.target;
+    if (t && typeof t.closest === 'function' &&
+        (t.closest('.flagBtn') || t.closest('#peekOverlay'))) {
       e.preventDefault();
     }
   }, { passive:false });
@@ -784,6 +1036,7 @@ function clearAllFlags(itemId){
   it.flags = {};
   syncRow(it);
   renderStage();
+debouncedSaver(itemId)();                     // <— persist this item
 
   fillPeek(itemId);
   pullZone.classList.add('cleared');
@@ -904,7 +1157,8 @@ function startListeningFor(id){
   try{ rec.abort(); }catch{}
   activeFix=null;
   activeId=id;
-  document.querySelectorAll('.row').forEach(r=>r.classList.toggle('listening', r.id==='row-'+id));
+  document.querySelectorAll('.row')
+    .forEach(r=> r.classList.toggle('listening', r.id==='row-'+id));
   rec.start();
 }
 function startFixListening(itemId, phrase, suggestKey){
@@ -918,7 +1172,7 @@ function startFixListening(itemId, phrase, suggestKey){
 }
 function endListen(){
   activeId=null;
-  document.querySelectorAll('.row').forEach(r=>r.classList.remove('listening'));
+  document.querySelectorAll('.row').forEach(r=> r.classList.remove('listening'));
 }
 
 /* ---------------- NLP core ---------------- */
@@ -1267,6 +1521,20 @@ if (dogMicBtn){
 /* ---------------- Apply to row, then surface missed overlay + logging ---------------- */
 function quantClamp(n){ return Math.max(0, Math.min(10, n)); }
 
+// Update the on-screen pane (Mark or Blind) without re-rendering the whole stage
+function syncStageForItem(it){
+  const type = it.kind === 'Mark' ? 'mark' : 'blind';
+  const pane = stageEl.querySelector(`.pane-slot[data-type="${type}"] .pane`);
+  if (!pane) return; // not currently visible
+
+  const rangeEl = pane.querySelector('input[type="range"]');
+  const scoreEl = pane.querySelector('.score');
+
+  if (rangeEl) rangeEl.value = it.score;
+  if (scoreEl) scoreEl.textContent = it.score.toFixed(1);
+}
+
+
 function applyTranscript(itemId, raw){
   const it=items.find(x=>x.id===itemId); if(!it) return;
   const { intents, missed } = parseUtterance(raw);
@@ -1284,7 +1552,9 @@ function applyTranscript(itemId, raw){
   if(intents.adjust!==0) it.score=quant05(it.score + intents.adjust);
   it.score = quantClamp(it.score);
 
-  syncRow(it);
+   syncRow(it);
+  syncStageForItem(it); // <-- instantly reflect score on the visible pane
+
   renderStage(); // <-- refresh the big Mark/Blind panes so score shows immediately
 
   if (missed.length){
@@ -1295,6 +1565,9 @@ function applyTranscript(itemId, raw){
     }
     renderMissedOverlay();
   }
+  
+  debouncedSaver(itemId)();                     // <— persist this item
+
 }
 function syncRow(it){
   const row=document.getElementById('row-'+it.id);
@@ -1367,6 +1640,8 @@ function renderMissedOverlay(){
       quick.addEventListener('click', ()=>{
         const it = items.find(x=>x.id===m.itemId); if (!it) return;
         it.flags[m.suggestKey] = true;
+		debouncedSaver(it.id)();                      // <— persist change
+
         syncRow(it);
         removeMissed(m.itemId, m.phrase);
         renderMissedOverlay();
@@ -1431,10 +1706,18 @@ document.getElementById('logClear').addEventListener('click', ()=>{ clearLog(); 
 
 /* ---------------- Clear all ---------------- */
 document.getElementById('clearBtn').addEventListener('click',()=>{
-  items.forEach(it=>{ it.flags={}; it.score=0; syncRow(it); });
-  missedItems.length=0; renderMissedOverlay();
+  items.forEach(it=>{
+    it.flags = {};
+    it.score = 0;
+    syncRow(it);
+    debouncedSaver(it.id)();          // persist resets per item
+  });
+  missedItems.length = 0;
+  renderMissedOverlay();
+  renderStage();
   setStatus('cleared');
 });
+
 </script>
 </body>
 </html>
