@@ -238,19 +238,23 @@ html.overlay-open, body.overlay-open { overflow: hidden; }
 </style>
 </head>
 <body>
-  <header>
-    <h1>Voice Flag Tester</h1>
-    <div class="sub">Click a row’s 🎤; that utterance applies only to that row. Say multiple flags and a score in one go.</div>
-  </header>
-
-  <div class="bar">
-    <button id="clearBtn" class="btn">Clear all</button>
-    <button id="viewLogBtn" class="btn ghost">Unassigned Log</button>
-    <div id="status" class="status">Status: idle</div>
-  </div>
+  
 
   <div class="wrap">
     <div class="card">
+	<div class="card" id="dogCard" style="margin-bottom:12px;">
+  <div class="pane-head">
+    <div class="kind">Dog</div>
+    <div class="title" id="dogName">—</div>
+  </div>
+  <div class="pane-controls">
+    <button class="mic big" id="dogMic" type="button" title="Say a dog’s name">
+      <span class="dot"></span> 🎤 Listen
+    </button>
+    <div class="hint" id="dogHint">Loading dog names…</div>
+  </div>
+</div>
+
       <div id="items" class="items"></div>
 	  <div id="stage" class="stage" aria-live="polite"></div>
 
@@ -311,7 +315,34 @@ html.overlay-open, body.overlay-open { overflow: hidden; }
   </div>
 </div>
 
+
+
+  <div class="bar">
+    <button id="clearBtn" class="btn">Clear all</button>
+    <button id="viewLogBtn" class="btn ghost">Unassigned Log</button>
+    <div id="status" class="status">Status: idle</div>
+  </div>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+
 <script>
+
+
+  // reuse trailer.html config
+  const firebaseConfig = {
+    apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+    authDomain: "task-tracker-73b77.firebaseapp.com",
+    projectId: "task-tracker-73b77",
+    storageBucket: "task-tracker-73b77.firebasestorage.app",
+    messagingSenderId: "795274673000",
+    appId: "1:795274673000:web:0ea07130e45c72384134dd",
+    measurementId: "G-VLW5KLY4FF"
+  };
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+
+
 /* ---------------- Flag dictionary & variants (for positioning/fuzzy) ---------------- */
 const FLAGS = [
   { key:'bigHunt',        label:'Big Hunt',         variants:['big hunt'] },
@@ -823,6 +854,21 @@ if (SR){
     })) : [];
 
     const best = alts[0]?.transcript || tx;
+	
+	// ---- inside rec.onresult, right after you set `const best = ...` ----
+if (dogListenActive){
+  const name = matchDogName(best);
+  if (name){
+    setSelectedDog(name);
+    setStatus('Dog: ' + name);
+  }else{
+    setStatus('Heard: "'+best+'", didn’t match a dog');
+  }
+  dogListenActive = false;
+  dogMicBtn?.classList.remove('listening');
+  return; // don’t run the row/flags logic for this utterance
+}
+
 
     console.groupCollapsed(
       `%cSpeech(final) → %c${best}`,
@@ -1132,6 +1178,90 @@ function bestSuggestion(seg){
     }
   }
   return (best && best.sim >= 0.55) ? best : null; // threshold
+}
+
+let DOG_NAMES = [];
+let selectedDog = localStorage.getItem('selectedDog') || null;
+const dogNameEl = document.getElementById('dogName');
+const dogHintEl = document.getElementById('dogHint');
+const dogMicBtn = document.getElementById('dogMic');
+
+// show persisted selection on load
+if (selectedDog) dogNameEl.textContent = selectedDog;
+
+// pull all names from every `layouts/*` doc you’re already writing in trailer.html
+async function fetchDogNames(){
+  const snap = await db.collection('layouts').get();
+  const bucket = [];
+  snap.forEach(doc => {
+    const d = doc.data() || {};
+    if (Array.isArray(d.masterNames)) bucket.push(...d.masterNames);
+    if (Array.isArray(d.dockNames))   bucket.push(...d.dockNames);
+    if (d.slotData && typeof d.slotData === 'object') {
+      bucket.push(...Object.values(d.slotData).filter(Boolean));
+    }
+  });
+  // unique + cleaned + sorted
+  DOG_NAMES = [...new Set(bucket.map(n => String(n).trim()).filter(Boolean))]
+               .sort((a,b)=>a.localeCompare(b));
+  dogHintEl.textContent = DOG_NAMES.length
+    ? `Say a name (${DOG_NAMES.length} loaded)`
+    : `No names found in Firestore layouts`;
+}
+fetchDogNames().catch(err=>{
+  console.error(err);
+  dogHintEl.textContent = 'Failed to load names';
+});
+
+// similarity helper using your existing lev()
+function sim(a,b){
+  const A = normalize(a), B = normalize(b);
+  if (!A || !B) return 0;
+  const d = lev(A,B);
+  return 1 - d / Math.max(A.length, B.length);
+}
+
+// find the best dog name for a transcript
+function matchDogName(heard){
+  const q = normalize(heard);
+  if (!q) return null;
+
+  // 1) exact token contain check (fast path)
+  let exact = DOG_NAMES.find(n => q.includes(normalize(n)));
+  if (exact) return exact;
+
+  // 2) highest similarity
+  let best = null;
+  for (const n of DOG_NAMES){
+    const s = sim(q, n);
+    if (!best || s > best.s) best = { n, s };
+  }
+  // require a reasonably strong match
+  return (best && best.s >= 0.72) ? best.n : null;
+}
+
+function setSelectedDog(name){
+  selectedDog = name;
+  dogNameEl.textContent = name;
+  localStorage.setItem('selectedDog', name);
+  // broadcast so other parts can react if needed
+  document.dispatchEvent(new CustomEvent('dog:selected', { detail: { name } }));
+}
+
+// We’ll reuse your existing SpeechRecognition instance `rec`
+let dogListenActive = false;
+
+// attach the button
+if (dogMicBtn){
+  dogMicBtn.addEventListener('click', ()=>{
+    if (!rec){ alert('Speech API not supported'); return; }
+    try{ rec.abort(); }catch{}
+    dogListenActive = true;
+    // optional little UI cue
+    dogMicBtn.classList.add('listening');
+    setStatus('listening… (dog name)');
+    rec.start();
+  });
 }
 
 /* ---------------- Apply to row, then surface missed overlay + logging ---------------- */
