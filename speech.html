@@ -45,6 +45,39 @@
   .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:#fff;font-size:12px}
   .pill.ok{border-color:#c7f1d9;background:#ecfdf5;color:#065f46}
   .pill.bad{border-color:#ffd5d5;background:#fff1f1;color:#7f1d1d}
+/* Hide the old grid; voice still toggles in the background */
+.chips{ display:none; }
+
+/* Red circle “flag” button */
+.flagBtn{
+  width:48px; height:48px; border-radius:999px;
+  display:inline-flex; align-items:center; justify-content:center;
+  background:#FFFFFF; color:#fff; border:none; cursor:pointer;
+  box-shadow:0 10px 24px rgba(239,68,68,.35);
+  touch-action:none; /* enables swipe tracking on mobile */
+  font-size:20px; font-weight:900;
+}
+.flagBtn:active{ transform:translateY(1px); }
+
+/* Peek overlay: big, easy-to-read list */
+.peek{ width:min(420px,92vw); background:#fff; border-radius:16px;
+  border:1px solid var(--border); padding:16px; text-align:center;
+  box-shadow:0 20px 50px rgba(0,0,0,.25);
+}
+.peek-head{font-weight:800; font-size:14px; color:#475467; margin-bottom:8px}
+.peek-list{display:flex; flex-direction:column; gap:12px; margin:10px 0 6px}
+.peek-flag{font-size:22px; font-weight:800; padding:8px 12px; border-radius:12px;
+  background:#f8fafc; border:1px solid #e5e7eb}
+
+/* Pull-to-clear zone at bottom of the card */
+.pull-zone{position:relative; height:64px; border-radius:12px; overflow:hidden;
+  background:#fafafa; border:1px dashed #e5e7eb; margin-top:8px}
+.pull-bar{position:absolute; left:0; top:0; width:100%; height:0;
+  background:rgba(239,68,68,.25); transition:height .1s linear}
+.pull-zone.ready .pull-bar{ background:rgba(239,68,68,.45); }
+.pull-zone.cleared{ background:#fee2e2; border-color:#fecaca; }
+.pull-label{position:relative; z-index:1; line-height:64px; font-weight:800; color:#7f1d1d}
+
 
   /* Overlay (missed phrases) */
   .overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
@@ -108,6 +141,7 @@
       </div>
     </div>
   </div>
+  
 
   <!-- Master log overlay -->
   <div id="logOverlay" class="overlay" aria-hidden="true">
@@ -123,55 +157,117 @@
       </div>
     </div>
   </div>
+  
+<!-- Active-flags peek (hold the red circle, swipe down to clear) -->
+<div id="peekOverlay" class="overlay" aria-hidden="true">
+  <div class="peek">
+    <div class="peek-head">Active flags for this item</div>
+    <div id="peekList" class="peek-list"></div>
+
+    <div id="pullZone" class="pull-zone">
+      <div id="pullBar" class="pull-bar"></div>
+      <div id="pullLabel" class="pull-label">Swipe down to clear</div>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ---------------- Flag dictionary & variants (for positioning/fuzzy) ---------------- */
 const FLAGS = [
   { key:'bigHunt',        label:'Big Hunt',         variants:['big hunt'] },
   { key:'marginalHunt',   label:'Marginal Hunt',    variants:['marginal hunt'] },
-  { key:'overran',        label:'Overran',          variants:['overran','over run','over-run','over run'] },
-  { key:'shortCheckDown', label:'Short Checkdown',  variants:['short checkdown','short check down'] },
-  { key:'backSideOfGun',  label:'Backside of Gun',  variants:['backside of gun','back side of gun'] },
+
+  // add split/inflected variants
+  { key:'overran',        label:'Overran',          variants:['overran','over run','over-run','over ran','ran over'] },
+
+  { key:'shortCheckDown', label:'Short Checkdown',  variants:[
+      'short checkdown','short check down','short-check down','short check-down'
+    ] },
+
+  // allow articles + shorthand
+  { key:'backSideOfGun',  label:'Backside of Gun',  variants:[
+      'backside of gun','backside of the gun','back side of gun','back side of the gun',
+      'back of gun','back of the gun'
+    ] },
 
   { key:'handled',        label:'Handled',          variants:['handled'] },
-  { key:'castRefusal',    label:'Cast Refusal',     variants:['cast refusal'] },
-  { key:'sitOnWhistle',   label:'Sit on Whistle',   variants:['sit on whistle'] },
-  { key:'didntMark',      label:"Didn't Mark",      variants:["didn't mark",'didnt mark'] },
+  { key:'castRefusal',    label:'Cast Refusal',     variants:['cast refusal','cast refused','refused cast'] },
+
+  // sit/sat + article
+  { key:'sitOnWhistle',   label:'Sit on Whistle',   variants:[
+      'sit on whistle','sit on the whistle','sat on whistle','sat on the whistle'
+    ] },
+
+  // didn’t vs did not
+  { key:'didntMark',      label:"Didn't Mark",      variants:["didn't mark",'didnt mark','did not mark'] },
+
   { key:'poorInitial',    label:'Poor Initial',     variants:['poor initial'] },
 
-  { key:'headswing',      label:'Headswing',        variants:['headswing','head swing'] },
+  // head swing vs swung
+  { key:'headswing',      label:'Headswing',        variants:['headswing','head swing','head swung'] },
+
   { key:'break',          label:'Broke',            variants:['broke','break'] },
-  { key:'switched',       label:'Switched',         variants:['switched','switch'] },
+  { key:'switched',       label:'Switched',         variants:['switched','switch','did a switch'] },
   { key:'noGo',           label:'No-Go',            variants:['no go','no-go'] },
 
-  { key:'pickedUpPoison', label:'Poison Pick Up',   variants:['poison pick up','picked up poison'] },
-  { key:'noPickUp',       label:'No Pick Up',       variants:['no pick up','no pickup'] },
-  { key:'stoodOut',       label:'Stood Out',        variants:['stood out'] },
-  { key:'popped',         label:'Popped',           variants:['popped'] },
+  // pick-up hyphen + article
+  { key:'pickedUpPoison', label:'Poison Pick Up',   variants:[
+      'poison pick up','poison pick-up','picked up poison','picked up the poison'
+    ] },
+  { key:'noPickUp',       label:'No Pick Up',       variants:[
+      'no pick up','no pick-up','no pickup'
+    ] },
+
+  { key:'stoodOut',       label:'Stood Out',        variants:['stood out','stood way out'] },
+  { key:'popped',         label:'Popped',           variants:['popped','pop'] },
 ];
 const FLAG_MAP = Object.fromEntries(FLAGS.map(f=>[f.key,f]));
 
 /* Regex bundle for fast detection (multi-match) */
+/* NOTE: these broaden matching but preserve existing behavior */
 const FLAG_RX = {
-  bigHunt:        [/big\s*hunt/gi],
-  marginalHunt:   [/marginal\s*hunt/gi],
-  overran:        [/\boverran\b/gi, /\bover[-\s]?run\b/gi],
-  shortCheckDown: [/short\s*check\s*down/gi, /short\s*checkdown/gi],
-  backSideOfGun:  [/back\s*side\s*of\s*gun/gi, /backside\s*of\s*gun/gi],
+  bigHunt:        [/big[\s-]*hunt/gi],
+  marginalHunt:   [/marginal[\s-]*hunt/gi],
+
+  // overran / over ran / over run / ran over
+  overran:        [/\boverran\b/gi, /\bover[\s-]*(?:ran|run)\b/gi, /\bran\s+over\b/gi],
+
+  // short checkdown / short check down / hyphenated
+  shortCheckDown: [/short[\s-]*check[\s-]*down/gi, /short[\s-]*checkdown/gi],
+
+  // backside of (the) gun | back of (the) gun
+  backSideOfGun:  [
+    /back\s*side\s*of\s*(?:the\s*)?gun/gi,
+    /backside\s*of\s*(?:the\s*)?gun/gi,
+    /back\s*of\s*(?:the\s*)?gun/gi
+  ],
 
   handled:        [/\bhandled?\b/gi],
-  castRefusal:    [/cast\s*refusal/gi],
-  sitOnWhistle:   [/sit\s*on\s*whistle/gi],
-  didntMark:      [/didn'?t\s*mark/gi],
+
+  // cast refusal + inflections
+  castRefusal:    [/cast[\s-]*refusal/gi, /cast[\s-]*refused/gi, /refused[\s-]*cast/gi],
+
+  // sit|sat on (the) whistle
+  sitOnWhistle:   [/\b(?:sit|sat)\s*on\s*(?:the\s*)?whistle\b/gi],
+
+  // didn't|did not mark
+  didntMark:      [/(?:didn'?t|did\s+not)\s*mark/gi],
+
   poorInitial:    [/poor\s*initial/gi],
 
-  headswing:      [/head\s*swing/gi, /\bheadswing\b/gi],
+  // head swing / headswing / head swung
+  headswing:      [/head\s*swing/gi, /\bheadswing\b/gi, /\bhead\s*swung\b/gi],
+
   break:          [/\bbroke?\b/gi, /\bbreak\b/gi],
-  switched:       [/\bswitch(?:ed|)\b/gi],
+  switched:       [/\bswitch(?:ed|)\b/gi, /did\s*(?:a\s*)?switch\b/gi],
   noGo:           [/\bno[-\s]?go\b/gi],
 
-  pickedUpPoison: [/poison\s*pick\s*up/gi, /picked\s*up\s*poison/gi],
-  noPickUp:       [/\bno\s*pick\s*up\b/gi, /\bno\s*pickup\b/gi],
+  // poison pick up (hyphen tolerant) | picked up (the) poison
+  pickedUpPoison: [/poison\s*pick[-\s]*up/gi, /picked\s*up\s*(?:the\s*)?poison/gi],
+
+  // no pick up | no pick-up | no pickup
+  noPickUp:       [/\bno\s*pick[-\s]*up\b/gi, /\bno\s*pickup\b/gi],
+
   stoodOut:       [/stood\s*out/gi],
   popped:         [/\bpopped?\b/gi],
 };
@@ -206,21 +302,115 @@ function renderRow(it){
   const chips=document.createElement('div'); chips.className='chips';
   FLAGS.forEach(f=> chips.appendChild(chip(f.key, !!it.flags[f.key])));
   mid.appendChild(chips);
+  
+ const right=document.createElement('div'); right.className='controls';
+const flagBtn = document.createElement('button');
+flagBtn.type='button';
+flagBtn.className='flagBtn';
+flagBtn.title='Hold to view flags • Swipe down to clear';
+flagBtn.textContent='🚩'; // keep emoji; easy and readable
+setupFlagPeek(flagBtn, it.id);
 
-  const right=document.createElement('div'); right.className='controls';
+ 
   const mic=document.createElement('button'); mic.type='button'; mic.className='mic';
   mic.innerHTML='<span class="dot"></span> 🎤 Listen';
   mic.addEventListener('click',()=>startListeningFor(it.id));
+  
   const slider=document.createElement('input'); slider.type='range'; slider.min='0'; slider.max='10'; slider.step='0.5'; slider.value=it.score;
   slider.addEventListener('input',()=>{ it.score=+slider.value; score.textContent=it.score.toFixed(1); });
   const score=document.createElement('div'); score.className='score'; score.textContent=it.score.toFixed(1);
-  right.append(mic,slider,score);
+ right.append(flagBtn, mic, slider, score);
 
   row.append(left,mid,right);
   itemsEl.appendChild(row);
 }
 function renderAll(){ itemsEl.innerHTML=''; items.forEach(renderRow); }
 renderAll();
+
+
+// --- Peek overlay state/refs ---
+const peekOverlay = document.getElementById('peekOverlay');
+const peekListEl  = document.getElementById('peekList');
+const pullZone    = document.getElementById('pullZone');
+const pullBar     = document.getElementById('pullBar');
+const pullLabel   = document.getElementById('pullLabel');
+
+let peekHold = { itemId:null, startY:0, threshold:90 };
+
+function openPeek(itemId){
+  peekHold.itemId = itemId;
+  fillPeek(itemId);
+  pullZone.classList.remove('ready','cleared');
+  pullBar.style.height = '0px';
+  pullLabel.textContent = 'Swipe down to clear';
+  peekOverlay.classList.add('open');
+  peekOverlay.setAttribute('aria-hidden','false');
+}
+function closePeek(){
+  peekOverlay.classList.remove('open');
+  peekOverlay.setAttribute('aria-hidden','true');
+  peekHold.itemId = null;
+  pullZone.classList.remove('ready','cleared');
+  pullBar.style.height = '0px';
+}
+
+function fillPeek(itemId){
+  const it = items.find(x=>x.id===itemId);
+  const labels = FLAGS.filter(f => !!(it?.flags?.[f.key])).map(f=>f.label);
+  peekListEl.innerHTML = labels.length
+    ? labels.map(l=>`<div class="peek-flag">${l}</div>`).join('')
+    : `<div class="hint">No flags set</div>`;
+}
+
+function updatePull(dy){
+  const h = Math.max(0, Math.min(140, dy));
+  pullBar.style.height = h + 'px';
+  const ready = dy >= peekHold.threshold;
+  pullZone.classList.toggle('ready', ready);
+  pullLabel.textContent = ready ? 'Release to clear' : 'Swipe down to clear';
+}
+
+function clearAllFlags(itemId){
+  const it = items.find(x=>x.id===itemId);
+  if(!it) return;
+  it.flags = {};
+  syncRow(it);
+  fillPeek(itemId);
+  pullZone.classList.add('cleared');
+  pullLabel.textContent = 'Cleared';
+}
+
+// Attach pointer interactions to a given red circle button
+function setupFlagPeek(btn, itemId){
+  let pid = null, holding = false;
+
+  btn.addEventListener('pointerdown', (e)=>{
+    e.preventDefault();
+    holding = true;
+    pid = e.pointerId;
+    btn.setPointerCapture?.(pid);
+    peekHold.startY = e.clientY ?? (e.touches?.[0]?.clientY || 0);
+    openPeek(itemId);
+  });
+
+  btn.addEventListener('pointermove', (e)=>{
+    if(!holding || e.pointerId !== pid) return;
+    const y = e.clientY ?? (e.touches?.[0]?.clientY || peekHold.startY);
+    updatePull(y - peekHold.startY);
+  });
+
+  const end = (e)=>{
+    if(!holding || e.pointerId !== pid) return;
+    const y = e.clientY ?? (e.touches?.[0]?.clientY || peekHold.startY);
+    const dy = y - peekHold.startY;
+    if (dy >= peekHold.threshold) clearAllFlags(itemId);
+    holding = false; pid = null;
+    closePeek();
+  };
+  btn.addEventListener('pointerup', end);
+  btn.addEventListener('pointercancel', end);
+}
+
 
 /* ---------------- Speech engine ---------------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -230,12 +420,31 @@ if (SR){
   rec.onstart=()=>setStatus('listening…');
   rec.onerror=e=>{ setStatus('error: '+(e.error||'unknown')); endListen(); };
   rec.onend=()=>{ setStatus('idle'); endListen(); };
-  rec.onresult=e=>{
-    const tx=[...e.results].map(r=>r[0].transcript).join(' ').trim();
+  rec.onresult = (e) => {
+    // Build a “best guess” for apply, but also capture the last result’s alternatives.
+    const tx = [...e.results].map(r => r[0].transcript).join(' ').trim();
+
+    // Log alternatives (browser-dependent confidence support)
+    const last = e.results[e.results.length - 1];
+    const alts = last ? Array.from(last).map(a => ({
+      transcript: (a.transcript || '').trim(),
+      confidence: (typeof a.confidence === 'number') ? +a.confidence.toFixed(3) : null
+    })) : [];
+
+    const best = alts[0]?.transcript || tx;
+
+    console.groupCollapsed(
+      `%cSpeech(final) → %c${best}`,
+      'color:#888', 'color:#111;font-weight:700'
+    );
+    console.log('activeId:', activeId, 'activeFix:', activeFix);
+    if (alts.length) console.table(alts);
+    console.groupEnd();
+
     if (activeFix){
       // targeted retry: apply to its row, then remove if matched suggestion or any flag detected
       const before = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
-      applyTranscript(activeFix.itemId, tx);
+      applyTranscript(activeFix.itemId, best);
       const after = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
       const changed = diffFlags(before, after);
       const matchedSuggestion = changed.added.includes(activeFix.suggestKey) || changed.toggled.includes(activeFix.suggestKey);
@@ -243,11 +452,12 @@ if (SR){
         removeMissed(activeFix.itemId, activeFix.phrase);
         renderMissedOverlay();
       }
-      activeFix=null;
+      activeFix = null;
     } else if (activeId) {
-      applyTranscript(activeId, tx);
+      applyTranscript(activeId, best);
     }
   };
+
 }else{
   setStatus('Speech API not supported in this browser.');
 }
@@ -302,7 +512,17 @@ function wordsToNumber(s){
   if(s in NUM_WORDS) return NUM_WORDS[s];
   return NaN;
 }
+
 function quant05(n){ return Math.max(0, Math.min(10, Math.round(n*2)/2)); }
+
+// treat digits or number-words as numeric (e.g., "nine", "seven point five")
+function isNumberish(s){
+  const t = normalize(s);
+  if(!t) return false;
+  if(/^\d+(\.\d+)?$/.test(t)) return true;
+  return Number.isFinite(wordsToNumber(t));
+}
+
 
 function detectFlagsMulti(tx){
   const found=new Set();
@@ -339,10 +559,12 @@ function parseUtterance(raw){
   let m=tx.match(/\b(?:rating|score|set|make)\b(?:\s*(?:it|to|at))?\s+([a-z0-9.\s-]+)(?!.*\b(?:by)\b)/);
   if(m){ const n=wordsToNumber(m[1].trim()); if(Number.isFinite(n)) intents.score=quant05(n); }
   else {
+    // pure-number utterance → score
     if(/^\d+(\.\d+)?$/.test(tx) || Number.isFinite(wordsToNumber(tx))){
       const n=wordsToNumber(tx); if(Number.isFinite(n)) intents.score=quant05(n);
     }
   }
+
   // adjustments
   const inc=tx.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
   const dec=tx.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
@@ -359,32 +581,96 @@ function parseUtterance(raw){
     else intents.toggle.add(k);
   }
 
-  // infer "missed between known hits"
-  const missed = (hits.length>=2) ? inferMissedSegments(tx, hits) : [];
+  // infer missed phrases (now robust for head/tail too)
+  let missed = [];
+  if (hits.length >= 2) {
+    missed = inferMissedSegments(tx, hits);
+  } else {
+    missed = inferMissedLoose(tx, hits);
+  }
+
+  // ---- DEBUG CONSOLE ----
+  console.groupCollapsed('%cNLP', 'color:#0b74ff;font-weight:700');
+  console.log('raw:', raw);
+  console.log('normalized:', tx);
+  console.log('flags(keys):', keys);
+  console.log('hits:', hits);
+  console.log('missed:', missed);
+  console.log('score:', intents.score, 'adjust:', intents.adjust, 'clearAll:', intents.clearAll);
+  console.log('add:', Array.from(intents.add));
+  console.log('remove:', Array.from(intents.remove));
+  console.log('toggle:', Array.from(intents.toggle));
+  console.groupEnd();
+  // -----------------------
+
   return { intents, missed, hits, keys };
 }
 
+
 /* Heuristic: segments between detected flags that still have meaningful tokens */
-const STOPWORDS = /\b(?:and|then|uh|um|a|an|the|please|flag|set|add|remove|clear|by|to|at|score|rating|make|plus|minus|up|down|of)\b/gi;
+const STOPWORDS = /\b(?:and|then|uh|um|a|an|the|please|flag|set|add|remove|clear|by|to|at|on|in|into|onto|with|for|from|about|around|like|as|score|rating|make|plus|minus|up|down|of|this|that|there|here|it|him|her|them|they|their|his|hers|just)\b/gi;
+
 function cleanSegment(seg){
   return seg.replace(/[^a-z0-9.\s-]/g,' ').replace(/\s+/g,' ').replace(STOPWORDS,' ').replace(/\s+/g,' ').trim();
 }
 function inferMissedSegments(tx, hits){
-  const out=[];
-  for (let i=0;i<hits.length-1;i++){
-    const a=hits[i], b=hits[i+1];
-    if (b.start <= a.end) continue;
-    const raw = tx.slice(a.end, b.start);
-    const cleaned = cleanSegment(raw);
-    if (cleaned && /[a-z]/.test(cleaned)){
-      // suggest likely flag via fuzzy
-      const suggestion = bestSuggestion(cleaned);
-      out.push({ raw: cleaned, suggestKey: suggestion?.key || null, suggestLabel: suggestion?.label || null,
-                 leftKey: a.key, rightKey: b.key });
+  const out = [];
+  if (!hits.length) return out;
+
+  const sorted = hits.slice().sort((a,b)=>a.start - b.start);
+
+  // HEAD (before first hit)
+  {
+    const first = sorted[0];
+    const head = cleanSegment(tx.slice(0, first.start));
+    if (head && !isNumberish(head)) {
+      const suggestion = bestSuggestion(head);
+      out.push({
+        raw: head,
+        suggestKey: suggestion?.key || null,
+        suggestLabel: suggestion?.label || null,
+        leftKey: null,
+        rightKey: first.key
+      });
     }
   }
+
+  // BETWEEN hits
+  for (let i = 0; i < sorted.length - 1; i++){
+    const a = sorted[i], b = sorted[i+1];
+    if (b.start <= a.end) continue;
+    const mid = cleanSegment(tx.slice(a.end, b.start));
+    if (mid && !isNumberish(mid)) {
+      const suggestion = bestSuggestion(mid);
+      out.push({
+        raw: mid,
+        suggestKey: suggestion?.key || null,
+        suggestLabel: suggestion?.label || null,
+        leftKey: a.key,
+        rightKey: b.key
+      });
+    }
+  }
+
+  // TAIL (after last hit)
+  {
+    const last = sorted[sorted.length - 1];
+    const tail = cleanSegment(tx.slice(last.end));
+    if (tail && !isNumberish(tail)) {
+      const suggestion = bestSuggestion(tail);
+      out.push({
+        raw: tail,
+        suggestKey: suggestion?.key || null,
+        suggestLabel: suggestion?.label || null,
+        leftKey: last.key,
+        rightKey: null
+      });
+    }
+  }
+
   return dedupeMissed(out);
 }
+
 function dedupeMissed(arr){
   const seen=new Set(); const out=[];
   for (const x of arr){
@@ -394,6 +680,43 @@ function dedupeMissed(arr){
   }
   return out;
 }
+
+// treat the whole utterance (0 hits) or edge segments (1 hit) as candidates
+function inferMissedLoose(tx, hits){
+  const out = [];
+  const addCand = (raw, leftKey=null, rightKey=null) => {
+    const cleaned = cleanSegment(raw);
+    if (!cleaned) return;
+    // ignore numbers-only like "7" or "7.5"
+    if (isNumberish(cleaned)) return;
+
+    const suggestion = bestSuggestion(cleaned);
+    out.push({
+      raw: cleaned,
+      suggestKey: suggestion?.key || null,
+      suggestLabel: suggestion?.label || null,
+      leftKey, rightKey
+    });
+  };
+
+  if (hits.length === 0) {
+    // no flags detected -> whole utterance is a candidate
+    addCand(tx);
+    return dedupeMissed(out);
+  }
+
+  if (hits.length === 1) {
+    const h = hits[0];
+    const pre  = tx.slice(0, h.start);
+    const post = tx.slice(h.end);
+    addCand(pre, null, h.key);
+    addCand(post, h.key, null);
+    return dedupeMissed(out);
+  }
+
+  return out; // fallback – shouldn't happen here
+}
+
 
 /* Fuzzy suggestion (Levenshtein) to nearest canonical phrase */
 function lev(a,b){
@@ -426,6 +749,9 @@ function quantClamp(n){ return Math.max(0, Math.min(10, n)); }
 function applyTranscript(itemId, raw){
   const it=items.find(x=>x.id===itemId); if(!it) return;
   const { intents, missed } = parseUtterance(raw);
+  if (missed.length && (!intents.add.size && !intents.remove.size && !intents.toggle.size)) {
+    setStatus('No flags matched; queued ' + missed.length + ' missed phrase(s).');
+  }
 
   if(intents.clearAll) it.flags = {};
 
