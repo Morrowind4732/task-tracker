@@ -233,6 +233,18 @@
 
 html.overlay-open, body.overlay-open { overflow: hidden; }
 
+/* keep slide animations from expanding layout width */
+.stage, .pane-slot { overflow: hidden; }
+
+/* belt-and-suspenders: never allow horizontal page growth */
+html, body { max-width: 100%; overflow-x: hidden; overscroll-behavior-x: none; }
+
+
+	/* controls can wrap, but children still need to be allowed to shrink */
+.pane-controls > * { min-width: 0; }
+
+/* pager shouldn't force the row wider than the screen */
+.pager { min-width: 0; flex: 0 1 auto; overflow: hidden; }
 
   
 </style>
@@ -1721,3 +1733,4 @@ document.getElementById('clearBtn').addEventListener('click',()=>{
 </script>
 </body>
 </html>
+
