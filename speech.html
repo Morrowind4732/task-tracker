@@ -29,8 +29,7 @@
   .chip{border:1px solid #d0d5dd;background:#fff;border-radius:999px;padding:6px 10px;font-size:13px;user-select:none;display:block}
   .chip.on{background:#eef4ff;border-color:#c7d7fe}
   .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .mic{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border-radius:999px;background:#fff;border:1px solid #d0d5dd;cursor:pointer;font-weight:700}
-  .mic .dot{width:10px;height:10px;border-radius:50%;background:#94a3b8}
+  
   .row.listening .mic{border-color:#ffb4b4;box-shadow:0 0 0 4px rgba(255,59,48,.12)}
   .row.listening .mic .dot{background:#ff3b30;animation:pulse 1s infinite alternate}
   @keyframes pulse{from{transform:scale(.9)}to{transform:scale(1.2)}}
@@ -48,16 +47,22 @@
 /* Hide the old grid; voice still toggles in the background */
 .chips{ display:none; }
 
-/* Red circle “flag” button */
+/* Red circle “flag” button — bigger default + explicit BIG variant */
 .flagBtn{
-  width:48px; height:48px; border-radius:999px;
+  width:64px; height:64px; border-radius:999px;
   display:inline-flex; align-items:center; justify-content:center;
-  background:#FFFFFF; color:#fff; border:none; cursor:pointer;
-  box-shadow:0 10px 24px rgba(239,68,68,.35);
+  background:#FFFFFF; border:none; cursor:pointer;
+  box-shadow:0 14px 28px rgba(239,68,68,.35);
   touch-action:none; /* enables swipe tracking on mobile */
-  font-size:20px; font-weight:900;
+  font-size:26px; font-weight:900;
+}
+.flagBtn.big{
+  width:76px; height:76px;
+  font-size:32px;
+  box-shadow:0 18px 38px rgba(239,68,68,.35);
 }
 .flagBtn:active{ transform:translateY(1px); }
+
 
 /* Peek overlay: big, easy-to-read list */
 .peek{ width:min(420px,92vw); background:#fff; border-radius:16px;
@@ -130,11 +135,14 @@
   justify-content:space-between;
   touch-action: pan-y;              /* allow vertical scrolling; we handle horizontal */
 }
-.pane-head .kind { font-size:14px; font-weight:800; color:#475467; }
-.pane-head .title{ font-size:24px; font-weight:900; margin-top:2px; }
+/* Bigger Mark/Blind label */
+.pane-head .kind { font-size:22px; font-weight:900; color:#475467; }
+/* tiny spacing tweak so the bigger label breathes */
+.pane-head .title{ font-size:24px; font-weight:900; margin-top:4px; }
+
 
 .pane-controls{ display:flex; align-items:center; gap:12px; flex-wrap:wrap }
-.mic.big { font-size:18px; padding:12px 14px; }
+
 .score.big { font-size:24px; font-weight:900; min-width:56px; text-align:right; }
 
 .navBtn{
@@ -151,6 +159,33 @@
 .pane input[type=range]{
   flex:1 1 240px; min-width:180px;
 }
+/* --- Swipe slide animation --- */
+.stage { position: relative; }                /* anchor absolute panes */
+.pane-slot{
+  position: relative;                         /* local stacking for each slot */
+  min-height: 36vh;                           /* match pane's min-height */
+}
+.pane{
+  position: absolute; inset: 0;               /* let old/new overlap to animate */
+  transition: transform .28s ease, opacity .28s ease;
+  transform: translateX(0); opacity: 1;
+}
+.pane.enter-from-right { transform: translateX(100%); opacity: 0; }
+.pane.enter-from-left  { transform: translateX(-100%); opacity: 0; }
+.pane.exit-to-left     { transform: translateX(-100%); opacity: 0; }
+.pane.exit-to-right    { transform: translateX(100%);  opacity: 0; }
+
+
+.mic{
+  display:inline-flex;align-items:center;gap:10px;
+  padding:12px 14px;border-radius:999px;background:#fff;border:1px solid #d0d5dd;
+  cursor:pointer;font-weight:800;font-size:16px;min-height:44px
+}
+.mic .dot{width:12px;height:12px;border-radius:50%;background:#94a3b8}
+.mic.big{ font-size:22px; padding:16px 18px; min-height:56px }
+.mic.big .dot{ width:16px; height:16px }
+
+#peekOverlay { touch-action: none; }
 
   
 </style>
@@ -373,14 +408,14 @@ function renderRow(it){
  const right=document.createElement('div'); right.className='controls';
 const flagBtn = document.createElement('button');
 flagBtn.type='button';
-flagBtn.className='flagBtn';
+flagBtn.className='flagBtn big';
 flagBtn.title='Hold to view flags • Swipe down to clear';
-flagBtn.textContent='🚩'; // keep emoji; easy and readable
+flagBtn.textContent='🚩';
 setupFlagPeek(flagBtn, it.id);
 
- 
-  const mic=document.createElement('button'); mic.type='button'; mic.className='mic';
-  mic.innerHTML='<span class="dot"></span> 🎤 Listen';
+const mic=document.createElement('button'); mic.type='button'; mic.className='mic big';
+mic.innerHTML='<span class="dot"></span> 🎤 Listen';
+
   mic.addEventListener('click',()=>startListeningFor(it.id));
   
   const slider=document.createElement('input'); slider.type='range'; slider.min='0'; slider.max='10'; slider.step='0.5'; slider.value=it.score;
@@ -393,6 +428,17 @@ setupFlagPeek(flagBtn, it.id);
 }
 function renderAll(){ itemsEl.innerHTML=''; items.forEach(renderRow); }
 
+function ensureSlot(type){
+  let slot = stageEl.querySelector(`.pane-slot[data-type="${type}"]`);
+  if(!slot){
+    slot = document.createElement('div');
+    slot.className = 'pane-slot';
+    slot.dataset.type = type;
+    stageEl.appendChild(slot);
+  }
+  return slot;
+}
+
 function renderStage(){
   const marks  = items.filter(it=>it.kind==='Mark');
   const blinds = items.filter(it=>it.kind==='Blind');
@@ -401,10 +447,55 @@ function renderStage(){
   idxMark  = clamp(idxMark,  marks.length);
   idxBlind = clamp(idxBlind, blinds.length);
 
-  stageEl.innerHTML = '';
-  stageEl.appendChild(renderPane('Mark',  marks[idxMark],  marks.length,  'mark'));
-  stageEl.appendChild(renderPane('Blind', blinds[idxBlind], blinds.length, 'blind'));
+  // Ensure slots exist (one for each)
+  const markSlot  = ensureSlot('mark');
+  const blindSlot = ensureSlot('blind');
+
+  // First time render: if slot empty, just place the pane (no animation)
+  if(!markSlot.querySelector('.pane')){
+    markSlot.appendChild(renderPane('Mark', marks[idxMark], marks.length, 'mark'));
+  }
+  if(!blindSlot.querySelector('.pane')){
+    blindSlot.appendChild(renderPane('Blind', blinds[idxBlind], blinds.length, 'blind'));
+  }
 }
+
+// direction: 'left' (next) or 'right' (prev)
+function animateSwap(type, direction){
+  const isMark = (type==='mark');
+  const list   = items.filter(it=> it.kind === (isMark ? 'Mark' : 'Blind'));
+  const total  = list.length;
+  const idx    = isMark ? idxMark : idxBlind;
+  const slot   = stageEl.querySelector(`.pane-slot[data-type="${type}"]`);
+  if(!slot || !total) return;
+
+  const current = slot.querySelector('.pane');
+  const label   = isMark ? 'Mark' : 'Blind';
+  const next    = renderPane(label, list[idx], total, type);
+
+  // stage the new pane off-screen
+  next.classList.add(direction==='left' ? 'enter-from-right' : 'enter-from-left');
+  slot.appendChild(next);
+
+  // lock both panes to the slot for animation
+  next.style.position = current.style.position = 'absolute';
+  next.style.inset    = current.style.inset    = '0';
+
+  // kick the transition
+  requestAnimationFrame(()=>{
+    current.classList.add(direction==='left' ? 'exit-to-left' : 'exit-to-right');
+    next.classList.remove('enter-from-right','enter-from-left');
+  });
+
+  const cleanup = () => {
+    current?.remove();
+    // let the survivor be normal flow for focus/scroll if you prefer (or stay absolute)
+    next.style.position = 'absolute';  // keep absolute so future swaps overlay cleanly
+    next.style.inset = '0';
+  };
+  next.addEventListener('transitionend', cleanup, { once:true });
+}
+
 
 function renderPane(label, it, total, type){
   const pane = document.createElement('div');
@@ -421,21 +512,14 @@ function renderPane(label, it, total, type){
   const ctrls = document.createElement('div');
   ctrls.className = 'pane-controls';
 
-  const prev = document.createElement('button');
-  prev.className = 'navBtn';
-  prev.title = 'Previous';
-  prev.textContent = '⟵';
+  // (arrows removed)
+const flagBtn = document.createElement('button');
+flagBtn.type='button';
+flagBtn.className='flagBtn big';
+flagBtn.title='Hold to view flags • Swipe down to clear';
+flagBtn.textContent='🚩';
 
-  const next = document.createElement('button');
-  next.className = 'navBtn';
-  next.title = 'Next';
-  next.textContent = '⟶';
 
-  const flagBtn = document.createElement('button');
-  flagBtn.type='button';
-  flagBtn.className='flagBtn';
-  flagBtn.title='Hold to view flags • Swipe down to clear';
-  flagBtn.textContent='🚩';
 
   const mic = document.createElement('button');
   mic.type='button';
@@ -467,51 +551,56 @@ function renderPane(label, it, total, type){
     setupFlagPeek(flagBtn, it.id);
     // slider
     range.addEventListener('input', ()=>{
-      it.score = +range.value;
-      score.textContent = it.score.toFixed(1);
-    });
+  it.score = +range.value;
+  score.textContent = it.score.toFixed(1);
+});
+range.addEventListener('pointerdown', (e)=> e.stopPropagation());
 
-    // nav
-    prev.addEventListener('click', ()=>{
-      if (type==='mark'){ idxMark = clamp(idxMark-1, total); }
-      else { idxBlind = clamp(idxBlind-1, total); }
-      saveIdx(); renderStage();
-    });
-    next.addEventListener('click', ()=>{
-      if (type==='mark'){ idxMark = clamp(idxMark+1, total); }
-      else { idxBlind = clamp(idxBlind+1, total); }
-      saveIdx(); renderStage();
-    });
+
+    
+
 
     // swipe (left/right) on the whole pane
     attachSwipeX(pane, 60, () => { // swipe left → next
-      if (type==='mark'){ idxMark = clamp(idxMark+1, total); }
-      else { idxBlind = clamp(idxBlind+1, total); }
-      saveIdx(); renderStage();
-    }, () => { // swipe right → prev
-      if (type==='mark'){ idxMark = clamp(idxMark-1, total); }
-      else { idxBlind = clamp(idxBlind-1, total); }
-      saveIdx(); renderStage();
-    });
+  if (type==='mark'){ idxMark = clamp(idxMark+1, total); }
+  else { idxBlind = clamp(idxBlind+1, total); }
+  saveIdx(); animateSwap(type, 'left');
+}, () => { // swipe right → prev
+  if (type==='mark'){ idxMark = clamp(idxMark-1, total); }
+  else { idxBlind = clamp(idxBlind-1, total); }
+  saveIdx(); animateSwap(type, 'right');
+});
+
   }
 
-  ctrls.append(prev, flagBtn, mic, range, score, next, pager);
+  ctrls.append(flagBtn, mic, range, score, pager);
+
   pane.append(head, ctrls);
   return pane;
 }
 
 function attachSwipeX(el, threshold, onLeft, onRight){
-  let pid=null, sx=0, dx=0;
+  let pid=null, sx=0, dx=0, ignore=false;
+
   el.addEventListener('pointerdown', (e)=>{
-    pid=e.pointerId; sx=e.clientX; dx=0;
+    // If the pointer starts on a score slider, do NOT arm swipe.
+    if (e.target.closest('input[type="range"]')) {
+      ignore = true; pid=null; sx=0; dx=0;
+      return; // let the slider keep full control
+    }
+    ignore = false;
+    pid = e.pointerId; sx = e.clientX; dx = 0;
     el.setPointerCapture?.(pid);
   });
+
   el.addEventListener('pointermove', (e)=>{
-    if(e.pointerId!==pid) return;
+    if (ignore || e.pointerId!==pid) return;
     dx = e.clientX - sx;
   });
+
   const end = (e)=>{
-    if(e.pointerId!==pid) return;
+    if (ignore) { ignore=false; return; }
+    if (e.pointerId!==pid) return;
     if (dx <= -threshold) onLeft?.();
     else if (dx >= threshold) onRight?.();
     pid=null; dx=0;
@@ -519,6 +608,7 @@ function attachSwipeX(el, threshold, onLeft, onRight){
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
 }
+
 
 
 renderAll();
@@ -539,6 +629,14 @@ peekOverlay.addEventListener('click', (e)=>{
 document.addEventListener('keydown', (e)=>{
   if (e.key === 'Escape') closePeek();
 });
+
+peekOverlay.addEventListener('pointermove', (e)=>{
+  if (peekHold.itemId == null) return;
+  if (peekHold.pid != null && e.pointerId !== peekHold.pid) return; // ignore other fingers
+  const y = e.clientY ?? (e.touches?.[0]?.clientY || peekHold.startY);
+  updatePull(y - peekHold.startY);
+}, { passive: true });
+
 
 // Global safety net: if the button loses the pointerup, still close
 const closeFromDoc = (e)=>{
@@ -562,7 +660,8 @@ document.addEventListener('pointercancel', closeFromDoc, { capture:true });
 });
 
 
-let peekHold = { itemId:null, startY:0, threshold:90 };
+let peekHold = { itemId:null, startY:0, threshold:90, pid:null };
+
 
 function openPeek(itemId){
   peekHold.itemId = itemId;
@@ -577,9 +676,11 @@ function closePeek(){
   peekOverlay.classList.remove('open');
   peekOverlay.setAttribute('aria-hidden','true');
   peekHold.itemId = null;
+  peekHold.pid = null;                 // <— add this
   pullZone.classList.remove('ready','cleared');
   pullBar.style.height = '0px';
 }
+
 
 function fillPeek(itemId){
   const it = items.find(x=>x.id===itemId);
@@ -619,13 +720,15 @@ function setupFlagPeek(btn, itemId){
   btn.addEventListener('touchstart',  e => e.preventDefault(), { passive:false });
 
   btn.addEventListener('pointerdown', (e)=>{
-    e.preventDefault();
-    holding = true;
-    pid = e.pointerId;
-    btn.setPointerCapture?.(pid);
-    peekHold.startY = e.clientY ?? (e.touches?.[0]?.clientY || 0);
-    openPeek(itemId);
-  });
+  e.preventDefault();
+  holding = true;
+  pid = e.pointerId;
+  peekHold.pid = e.pointerId;          // <— add this
+  btn.setPointerCapture?.(pid);
+  peekHold.startY = e.clientY ?? (e.touches?.[0]?.clientY || 0);
+  openPeek(itemId);
+});
+
 
   btn.addEventListener('pointermove', (e)=>{
     if(!holding || e.pointerId !== pid) return;
@@ -641,8 +744,10 @@ function setupFlagPeek(btn, itemId){
   holding = false;
   try { btn.releasePointerCapture?.(pid); } catch {}
   pid = null;
+  peekHold.pid = null;                 // <— add this
   closePeek();
 };
+
 btn.addEventListener('pointerup', end);
 btn.addEventListener('pointercancel', end);
 
@@ -1001,6 +1106,7 @@ function applyTranscript(itemId, raw){
   it.score = quantClamp(it.score);
 
   syncRow(it);
+  renderStage(); // <-- refresh the big Mark/Blind panes so score shows immediately
 
   if (missed.length){
     // build per-row missed items and log phrases
