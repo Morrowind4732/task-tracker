@@ -187,6 +187,53 @@
 
 #peekOverlay { touch-action: none; }
 
+/* Overlay container */
+.overlay{
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.35);
+  display:none; align-items:center; justify-content:center;
+  z-index:9999;
+
+  /* keep content inside the viewport even with outer padding */
+  padding:16px;
+  /* notch-safe padding on iOS */
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right:max(16px, env(safe-area-inset-right));
+  padding-top:  max(16px, env(safe-area-inset-top));
+  padding-bottom:max(16px, env(safe-area-inset-bottom));
+}
+
+/* Flags peek card */
+.peek{
+  /* width that *always* fits inside overlay padding */
+  width: min(420px, calc(100dvw - 32px));
+  /* prevent vertical overflow off-screen */
+  max-height: calc(100dvh - 32px);
+  overflow:auto;
+
+  background:#fff; border:1px solid var(--border);
+  border-radius:16px; padding:16px; text-align:center;
+  box-shadow:0 20px 50px rgba(0,0,0,.25);
+}
+
+/* Missed/log sheet */
+.sheet{
+  width: min(720px, calc(100dvw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow:auto;
+
+  background:#fff; border:1px solid var(--border);
+  border-radius:16px; box-shadow:0 20px 50px rgba(0,0,0,.25);
+}
+
+/* Keep peek draggable; keep sheets scrollable */
+#peekOverlay { touch-action: none; }
+#missedOverlay, #logOverlay { touch-action: pan-y; }
+
+
+html.overlay-open, body.overlay-open { overflow: hidden; }
+
+
   
 </style>
 </head>
@@ -664,6 +711,7 @@ let peekHold = { itemId:null, startY:0, threshold:90, pid:null };
 
 
 function openPeek(itemId){
+  document.documentElement.classList.add('overlay-open');
   peekHold.itemId = itemId;
   fillPeek(itemId);
   pullZone.classList.remove('ready','cleared');
@@ -679,6 +727,7 @@ function closePeek(){
   peekHold.pid = null;                 // <— add this
   pullZone.classList.remove('ready','cleared');
   pullBar.style.height = '0px';
+ if (!document.querySelector('.overlay.open')) document.documentElement.classList.remove('overlay-open');
 }
 
 
@@ -1154,8 +1203,16 @@ function addMissed(itemId, rowTitle, phrase, suggestKey, suggestLabel){
 function removeMissed(itemId, phrase){
   missedItems = missedItems.filter(x => !(x.itemId===itemId && x.phrase.toLowerCase()===phrase.toLowerCase()));
 }
-function openMissed(){ missedOverlay.classList.add('open'); missedOverlay.setAttribute('aria-hidden','false'); }
-function closeMissed(){ missedOverlay.classList.remove('open'); missedOverlay.setAttribute('aria-hidden','true'); }
+function openMissed(){ 
+  document.documentElement.classList.add('overlay-open');
+  missedOverlay.classList.add('open'); 
+  missedOverlay.setAttribute('aria-hidden','false'); 
+}
+function closeMissed(){ 
+  missedOverlay.classList.remove('open'); 
+  missedOverlay.setAttribute('aria-hidden','true'); 
+  if (!document.querySelector('.overlay.open')) document.documentElement.classList.remove('overlay-open');
+}
 
 function renderMissedOverlay(){
   missedListEl.innerHTML = '';
@@ -1226,6 +1283,17 @@ function renderLog(){
     row.append(left, right); listEl.appendChild(row);
   });
 }
+
+document.getElementById('viewLogBtn').addEventListener('click', ()=>{
+  renderLog();
+  document.documentElement.classList.add('overlay-open');
+  logOverlay.classList.add('open');
+});
+document.getElementById('logClose').addEventListener('click', ()=>{
+  logOverlay.classList.remove('open');
+  if (!document.querySelector('.overlay.open')) document.documentElement.classList.remove('overlay-open');
+});
+
 const logOverlay = document.getElementById('logOverlay');
 document.getElementById('viewLogBtn').addEventListener('click', ()=>{ renderLog(); logOverlay.classList.add('open'); });
 document.getElementById('logClose').addEventListener('click', ()=> logOverlay.classList.remove('open'));
