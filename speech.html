@@ -542,6 +542,31 @@ html, body { max-width:100%; overflow-x:hidden; overscroll-behavior-x:none; }
   z-index: 0;                        /* above ::before (which is z:-1) */
 }
 
+  /* Header becomes a 2-column bar: titles on the left, flag on the right */
+.pane-head{
+  display:grid;
+  grid-template-columns: 1fr auto;
+  align-items:center;
+  gap:12px;
+  padding-bottom:6px;                 /* tightens vertical spacing */
+}
+
+/* Right-side action area for the flag */
+.pane-actions{ display:flex; align-items:center; }
+
+/* Make the header flag a bit smaller so it fits nicely */
+.pane-head .flagBtn.big{ --btn-h:72px; }         /* was 92px */
+.pane-head .flagBtn.big{ --rhombus-scale:.74; }  /* keeps rounded diamond inside button */
+
+/* Tighten the controls row since it no longer holds the flag */
+.pane-controls{ gap:10px; margin-top:2px; }
+
+/* On very narrow phones, shrink the header flag a touch more */
+@media (max-width: 380px){
+  .pane-head .flagBtn.big{ --btn-h:64px; --rhombus-scale:.72; }
+}
+
+  
   
 </style>
 </head>
@@ -1043,63 +1068,64 @@ function renderPane(label, it, total, type){
   pane.className = 'pane';
   pane.dataset.type = type;
 
+  // ---- HEADER: titles on the left, flag on the right ----
   const head = document.createElement('div');
   head.className = 'pane-head';
-  head.innerHTML = `
+
+  const headLeft = document.createElement('div');
+  headLeft.innerHTML = `
     <div class="kind">${label}</div>
     <div class="title">${it ? it.title : '—'}</div>
   `;
 
-  const ctrls = document.createElement('div');
-  ctrls.className = 'pane-controls';
+  const headRight = document.createElement('div');
+  headRight.className = 'pane-actions';
 
-  // Big red flag
+  // Flag lives in the header now
   const flagBtn = document.createElement('button');
   flagBtn.type='button';
   flagBtn.className='flagBtn big';
   flagBtn.title='Hold to view flags • Swipe down to clear';
   flagBtn.textContent='🚩';
+  if (it) setupFlagPeek(flagBtn, it.id);
 
-  // Big mic
+  headRight.appendChild(flagBtn);
+  head.append(headLeft, headRight);
+
+  // ---- CONTROLS: mic + score + pager (flag removed) ----
+  const ctrls = document.createElement('div');
+  ctrls.className = 'pane-controls';
+
   const mic = document.createElement('button');
   mic.type='button';
   mic.className='mic big';
   mic.innerHTML='<span class="dot"></span> 🎤 Listen';
 
-  // Hidden range kept for compatibility with existing code
+  // Hidden range for existing logic
   const range = document.createElement('input');
   range.type='range'; range.min='0'; range.max='10'; range.step='0.5';
   range.value = it ? it.score : 0;
   range.className = 'visually-hidden';
 
-  // Hidden legacy score node (so syncStageForItem still finds something)
   const legacyScore = document.createElement('div');
   legacyScore.className='score big';
   legacyScore.textContent = (it ? it.score : 0).toFixed(1);
 
-  // New score cluster: [-] [ 7.5 ] [+]
   const scoreWrap = document.createElement('div');
   scoreWrap.className = 'scoreWrap';
 
   const dec = document.createElement('button');
-  dec.type='button';
-  dec.className='scoreBtn';
-  dec.setAttribute('aria-label','Decrease score');
-  dec.textContent='–';
+  dec.type='button'; dec.className='scoreBtn'; dec.setAttribute('aria-label','Decrease score'); dec.textContent='–';
 
   const badge = document.createElement('div');
   badge.className='scoreBadge';
   badge.textContent = (it ? it.score : 0).toFixed(1);
 
   const inc = document.createElement('button');
-  inc.type='button';
-  inc.className='scoreBtn';
-  inc.setAttribute('aria-label','Increase score');
-  inc.textContent='+';
+  inc.type='button'; inc.className='scoreBtn'; inc.setAttribute('aria-label','Increase score'); inc.textContent='+';
 
   scoreWrap.append(dec, badge, inc);
 
-  // Pager dots
   const pager = document.createElement('div');
   pager.className = 'pager';
   if (total > 1){
@@ -1111,11 +1137,8 @@ function renderPane(label, it, total, type){
   }
 
   if (it){
-    // speech + flags
     mic.addEventListener('click', ()=> startListeningFor(it.id));
-    setupFlagPeek(flagBtn, it.id);
 
-    // slider (hidden) still reflects changes
     range.addEventListener('input', ()=>{
       it.score = +range.value;
       const v = it.score = quant05(it.score);
@@ -1125,40 +1148,30 @@ function renderPane(label, it, total, type){
     });
     range.addEventListener('pointerdown', (e)=> e.stopPropagation());
 
-    // ± buttons (0.5 step)
     const nudge = (dir)=> {
       const raw = (it.score ?? 0) + (dir * 0.5);
       const v = it.score = Math.max(0, Math.min(10, quant05(raw)));
       range.value = v;
       badge.textContent = v.toFixed(1);
       legacyScore.textContent = v.toFixed(1);
-      // keep row UI in sync (even though the list is hidden on this page)
       syncRow(it);
       debouncedSaver(it.id)();
     };
     dec.addEventListener('click', ()=> nudge(-1));
     inc.addEventListener('click', ()=> nudge(+1));
 
-    // Swipe left/right to navigate
     attachSwipeX(pane, 60,
-      () => { // left → next
-        if (type==='mark'){ idxMark = clamp(idxMark+1, total); }
-        else { idxBlind = clamp(idxBlind+1, total); }
-        saveIdx(); animateSwap(type, 'left');
-      },
-      () => { // right → prev
-        if (type==='mark'){ idxMark = clamp(idxMark-1, total); }
-        else { idxBlind = clamp(idxBlind-1, total); }
-        saveIdx(); animateSwap(type, 'right');
-      }
+      () => { if (type==='mark'){ idxMark = clamp(idxMark+1, total); } else { idxBlind = clamp(idxBlind+1, total); } saveIdx(); animateSwap(type, 'left'); },
+      () => { if (type==='mark'){ idxMark = clamp(idxMark-1, total); } else { idxBlind = clamp(idxBlind-1, total); } saveIdx(); animateSwap(type, 'right'); }
     );
   }
 
-  // Order: flag / mic / score cluster / pager (range+legacy hidden)
-  ctrls.append(flagBtn, mic, scoreWrap, pager, range, legacyScore);
+  // Order: header (with flag) + controls (mic/score/pager)
+  ctrls.append(mic, scoreWrap, pager, range, legacyScore);
   pane.append(head, ctrls);
   return pane;
 }
+
 
 
 function attachSwipeX(el, threshold, onLeft, onRight){
