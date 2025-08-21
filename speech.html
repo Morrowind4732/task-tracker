@@ -627,6 +627,56 @@ html, body { max-width:100%; overflow-x:hidden; overscroll-behavior-x:none; }
 @keyframes toast-out { to   { transform: translateY(8px);  opacity:0 } }
 .toast.hide{ animation: toast-out .15s ease-in forwards; }
 
+/* Bigger, phone-friendly toast */
+.toast{
+  pointer-events: auto;
+  background:#fff; color:#0f172a;
+  border:1px solid #e7ecff; border-left:8px solid #0b74ff; /* thicker accent */
+  border-radius:14px;
+
+  /* wider + responsive type / padding */
+  width: min(640px, 96vw);
+  font-weight:800; line-height:1.25;
+  font-size: clamp(16px, 4.8vw, 20px);
+  padding: clamp(14px, 3.6vw, 22px) clamp(16px, 4.2vw, 24px);
+
+  box-shadow:0 14px 34px rgba(16,24,40,.18);
+  display:flex; flex-direction:column; gap:6px;
+  animation: toast-in .18s ease-out;
+}
+.toast .sub{
+  font-weight:600; color:#475467;
+  font-size: clamp(13px, 3.6vw, 16px);
+}
+
+/* keep the exit anim */
+@keyframes toast-in  { from { transform: translateY(8px);  opacity:0 } to { transform: translateY(0); opacity:1 } }
+@keyframes toast-out { to   { transform: translateY(8px);  opacity:0 } }
+.toast.hide{ animation: toast-out .15s ease-in forwards; }
+
+/* XXL toast (bigger than xl) */
+.toast.xxl{
+  /* bigger readable type + comfy padding */
+  font-size: clamp(22px, 7.2vw, 30px);
+  line-height: 1.25;
+  padding: clamp(24px, 6vw, 36px) clamp(26px, 7vw, 40px);
+
+  /* stronger visual weight */
+  border-left-width: 12px;
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(16,24,40,.22);
+
+  /* give it more room, still safe on tiny phones */
+  width: min(720px, 98vw);
+}
+
+.toast.xxl .sub{
+  font-size: clamp(16px, 4.8vw, 20px);
+  line-height: 1.3;
+}
+
+
+
 </style>
 </head>
 <body>
@@ -750,7 +800,22 @@ function runDocRef(dogName){
 }
 
 // Tiny debounce helper + per-item debouncers
-function debounce(fn, ms=350){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; }
+function debounce(fn, ms=350){
+  let t = null;
+  const d = (...a) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...a), ms);
+  };
+  d.cancel = () => { clearTimeout(t); t = null; };
+  return d;
+}
+
+function cancelPendingSaves(){
+  Object.values(saveDebouncers).forEach(fn => fn?.cancel?.());
+  for (const k in saveDebouncers) delete saveDebouncers[k];
+}
+
+
 const saveDebouncers = {};
 function debouncedSaver(itemId){
   if (!saveDebouncers[itemId]){
@@ -781,26 +846,37 @@ function debouncedSaver(itemId){
 async function loadDogRun(dogName){
   const ref = runDocRef(dogName);
   if (!ref) return;
-  const snap = await ref.get();
-  if (!snap.exists) return;
 
-  const data = snap.data() || {};
-  const saved = data.items || {};
+  const snap  = await ref.get();
+  const saved = snap.exists ? (snap.data()?.items || {}) : {};
+
   let changed = false;
 
   items.forEach(it => {
     const s = saved[it.id];
-    if (s){
-      if (typeof s.score === 'number') { it.score = quant05(s.score); changed = true; }
-      if (s.flags && typeof s.flags === 'object') {
-        it.flags = Object.assign({}, it.flags, s.flags);
-        changed = true;
-      }
+
+    // NEW: hard reset to a clean baseline first
+    const newScore = Number.isFinite(s?.score) ? quant05(s.score) : 0;
+    const newFlags = (s?.flags && typeof s.flags === 'object') ? { ...s.flags } : {};
+
+    // Only mark changed if values differ (prevents noisy re-renders)
+    const flagsChanged = JSON.stringify(it.flags || {}) !== JSON.stringify(newFlags);
+    const scoreChanged = (it.score ?? 0) !== newScore;
+
+    if (flagsChanged || scoreChanged){
+      it.flags = newFlags;
+      it.score = newScore;
+      changed = true;
     }
   });
 
-  if (changed){ renderAll(); renderStage(); }
+  if (changed){
+  renderAll();
+  refreshStage();     // <— rebuild both visible panes for the new dog
 }
+
+}
+
 
 
 
@@ -1489,7 +1565,7 @@ if (SR){
   rec.onstart = () => {
   setStatus('listening…');
   if (listeningToastId) hideToast(listeningToastId);
-  listeningToastId = showToast('🎤 Listening…', { type:'info', duration:0 }); // sticky
+  listeningToastId = showToast('🎤 Listening…', { duration: 0, size: 'xxl' });
 };
 
 rec.onerror = e => {
@@ -1573,7 +1649,7 @@ if (dogListenActive){
       parts.push(`Removed: ${labelsFor(summary.removed).join(', ')}`);
     }
     if (parts.length){
-      showToast('✅ Updated', { type:'success', sub: parts.join(' • '), duration: 2400 });
+      showToast('✅ Updated', { type:'success', size: 'xxl', sub: parts.join(' • '), duration: 2400 });
     } else {
       // nothing mapped (flags handled by your missed overlay)
       showToast('No flags recognized', { type:'info', duration: 1400 });
@@ -1598,18 +1674,19 @@ function startListeningFor(id){
 }
 
 let __toastSeq = 0;
-function showToast(text, { type='info', duration=1800, sub=null, placement='bottom' } = {}){
+function showToast(text, { type='info', duration=1800, sub=null, placement='center', size=null } = {}){
   const wrap = document.getElementById('toasts'); if(!wrap) return null;
   const id = (++__toastSeq);
   const el = document.createElement('div');
-  el.className = 'toast' + (type !== 'info' ? ' ' + type : '');
-  if (placement === 'center') el.classList.add('center');   // ← new
+  el.className = 'toast' + (type !== 'info' ? ' ' + type : '') + (size ? ' ' + size : '');
+  if (placement === 'center') el.classList.add('center');
   el.dataset.id = String(id);
   el.innerHTML = `<div>${text}</div>${sub ? `<div class="sub">${sub}</div>` : ''}`;
   wrap.appendChild(el);
   if (duration > 0) setTimeout(()=> hideToast(id), duration);
   return id;
 }
+
 
 function hideToast(id){
   const wrap = document.getElementById('toasts'); if(!wrap) return;
@@ -1962,7 +2039,11 @@ function setSelectedDog(name){
   selectedDog = name;
   dogNameEl.textContent = name;
   localStorage.setItem('selectedDog', name);
-  // broadcast so other parts can react if needed
+
+  cancelPendingSaves();        // ← NEW: stop any in-flight writes from previous dog
+  closePeek?.();               // optional: avoids showing stale flags while switching
+  closeMissed?.();             // optional
+
   document.dispatchEvent(new CustomEvent('dog:selected', { detail: { name } }));
 }
 
@@ -1988,15 +2069,43 @@ function quantClamp(n){ return Math.max(0, Math.min(10, n)); }
 // Update the on-screen pane (Mark or Blind) without re-rendering the whole stage
 function syncStageForItem(it){
   const type = it.kind === 'Mark' ? 'mark' : 'blind';
-  const pane = stageEl.querySelector(`.pane-slot[data-type="${type}"] .pane`);
-  if (!pane) return; // not currently visible
+  const slot = stageEl.querySelector(`.pane-slot[data-type="${type}"]`);
+  if (!slot) return;
 
-  const rangeEl = pane.querySelector('input[type="range"]');
-  const scoreEl = pane.querySelector('.score');
+  // If an animation left 2 panes in the slot, take the topmost (last)
+  const panes = slot.querySelectorAll('.pane');
+  const pane = panes[panes.length - 1] || panes[0];
+  if (!pane) return;
 
-  if (rangeEl) rangeEl.value = it.score;
-  if (scoreEl) scoreEl.textContent = it.score.toFixed(1);
+  const rangeEl  = pane.querySelector('input[type="range"]');
+  const legacyEl = pane.querySelector('.score');       // hidden by CSS
+  const badgeEl  = pane.querySelector('.scoreBadge');  // the big visible number
+
+  if (rangeEl)  rangeEl.value = it.score;
+  if (legacyEl) legacyEl.textContent = it.score.toFixed(1);
+  if (badgeEl)  badgeEl.textContent  = it.score.toFixed(1);
 }
+
+
+function refreshVisiblePane(type){
+  const isMark = (type === 'mark');
+  const list   = items.filter(it => it.kind === (isMark ? 'Mark' : 'Blind'));
+  if (!list.length) return;
+
+  const idx  = isMark ? idxMark : idxBlind;
+  const slot = ensureSlot(type);
+
+  const newPane = renderPane(isMark ? 'Mark' : 'Blind', list[idx], list.length, type);
+  const oldPane = slot.querySelector('.pane');
+  if (oldPane) slot.replaceChild(newPane, oldPane);
+  else slot.appendChild(newPane);
+}
+
+function refreshStage(){
+  refreshVisiblePane('mark');
+  refreshVisiblePane('blind');
+}
+
 
 
 function applyTranscript(itemId, raw){
@@ -2186,6 +2295,7 @@ document.getElementById('clearBtn').addEventListener('click',()=>{
   missedItems.length = 0;
   renderMissedOverlay();
   renderStage();
+  refreshStage();
   setStatus('cleared');
 });
 
