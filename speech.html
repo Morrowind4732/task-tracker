@@ -566,7 +566,22 @@ html, body { max-width:100%; overflow-x:hidden; overscroll-behavior-x:none; }
   .pane-head .flagBtn.big{ --btn-h:64px; --rhombus-scale:.72; }
 }
 
+  /* Give the header a hair more top room and bump the flag down a bit */
+  .pane-head{ padding-top: 6px; overflow: visible; }   /* keep any glow visible */
+  .pane-head .flagBtn.big{ margin-top: 6px; }          /* nudges the diamond down */
   
+  @media (max-width: 380px){
+    .pane-head{ padding-top: 8px; }
+	  .pane-head .flagBtn.big{ margin-top: 8px; }
+	  }
+	  
+	  
+	  /* Score cluster should always hug the left edge */
+.scoreWrap{ margin-left: 0 !important; }
+
+/* Pager dots slide to the far right so they never push the score */
+.pager{ margin-left: auto !important; }
+
   
 </style>
 </head>
@@ -1167,7 +1182,8 @@ function renderPane(label, it, total, type){
   }
 
   // Order: header (with flag) + controls (mic/score/pager)
-  ctrls.append(mic, scoreWrap, pager, range, legacyScore);
+  ctrls.append(scoreWrap, mic, pager, range, legacyScore);
+
   pane.append(head, ctrls);
   return pane;
 }
