@@ -920,7 +920,7 @@ const FLAGS = [
   { key:'marginalHunt',   label:'Marginal Hunt',    variants:['marginal hunt'] },
 
   // add split/inflected variants
-  { key:'overran',        label:'Overran',          variants:['overran','over run','over-run','over ran','ran over'] },
+  { key:'overran',        label:'Overran',          variants:['overran','overrun','over run','over-run','over ran','ran over'] },
 
   { key:'shortCheckDown', label:'Short Checkdown',  variants:[
       'short checkdown','short check down','short-check down','short check-down'
@@ -932,7 +932,7 @@ const FLAGS = [
       'back of gun','back of the gun'
     ] },
 
-  { key:'handled',        label:'Handled',          variants:['handled'] },
+  { key:'handled',        label:'Handled',          variants:['handled','handles'] },
   { key:'castRefusal',    label:'Cast Refusal',     variants:['cast refusal','cast refused','refused cast'] },
 
   // sit/sat + article
@@ -941,7 +941,8 @@ const FLAGS = [
     ] },
 
   // didn’t vs did not
-  { key:'didntMark',      label:"Didn't Mark",      variants:["didn't mark",'didnt mark','did not mark'] },
+  { key:'didntMark', label:"Didn't Mark", variants:['didnt mark', "didn't mark", 'did not mark'] },
+
 
   { key:'poorInitial',    label:'Poor Initial',     variants:['poor initial'] },
 
@@ -984,7 +985,7 @@ const FLAG_RX = {
     /back\s*of\s*(?:the\s*)?gun/gi
   ],
 
-  handled:        [/\bhandled?\b/gi],
+  handled:        [/\bhandl(?:e|ed|es)\b/gi],
 
   // cast refusal + inflections
   castRefusal:    [/cast[\s-]*refusal/gi, /cast[\s-]*refused/gi, /refused[\s-]*cast/gi],
@@ -1615,80 +1616,98 @@ rec.onend = () => {
 };
 
   rec.onresult = (e) => {
-    // Build a “best guess” for apply, but also capture the last result’s alternatives.
-    const tx = [...e.results].map(r => r[0].transcript).join(' ').trim();
+  // Build a “best guess” for apply, but also capture the last result’s alternatives.
+  const tx = [...e.results].map(r => r[0].transcript).join(' ').trim();
 
-    // Log alternatives (browser-dependent confidence support)
-    const last = e.results[e.results.length - 1];
-    const alts = last ? Array.from(last).map(a => ({
-      transcript: (a.transcript || '').trim(),
-      confidence: (typeof a.confidence === 'number') ? +a.confidence.toFixed(3) : null
-    })) : [];
+  // Log alternatives (browser-dependent confidence support)
+  const last = e.results[e.results.length - 1];
+  const alts = last ? Array.from(last).map(a => ({
+    transcript: (a.transcript || '').trim(),
+    confidence: (typeof a.confidence === 'number') ? +a.confidence.toFixed(3) : null
+  })) : [];
 
-    const best = alts[0]?.transcript || tx;
-	
-	// ---- inside rec.onresult, right after you set `const best = ...` ----
-if (dogListenActive){
-  const name = matchDogName(best);
-  if (name){
-    setSelectedDog(name);
-    setStatus('Dog: ' + name);
-  }else{
-    setStatus('Heard: "'+best+'", didn’t match a dog');
-  }
-  dogListenActive = false;
-  dogMicBtn?.classList.remove('listening');
- if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
+  const best = alts[0]?.transcript || tx;
+
+  // ---- Dog-name listening fast-path ----
+  if (dogListenActive){
+    const name = matchDogName(best);
+    if (name){
+      setSelectedDog(name);
+      setStatus('Dog: ' + name);
+    } else {
+      setStatus('Heard: "' + best + '", didn’t match a dog');
+    }
+    dogListenActive = false;
+    dogMicBtn?.classList.remove('listening');
+    if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
     return;
-}
+  }
 
+  console.groupCollapsed(
+    `%cSpeech(final) → %c${best}`,
+    'color:#888', 'color:#111;font-weight:700'
+  );
+  console.log('activeId:', activeId, 'activeFix:', activeFix);
+  if (alts.length) console.table(alts);
+  console.groupEnd();
 
-    console.groupCollapsed(
-      `%cSpeech(final) → %c${best}`,
-      'color:#888', 'color:#111;font-weight:700'
-    );
-    console.log('activeId:', activeId, 'activeFix:', activeFix);
-    if (alts.length) console.table(alts);
-    console.groupEnd();
-
-      // ---- apply to the right item and build a toast summary
+  // ---- apply to the right item and build a toast summary
   let summary = null;
 
   if (activeFix){
-    const before = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
-    summary = applyTranscript(activeFix.itemId, best);   // <— now returns summary
-    const after  = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
+    const before = snapshotFlags(items.find(x => x.id === activeFix.itemId));
+    summary = applyTranscript(activeFix.itemId, best);
+    const after  = snapshotFlags(items.find(x => x.id === activeFix.itemId));
     const changed = diffFlags(before, after);
-    const matchedSuggestion = changed.added.includes(activeFix.suggestKey) || changed.toggled?.includes?.(activeFix.suggestKey);
-    if (matchedSuggestion || (changed.added.length + changed.toggled.length) > 0) {
+    const matchedSuggestion = changed.added.includes(activeFix.suggestKey) ||
+                              changed.toggled?.includes?.(activeFix.suggestKey);
+
+    if (matchedSuggestion || (changed.added.length + changed.toggled?.length || 0) > 0){
+      // persist auto-fix for future runs
+      if (activeFix.suggestKey){
+        const canon = canonicalPhraseForKey(activeFix.suggestKey);
+        if (canon) addAutoFix(activeFix.phrase, canon);
+      }
       removeMissed(activeFix.itemId, activeFix.phrase);
       renderMissedOverlay();
     }
     activeFix = null;
+
   } else if (activeId) {
-    summary = applyTranscript(activeId, best);           // <— now returns summary
+    summary = applyTranscript(activeId, best);
   }
 
   // close the "Listening…" toast
   if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
 
-  // Build the success toast (only if something actually changed)
-  if (summary){
+  // ---- Toasts ----
+  if (summary?.batchApplied){
+    const range =
+      summary.batchApplied > 1
+        ? `${summary.batchFrom} → ${summary.batchTo}`
+        : `${summary.batchFrom}`;
+    showToast('✅ Applied scores', {
+      type: 'success',
+      size: 'xxl',
+      sub: `${summary.batchApplied} ${summary.batchKind.toLowerCase()}(s) • ${range}`,
+      duration: 2600
+    });
+  } else if (summary){
     const parts = [];
-    if (summary.added.length) parts.push(`Added: ${labelsFor(summary.added).join(', ')}`);
-    if (summary.setScore)     parts.push(`Score: ${summary.score.toFixed(1)}`);
-    else if (summary.adjust)  parts.push(`Score ${summary.adjust>0?'+':''}${summary.adjust.toFixed(1)} → ${summary.score.toFixed(1)}`);
-    if (!parts.length && summary.removed.length){
+    if (summary.added?.length) parts.push(`Added: ${labelsFor(summary.added).join(', ')}`);
+    if (summary.setScore)      parts.push(`Score: ${summary.score.toFixed(1)}`);
+    else if (summary.adjust)   parts.push(`Score ${summary.adjust>0?'+':''}${summary.adjust.toFixed(1)} → ${summary.score.toFixed(1)}`);
+    if (!parts.length && summary.removed?.length){
       parts.push(`Removed: ${labelsFor(summary.removed).join(', ')}`);
     }
     if (parts.length){
       showToast('✅ Updated', { type:'success', size: 'xxl', sub: parts.join(' • '), duration: 2400 });
     } else {
-      // nothing mapped (flags handled by your missed overlay)
       showToast('No flags recognized', { type:'info', duration: 1400 });
     }
   }
 };
+
 
 
 
@@ -1749,12 +1768,56 @@ function endListen(){
   document.querySelectorAll('.row').forEach(r=> r.classList.remove('listening'));
 }
 
+
+/* ---------------- Persistent Auto-Fix Dictionary ---------------- */
+const FIX_KEY = 'speech_autofix_map_v1';
+
+function readFixMap(){
+  try { return JSON.parse(localStorage.getItem(FIX_KEY) || '{}'); }
+  catch { return {}; }
+}
+function writeFixMap(map){
+  localStorage.setItem(FIX_KEY, JSON.stringify(map));
+}
+function escapeRegex(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+/** Save a mapping like "big hut" -> "big hunt" (normalized, word-bounded) */
+function addAutoFix(heard, corrected){
+  const map = readFixMap();
+  const h = normalize(heard);
+  const c = normalize(corrected);
+  if (!h || !c) return;
+  map[h] = c;
+  writeFixMap(map);
+  // optional UI sugar:
+  showToast('Saved auto-fix', { type:'success', sub:`"${heard}" → "${corrected}"`, duration: 1600 });
+}
+
+/** Apply all saved replacements to a normalized transcript */
+function applyAutoFixes(tx){
+  const map = readFixMap();
+  let out = tx;
+  for (const [h, c] of Object.entries(map)){
+    const rx = new RegExp(`\\b${escapeRegex(h)}\\b`, 'g');  // whole-phrase, case-normalized
+    out = out.replace(rx, c);
+  }
+  return out;
+}
+
+/** Get a canonical phrase string for a given flag key (first variant is best) */
+function canonicalPhraseForKey(key){
+  const f = FLAGS.find(x => x.key === key);
+  return f?.variants?.[0] || f?.label || null;
+}
+
+
 /* ---------------- NLP core ---------------- */
 function normalize(s){
   return String(s||'')
     .toLowerCase()
-    .replace(/[’‘']/g,"'")
-    .replace(/[^a-z0-9.\s-]/g,' ')
+.replace(/[’‘']/g,'')            // "didn't" → "didnt"
+.replace(/[^a-z0-9.\s-]/g,' ')
+
     .replace(/\s+/g,' ')
     .trim();
 }
@@ -1777,6 +1840,123 @@ function wordsToNumber(s){
   if(s in NUM_WORDS) return NUM_WORDS[s];
   return NaN;
 }
+
+// Extracts a sequence of numbers like "5 4.5 3 10" or "five four point five three ten"
+function extractNumberSequence(s){
+  const tok = normalize(s).split(/[\s,]+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < tok.length; i++){
+    const t = tok[i];
+
+    // digits (7 or 7.5)
+    if (/^\d+(\.\d+)?$/.test(t)){
+      out.push(parseFloat(t));
+      continue;
+    }
+
+    // word number (e.g., "seven" or "seven point five")
+    if (t in NUM_WORDS){
+      // optional "point X"
+      if (tok[i+1] === 'point' && (tok[i+2] in NUM_WORDS || /^\d+$/.test(tok[i+2]))){
+        const rhs = (tok[i+2] in NUM_WORDS) ? NUM_WORDS[tok[i+2]] : parseInt(tok[i+2], 10);
+        const n   = wordsToNumber(`${t} point ${rhs}`);
+        if (Number.isFinite(n)) out.push(n);
+        i += 2;
+      } else {
+        const n = wordsToNumber(t);
+        if (Number.isFinite(n)) out.push(n);
+      }
+    }
+  }
+  return out;
+}
+
+const ORD_WORDS = { first:1, second:2, third:3, fourth:4, fifth:5,
+                    sixth:6, seventh:7, eighth:8, ninth:9, tenth:10 };
+function romanToInt(s){
+  // supports i..xl (1..40) safely; extend if you ever need more
+  const map = {i:1, v:5, x:10, l:50, c:100, d:500, m:1000};
+  const r = String(s||'').toLowerCase().replace(/[^ivxlcdm]/g,'');
+  if (!r) return NaN;
+  let total = 0, prev = 0;
+  for (let i = r.length - 1; i >= 0; i--){
+    const val = map[r[i]] || 0;
+    total += (val < prev) ? -val : val;
+    prev = val;
+  }
+  return total;
+}
+function wordToIndex(s){
+  // number word (“two”), plain digit (“2”), ordinal word (“second”),
+  // or roman numeral (“ii”, “iv”, “x”)
+  const n = wordsToNumber(s);
+  if (Number.isFinite(n)) return n;
+
+  const key = normalize(s);
+  if (ORD_WORDS[key]) return ORD_WORDS[key];
+
+  if (/^[ivxlcdm]+$/i.test(key)){
+    const r = romanToInt(key);
+    if (Number.isFinite(r)) return r;
+  }
+  return NaN;
+}
+
+
+
+function findAddressedGroups(tx){
+  // “mark 3 …”, “marks three …”, “blind 2 …”, “blind number four …”
+  const RX = /\b(mark|blind)s?\s+(?:number\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|[ivxlcdm]+|\d{1,2})\b/gi;
+
+  const groups = [];
+  let m;
+  while ((m = RX.exec(tx)) !== null){
+    const kind  = m[1].toLowerCase() === 'mark' ? 'Mark' : 'Blind';
+    const idx   = Number.isFinite(+m[2]) ? +m[2] : wordToIndex(m[2]);
+    const start = m.index + m[0].length;
+    groups.push({ kind, index: idx, start, end: tx.length });
+  }
+  // set group ends to the next header’s start
+  for (let i=0;i<groups.length-1;i++) groups[i].end = groups[i+1].start;
+  return groups.filter(g => Number.isFinite(g.index) && g.index >= 1);
+}
+
+function parseGroupBody(txSlice){
+  // Reuse your existing pieces on the slice:
+  const { keys } = detectFlagsMulti(txSlice);
+  const isRemove = /\b(remove|clear|unset|delete)\b/.test(txSlice);
+  const isAdd    = /\b(add|flag|set)\b/.test(txSlice);
+
+  const add = new Set(), remove = new Set(), toggle = new Set();
+  keys.forEach(k => {
+    if (isRemove) remove.add(k);
+    else if (isAdd) add.add(k);
+    else toggle.add(k);
+  });
+
+  // Optional: support “score …” inside the group
+  let score = null, adjust = 0, clearAll = /\bclear\s+flags?\b/.test(txSlice);
+  const afterCmd = txSlice.match(/\b(?:score|rating|set|make)\b([\s\S]*)$/)?.[1]?.trim() || '';
+  if (afterCmd){
+    const nums = parseScoreListFlexible(afterCmd);
+    if (nums.length >= 1) score = quant05(quantClamp(nums[0]));
+  }
+  // small +/- inside the group
+  const inc = txSlice.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
+  const dec = txSlice.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
+  if (inc && !dec){
+    const amt = inc[2] ? (Number.isFinite(wordsToNumber(inc[2])) ? wordsToNumber(inc[2]) : parseFloat(inc[2])) : 0.5;
+    adjust += Number.isFinite(amt) ? amt : 0.5;
+  }
+  if (dec && !inc){
+    const amt = dec[2] ? (Number.isFinite(wordsToNumber(dec[2])) ? wordsToNumber(dec[2]) : parseFloat(dec[2])) : 0.5;
+    adjust -= Number.isFinite(amt) ? amt : 0.5;
+  }
+
+  return { add, remove, toggle, score, adjust, clearAll };
+}
+
+
 
 function quant05(n){ return Math.max(0, Math.min(10, Math.round(n*2)/2)); }
 
@@ -1814,62 +1994,118 @@ function detectFlagsMulti(tx){
   return { keys:[...found], hits };
 }
 
+// Already have parseSquashedScores() from earlier; keep it as-is.
+// Add this helper to choose the best interpretation per your rules.
+
+function parseScoreListFlexible(s){
+  const spaced   = extractNumberSequence(s);   // e.g., ["8.5","103","6.5"] → [8.5, 103, 6.5]
+  const squashed = parseSquashedScores(s);     // e.g., "8.5 103 6.5" → [8.5, 10, 3, 6.5]
+
+  // Heuristics: prefer squashed if it explains more numbers or fixes >10 artifacts.
+  const spacedHasBig = spaced.some(n => n > 10.0);
+  if (squashed.length > spaced.length || spacedHasBig){
+    return squashed;
+  }
+  return spaced;
+}
+
+
 /* Parse utterance → intents + missed phrases (between hits) */
 function parseUtterance(raw){
-  const tx = normalize(raw);
-  const intents={ add:new Set(), remove:new Set(), toggle:new Set(), clearAll:false, score:null, adjust:0 };
-  if(/\bclear\s+flags?\b/.test(tx)) intents.clearAll=true;
+  const tx = applyAutoFixes(normalize(raw));
+  const intents = {
+    add:new Set(), remove:new Set(), toggle:new Set(),
+    clearAll:false, score:null, adjust:0, batchScores:[]
+  };
 
-  // score explicit
-  let m=tx.match(/\b(?:rating|score|set|make)\b(?:\s*(?:it|to|at))?\s+([a-z0-9.\s-]+)(?!.*\b(?:by)\b)/);
-  if(m){ const n=wordsToNumber(m[1].trim()); if(Number.isFinite(n)) intents.score=quant05(n); }
-  else {
-    // pure-number utterance → score
-    if(/^\d+(\.\d+)?$/.test(tx) || Number.isFinite(wordsToNumber(tx))){
-      const n=wordsToNumber(tx); if(Number.isFinite(n)) intents.score=quant05(n);
+  if (/\bclear\s+flags?\b/.test(tx)) intents.clearAll = true;
+
+  // ----- SCORES / BATCH DETECTION -----
+  const afterCmd = tx.match(/\b(?:scores?|rating|set|make)\b([\s\S]*)$/)?.[1]?.trim() || '';
+
+  if (afterCmd){
+    const nums = parseScoreListFlexible(afterCmd);
+    if (nums.length > 1){
+      intents.batchScores = nums.map(n => quant05(Math.max(0, Math.min(10, n))));
+    } else if (nums.length === 1){
+      intents.score = quant05(nums[0]);
+    }
+  } else {
+    // Pure-number utterance → may be a single score OR a squashed list
+    const onlyDigitsDots = /^[\d.\s]+$/.test(tx);
+    if (onlyDigitsDots){
+      const nums = parseScoreListFlexible(tx);
+      if (nums.length > 1){
+        intents.batchScores = nums.map(n => quant05(Math.max(0, Math.min(10, n))));
+      } else if (nums.length === 1){
+        intents.score = quant05(nums[0]);
+      }
+    } else if (/^\d+(\.\d+)?$/.test(tx) || Number.isFinite(wordsToNumber(tx))){
+      intents.score = quant05(wordsToNumber(tx));
     }
   }
 
-  // adjustments
-  const inc=tx.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
-  const dec=tx.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
-  if(inc && !dec){ const amt = inc[2] ? (Number.isFinite(wordsToNumber(inc[2])) ? wordsToNumber(inc[2]) : parseFloat(inc[2])) : 0.5; intents.adjust += Number.isFinite(amt) ? amt : 0.5; }
-  if(dec && !inc){ const amt = dec[2] ? (Number.isFinite(wordsToNumber(dec[2])) ? wordsToNumber(dec[2]) : parseFloat(dec[2])) : 0.5; intents.adjust -= Number.isFinite(amt) ? amt : 0.5; }
+  // ----- ADJUSTMENTS (+/- by X; defaults to 0.5) -----
+  const inc = tx.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
+  const dec = tx.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
+  if (inc && !dec){
+    const amt = inc[2] ? (Number.isFinite(wordsToNumber(inc[2])) ? wordsToNumber(inc[2]) : parseFloat(inc[2])) : 0.5;
+    intents.adjust += Number.isFinite(amt) ? amt : 0.5;
+  }
+  if (dec && !inc){
+    const amt = dec[2] ? (Number.isFinite(wordsToNumber(dec[2])) ? wordsToNumber(dec[2]) : parseFloat(dec[2])) : 0.5;
+    intents.adjust -= Number.isFinite(amt) ? amt : 0.5;
+  }
 
-  // flags + hit spans
+  // ----- FLAGS -----
   const { keys, hits } = detectFlagsMulti(tx);
-  const isRemove=/\b(remove|clear|unset|delete)\b/.test(tx);
-  const isAdd=/\b(add|flag|set)\b/.test(tx);
+  const isRemove = /\b(remove|clear|unset|delete)\b/.test(tx);
+  const isAdd    = /\b(add|flag|set)\b/.test(tx);
+
   for (const k of keys){
-    if(isRemove) intents.remove.add(k);
-    else if(isAdd) intents.add.add(k);
+    if (isRemove) intents.remove.add(k);
+    else if (isAdd) intents.add.add(k);
     else intents.toggle.add(k);
   }
 
-  // infer missed phrases (now robust for head/tail too)
-  let missed = [];
-  if (hits.length >= 2) {
-    missed = inferMissedSegments(tx, hits);
-  } else {
-    missed = inferMissedLoose(tx, hits);
-  }
+  // ----- ADDRESSed GROUPS (Mark/Blind N …) -----
+  const groups = findAddressedGroups(tx).map(g => {
+    const body = tx.slice(g.start, g.end);
+    const parsed = parseGroupBody(body);
+    return {
+      kind: g.kind,
+      index: g.index,
+      start: g.start,
+      end: g.end,
+      add: parsed.add,
+      remove: parsed.remove,
+      toggle: parsed.toggle,
+      score: parsed.score,
+      adjust: parsed.adjust,
+      clearAll: parsed.clearAll
+    };
+  });
 
-  // ---- DEBUG CONSOLE ----
+  // ----- MISSED PHRASES -----
+  const missed = (hits.length >= 2) ? inferMissedSegments(tx, hits) : inferMissedLoose(tx, hits);
+
+  // DEBUG
   console.groupCollapsed('%cNLP', 'color:#0b74ff;font-weight:700');
   console.log('raw:', raw);
   console.log('normalized:', tx);
-  console.log('flags(keys):', keys);
-  console.log('hits:', hits);
-  console.log('missed:', missed);
+  console.log('groups:', groups.map(g => ({ kind:g.kind, index:g.index, span:[g.start,g.end] })));
+  console.log('batchScores:', intents.batchScores);
   console.log('score:', intents.score, 'adjust:', intents.adjust, 'clearAll:', intents.clearAll);
   console.log('add:', Array.from(intents.add));
   console.log('remove:', Array.from(intents.remove));
   console.log('toggle:', Array.from(intents.toggle));
   console.groupEnd();
-  // -----------------------
 
-  return { intents, missed, hits, keys };
+  return { intents, missed, hits, keys, groups };
 }
+
+
+
 
 
 /* Heuristic: segments between detected flags that still have meaningful tokens */
@@ -2096,6 +2332,82 @@ if (dogMicBtn){
   });
 }
 
+// Parse smooshed digit runs like "108.57.56" or "10835"
+// Rules: (1) only "10" is two-digit, (2) decimals are ".5" only, else single digits.
+function parseSquashedScores(str){
+  // normalize, keep only digits and dots, make "point" a dot
+  let s = normalize(str)
+    .replace(/point/g, '.')      // spoken "point"
+    .replace(/[^\d.]/g, '')      // keep 0-9 and .
+    .replace(/\.+/g, '.');       // collapse accidental multiple dots
+
+  if (!s) return [];
+
+  const out = [];
+  let i = 0;
+  while (i < s.length){
+    const ch = s[i];
+
+    if (ch === '.'){ i++; continue; } // skip stray separators
+
+    // "10" is the only two-digit number
+    if (ch === '1' && s[i+1] === '0'){
+      out.push(10); i += 2; continue;
+    }
+
+    // single digit
+    if (/\d/.test(ch)){
+      const d = ch.charCodeAt(0) - 48;
+
+      // optional ".5" right after → halves only
+      if (s[i+1] === '.'){
+        if (s[i+2] === '5'){ out.push(d + 0.5); i += 3; continue; }
+
+        // if some other decimal sneaks in, round to the closest half policy
+        if (/\d/.test(s[i+2])){
+          const dec = s[i+2].charCodeAt(0) - 48;
+          out.push(d + (dec >= 5 ? 0.5 : 0));
+          i += 3; continue;
+        }
+      }
+
+      out.push(d); i += 1; continue;
+    }
+
+    i++; // safety
+  }
+  return out;
+}
+
+
+// Update the legacy list row UI (chips + tiny score) and keep stage in sync
+function syncRow(it){
+  const row = document.getElementById('row-' + it.id);
+  if (!row) { 
+    // still keep the stage/badge in sync even if the row list is hidden
+    syncStageForItem?.(it);
+    return; 
+  }
+
+  // chips
+  row.querySelectorAll('.chip').forEach(ch => {
+    const key = ch.dataset.key;
+    ch.classList.toggle('on', !!(it.flags && it.flags[key]));
+  });
+
+  // tiny slider + score in the row (the list view is hidden but still present)
+  const slider = row.querySelector('input[type="range"]');
+  if (slider) slider.value = it.score ?? 0;
+
+  const scoreEl = row.querySelector('.score');
+  if (scoreEl) scoreEl.textContent = (it.score ?? 0).toFixed(1);
+
+  // also update the big visible badge in the active pane
+  syncStageForItem?.(it);
+}
+
+
+
 /* ---------------- Apply to row, then surface missed overlay + logging ---------------- */
 function quantClamp(n){ return Math.max(0, Math.min(10, n)); }
 
@@ -2142,59 +2454,129 @@ function refreshStage(){
 
 
 function applyTranscript(itemId, raw){
-  const it=items.find(x=>x.id===itemId); if(!it) return;
-  const { intents, missed } = parseUtterance(raw);
-  const before = snapshotFlags(it); 
-  if (missed.length && (!intents.add.size && !intents.remove.size && !intents.toggle.size)) {
+  const it = items.find(x => x.id === itemId);
+  if (!it) return;
+
+  const parsed = parseUtterance(raw);
+  const { intents, missed, groups } = parsed;
+
+  // ----- Addressed group path (“Mark 3 …”, “Blind 2 …”) -----
+  if (groups && groups.length){
+    let applied = 0;
+    const labels = [];
+
+    for (const g of groups){
+      const lane = items.filter(x => x.kind === g.kind);
+      const target = lane[g.index - 1];  // 1-based spoken index
+
+      if (!target){
+        showToast(`No ${g.kind} #${g.index}`, { type:'error', duration: 1800 });
+        continue;
+      }
+
+      if (g.clearAll) target.flags = {};
+      g.add.forEach(k    => { target.flags[k] = true; });
+      g.remove.forEach(k => { target.flags[k] = false; });
+      g.toggle.forEach(k => { target.flags[k] = !target.flags[k]; });
+
+      if (Number.isFinite(g.score)) target.score = g.score;
+      if (g.adjust) target.score = quant05(quantClamp((target.score ?? 0) + g.adjust));
+
+      syncRow(target);
+      debouncedSaver(target.id)();
+      applied++;
+      labels.push(`${g.kind} #${g.index}`);
+    }
+
+    if (applied){
+      refreshStage();
+      showToast('✅ Applied to specific slots', {
+        type:'success',
+        size:'xxl',
+        sub: labels.join(' • '),
+        duration: 2600
+      });
+    }
+
+    // We handled everything addressed; do not continue into the single/batch logic.
+    return;
+  }
+
+  // ----- Batch scoring path (applies to the current pane onward) -----
+  if (intents.batchScores && intents.batchScores.length){
+    const start = it;
+    const kind  = start.kind; // 'Mark' or 'Blind'
+    const list  = items.filter(x => x.kind === kind);
+    const startIdx = list.findIndex(x => x.id === itemId);
+
+    let applied = 0;
+    for (let i = 0; i < intents.batchScores.length; i++){
+      const idx = startIdx + i;
+      if (idx >= list.length) break;
+      const target = list[idx];
+      const v = quant05(Math.max(0, Math.min(10, intents.batchScores[i])));
+      target.score = v;
+      syncRow(target);
+      debouncedSaver(target.id)();
+      applied++;
+    }
+
+    refreshStage(); // keep UI in sync with the visible pane(s)
+
+    return {
+      batchApplied: applied,
+      batchKind: kind,
+      batchFrom: list[startIdx]?.title || '',
+      batchTo: list[startIdx + Math.max(0, applied-1)]?.title || '',
+      score: list[startIdx]?.score ?? null,
+      added: [], removed: [], setScore: false, adjust: 0
+    };
+  }
+
+  // ----- Normal single-item path (flags, single score, adjust, missed) -----
+  const before = snapshotFlags(it);
+
+
+
+  if (missed.length && (!intents.add.size && !intents.remove.size && !intents.toggle.size)){
     setStatus('No flags matched; queued ' + missed.length + ' missed phrase(s).');
   }
 
-  if(intents.clearAll) it.flags = {};
+  if (intents.clearAll) it.flags = {};
 
-  intents.add.forEach(k => it.flags[k]=true);
-  intents.remove.forEach(k => it.flags[k]=false);
-  intents.toggle.forEach(k => it.flags[k]=!it.flags[k]);
+  intents.add.forEach(k => it.flags[k] = true);
+  intents.remove.forEach(k => it.flags[k] = false);
+  intents.toggle.forEach(k => it.flags[k] = !it.flags[k]);
 
-  if(Number.isFinite(intents.score)) it.score=intents.score;
-  if(intents.adjust!==0) it.score=quant05(it.score + intents.adjust);
+  if (Number.isFinite(intents.score)) it.score = intents.score;
+  if (intents.adjust !== 0) it.score = quant05(it.score + intents.adjust);
   it.score = quantClamp(it.score);
 
-   syncRow(it);
-  syncStageForItem(it); // <-- instantly reflect score on the visible pane
-
+  syncRow(it);
+  syncStageForItem(it); // instantly reflect score on the visible pane
+  debouncedSaver(itemId)();
 
   if (missed.length){
-    // build per-row missed items and log phrases
     for (const m of missed){
       addMissed(itemId, it.title, m.raw, m.suggestKey, m.suggestLabel);
       logUnassigned(m.raw);
     }
     renderMissedOverlay();
   }
-  const after = snapshotFlags(it);               // <— NEW
+
+  const after = snapshotFlags(it);
   const changed = diffFlags(before, after);
-  debouncedSaver(itemId)();                     // <— persist this item
-  
-   // return what happened (NEW)
-  return { 
+
+  return {
     added: changed.added,
     removed: changed.removed,
     setScore: Number.isFinite(intents.score),
     adjust: intents.adjust || 0,
     score: it.score
   };
+}
 
-}
-function syncRow(it){
-  const row=document.getElementById('row-'+it.id);
-  if(!row) return;
-  row.querySelector('input[type=range]').value=it.score;
-  row.querySelector('.score').textContent=it.score.toFixed(1);
-  row.querySelectorAll('.chip').forEach(ch=>{
-    const k=ch.dataset.key;
-    ch.classList.toggle('on', !!it.flags[k]);
-  });
-}
+
 function snapshotFlags(it){
   const on = Object.entries(it.flags||{}).filter(([k,v])=>!!v).map(([k])=>k);
   return { on: new Set(on) };
@@ -2251,19 +2633,22 @@ function renderMissedOverlay(){
     actions.appendChild(mic);
 
     if (m.suggestKey){
-      const quick = document.createElement('button'); quick.className='btn small primary';
-      quick.textContent = `✓ Apply ${m.suggestLabel}`;
-      quick.addEventListener('click', ()=>{
-        const it = items.find(x=>x.id===m.itemId); if (!it) return;
-        it.flags[m.suggestKey] = true;
-		debouncedSaver(it.id)();                      // <— persist change
+  const quick = document.createElement('button'); quick.className='btn small primary';
+  quick.textContent = `✓ Apply ${m.suggestLabel}`;
+  quick.addEventListener('click', ()=>{
+    const it = items.find(x=>x.id===m.itemId); if (!it) return;
+    it.flags[m.suggestKey] = true;
+    const canon = canonicalPhraseForKey(m.suggestKey);
+    if (canon) addAutoFix(m.phrase, canon);      // ← persist future auto-fix
 
-        syncRow(it);
-        removeMissed(m.itemId, m.phrase);
-        renderMissedOverlay();
-      });
-      actions.appendChild(quick);
-    }
+    debouncedSaver(it.id)();
+    syncRow(it);
+    removeMissed(m.itemId, m.phrase);
+    renderMissedOverlay();
+  });
+  actions.appendChild(quick);
+}
+
 
     const dismiss = document.createElement('button'); dismiss.className='btn small';
     dismiss.textContent='Dismiss';
