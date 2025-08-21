@@ -163,20 +163,27 @@
   min-height: 36vh;                           /* match pane's min-height */
 }
 .pane{
-  position: absolute; inset: 0;               /* let old/new overlap to animate */
+  position: absolute; inset: 0;
   transition: transform .28s ease, opacity .28s ease;
   transform: translateX(0); opacity: 1;
+  will-change: transform, opacity;
 }
+
 .pane.enter-from-right { transform: translateX(100%); opacity: 0; }
 .pane.enter-from-left  { transform: translateX(-100%); opacity: 0; }
 .pane.exit-to-left     { transform: translateX(-100%); opacity: 0; }
 .pane.exit-to-right    { transform: translateX(100%);  opacity: 0; }
 
 
+/* allow vertical scroll; we'll handle horizontal swipes */
+.mic { touch-action: pan-y; }
+
+
 .mic{
   display:inline-flex;align-items:center;gap:10px;
   padding:12px 14px;border-radius:999px;background:#fff;border:1px solid #d0d5dd;
   cursor:pointer;font-weight:800;font-size:16px;min-height:44px
+  
 }
 .mic .dot{width:12px;height:12px;border-radius:50%;background:#94a3b8}
 .mic.big{ font-size:22px; padding:16px 18px; min-height:56px }
@@ -582,7 +589,44 @@ html, body { max-width:100%; overflow-x:hidden; overscroll-behavior-x:none; }
 /* Pager dots slide to the far right so they never push the score */
 .pager{ margin-left: auto !important; }
 
-  
+
+/* ——— Toasts (center of screen, all of them) ——— */
+.toasts{
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);      /* hard-center the stack */
+  display: flex;
+  flex-direction: column;
+  align-items: center;                    /* center each toast */
+  gap: 10px;
+  z-index: 10000;
+  pointer-events: none;                   /* lets you tap through gaps */
+  max-width: calc(100vw - 32px);
+}
+
+.toast{
+  pointer-events: auto;                   /* but the toast itself is clickable */
+  background:#fff; color:#0f172a;
+  border:1px solid #e7ecff; border-left:6px solid #0b74ff;
+  border-radius:12px;
+  width: min(560px, 92vw);                /* nice centered width */
+  padding:12px 14px;
+  box-shadow:0 10px 30px rgba(16,24,40,.15);
+  font-weight:800; line-height:1.2;
+  display:flex; flex-direction:column; gap:4px;
+  animation: toast-in .18s ease-out;
+}
+
+.toast.success{ border-left-color:#16a34a; }
+.toast.error{   border-left-color:#ef4444; }
+.toast .sub{ font-weight:600; color:#475467; font-size:12px; }
+
+/* animate only vertical so center math stays crisp */
+@keyframes toast-in  { from { transform: translateY(8px);  opacity:0 } to { transform: translateY(0); opacity:1 } }
+@keyframes toast-out { to   { transform: translateY(8px);  opacity:0 } }
+.toast.hide{ animation: toast-out .15s ease-in forwards; }
+
 </style>
 </head>
 <body>
@@ -1062,11 +1106,15 @@ function animateSwap(type, direction){
   next.style.position = current.style.position = 'absolute';
   next.style.inset    = current.style.inset    = '0';
 
-  // kick the transition
-  requestAnimationFrame(()=>{
-    current.classList.add(direction==='left' ? 'exit-to-left' : 'exit-to-right');
-    next.classList.remove('enter-from-right','enter-from-left');
+  // kick the transition – ensure the off-screen state is committed first
+requestAnimationFrame(() => {
+  void next.offsetWidth; // layout flush (or use next.getBoundingClientRect())
+  requestAnimationFrame(() => {
+    current.classList.add(direction === 'left' ? 'exit-to-left' : 'exit-to-right');
+    next.classList.remove('enter-from-right', 'enter-from-left');
   });
+});
+
 
   const cleanup = () => {
     current?.remove();
@@ -1112,9 +1160,12 @@ function renderPane(label, it, total, type){
   ctrls.className = 'pane-controls';
 
   const mic = document.createElement('button');
-  mic.type='button';
-  mic.className='mic big';
-  mic.innerHTML='<span class="dot"></span> 🎤 Listen';
+mic.type='button';
+mic.className='mic big';
+mic.innerHTML='<span class="dot"></span> 🎤 Listen';
+
+// NEW: default to “not blocking click”
+mic.dataset.blockClick = '0';
 
   // Hidden range for existing logic
   const range = document.createElement('input');
@@ -1152,7 +1203,16 @@ function renderPane(label, it, total, type){
   }
 
   if (it){
-    mic.addEventListener('click', ()=> startListeningFor(it.id));
+    mic.addEventListener('click', (ev) => {
+  // If a horizontal swipe started on the mic, cancel this click
+  if (mic.dataset.blockClick === '1') {
+    ev.preventDefault();
+    ev.stopPropagation();
+    return;
+  }
+  startListeningFor(it.id);
+});
+
 
     range.addEventListener('input', ()=>{
       it.score = +range.value;
@@ -1191,39 +1251,75 @@ function renderPane(label, it, total, type){
 
 
 function attachSwipeX(el, threshold, onLeft, onRight){
-  let pid=null, sx=0, dx=0, ignore=false;
+  let pid = null, sx = 0, dx = 0, ignore = false;
+  let micEl = null;        // if gesture started on the mic
+  let swiping = false;
 
   el.addEventListener('pointerdown', (e)=>{
-  const t = e.target;
-  // bail out if the gesture started on any interactive control
-  const isInteractive = t && typeof t.closest === 'function' &&
-    (t.closest('input[type="range"]') || t.closest('.mic') || t.closest('.flagBtn'));
-  if (isInteractive) {
-    ignore = true; pid=null; sx=0; dx=0;
-    return; // let mic/flag/slider handle it; do NOT capture
-  }
+    const t = e.target;
+    const startedOnRange = t.closest?.('input[type="range"]');
+    const startedOnFlag  = t.closest?.('.flagBtn');
+    micEl                = t.closest?.('.mic') || null;
 
-  ignore = false;
-  pid = e.pointerId; sx = e.clientX; dx = 0;
-  el.setPointerCapture?.(pid);
-});
+    // still block swipes that start on the range or the flag
+    if (startedOnRange || startedOnFlag){
+      ignore = true; pid = null; sx = 0; dx = 0; micEl = null; swiping = false;
+      return;
+    }
 
+    ignore = false;
+    pid = e.pointerId; sx = e.clientX; dx = 0; swiping = false;
+
+    // IMPORTANT: do NOT capture yet if we started on the mic.
+    // Let the tap produce a normal click unless we detect a swipe.
+    if (!micEl) el.setPointerCapture?.(pid);
+  });
 
   el.addEventListener('pointermove', (e)=>{
-    if (ignore || e.pointerId!==pid) return;
+    if (ignore || e.pointerId !== pid) return;
     dx = e.clientX - sx;
+
+    // If the gesture began on the mic and moves horizontally,
+    // mark swipe, block the mic's click, and now capture.
+    if (micEl && !swiping && Math.abs(dx) > 8){
+      swiping = true;
+      micEl.dataset.blockClick = '1';
+      el.setPointerCapture?.(pid);
+    }
   });
 
   const end = (e)=>{
-    if (ignore) { ignore=false; return; }
-    if (e.pointerId!==pid) return;
+    if (ignore || e.pointerId !== pid){
+      micEl = null; return;
+    }
+
+    // If we started on mic and never swiped, do nothing here;
+    // let the mic's normal click fire naturally.
+    if (micEl && !swiping){
+      // ensure it's not blocked just in case
+      micEl.dataset.blockClick = '0';
+      micEl = null;
+      pid = null; dx = 0;
+      return;
+    }
+
+    // otherwise, handle the swipe
     if (dx <= -threshold) onLeft?.();
     else if (dx >= threshold) onRight?.();
-    pid=null; dx=0;
+
+    // re-enable mic clicks after this event cycle
+    if (micEl){
+      setTimeout(()=> { micEl.dataset.blockClick = '0'; micEl = null; }, 0);
+    }
+
+    pid = null; dx = 0; swiping = false;
   };
+
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
 }
+
+
 
 
 
@@ -1387,11 +1483,28 @@ btn.addEventListener('pointercancel', end);
 /* ---------------- Speech engine ---------------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let rec=null, activeId=null, activeFix=null; // activeFix = { itemId, phrase, suggestKey }
+let listeningToastId = null;
 if (SR){
   rec=new SR(); rec.lang='en-US'; rec.interimResults=false; rec.continuous=false;
-  rec.onstart=()=>setStatus('listening…');
-  rec.onerror=e=>{ setStatus('error: '+(e.error||'unknown')); endListen(); };
-  rec.onend=()=>{ setStatus('idle'); endListen(); };
+  rec.onstart = () => {
+  setStatus('listening…');
+  if (listeningToastId) hideToast(listeningToastId);
+  listeningToastId = showToast('🎤 Listening…', { type:'info', duration:0 }); // sticky
+};
+
+rec.onerror = e => {
+  setStatus('error: ' + (e.error || 'unknown'));
+  if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
+  showToast('Speech error', { type:'error', sub:String(e.error || ''), duration:2000 });
+  endListen();
+};
+
+rec.onend = () => {
+  setStatus('idle');
+  if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
+  endListen();
+};
+
   rec.onresult = (e) => {
     // Build a “best guess” for apply, but also capture the last result’s alternatives.
     const tx = [...e.results].map(r => r[0].transcript).join(' ').trim();
@@ -1416,7 +1529,8 @@ if (dogListenActive){
   }
   dogListenActive = false;
   dogMicBtn?.classList.remove('listening');
-  return; // don’t run the row/flags logic for this utterance
+ if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
+    return;
 }
 
 
@@ -1428,22 +1542,46 @@ if (dogListenActive){
     if (alts.length) console.table(alts);
     console.groupEnd();
 
-    if (activeFix){
-      // targeted retry: apply to its row, then remove if matched suggestion or any flag detected
-      const before = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
-      applyTranscript(activeFix.itemId, best);
-      const after = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
-      const changed = diffFlags(before, after);
-      const matchedSuggestion = changed.added.includes(activeFix.suggestKey) || changed.toggled.includes(activeFix.suggestKey);
-      if (matchedSuggestion || (changed.added.length + changed.toggled.length) > 0) {
-        removeMissed(activeFix.itemId, activeFix.phrase);
-        renderMissedOverlay();
-      }
-      activeFix = null;
-    } else if (activeId) {
-      applyTranscript(activeId, best);
+      // ---- apply to the right item and build a toast summary
+  let summary = null;
+
+  if (activeFix){
+    const before = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
+    summary = applyTranscript(activeFix.itemId, best);   // <— now returns summary
+    const after  = snapshotFlags(items.find(x=>x.id===activeFix.itemId));
+    const changed = diffFlags(before, after);
+    const matchedSuggestion = changed.added.includes(activeFix.suggestKey) || changed.toggled?.includes?.(activeFix.suggestKey);
+    if (matchedSuggestion || (changed.added.length + changed.toggled.length) > 0) {
+      removeMissed(activeFix.itemId, activeFix.phrase);
+      renderMissedOverlay();
     }
-  };
+    activeFix = null;
+  } else if (activeId) {
+    summary = applyTranscript(activeId, best);           // <— now returns summary
+  }
+
+  // close the "Listening…" toast
+  if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
+
+  // Build the success toast (only if something actually changed)
+  if (summary){
+    const parts = [];
+    if (summary.added.length) parts.push(`Added: ${labelsFor(summary.added).join(', ')}`);
+    if (summary.setScore)     parts.push(`Score: ${summary.score.toFixed(1)}`);
+    else if (summary.adjust)  parts.push(`Score ${summary.adjust>0?'+':''}${summary.adjust.toFixed(1)} → ${summary.score.toFixed(1)}`);
+    if (!parts.length && summary.removed.length){
+      parts.push(`Removed: ${labelsFor(summary.removed).join(', ')}`);
+    }
+    if (parts.length){
+      showToast('✅ Updated', { type:'success', sub: parts.join(' • '), duration: 2400 });
+    } else {
+      // nothing mapped (flags handled by your missed overlay)
+      showToast('No flags recognized', { type:'info', duration: 1400 });
+    }
+  }
+};
+
+
 
 }else{
   setStatus('Speech API not supported in this browser.');
@@ -1458,6 +1596,35 @@ function startListeningFor(id){
     .forEach(r=> r.classList.toggle('listening', r.id==='row-'+id));
   rec.start();
 }
+
+let __toastSeq = 0;
+function showToast(text, { type='info', duration=1800, sub=null, placement='bottom' } = {}){
+  const wrap = document.getElementById('toasts'); if(!wrap) return null;
+  const id = (++__toastSeq);
+  const el = document.createElement('div');
+  el.className = 'toast' + (type !== 'info' ? ' ' + type : '');
+  if (placement === 'center') el.classList.add('center');   // ← new
+  el.dataset.id = String(id);
+  el.innerHTML = `<div>${text}</div>${sub ? `<div class="sub">${sub}</div>` : ''}`;
+  wrap.appendChild(el);
+  if (duration > 0) setTimeout(()=> hideToast(id), duration);
+  return id;
+}
+
+function hideToast(id){
+  const wrap = document.getElementById('toasts'); if(!wrap) return;
+  const el = wrap.querySelector(`.toast[data-id="${id}"]`); if(!el) return;
+  el.classList.add('hide');
+  el.addEventListener('animationend', ()=> el.remove(), { once:true });
+}
+
+const toastsWrap = document.getElementById('toasts');
+function setToastCenter(on){ toastsWrap?.classList.toggle('center', !!on); }
+
+
+function labelsFor(keys){ return keys.map(k => FLAG_MAP[k]?.label || k); }
+
+
 function startFixListening(itemId, phrase, suggestKey){
   if(!rec){ alert('Speech API not supported'); return; }
   try{ rec.abort(); }catch{}
@@ -1835,6 +2002,7 @@ function syncStageForItem(it){
 function applyTranscript(itemId, raw){
   const it=items.find(x=>x.id===itemId); if(!it) return;
   const { intents, missed } = parseUtterance(raw);
+  const before = snapshotFlags(it); 
   if (missed.length && (!intents.add.size && !intents.remove.size && !intents.toggle.size)) {
     setStatus('No flags matched; queued ' + missed.length + ' missed phrase(s).');
   }
@@ -1861,8 +2029,18 @@ function applyTranscript(itemId, raw){
     }
     renderMissedOverlay();
   }
-  
+  const after = snapshotFlags(it);               // <— NEW
+  const changed = diffFlags(before, after);
   debouncedSaver(itemId)();                     // <— persist this item
+  
+   // return what happened (NEW)
+  return { 
+    added: changed.added,
+    removed: changed.removed,
+    setScore: Number.isFinite(intents.score),
+    adjust: intents.adjust || 0,
+    score: it.score
+  };
 
 }
 function syncRow(it){
@@ -2012,5 +2190,7 @@ document.getElementById('clearBtn').addEventListener('click',()=>{
 });
 
 </script>
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
+
 </body>
 </html>
