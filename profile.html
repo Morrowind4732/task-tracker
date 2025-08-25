@@ -821,6 +821,8 @@ let currentTrainer = 'Scott';                   // default
 let currentDateKey = null;
 let currentSetupId = null;
 let currentSetupOrder = 1;
+let unsubRun = null;
+
 
 // Build a reference to the score "run" doc for a dog
 function runDocRef(dogName){
@@ -907,10 +909,49 @@ async function loadDogRun(dogName){
   renderAll();
   refreshStage();     // <— rebuild both visible panes for the new dog
 }
-
+attachRunListener(dogName);
 }
 
 
+function attachRunListener(dogName){
+  const ref = runDocRef(dogName);
+  if (!ref) return;
+
+  // stop any previous listener
+  if (unsubRun) { try{unsubRun();}catch{} unsubRun = null; }
+
+  unsubRun = ref.onSnapshot(snap => {
+    const saved = snap.exists ? (snap.data()?.items || {}) : {};
+
+    let changed = false;
+
+    // bring local items in sync with what Firestore has
+    items.forEach(it => {
+      const s = saved[it.id];
+
+      const newScore = Number.isFinite(s?.score) ? quant05(s.score) : 0;
+      const newFlags = (s?.flags && typeof s.flags === 'object') ? { ...s.flags } : {};
+
+      const flagsChanged = JSON.stringify(it.flags || {}) !== JSON.stringify(newFlags);
+      const scoreChanged = (it.score ?? 0) !== newScore;
+
+      if (flagsChanged || scoreChanged){
+        it.flags = newFlags;
+        it.score = newScore;
+        changed = true;
+
+        // keep both UI modes in sync
+        syncRow(it);
+        syncStageForItem?.(it);
+      }
+    });
+
+    if (changed){
+      refreshStage(); // ensures the visible panes reflect changes
+      setStatus('live update');
+    }
+  }, err => console.warn('run listener error:', err));
+}
 
 
 
@@ -2870,4 +2911,3 @@ document.getElementById('clearBtn').addEventListener('click',()=>{
 
 </body>
 </html>
-
