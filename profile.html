@@ -837,7 +837,9 @@ let currentDateKey = null;
 let currentSetupId = null;
 let currentSetupOrder = 1;
 let unsubRun = null;
-let currentUser = localStorage.getItem('currentUser') || null;  // doubles as trainer
+// NEW: force the overlay every load
+let currentUser = null;
+// doubles as trainer
 let unsubSession = null;                                        // session listener
 // (keep your existing: let unsubRun = null;)
 
@@ -1808,8 +1810,7 @@ rec.onend = () => {
       if (listeningToastId) { hideToast(listeningToastId); listeningToastId = null; }
       dogListenActive = false;
       dogMicBtn?.classList.remove('listening');
-      const who = currentTrainer || currentUser || 'Scott';
-      window.location.href = `https://morrowind4732.github.io/task-tracker/gps.html?trainer=${encodeURIComponent(who)}`;
+      window.location.href = `https://morrowind4732.github.io/task-tracker/gps.html`;
       return;
     }
     if (/\bgo\s+to\s+setup(?:s)?\b/.test(cmd)) {
@@ -2938,7 +2939,7 @@ function showUserOverlay(){
   ov.querySelectorAll('button[data-user]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       currentUser = btn.dataset.user;
-      localStorage.setItem('currentUser', currentUser);
+      
       ov.classList.remove('open'); ov.setAttribute('aria-hidden','true');
       if (!document.querySelector('.overlay.open')) document.documentElement.classList.remove('overlay-open');
       bootAfterUser();
@@ -2953,11 +2954,9 @@ function bootAfterUser(){
 
 
 // Boot:
-if (currentUser){
-  bootAfterUser();
-} else {
-  showUserOverlay();
-}
+// Always ask who it is
+showUserOverlay();
+
 
 
 
