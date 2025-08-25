@@ -1183,8 +1183,8 @@ function filterFitPoints(pts){
     navigator.geolocation.getCurrentPosition(
       pos => {
         const { latitude, longitude } = pos.coords;
-        const targetZoom = Math.min(MAX_COMFORT_ZOOM, map.getZoom() + 1);
-map.flyTo([latitude, longitude], targetZoom, { duration: 0.9 });
+        map.flyTo([latitude, longitude], MAX_COMFORT_ZOOM, { duration: 3 });
+
 
       },
       err => alert('Could not get your location'),
