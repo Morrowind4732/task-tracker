@@ -2070,8 +2070,8 @@ function findAddressedGroups(tx){
 function parseGroupBody(txSlice){
   // Reuse your existing pieces on the slice:
   const { keys } = detectFlagsMulti(txSlice);
-  const isRemove = RX_REMOVE_VERB.test(tx);
-const isAdd    = RX_ADD_VERB.test(tx);
+const isRemove = RX_REMOVE_VERB.test(txSlice);
+const isAdd    = RX_ADD_VERB.test(txSlice);
 
 
   const add = new Set(), remove = new Set(), toggle = new Set();
@@ -2870,3 +2870,4 @@ document.getElementById('clearBtn').addEventListener('click',()=>{
 
 </body>
 </html>
+
