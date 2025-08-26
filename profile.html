@@ -950,6 +950,35 @@ function debouncedSaver(itemId){
   return saveDebouncers[itemId];
 }
 
+// NEW: bulk saver to persist many items in one write (prevents clobbering on mobile)
+async function saveManyNow(itemIds){
+  const dogName = selectedDog;
+  const ref = runDocRef(dogName);
+  if (!ref || !itemIds || !itemIds.length) return;
+
+  const map = {};
+  for (const id of itemIds){
+    const it = items.find(x => x.id === id);
+    if (!it) continue;
+    map[id] = { score: it.score || 0, flags: it.flags || {} };
+  }
+
+  try{
+    await ref.set({
+      trainer: currentTrainer,
+      dateKey: currentDateKey,
+      setupId: currentSetupId,
+      setupOrder: currentSetupOrder,
+      items: map,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  } catch(err){
+    console.warn('saveManyNow error:', err);
+  }
+}
+
+
+
 // Load this dog's saved scores/flags into our in-memory `items` and re-render
 async function loadDogRun(dogName){
   const ref = runDocRef(dogName);
@@ -3007,7 +3036,7 @@ if ((!groups || groups.length === 0) &&
 if (groups && groups.length){
   let applied = 0;
   const labels = [];
-  const groupMissed = [];                 // NEW
+  const touched = [];
 
   for (const g of groups){
     const lane = items.filter(x => x.kind === g.kind);
@@ -3023,11 +3052,11 @@ if (groups && groups.length){
     if (g.adjust) target.score = quant05(quantClamp((target.score ?? 0) + g.adjust));
 
     syncRow(target);
-    debouncedSaver(target.id)();
+    touched.push(target.id);
     applied++;
     labels.push(`${g.kind} #${g.index}`);
 
-    // NEW: queue this group's missed phrases
+    // queue missed phrases to the overlay/log
     if (g.missed?.length){
       for (const m of g.missed){
         addMissed(target.id, target.title, m.raw, m.suggestKey, m.suggestLabel);
@@ -3037,49 +3066,55 @@ if (groups && groups.length){
   }
 
   if (applied){
+    // one write for everything we just changed
+    saveManyNow(touched).catch(console.error);
     refreshStage();
     showToast('✅ Applied to specific slots', {
       type:'success', size:'xxl', sub: labels.join(' • '), duration:2600
     });
   }
 
-  // NEW: surface the overlay if anything was missed
   if (missedItems.length) renderMissedOverlay();
-
-  return; // keep this, but only after queuing missed
+  return;
 }
 
 
-  // ----- Batch scoring path (applies to the current pane onward) -----
-  if (intents.batchScores && intents.batchScores.length){
-    const start = it;
-    const kind  = start.kind; // 'Mark' or 'Blind'
-    const list  = items.filter(x => x.kind === kind);
-    const startIdx = list.findIndex(x => x.id === itemId);
 
-    let applied = 0;
-    for (let i = 0; i < intents.batchScores.length; i++){
-      const idx = startIdx + i;
-      if (idx >= list.length) break;
-      const target = list[idx];
-      const v = quant05(Math.max(0, Math.min(10, intents.batchScores[i])));
-      target.score = v;
-      syncRow(target);
-      debouncedSaver(target.id)();
-      applied++;
-    }
+ // ----- Batch scoring path (applies to the current pane onward) -----
+if (intents.batchScores && intents.batchScores.length){
+  const start = it;
+  const kind  = start.kind; // 'Mark' or 'Blind'
+  const list  = items.filter(x => x.kind === kind);
+  const startIdx = list.findIndex(x => x.id === itemId);
 
-    refreshStage(); // keep UI in sync with the visible pane(s)
+  let applied = 0;
+  const touched = [];
 
-    return {
-      batchApplied: applied,
-      batchKind: kind,
-      batchFrom: list[startIdx]?.title || '',
-      batchTo: list[startIdx + Math.max(0, applied-1)]?.title || '',
-      score: list[startIdx]?.score ?? null,
-      added: [], removed: [], setScore: false, adjust: 0
-    };
+  for (let i = 0; i < intents.batchScores.length; i++){
+    const idx = startIdx + i;
+    if (idx >= list.length) break;
+    const target = list[idx];
+    const v = quant05(Math.max(0, Math.min(10, intents.batchScores[i])));
+    target.score = v;
+    syncRow(target);
+    touched.push(target.id);
+    applied++;
   }
+
+  // single write for all changed items — prevents “only the first one sticks”
+  saveManyNow(touched).catch(console.error);
+
+  refreshStage(); // keep UI in sync with the visible pane(s)
+
+  return {
+    batchApplied: applied,
+    batchKind: kind,
+    batchFrom: list[startIdx]?.title || '',
+    batchTo: list[startIdx + Math.max(0, applied-1)]?.title || '',
+    score: list[startIdx]?.score ?? null,
+    added: [], removed: [], setScore: false, adjust: 0
+  };
+}
 
   // ----- Normal single-item path (flags, single score, adjust, missed) -----
   const before = snapshotFlags(it);
