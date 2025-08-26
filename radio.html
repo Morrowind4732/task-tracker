@@ -53,6 +53,8 @@
       <input id="roomId" placeholder="Room ID (share this)" />
       <button id="makeId">Random</button>
       <button id="join" class="primary">Join</button>
+      <!-- tiny utility to confirm playback device works -->
+      <button id="beep">Test Beep</button>
     </div>
     <div class="recents" style="margin-top:8px">
       <button class="chip" id="recent1" disabled>-</button>
@@ -71,9 +73,7 @@
         </div>
         <div class="ptt">
           <button id="talk" disabled>Hold to Talk</button>
-          <div class="hint">
-            True PTT: mic hardware is only active while pressed. Release to stop sending.
-          </div>
+          <div class="hint">True PTT: mic hardware is only active while pressed. Release to stop sending.</div>
           <audio id="remoteAudio" autoplay playsinline></audio>
           <div class="small">If you don’t hear anything, ensure both sides pressed <b>Join</b> and granted mic permission.</div>
         </div>
@@ -118,6 +118,7 @@ const micStateEl  = document.getElementById('micState');
 const connStateEl = document.getElementById('connState');
 const iceStateEl  = document.getElementById('iceState');
 const remoteAudio = document.getElementById('remoteAudio');
+const beepBtn     = document.getElementById('beep');
 const recentBtns  = [document.getElementById('recent1'), document.getElementById('recent2'), document.getElementById('recent3')];
 
 /*** 3) STATE ***/
@@ -125,8 +126,7 @@ let pc, roomDoc, callerCandidates, calleeCandidates;
 let isJoined = false;
 let isHost = false;
 
-// WebRTC: create an audio transceiver; we attach/detach mic tracks on press.
-// This keeps the mic **off** (no capture) when you're not talking, saving battery.
+// Transceiver-based PTT
 let audioTransceiver = null;
 let micSender = null;
 let currentMicTrack = null;
@@ -166,7 +166,17 @@ function renderRecents(){
 }
 renderRecents();
 
-/*** 5) ROOM CLEANUP HELPERS (used by Option B) ***/
+// test beep (helps verify playback route/volume)
+beepBtn.addEventListener('click', async () => {
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.05;
+    o.connect(g).connect(ctx.destination); o.start(); setTimeout(()=>{o.stop(); ctx.close();}, 400);
+  }catch{}
+});
+
+/*** 5) ROOM CLEANUP HELPERS ***/
 async function deleteCollection(collRef){
   const snap = await collRef.get();
   const batch = db.batch();
@@ -184,17 +194,20 @@ async function startTalking(){
   if (!isJoined || !micSender) return;
   if (currentMicTrack) return; // already talking
 
-  // Ask for mic **when pressed** (user gesture), then attach to the sender.
   try{
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
     });
-    currentMicTrack = stream.getAudioTracks()[0];
-    if (!micSender) return;                // safety
-if (currentMicTrack.readyState === 'ended') return;
-await micSender.replaceTrack(currentMicTrack);
+    const track = stream.getAudioTracks()[0];
+    if (!track) return;
 
-	await micSender.replaceTrack(currentMicTrack);
+    // safety guards before we attach
+    if (!micSender) { track.stop(); return; }
+    if (track.readyState === 'ended') { track.stop(); return; }
+
+    await micSender.replaceTrack(track);
+    currentMicTrack = track;
+
     talkBtn.classList.add('talking');
     setMicBadge(true);
   }catch(e){
@@ -203,36 +216,27 @@ await micSender.replaceTrack(currentMicTrack);
   }
 }
 async function stopTalking(){
-  if (!micSender) return;
-  try{
-    await micSender.replaceTrack(null); // stop sending
-  }catch{}
+  if (micSender) {
+    try { await micSender.replaceTrack(null); } catch {}
+  }
   if (currentMicTrack){
-    currentMicTrack.stop();            // fully release hardware (saves battery)
+    try { currentMicTrack.stop(); } catch {}
     currentMicTrack = null;
   }
-  if (currentMicTrack) {
-  try { currentMicTrack.stop(); } catch {}
-  currentMicTrack = null;
-}
-
   talkBtn.classList.remove('talking');
   setMicBadge(false);
 }
 function attachPTTHandlers(){
   const downEvts = ['pointerdown','touchstart','mousedown'];
   const upEvts   = ['pointerup','pointercancel','touchend','mouseup','mouseleave'];
-
   downEvts.forEach(e => talkBtn.addEventListener(e, startTalking));
   upEvts.forEach(e => talkBtn.addEventListener(e, stopTalking));
-
-  // stop if tab hidden or page is unloading
   document.addEventListener('visibilitychange', () => { if (document.hidden) stopTalking(); });
   window.addEventListener('beforeunload', () => { stopTalking(); });
-  talkBtn.addEventListener('contextmenu', e => e.preventDefault()); // no long-press menu
+  talkBtn.addEventListener('contextmenu', e => e.preventDefault());
 }
 
-/*** 7) WEBRTC + OPTION B JOIN FLOW ***/
+/*** 7) JOIN (Option B with auto-reset) ***/
 joinBtn.addEventListener('click', async () => {
   if (isJoined) return;
   const roomId = (roomIdEl.value || '').trim();
@@ -243,13 +247,12 @@ joinBtn.addEventListener('click', async () => {
     pc = new RTCPeerConnection({ iceServers: [{urls:'stun:stun.l.google.com:19302'}] });
     setConnBadge(); setIceBadge();
 
-    // Prepare transceiver so remote can receive even before we attach a mic track.
+    // create recv/send m-line up front; we attach mic on press later
     audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
     micSender = audioTransceiver.sender;
 
     pc.onconnectionstatechange = () => { setConnBadge(); setStatus(`Peer: ${pc.connectionState}`); };
     pc.oniceconnectionstatechange = () => setIceBadge();
-
     pc.onicecandidate = async (event) => {
       if (!event.candidate) return;
       const cand = event.candidate.toJSON();
@@ -257,54 +260,46 @@ joinBtn.addEventListener('click', async () => {
       else        await calleeCandidates.add(cand);
     };
 
-pc.ontrack = (event) => {
-  // Some browsers deliver a muted track first and/or no streams array.
-  const attach = () => {
-    const stream = (event.streams && event.streams[0])
-      ? event.streams[0]
-      : new MediaStream([event.track]);
+    // HARDENED receiver
+    pc.ontrack = (event) => {
+      const attach = () => {
+        const stream = (event.streams && event.streams[0])
+          ? event.streams[0]
+          : new MediaStream([event.track]);
 
-    if (remoteAudio.srcObject !== stream) remoteAudio.srcObject = stream;
-    remoteAudio.muted = false;
-    remoteAudio.volume = 1.0;
-    remoteAudio.play?.().catch(()=>{});
-  };
+        if (remoteAudio.srcObject !== stream) remoteAudio.srcObject = stream;
+        remoteAudio.muted = false;
+        remoteAudio.volume = 1.0;
+        remoteAudio.play?.().catch(()=>{});
+      };
 
-  if (event.track && event.track.muted) {
-    // Wait until remote starts sending actual audio
-    event.track.onunmute = () => {
-      attach();
-      event.track.onunmute = null;
+      if (event.track && event.track.muted) {
+        event.track.onunmute = () => { attach(); event.track.onunmute = null; };
+      } else {
+        attach();
+      }
+
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: 'Walkie-Talkie',
+          artist: 'PTT Room ' + (roomIdEl.value || ''),
+          album: 'WebRTC'
+        });
+        navigator.mediaSession.setActionHandler('play',  () => remoteAudio.play());
+        navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
+      }
+
+      console.log('Remote track:', event.track.kind,
+                  'muted=', event.track.muted,
+                  'readyState=', event.track.readyState);
     };
-  } else {
-    attach();
-  }
-
-  // Keep Android playing in background
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: 'Walkie-Talkie',
-      artist: 'PTT Room ' + (roomIdEl.value || ''),
-      album: 'WebRTC'
-    });
-    navigator.mediaSession.setActionHandler('play',  () => remoteAudio.play());
-    navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
-  }
-
-  console.log('Remote track:', event.track.kind,
-              'muted=', event.track.muted,
-              'readyState=', event.track.readyState);
-};
-
-
-
 
     // Firestore room doc
     roomDoc = db.collection('ptt_rooms').doc(roomId);
     const snap = await roomDoc.get();
 
     if (!snap.exists) {
-      // Fresh ID -> HOST
+      // HOST
       isHost = true;
       callerCandidates = roomDoc.collection('callerCandidates');
       calleeCandidates = roomDoc.collection('calleeCandidates');
@@ -313,7 +308,6 @@ pc.ontrack = (event) => {
       await pc.setLocalDescription(offer);
       await roomDoc.set({ offer: { type: offer.type, sdp: offer.sdp }, created: Date.now() });
 
-      // Wait for answer
       roomDoc.onSnapshot(async (s) => {
         const data = s.data();
         if (!pc.currentRemoteDescription && data && data.answer){
@@ -321,7 +315,6 @@ pc.ontrack = (event) => {
         }
       });
 
-      // ICE from callee
       calleeCandidates.onSnapshot(s => {
         s.docChanges().forEach(ch => {
           if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
@@ -330,15 +323,13 @@ pc.ontrack = (event) => {
 
       setStatus(`Created room ${roomId}. Share this ID with your partner.`);
     } else {
-      // Room exists. OPTION B logic:
-      // - If it has a live offer waiting (no answer yet) => become CALLEE
-      // - Otherwise, it's stale => wipe and become HOST
+      // Existing: callee if offer-only; otherwise reset + host
       const data = snap.data();
       const hasOffer = !!(data && data.offer && data.offer.sdp);
       const hasAnswer = !!(data && data.answer && data.answer.sdp);
 
       if (hasOffer && !hasAnswer){
-        // CALLEE path
+        // CALLEE
         isHost = false;
         callerCandidates = roomDoc.collection('callerCandidates');
         calleeCandidates = roomDoc.collection('calleeCandidates');
@@ -348,7 +339,6 @@ pc.ontrack = (event) => {
         await pc.setLocalDescription(answer);
         await roomDoc.update({ answer: { type: answer.type, sdp: answer.sdp }, answered: Date.now() });
 
-        // ICE from caller
         callerCandidates.onSnapshot(s => {
           s.docChanges().forEach(ch => {
             if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
@@ -357,7 +347,7 @@ pc.ontrack = (event) => {
 
         setStatus(`Joined room ${roomId}.`);
       } else {
-        // Stale room: auto-reset and become HOST
+        // STALE → reset and host
         await clearRoomDoc(roomDoc);
 
         isHost = true;
@@ -397,8 +387,7 @@ pc.ontrack = (event) => {
   }
 });
 
-/*** 8) OPTIONAL LEAVE (close PC and release mic if pressed) ***/
-// (Not shown as a button, but kept here in case you want it)
+/*** 8) OPTIONAL LEAVE ***/
 async function leave(){
   await stopTalking();
   if (pc) pc.close();
