@@ -704,6 +704,34 @@ html, body { max-width:100%; overflow-x:hidden; overscroll-behavior-x:none; }
 
 [hidden]{ display:none !important; }
 
+/* A second stack that lives at the top-center */
+.toasts-top{
+  position: fixed;
+  top: max(12px, env(safe-area-inset-top) + 12px);
+  left: 50%;
+  transform: translate(-50%, 0);        /* top-center */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 10000;
+  pointer-events: none;                  /* click-through gaps */
+  max-width: calc(100vw - 32px);
+}
+
+/* Keep toasts clickable even though the stack ignores pointer events */
+.toasts-top .toast{ pointer-events: auto; }
+
+/* Nice little settle once it reaches the top (optional) */
+@keyframes toast-top-in { from { transform: translateY(-6px); opacity:.96 } to { transform: translateY(0); opacity:1 } }
+.toasts-top .toast:not(.is-lifting){ animation: toast-top-in .14s ease-out; }
+
+
+/* Ensure the hide animation overrides stack animations (center or top) */
+.toasts-top .toast.hide,
+.toasts .toast.hide{
+  animation: toast-out .15s ease-in forwards !important;
+}
 
 </style>
 </head>
@@ -1049,6 +1077,63 @@ const FLAGS = [
 
   { key:'stoodOut',       label:'Stood Out',        variants:['stood out','stood way out'] },
   { key:'popped',         label:'Popped',           variants:['popped','pop'] },
+  
+  // — NEW FLAGS —
+{ key:'helped',        label:'Helped',           variants:[
+  'helped','made noise','yelled','got help','had to help'
+]},
+{ key:'huntedShort',   label:'Hunted Short',     variants:[
+  'hunted short','short hunt','came up short','tight hunt','inside hunt',
+  'checked down short','checked early'
+]},
+{ key:'skipped',       label:'Skipped',          variants:[
+  'skipped','skipped it','skipped the mark','skipped the blind',
+  'passed it','went on','went to the next','bypassed it',
+  'blew by it','ignored that bird','skipped over it'
+]},
+{ key:'overheated',    label:'Dog Overheated',   variants:[
+  'overheated','too hot','heat stress','heat exhaustion','gassed',
+  'cooked','blew up','shut down','panting hard','over temp',
+  'ran out of gas','ran out of dog'
+]},
+{ key:'cheatedWater',  label:'Cheated Water',    variants:[
+  'cheated water','ran the bank','bank run','stayed on the bank','stayed on shore',
+  'skirted the water','beached it','avoided water','took the bank',
+  'cut the shore','cut the corner','clipped the corner','cheated'
+]},
+{ key:'refusedWater',  label:'Refused Water Entry', variants:[
+  'refused water','wouldnt get in','wouldnt get in water','no water entry',
+  'stuck on shore','wouldnt enter','balked at water','no splash','refused entry'
+]},
+{ key:'windPushed',    label:'Wind Pushed',      variants:[
+  'faded with the wind','wind pushed','rode the wind','winded off line',
+  'downwind fade','drifted with wind','blew off line','pushed'
+]},
+{ key:'droppedBird',   label:'Dropped Bird',     variants:[
+  'dropped the bird','spit the bird','let it go','bird on the ground',
+  'no hold','spit it','didnt hold the bird','wouldnt hold the bird'
+]},
+{ key:'noDelivery',    label:'No Delivery',      variants:[
+  'came back in','came back no bird','no delivery','didnt deliver to hand',
+  'dropped at feet','wouldnt give','came in clean','returned empty'
+]},
+{ key:'creeped',       label:'Creeped on Line',  variants:[
+  'creeped','crept','inched','slid forward','moved on the line','crept on the line'
+]},
+{ key:'noisy',         label:'Noisy',            variants:[
+  'noisy','loud','wouldnt stay quiet','whining','whined','whiner'
+]},
+{ key:'resend',        label:'Resend',           variants:[
+  'resend','recast','had to resend','send again','needed another send','re send','re-send'
+]},
+{ key:'rethrow',       label:'Rethrow',          variants:[
+  'rethrow','throw it again','needed a rethrow','toss again','had to rethrow'
+]},
+{ key:'refusedCover',  label:'Refused Cover Entry', variants:[
+  'refused cover','wouldnt go in cover','no cover entry','stuck at cover',
+  'wouldnt enter cover','balked at cover','avoided cover'
+]},
+
 ];
 const FLAG_MAP = Object.fromEntries(FLAGS.map(f=>[f.key,f]));
 
@@ -1180,6 +1265,112 @@ const FLAG_RX = {
     /stopped\s+and\s+looked\b/gi,
     /stopped\s+short\b/gi
   ],
+  // — NEW DETECTORS —
+helped: [
+  /\bhelped\b/gi,
+  /\bgot\s+help\b/gi,
+  /\bhad\s+to\s+help\b/gi,
+  /\bmade\s+noise\b/gi,
+  /\byell(?:ed|ing)?\b/gi
+],
+
+huntedShort: [
+  /\bhunted\s+short\b/gi,
+  /\bshort\s+hunt\b/gi,
+  /\bcame\s+up\s+short\b/gi,
+  /\btight\s+hunt\b/gi, /\binside\s+hunt\b/gi,
+  /\bchecked\s+down\s+short\b/gi,
+  /\bchecked\s+early\b/gi
+],
+
+skipped: [
+  /\bskipped(?:\s+(?:it|the\s+(?:mark|blind)))?\b/gi,
+  /\bpassed\s+it\b/gi,
+  /\bwent\s+on\b/gi, /\bwent\s+to\s+the\s+next\b/gi,
+  /\bbypassed\s+it\b/gi, /\bblew\s+by\s+it\b/gi,
+  /\bignored\s+that\s+bird\b/gi,
+  /\bskipped\s+over\s+it\b/gi
+],
+
+overheated: [
+  /\boverheated\b/gi, /\btoo\s+hot\b/gi,
+  /\bheat\s+stress\b/gi, /\bheat\s+exhaustion\b/gi,
+  /\bgassed\b/gi, /\bcooked\b/gi, /\bblew\s+up\b/gi,
+  /\bshut\s+down\b/gi, /\bpanting\s+hard\b/gi,
+  /\bover\s*temp\b/gi, /\bran\s+out\s+of\s+(?:gas|dog)\b/gi
+],
+
+cheatedWater: [
+  /\bcheated\s+water\b/gi, /\bran\s+the\s+bank\b/gi, /\bbank\s+run\b/gi,
+  /\bstayed\s+on\s+(?:the\s+)?(?:bank|shore)\b/gi,
+  /\bskirted\s+the\s+water\b/gi, /\bbeached\s+it\b/gi,
+  /\bavoided\s+water\b/gi, /\btook\s+the\s+bank\b/gi,
+  /\bcut\s+(?:the\s+)?(?:shore|corner)\b/gi, /\bclipped\s+the\s+corner\b/gi,
+  /\bcheated\b/gi
+],
+
+refusedWater: [
+  /\brefused\s+water\b/gi,
+  /\bwouldn'?t\s+get\s+in(?:\s+water)?\b/gi,
+  /\bno\s+water\s+entry\b/gi, /\bstuck\s+on\s+shore\b/gi,
+  /\bwouldn'?t\s+enter\b/gi, /\bbalked\s+at\s+water\b/gi,
+  /\bno\s+splash\b/gi, /\brefused\s+entry\b/gi
+],
+
+windPushed: [
+  /\bfaded\s+with\s+the\s+wind\b/gi, /\bwind\s+pushed\b/gi,
+  /\brode\s+the\s+wind\b/gi, /\bwinded\s+off\s+line\b/gi,
+  /\bdownwind\s+fade\b/gi, /\bdrifted\s+with\s+wind\b/gi,
+  /\bblew\s+off\s+line\b/gi,
+  // “pushed” only when near “wind”
+  /(?:\bpushed\b.*\bwind\b|\bwind\b.*\bpushed\b)/gi
+],
+
+droppedBird: [
+  /\bdropped\s+the\s+bird\b/gi, /\bspit\s+the\s+bird\b/gi,
+  /\blet\s+it\s+go\b/gi, /\bbird\s+on\s+the\s+ground\b/gi,
+  /\bno\s+hold\b/gi, /\bspit\s+it\b/gi,
+  /\bdidn'?t\s+hold\s+the\s+bird\b/gi, /\bwouldn'?t\s+hold\s+the\s+bird\b/gi
+],
+
+noDelivery: [
+  /\bcame\s+back\s+in\b/gi, /\bcame\s+back\s+no\s+bird\b/gi,
+  /\bno\s+delivery\b/gi, /\bdidn'?t\s+deliver\s+to\s+hand\b/gi,
+  /\bdropped\s+at\s+feet\b/gi, /\bwouldn'?t\s+give\b/gi,
+  /\bcame\s+in\s+clean\b/gi, /\breturned\s+empty\b/gi
+],
+
+creeped: [
+  /\bcreep(?:ed|t)\b/gi, /\binched\b/gi,
+  /\bslid\s+forward\b/gi, /\bmoved\s+on\s+the\s+line\b/gi,
+  /\bcrept\s+on\s+the\s+line\b/gi
+],
+
+noisy: [
+  /\bnoisy\b/gi, /\bloud\b/gi,
+  /\bwouldn'?t\s+stay\s+quiet\b/gi,
+  /\bwhin(?:e|ed|ing|er)\b/gi
+],
+
+resend: [
+  /\bresend\b/gi, /\bre\s*send\b/gi, /\bre-send\b/gi,
+  /\brecast\b/gi, /\bhad\s+to\s+resend\b/gi,
+  /\bsend\s+again\b/gi, /\bneeded\s+another\s+send\b/gi
+],
+
+rethrow: [
+  /\brethrow\b/gi, /\bthrow\s+it\s+again\b/gi,
+  /\bneeded\s+a\s+rethrow\b/gi, /\btoss\s+again\b/gi,
+  /\bhad\s+to\s+rethrow\b/gi
+],
+
+refusedCover: [
+  /\brefused\s+cover\b/gi, /\bwouldn'?t\s+go\s+in\s+cover\b/gi,
+  /\bno\s+cover\s+entry\b/gi, /\bstuck\s+at\s+cover\b/gi,
+  /\bwouldn'?t\s+enter\s+cover\b/gi, /\bbalked\s+at\s+cover\b/gi,
+  /\bavoided\s+cover\b/gi
+],
+
 };
 
 // Add/remove verb detectors (single source of truth)
@@ -1925,7 +2116,10 @@ function startListeningFor(id){
 }
 
 let __toastSeq = 0;
-function showToast(text, { type='info', duration=1800, sub=null, placement='center', size=null } = {}){
+const _toastTimers = new Map();
+
+// PATCH: showToast — auto-lift confirmation (type:'success') after a short pause
+function showToast(text, { type='info', duration=1800, sub=null, placement='center', size=null, lift, liftDelay=480 } = {}){
   const wrap = document.getElementById('toasts'); if(!wrap) return null;
   const id = (++__toastSeq);
   const el = document.createElement('div');
@@ -1934,20 +2128,95 @@ function showToast(text, { type='info', duration=1800, sub=null, placement='cent
   el.dataset.id = String(id);
   el.innerHTML = `<div>${text}</div>${sub ? `<div class="sub">${sub}</div>` : ''}`;
   wrap.appendChild(el);
-  if (duration > 0) setTimeout(()=> hideToast(id), duration);
+
+  // schedule hide (if any)
+  if (duration > 0){
+    const ht = setTimeout(()=> hideToast(id), duration);
+    _toastTimers.set(id, { ...( _toastTimers.get(id)||{}), hide: ht });
+  }
+
+  // auto-lift ONLY confirmations (success). Can be overridden with {lift:false}.
+  const shouldLift = (typeof lift === 'boolean') ? lift : (type === 'success');
+  if (shouldLift){
+    const lt = setTimeout(()=> {
+      liftToast(id);
+      // after lifting, it won't block center; nothing else to do
+    }, Math.max(0, liftDelay));
+    _toastTimers.set(id, { ...( _toastTimers.get(id)||{}), lift: lt });
+  }
+
   return id;
 }
 
-
+// PATCH: hideToast — find the toast anywhere (center or top) + clear timers
 function hideToast(id){
-  const wrap = document.getElementById('toasts'); if(!wrap) return;
-  const el = wrap.querySelector(`.toast[data-id="${id}"]`); if(!el) return;
+  const timers = _toastTimers.get(id);
+  if (timers){
+    clearTimeout(timers.hide);
+    clearTimeout(timers.lift);
+    _toastTimers.delete(id);
+  }
+  const el = document.querySelector(`.toast[data-id="${id}"]`);
+  if(!el) return;
+  el.style.animation = 'toast-out .15s ease-in forwards'; // override any previous animation
   el.classList.add('hide');
   el.addEventListener('animationend', ()=> el.remove(), { once:true });
 }
 
+
+
 const toastsWrap = document.getElementById('toasts');
 function setToastCenter(on){ toastsWrap?.classList.toggle('center', !!on); }
+
+
+function ensureTopWrap(){
+  let top = document.getElementById('toastsTop');
+  if (!top){
+    top = document.createElement('div');
+    top.id = 'toastsTop';
+    top.className = 'toasts toasts-top';
+    top.setAttribute('aria-live', 'polite');
+    top.setAttribute('aria-atomic', 'true');
+    document.body.appendChild(top);
+  }
+  return top;
+}
+
+// Smoothly move a toast from center stack to the top stack (FLIP animation)
+function liftToast(id){
+  const el = document.querySelector(`.toast[data-id="${id}"]`);
+  if (!el) return;
+
+  const start = el.getBoundingClientRect();
+  const topWrap = ensureTopWrap();
+
+  el.classList.add('is-lifting');
+  el.style.animation = 'none';        // stop top stack’s CSS anim from fighting us
+  topWrap.appendChild(el);
+
+  const end = el.getBoundingClientRect();
+  const dx = start.left - end.left;
+  const dy = start.top  - end.top;
+
+  el.style.willChange = 'transform';
+  el.style.transform  = `translate(${dx}px, ${dy}px)`;
+
+  void el.offsetWidth;                // ⟵ flush so the transition starts *now*
+
+  // slower overall, but fast out of the gate
+  el.style.transition = 'transform 460ms cubic-bezier(0.23, 1, 0.32, 1)';
+  el.style.transform  = 'translate(0,0)';
+
+  const done = () => {
+    el.style.transition = el.style.transform = el.style.willChange = '';
+    el.style.animation  = '';
+    el.classList.remove('is-lifting');
+  };
+  el.addEventListener('transitionend', done, { once:true });
+}
+
+
+
 
 
 function labelsFor(keys){ return keys.map(k => FLAG_MAP[k]?.label || k); }
