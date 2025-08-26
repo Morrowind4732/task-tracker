@@ -2309,6 +2309,15 @@ function wordsToNumber(s){
   return NaN;
 }
 
+// NEW: split raw span into smaller candidates *before* cleaning
+function splitByConjunctions(raw){
+  const s = normalize(raw); // your existing normalizer
+  // split on common joiners, but DO NOT split "and a half"
+  const RX = /\b(?:,|;|&|then|plus|with|as\s+well\s+as|along\s+with|together\s+with|and(?!\s+a\s+half\b))\b/gi;
+  return s.split(RX).map(x => x.trim()).filter(Boolean);
+}
+
+
 // Extracts a sequence of numbers like "5 4.5 3 10" or "five four point five three ten"
 function extractNumberSequence(s){
   const tok = normalize(s).split(/[\s,]+/).filter(Boolean);
@@ -2393,7 +2402,6 @@ function wordToIndex(s){
 
 
 function findAddressedGroups(tx){
-  // “mark 3 …”, “marks three …”, “blind 2 …”, “blind number four …”
   const RX = /\b(mark|blind)s?\s+(?:number\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|[ivxlcdm]+|\d{1,2})\b/gi;
 
   const groups = [];
@@ -2401,20 +2409,39 @@ function findAddressedGroups(tx){
   while ((m = RX.exec(tx)) !== null){
     const kind  = m[1].toLowerCase() === 'mark' ? 'Mark' : 'Blind';
     const idx   = Number.isFinite(+m[2]) ? +m[2] : wordToIndex(m[2]);
-    const start = m.index + m[0].length;
-    groups.push({ kind, index: idx, start, end: tx.length });
+
+    const headerStart = m.index;                 // NEW: keep where header begins
+    const headerEnd   = m.index + m[0].length;   // body starts after header
+
+    groups.push({
+      kind,
+      index: idx,
+      headerStart,
+      headerEnd,
+      start: headerEnd,        // body start
+      end: tx.length           // temp; fix below
+    });
   }
-  // set group ends to the next header’s start
-  for (let i=0;i<groups.length-1;i++) groups[i].end = groups[i+1].start;
+
+  // Use the *next* group's headerStart as this group's end
+  for (let i = 0; i < groups.length - 1; i++){
+    groups[i].end = groups[i+1].headerStart;     // <-- was groups[i+1].start
+  }
+
   return groups.filter(g => Number.isFinite(g.index) && g.index >= 1);
 }
 
-function parseGroupBody(txSlice){
-  // Reuse your existing pieces on the slice:
-  const { keys } = detectFlagsMulti(txSlice);
-const isRemove = RX_REMOVE_VERB.test(txSlice);
-const isAdd    = RX_ADD_VERB.test(txSlice);
 
+function parseGroupBody(txSlice){
+  // Clip any accidental next header token
+  txSlice = txSlice.replace(
+    /\b(mark|blind)s?\s+(?:number\s+)?(one|two|three|four|five|six|seven|eight|nine|ten|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|[ivxlcdm]+|\d{1,2})\b.*$/i,
+    ''
+  ).trim();
+  const { keys, hits } = detectFlagsMulti(txSlice);
+
+  const isRemove = RX_REMOVE_VERB.test(txSlice);
+  const isAdd    = RX_ADD_VERB.test(txSlice);
 
   const add = new Set(), remove = new Set(), toggle = new Set();
   keys.forEach(k => {
@@ -2423,14 +2450,13 @@ const isAdd    = RX_ADD_VERB.test(txSlice);
     else toggle.add(k);
   });
 
-  // Optional: support “score …” inside the group
+  // score/adjust/clearAll logic unchanged...
   let score = null, adjust = 0, clearAll = /\bclear\s+flags?\b/.test(txSlice);
   const afterCmd = txSlice.match(/\b(?:score|rating|set|make)\b([\s\S]*)$/)?.[1]?.trim() || '';
   if (afterCmd){
     const nums = parseScoreListFlexible(afterCmd);
     if (nums.length >= 1) score = quant05(quantClamp(nums[0]));
   }
-  // small +/- inside the group
   const inc = txSlice.match(/\b(increase|raise|up|\+|plus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
   const dec = txSlice.match(/\b(decrease|lower|down|-|minus)\b(?:.*?\bby\b)?\s*([a-z0-9.\s-]+)?/);
   if (inc && !dec){
@@ -2442,8 +2468,14 @@ const isAdd    = RX_ADD_VERB.test(txSlice);
     adjust -= Number.isFinite(amt) ? amt : 0.5;
   }
 
-  return { add, remove, toggle, score, adjust, clearAll };
+  // NEW: infer missed phrases in this slice
+  const missed = (hits.length >= 2)
+    ? inferMissedSegments(txSlice, hits)
+    : inferMissedLoose(txSlice, hits);
+
+  return { add, remove, toggle, score, adjust, clearAll, missed };
 }
+
 
 
 
@@ -2571,7 +2603,9 @@ function parseUtterance(raw){
       toggle: parsed.toggle,
       score: parsed.score,
       adjust: parsed.adjust,
-      clearAll: parsed.clearAll
+      clearAll: parsed.clearAll,
+      missed: parsed.missed   
+	  
     };
   });
 
@@ -2610,57 +2644,42 @@ function inferMissedSegments(tx, hits){
 
   const sorted = hits.slice().sort((a,b)=>a.start - b.start);
 
-  // HEAD (before first hit)
-  {
-    const first = sorted[0];
-    const head = cleanSegment(tx.slice(0, first.start));
-    if (head && !isNumberish(head)) {
-      const suggestion = bestSuggestion(head);
-      out.push({
-        raw: head,
-        suggestKey: suggestion?.key || null,
-        suggestLabel: suggestion?.label || null,
-        leftKey: null,
-        rightKey: first.key
-      });
-    }
+  const addPart = (part, leftKey=null, rightKey=null) => {
+    const cleaned = cleanSegment(part);
+    if (!cleaned || isNumberish(cleaned)) return;
+    const suggestion = bestSuggestion(cleaned);
+    out.push({
+      raw: cleaned,
+      suggestKey: suggestion?.key || null,
+      suggestLabel: suggestion?.label || null,
+      leftKey, rightKey
+    });
+  };
+
+  // HEAD
+  for (const part of splitByConjunctions(tx.slice(0, sorted[0].start))){
+    addPart(part, null, sorted[0].key);
   }
 
-  // BETWEEN hits
+  // BETWEEN
   for (let i = 0; i < sorted.length - 1; i++){
     const a = sorted[i], b = sorted[i+1];
     if (b.start <= a.end) continue;
-    const mid = cleanSegment(tx.slice(a.end, b.start));
-    if (mid && !isNumberish(mid)) {
-      const suggestion = bestSuggestion(mid);
-      out.push({
-        raw: mid,
-        suggestKey: suggestion?.key || null,
-        suggestLabel: suggestion?.label || null,
-        leftKey: a.key,
-        rightKey: b.key
-      });
+    const between = tx.slice(a.end, b.start);
+    for (const part of splitByConjunctions(between)){
+      addPart(part, a.key, b.key);
     }
   }
 
-  // TAIL (after last hit)
-  {
-    const last = sorted[sorted.length - 1];
-    const tail = cleanSegment(tx.slice(last.end));
-    if (tail && !isNumberish(tail)) {
-      const suggestion = bestSuggestion(tail);
-      out.push({
-        raw: tail,
-        suggestKey: suggestion?.key || null,
-        suggestLabel: suggestion?.label || null,
-        leftKey: last.key,
-        rightKey: null
-      });
-    }
+  // TAIL
+  const last = sorted[sorted.length - 1];
+  for (const part of splitByConjunctions(tx.slice(last.end))){
+    addPart(part, last.key, null);
   }
 
   return dedupeMissed(out);
 }
+
 
 function dedupeMissed(arr){
   const seen=new Set(); const out=[];
@@ -2675,12 +2694,9 @@ function dedupeMissed(arr){
 // treat the whole utterance (0 hits) or edge segments (1 hit) as candidates
 function inferMissedLoose(tx, hits){
   const out = [];
-  const addCand = (raw, leftKey=null, rightKey=null) => {
+  const addPart = (raw, leftKey=null, rightKey=null) => {
     const cleaned = cleanSegment(raw);
-    if (!cleaned) return;
-    // ignore numbers-only like "7" or "7.5"
-    if (isNumberish(cleaned)) return;
-
+    if (!cleaned || isNumberish(cleaned)) return;
     const suggestion = bestSuggestion(cleaned);
     out.push({
       raw: cleaned,
@@ -2690,23 +2706,21 @@ function inferMissedLoose(tx, hits){
     });
   };
 
-  if (hits.length === 0) {
-    // no flags detected -> whole utterance is a candidate
-    addCand(tx);
+  if (hits.length === 0){
+    for (const part of splitByConjunctions(tx)) addPart(part);
     return dedupeMissed(out);
   }
 
-  if (hits.length === 1) {
+  if (hits.length === 1){
     const h = hits[0];
-    const pre  = tx.slice(0, h.start);
-    const post = tx.slice(h.end);
-    addCand(pre, null, h.key);
-    addCand(post, h.key, null);
+    for (const part of splitByConjunctions(tx.slice(0, h.start))) addPart(part, null, h.key);
+    for (const part of splitByConjunctions(tx.slice(h.end)))     addPart(part, h.key, null);
     return dedupeMissed(out);
   }
 
-  return out; // fallback – shouldn't happen here
+  return out;
 }
+
 
 
 /* Fuzzy suggestion (Levenshtein) to nearest canonical phrase */
@@ -2960,46 +2974,51 @@ function applyTranscript(itemId, raw){
   const { intents, missed, groups } = parsed;
 
   // ----- Addressed group path (“Mark 3 …”, “Blind 2 …”) -----
-  if (groups && groups.length){
-    let applied = 0;
-    const labels = [];
+if (groups && groups.length){
+  let applied = 0;
+  const labels = [];
+  const groupMissed = [];                 // NEW
 
-    for (const g of groups){
-      const lane = items.filter(x => x.kind === g.kind);
-      const target = lane[g.index - 1];  // 1-based spoken index
+  for (const g of groups){
+    const lane = items.filter(x => x.kind === g.kind);
+    const target = lane[g.index - 1];
+    if (!target){ showToast(`No ${g.kind} #${g.index}`, { type:'error', duration:1800 }); continue; }
 
-      if (!target){
-        showToast(`No ${g.kind} #${g.index}`, { type:'error', duration: 1800 });
-        continue;
+    if (g.clearAll) target.flags = {};
+    g.add.forEach(k    => { target.flags[k] = true; });
+    g.remove.forEach(k => { target.flags[k] = false; });
+    g.toggle.forEach(k => { target.flags[k] = !target.flags[k]; });
+
+    if (Number.isFinite(g.score)) target.score = g.score;
+    if (g.adjust) target.score = quant05(quantClamp((target.score ?? 0) + g.adjust));
+
+    syncRow(target);
+    debouncedSaver(target.id)();
+    applied++;
+    labels.push(`${g.kind} #${g.index}`);
+
+    // NEW: queue this group's missed phrases
+    if (g.missed?.length){
+      for (const m of g.missed){
+        addMissed(target.id, target.title, m.raw, m.suggestKey, m.suggestLabel);
+        logUnassigned(m.raw);
       }
-
-      if (g.clearAll) target.flags = {};
-      g.add.forEach(k    => { target.flags[k] = true; });
-      g.remove.forEach(k => { target.flags[k] = false; });
-      g.toggle.forEach(k => { target.flags[k] = !target.flags[k]; });
-
-      if (Number.isFinite(g.score)) target.score = g.score;
-      if (g.adjust) target.score = quant05(quantClamp((target.score ?? 0) + g.adjust));
-
-      syncRow(target);
-      debouncedSaver(target.id)();
-      applied++;
-      labels.push(`${g.kind} #${g.index}`);
     }
-
-    if (applied){
-      refreshStage();
-      showToast('✅ Applied to specific slots', {
-        type:'success',
-        size:'xxl',
-        sub: labels.join(' • '),
-        duration: 2600
-      });
-    }
-
-    // We handled everything addressed; do not continue into the single/batch logic.
-    return;
   }
+
+  if (applied){
+    refreshStage();
+    showToast('✅ Applied to specific slots', {
+      type:'success', size:'xxl', sub: labels.join(' • '), duration:2600
+    });
+  }
+
+  // NEW: surface the overlay if anything was missed
+  if (missedItems.length) renderMissedOverlay();
+
+  return; // keep this, but only after queuing missed
+}
+
 
   // ----- Batch scoring path (applies to the current pane onward) -----
   if (intents.batchScores && intents.batchScores.length){
