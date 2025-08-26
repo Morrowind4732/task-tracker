@@ -221,6 +221,37 @@
   const $ = s => document.querySelector(s);
   function ymd(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
   const GROUP_BLUES = ['var(--g0)','var(--g1)','var(--g2)','var(--g3)','var(--g4)'];
+
+let currentHeading = null;  // store last known compass heading
+
+// Listen for device orientation (compass)
+if (window.DeviceOrientationEvent) {
+  if (typeof DeviceOrientationEvent.requestPermission === "function") {
+    // iOS 13+ requires user interaction
+    document.body.addEventListener("click", () => {
+      DeviceOrientationEvent.requestPermission().then(state => {
+        if (state === "granted") {
+          window.addEventListener("deviceorientationabsolute", (e) => {
+            if (e.alpha != null) {
+              currentHeading = 360 - e.alpha;
+            }
+          });
+        }
+      }).catch(console.warn);
+    }, { once:true });
+  } else {
+    // Android / other browsers
+    window.addEventListener("deviceorientationabsolute", (e) => {
+      if (e.alpha != null) {
+        currentHeading = 360 - e.alpha;
+      }
+    });
+  }
+}
+
+// Qualifier -> suffix; priority: RT > WT > HT
+function qualSuffix(mark){
+
   
 // Qualifier -> suffix; priority: RT > WT > HT
 function qualSuffix(mark){
@@ -788,11 +819,13 @@ chip.textContent = `M${idx >= 0 ? idx+1 : '?'}${suffix}`;
   }
 
 async function placeItem(data, ll){
-  if (data.type === 'mark') {
-    const hLL = destPoint(ll, DEFAULT_ARROW_BRG, DEFAULT_ARROW_LEN);
-    await setDoc(setupDoc(), { geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
-    await writeMarkDistance(data.id, L.latLng(ll.lat, ll.lng));           // <—
-  } else if (data.type === 'blind') {
+if (data.type === 'mark') {
+  const heading = (currentHeading != null ? currentHeading : DEFAULT_ARROW_BRG);
+  const hLL = destPoint(ll, heading, DEFAULT_ARROW_LEN);
+  await setDoc(setupDoc(), { geo: { marks: { [data.id]: { lat: ll.lat, lng: ll.lng, handle: { lat: hLL.lat, lng: hLL.lng } } } } }, { merge:true });
+  await writeMarkDistance(data.id, L.latLng(ll.lat, ll.lng));
+}
+ else if (data.type === 'blind') {
     await setDoc(setupDoc(), { geo: { blinds: { [data.id]: { lat: ll.lat, lng: ll.lng } } } }, { merge:true });
     await writeBlindDistance(data.id, L.latLng(ll.lat, ll.lng));          // <—
   } else if (data.type === 'trainer') {
