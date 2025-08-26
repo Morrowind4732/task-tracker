@@ -86,7 +86,7 @@
         <li>Both sides must use the same <b>Room ID</b>.</li>
         <li>First person to Join becomes host; second person joins as callee.</li>
         <li>Reusing an old ID? This page auto-resets stale rooms for you.</li>
-        <li>Android can play in background; iOS/Safari can’t keep WebRTC alive reliably in background.</li>
+        <li>Android can play in background; iOS Safari can’t keep WebRTC alive reliably in background.</li>
       </ul>
     </div>
   </div>
@@ -126,13 +126,21 @@ let pc, roomDoc, callerCandidates, calleeCandidates;
 let isJoined = false;
 let isHost = false;
 
-// True PTT with renegotiation
-let sender = null;            // RTCRtpSender for our audio m-line
-let currentMicTrack = null;   // only while pressed
-let myId = Math.random().toString(36).slice(2,10); // identify which side wrote an offer/answer
-let myOfferSeq = 0;           // increment every time we offer
+// Perfect Negotiation flags + ids
+let makingOffer = false;
+let ignoreOffer = false;
+let isPolite = false; // callee will be polite
+let myId = Math.random().toString(36).slice(2,10);
+let myOfferSeq = 0;
 let lastSeenOfferSeq = -1;
 let lastSeenAnswerSeq = -1;
+
+// True PTT sender + current track
+let sender = null;
+let currentMicTrack = null;
+
+// Buffer ICE until subcollections exist
+let pendingIce = [];
 
 /*** 4) UTILITIES ***/
 const genId = () => Math.random().toString(36).slice(2,8).toUpperCase();
@@ -209,8 +217,7 @@ async function startTalking(){
     talkBtn.classList.add('talking');
     setMicBadge(true);
 
-    // Adding/removing track may require renegotiation on some browsers.
-    // Let the negotiationneeded event fire, or force it:
+    // attaching may need renegotiation
     maybeOffer();
   }catch(e){
     console.error('Mic error:', e);
@@ -226,7 +233,7 @@ async function stopTalking(){
   }
   talkBtn.classList.remove('talking');
   setMicBadge(false);
-  // Detach also may need renegotiation
+  // detaching may need renegotiation
   maybeOffer();
 }
 function attachPTTHandlers(){
@@ -239,35 +246,28 @@ function attachPTTHandlers(){
   talkBtn.addEventListener('contextmenu', e => e.preventDefault());
 }
 
-/*** 7) SDP RENEGOTIATION HELPERS (Firestore signaling) ***/
-// Whenever negotiation is needed, create an offer and write it with a new seq
-function maybeOffer(){
-  // On some engines, negotiationneeded may not always fire; we can call this directly.
-  if (pc.signalingState === 'stable') {
-    // queue microtask to avoid nested operations
-    Promise.resolve().then(async () => {
-      try {
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        myOfferSeq += 1;
-        await roomDoc.update({
-          offer: {
-            sdp: offer.sdp,
-            type: offer.type,
-            ts: Date.now(),
-            seq: myOfferSeq,
-            sid: myId
-          }
-        });
-        console.log('[OFFER] seq', myOfferSeq, 'by', myId);
-      } catch(e) {
-        console.warn('maybeOffer error:', e);
-      }
-    });
+/*** 7) SDP RENEGOTIATION (Perfect Negotiation + Firestore) ***/
+async function maybeOffer(){
+  if (pc.signalingState !== 'stable') return;
+  try {
+    makingOffer = true;
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    myOfferSeq += 1;
+
+    await roomDoc.set({
+      offer: { sdp: offer.sdp, type: offer.type, ts: Date.now(), seq: myOfferSeq, sid: myId }
+    }, { merge: true });
+
+    console.log('[OFFER] seq', myOfferSeq, 'by', myId);
+  } catch (e) {
+    console.warn('maybeOffer error:', e);
+  } finally {
+    makingOffer = false;
   }
 }
 
-/*** 8) JOIN / ROOM FLOW (Option B reuse + bidirectional renegotiation) ***/
+/*** 8) JOIN / ROOM FLOW ***/
 joinBtn.addEventListener('click', async () => {
   if (isJoined) return;
   const roomId = (roomIdEl.value || '').trim();
@@ -278,20 +278,29 @@ joinBtn.addEventListener('click', async () => {
     pc = new RTCPeerConnection({ iceServers: [{urls:'stun:stun.l.google.com:19302'}] });
     setConnBadge(); setIceBadge();
 
-    // Prepare an audio m-line up front but without a track.
+    // Prepare an audio m-line up front (no track yet).
     const transceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
     sender = transceiver.sender;
 
     pc.onconnectionstatechange = () => { setConnBadge(); setStatus(`Peer: ${pc.connectionState}`); };
     pc.oniceconnectionstatechange = () => setIceBadge();
+
     pc.onicecandidate = async (event) => {
       if (!event.candidate) return;
       const cand = event.candidate.toJSON();
-      if (isHost) await callerCandidates.add(cand);
-      else        await calleeCandidates.add(cand);
+      if (!callerCandidates && !calleeCandidates) { // not ready yet
+        pendingIce.push(cand);
+        return;
+      }
+      try {
+        if (isHost) await callerCandidates.add(cand);
+        else        await calleeCandidates.add(cand);
+      } catch {
+        pendingIce.push(cand);
+      }
     };
 
-    // Hardened receiver (works even if event.streams is empty or track starts muted)
+    // Hardened receiver + Media Session (Android background)
     pc.ontrack = (event) => {
       const attach = () => {
         const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
@@ -305,7 +314,6 @@ joinBtn.addEventListener('click', async () => {
       } else {
         attach();
       }
-      // Background friendliness on Android
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: 'Walkie-Talkie',
@@ -315,52 +323,65 @@ joinBtn.addEventListener('click', async () => {
         navigator.mediaSession.setActionHandler('play',  () => remoteAudio.play());
         navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
       }
-      console.log('Remote track:', event.track.kind, 'muted=', event.track.muted, 'readyState=', event.track.readyState);
+      console.log('Remote track: audio muted=', event.track.muted, 'readyState=', event.track.readyState);
     };
 
-    // Some engines will fire this; some won’t—our maybeOffer() also gets called from PTT ops.
-    pc.onnegotiationneeded = () => {
-      console.log('onnegotiationneeded fired');
-      maybeOffer();
-    };
+    pc.onnegotiationneeded = () => { console.log('onnegotiationneeded'); maybeOffer(); };
 
     // Firestore room doc
     roomDoc = db.collection('ptt_rooms').doc(roomId);
     const snap = await roomDoc.get();
 
     if (!snap.exists) {
-      // HOST
+      // HOST (impolite)
       isHost = true;
+      isPolite = false;
       callerCandidates = roomDoc.collection('callerCandidates');
       calleeCandidates = roomDoc.collection('calleeCandidates');
 
-      // Initialize doc (no offer yet so callee can detect host presence)
-      await roomDoc.set({ created: Date.now() });
+      await roomDoc.set({ created: Date.now() }, { merge: true });
 
-      // First offer
-      maybeOffer();
+      // first offer
+      await maybeOffer();
 
-      // Listen for answers and remote renegotiation offers
+      // flush any buffered ICE now that collections exist
+      if (pendingIce.length) {
+        const batch = db.batch();
+        pendingIce.forEach(c => batch.set(callerCandidates.doc(), c));
+        await batch.commit();
+        pendingIce = [];
+      }
+
       roomDoc.onSnapshot(async (s) => {
         const data = s.data() || {};
-        // Remote offer (from callee)
+
+        // Remote offer (callee renegotiation)
         if (data.offer && data.offer.sid !== myId && (data.offer.seq ?? -1) > lastSeenOfferSeq) {
           lastSeenOfferSeq = data.offer.seq;
-          console.log('[REMOTE OFFER] seq', lastSeenOfferSeq, 'from', data.offer.sid);
-          await pc.setRemoteDescription({ type: 'offer', sdp: data.offer.sdp });
+          const offerDesc = { type: 'offer', sdp: data.offer.sdp };
+          const offerCollision = makingOffer || pc.signalingState !== 'stable';
+          ignoreOffer = !isPolite && offerCollision; // host is impolite
+          if (ignoreOffer) {
+            console.log('Ignoring remote offer (impolite & in collision)');
+            return;
+          }
+          if (offerCollision) {
+            try { await pc.setLocalDescription({ type: 'rollback' }); } catch {}
+          }
+          await pc.setRemoteDescription(offerDesc);
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          await roomDoc.update({
+          await roomDoc.set({
             answer: { sdp: answer.sdp, type: answer.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
-          });
+          }, { merge: true });
           console.log('[ANSWERED] seq', lastSeenOfferSeq);
         }
-        // Remote answer (to our latest offer)
+
+        // Remote answer to our latest offer
         if (data.answer && data.answer.sid !== myId && (data.answer.seq ?? -1) > lastSeenAnswerSeq) {
           lastSeenAnswerSeq = data.answer.seq;
-          console.log('[REMOTE ANSWER] seq', lastSeenAnswerSeq, 'from', data.answer.sid);
           if (pc.signalingState !== 'stable') {
-            await pc.setRemoteDescription({ type: 'answer', sdp: data.answer.sdp }).catch(()=>{});
+            try { await pc.setRemoteDescription({ type: 'answer', sdp: data.answer.sdp }); } catch {}
           }
         }
       });
@@ -374,53 +395,76 @@ joinBtn.addEventListener('click', async () => {
 
       setStatus(`Created room ${roomId}. Share this ID with your partner.`);
     } else {
-      // Existing: callee if there's an offer to answer; else reset + host
+      // Room exists
       const data = snap.data();
       const hasOffer = !!(data && data.offer && data.offer.sdp);
       const hasAnswer = !!(data && data.answer && data.answer.sdp);
 
-      if (hasOffer && !hasAnswer){
-        // CALLEE
+      if (hasOffer && !hasAnswer) {
+        // CALLEE (polite)
         isHost = false;
+        isPolite = true;
         callerCandidates = roomDoc.collection('callerCandidates');
         calleeCandidates = roomDoc.collection('calleeCandidates');
 
-        // Answer the existing offer
-        await pc.setRemoteDescription({ type: 'offer', sdp: data.offer.sdp });
-        lastSeenOfferSeq = data.offer.seq ?? 0;
+        // apply existing remote offer w/ glare handling
+        const remote = { type: 'offer', sdp: data.offer.sdp };
+        const collision = makingOffer || pc.signalingState !== 'stable';
+        ignoreOffer = !isPolite && collision;
+        if (collision) {
+          try { await pc.setLocalDescription({ type: 'rollback' }); } catch {}
+        }
+        await pc.setRemoteDescription(remote);
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        await roomDoc.update({
-          answer: { sdp: answer.sdp, type: answer.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
-        });
+        await roomDoc.set({
+          answer: { sdp: answer.sdp, type: answer.type, ts: Date.now(), seq: (data.offer.seq ?? 0), sid: myId }
+        }, { merge: true });
+        lastSeenOfferSeq = data.offer.seq ?? 0;
         console.log('[ANSWERED initial] seq', lastSeenOfferSeq);
 
-        // Listen for future offers from host (or renegotiations from either side)
+        // flush buffered ICE
+        if (pendingIce.length) {
+          const batch = db.batch();
+          pendingIce.forEach(c => batch.set(calleeCandidates.doc(), c));
+          await batch.commit();
+          pendingIce = [];
+        }
+
+        // listen for future host offers (and any renegotiations)
         roomDoc.onSnapshot(async (s) => {
           const d = s.data() || {};
-          // Remote offer (new)
           if (d.offer && d.offer.sid !== myId && (d.offer.seq ?? -1) > lastSeenOfferSeq) {
             lastSeenOfferSeq = d.offer.seq;
-            console.log('[REMOTE OFFER] seq', lastSeenOfferSeq, 'from', d.offer.sid);
-            await pc.setRemoteDescription({ type: 'offer', sdp: d.offer.sdp });
+            const offerDesc = { type: 'offer', sdp: d.offer.sdp };
+            const coll = makingOffer || pc.signalingState !== 'stable';
+            ignoreOffer = !isPolite && coll; // callee is polite, so usually false
+            if (ignoreOffer) {
+              console.log('Ignoring remote offer (impolite & in collision)');
+              return;
+            }
+            if (coll) {
+              try { await pc.setLocalDescription({ type: 'rollback' }); } catch {}
+            }
+            await pc.setRemoteDescription(offerDesc);
             const ans = await pc.createAnswer();
             await pc.setLocalDescription(ans);
-            await roomDoc.update({
+            await roomDoc.set({
               answer: { sdp: ans.sdp, type: ans.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
-            });
+            }, { merge: true });
             console.log('[ANSWERED] seq', lastSeenOfferSeq);
           }
-          // Remote answer (if host offered again later)
+
           if (d.answer && d.answer.sid !== myId && (d.answer.seq ?? -1) > lastSeenAnswerSeq) {
             lastSeenAnswerSeq = d.answer.seq;
-            console.log('[REMOTE ANSWER] seq', lastSeenAnswerSeq, 'from', d.answer.sid);
             if (pc.signalingState !== 'stable') {
-              await pc.setRemoteDescription({ type: 'answer', sdp: d.answer.sdp }).catch(()=>{});
+              try { await pc.setRemoteDescription({ type: 'answer', sdp: d.answer.sdp }); } catch {}
             }
           }
         });
 
-        // ICE from caller
+        // ICE from caller (host)
         callerCandidates.onSnapshot(s => {
           s.docChanges().forEach(ch => {
             if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
@@ -433,32 +477,39 @@ joinBtn.addEventListener('click', async () => {
         await clearRoomDoc(roomDoc);
 
         isHost = true;
+        isPolite = false;
         callerCandidates = roomDoc.collection('callerCandidates');
         calleeCandidates = roomDoc.collection('calleeCandidates');
 
-        await roomDoc.set({ created: Date.now() });
-
-        // First offer
-        maybeOffer();
+        await roomDoc.set({ created: Date.now() }, { merge: true });
+        await maybeOffer();
 
         roomDoc.onSnapshot(async (s) => {
           const d = s.data() || {};
           if (d.offer && d.offer.sid !== myId && (d.offer.seq ?? -1) > lastSeenOfferSeq) {
             lastSeenOfferSeq = d.offer.seq;
-            console.log('[REMOTE OFFER] seq', lastSeenOfferSeq, 'from', d.offer.sid);
-            await pc.setRemoteDescription({ type: 'offer', sdp: d.offer.sdp });
+            const offerDesc = { type: 'offer', sdp: d.offer.sdp };
+            const coll = makingOffer || pc.signalingState !== 'stable';
+            ignoreOffer = !isPolite && coll;
+            if (ignoreOffer) {
+              console.log('Ignoring remote offer (impolite & in collision)');
+              return;
+            }
+            if (coll) {
+              try { await pc.setLocalDescription({ type: 'rollback' }); } catch {}
+            }
+            await pc.setRemoteDescription(offerDesc);
             const ans = await pc.createAnswer();
             await pc.setLocalDescription(ans);
-            await roomDoc.update({
+            await roomDoc.set({
               answer: { sdp: ans.sdp, type: ans.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
-            });
+            }, { merge: true });
             console.log('[ANSWERED] seq', lastSeenOfferSeq);
           }
           if (d.answer && d.answer.sid !== myId && (d.answer.seq ?? -1) > lastSeenAnswerSeq) {
             lastSeenAnswerSeq = d.answer.seq;
-            console.log('[REMOTE ANSWER] seq', lastSeenAnswerSeq, 'from', d.answer.sid);
             if (pc.signalingState !== 'stable') {
-              await pc.setRemoteDescription({ type: 'answer', sdp: d.answer.sdp }).catch(()=>{});
+              try { await pc.setRemoteDescription({ type: 'answer', sdp: d.answer.sdp }); } catch {}
             }
           }
         });
