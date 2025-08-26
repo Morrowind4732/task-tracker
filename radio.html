@@ -249,11 +249,24 @@ joinBtn.addEventListener('click', async () => {
     };
 
     pc.ontrack = (event) => {
-      remoteAudio.srcObject = event.streams[0];
-      remoteAudio.muted = false;
-      remoteAudio.volume = 1.0;
-      remoteAudio.play?.().catch(()=>{});
-    };
+  // remote audio stream
+  remoteAudio.srcObject = event.streams[0];
+  remoteAudio.muted = false;
+  remoteAudio.volume = 1.0;
+  remoteAudio.play?.().catch(()=>{});
+
+  // === Media Session: helps Android keep audio playing in background ===
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: 'Walkie-Talkie',
+      artist: 'PTT Room ' + (roomIdEl.value || ''),
+      album: 'WebRTC'
+    });
+    navigator.mediaSession.setActionHandler('play',  () => remoteAudio.play());
+    navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
+  }
+};
+
 
     // Firestore room doc
     roomDoc = db.collection('ptt_rooms').doc(roomId);
