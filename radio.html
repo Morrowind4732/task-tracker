@@ -247,8 +247,12 @@ function attachPTTHandlers(){
 }
 
 /*** 7) SDP RENEGOTIATION (Perfect Negotiation + Firestore) ***/
+let offerBusy = false;
+
 async function maybeOffer(){
+  if (offerBusy) return;
   if (pc.signalingState !== 'stable') return;
+  offerBusy = true;
   try {
     makingOffer = true;
     const offer = await pc.createOffer();
@@ -264,8 +268,10 @@ async function maybeOffer(){
     console.warn('maybeOffer error:', e);
   } finally {
     makingOffer = false;
+    offerBusy = false;
   }
 }
+
 
 /*** 8) JOIN / ROOM FLOW ***/
 joinBtn.addEventListener('click', async () => {
@@ -326,7 +332,7 @@ joinBtn.addEventListener('click', async () => {
       console.log('Remote track: audio muted=', event.track.muted, 'readyState=', event.track.readyState);
     };
 
-    pc.onnegotiationneeded = () => { console.log('onnegotiationneeded'); maybeOffer(); };
+
 
     // Firestore room doc
     roomDoc = db.collection('ptt_rooms').doc(roomId);
