@@ -224,43 +224,38 @@
 
 let currentHeading = null;  // store last known compass heading
 
-// Listen for device orientation (compass)
+// Compass listener
 if (window.DeviceOrientationEvent) {
   if (typeof DeviceOrientationEvent.requestPermission === "function") {
-    // iOS 13+ requires user interaction
     document.body.addEventListener("click", () => {
       DeviceOrientationEvent.requestPermission().then(state => {
         if (state === "granted") {
           window.addEventListener("deviceorientationabsolute", (e) => {
             if (e.alpha != null) {
               currentHeading = 360 - e.alpha;
+              document.getElementById("headingDebug").textContent = "Heading: " + Math.round(currentHeading) + "°";
             }
           });
         }
       }).catch(console.warn);
     }, { once:true });
   } else {
-    // Android / other browsers
     window.addEventListener("deviceorientationabsolute", (e) => {
       if (e.alpha != null) {
         currentHeading = 360 - e.alpha;
+        document.getElementById("headingDebug").textContent = "Heading: " + Math.round(currentHeading) + "°";
       }
     });
   }
 }
 
-// Qualifier -> suffix; priority: RT > WT > HT
-function qualSuffix(mark){
-
-  
-// Qualifier -> suffix; priority: RT > WT > HT
+// Qualifier -> suffix
 function qualSuffix(mark){
   const o = mark?.options || {};
   if (o.retire)     return ' RT';
   if (o.whiteCoat)  return ' WC';
   if (o.handTossed) return ' HT';
-  if (o.goBird) return ' GO';
-  
+  if (o.goBird)     return ' GO';
   return '';
 }
 
