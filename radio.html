@@ -15,12 +15,12 @@
   h1{font-size:20px;margin:0;color:#e9edff}
   .card{background:var(--card);border:1px solid #1e2a44;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  input[type=text]{flex:1;min-width:180px;background:#0c1424;border:1px solid #243153;color:var(--ink);padding:10px 12px;border-radius:10px}
+  input[type=text]{flex:1;min-width:180px;background:#0c1424;border:1px solid #243153;color:#e9edff;padding:10px 12px;border-radius:10px}
   button{background:#1a2a4d;border:1px solid #2c3d6b;color:#edf2ff;padding:10px 14px;border-radius:10px;cursor:pointer}
   button.primary{background:linear-gradient(180deg,#345eea 0%,#2747b8 100%);border-color:#2747b8}
   button.chip{font-size:12px;padding:6px 10px;border-radius:999px;background:#0e1830;border:1px solid #21315a;color:#a9bbff}
   button:disabled{opacity:.5;cursor:not-allowed}
-  .status{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
+  .status{font-size:13px;color:#a9bbff;margin-top:8px;min-height:18px}
   .grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:16px}
   .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;background:#0e1830;border:1px solid #21315a;color:#a9bbff;font-size:12px}
   .ptt{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:10px}
@@ -53,7 +53,6 @@
       <input id="roomId" placeholder="Room ID (share this)" />
       <button id="makeId">Random</button>
       <button id="join" class="primary">Join</button>
-      <!-- tiny utility to confirm playback device works -->
       <button id="beep">Test Beep</button>
     </div>
     <div class="recents" style="margin-top:8px">
@@ -87,6 +86,7 @@
         <li>Both sides must use the same <b>Room ID</b>.</li>
         <li>First person to Join becomes host; second person joins as callee.</li>
         <li>Reusing an old ID? This page auto-resets stale rooms for you.</li>
+        <li>Android can play in background; iOS/Safari can’t keep WebRTC alive reliably in background.</li>
       </ul>
     </div>
   </div>
@@ -113,12 +113,12 @@ const roomIdEl    = document.getElementById('roomId');
 const makeIdBtn   = document.getElementById('makeId');
 const joinBtn     = document.getElementById('join');
 const talkBtn     = document.getElementById('talk');
+const beepBtn     = document.getElementById('beep');
 const statusEl    = document.getElementById('status');
 const micStateEl  = document.getElementById('micState');
 const connStateEl = document.getElementById('connState');
 const iceStateEl  = document.getElementById('iceState');
 const remoteAudio = document.getElementById('remoteAudio');
-const beepBtn     = document.getElementById('beep');
 const recentBtns  = [document.getElementById('recent1'), document.getElementById('recent2'), document.getElementById('recent3')];
 
 /*** 3) STATE ***/
@@ -126,10 +126,13 @@ let pc, roomDoc, callerCandidates, calleeCandidates;
 let isJoined = false;
 let isHost = false;
 
-// Transceiver-based PTT
-let audioTransceiver = null;
-let micSender = null;
-let currentMicTrack = null;
+// True PTT with renegotiation
+let sender = null;            // RTCRtpSender for our audio m-line
+let currentMicTrack = null;   // only while pressed
+let myId = Math.random().toString(36).slice(2,10); // identify which side wrote an offer/answer
+let myOfferSeq = 0;           // increment every time we offer
+let lastSeenOfferSeq = -1;
+let lastSeenAnswerSeq = -1;
 
 /*** 4) UTILITIES ***/
 const genId = () => Math.random().toString(36).slice(2,8).toUpperCase();
@@ -166,17 +169,17 @@ function renderRecents(){
 }
 renderRecents();
 
-// test beep (helps verify playback route/volume)
+// test beep (verify playback route/volume)
 beepBtn.addEventListener('click', async () => {
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const o = ctx.createOscillator(); const g = ctx.createGain();
-    o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.05;
-    o.connect(g).connect(ctx.destination); o.start(); setTimeout(()=>{o.stop(); ctx.close();}, 400);
+    o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.06;
+    o.connect(g).connect(ctx.destination); o.start(); setTimeout(()=>{o.stop(); ctx.close();}, 350);
   }catch{}
 });
 
-/*** 5) ROOM CLEANUP HELPERS ***/
+/*** 5) CLEANUP HELPERS ***/
 async function deleteCollection(collRef){
   const snap = await collRef.get();
   const batch = db.batch();
@@ -189,9 +192,9 @@ async function clearRoomDoc(ref){
   await ref.delete();
 }
 
-/*** 6) PTT (true push-to-talk mic lifecycle) ***/
+/*** 6) TRUE PTT (request mic only while pressed) ***/
 async function startTalking(){
-  if (!isJoined || !micSender) return;
+  if (!isJoined || !sender) return;
   if (currentMicTrack) return; // already talking
 
   try{
@@ -201,30 +204,30 @@ async function startTalking(){
     const track = stream.getAudioTracks()[0];
     if (!track) return;
 
-    // safety guards before we attach
-    if (!micSender) { track.stop(); return; }
-    if (track.readyState === 'ended') { track.stop(); return; }
-
-    await micSender.replaceTrack(track);
     currentMicTrack = track;
-
+    await sender.replaceTrack(track); // attach
     talkBtn.classList.add('talking');
     setMicBadge(true);
+
+    // Adding/removing track may require renegotiation on some browsers.
+    // Let the negotiationneeded event fire, or force it:
+    maybeOffer();
   }catch(e){
     console.error('Mic error:', e);
     setStatus('Mic error: ' + (e.message || e));
   }
 }
 async function stopTalking(){
-  if (micSender) {
-    try { await micSender.replaceTrack(null); } catch {}
-  }
+  if (!sender) return;
+  try { await sender.replaceTrack(null); } catch {}
   if (currentMicTrack){
     try { currentMicTrack.stop(); } catch {}
     currentMicTrack = null;
   }
   talkBtn.classList.remove('talking');
   setMicBadge(false);
+  // Detach also may need renegotiation
+  maybeOffer();
 }
 function attachPTTHandlers(){
   const downEvts = ['pointerdown','touchstart','mousedown'];
@@ -236,7 +239,35 @@ function attachPTTHandlers(){
   talkBtn.addEventListener('contextmenu', e => e.preventDefault());
 }
 
-/*** 7) JOIN (Option B with auto-reset) ***/
+/*** 7) SDP RENEGOTIATION HELPERS (Firestore signaling) ***/
+// Whenever negotiation is needed, create an offer and write it with a new seq
+function maybeOffer(){
+  // On some engines, negotiationneeded may not always fire; we can call this directly.
+  if (pc.signalingState === 'stable') {
+    // queue microtask to avoid nested operations
+    Promise.resolve().then(async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        myOfferSeq += 1;
+        await roomDoc.update({
+          offer: {
+            sdp: offer.sdp,
+            type: offer.type,
+            ts: Date.now(),
+            seq: myOfferSeq,
+            sid: myId
+          }
+        });
+        console.log('[OFFER] seq', myOfferSeq, 'by', myId);
+      } catch(e) {
+        console.warn('maybeOffer error:', e);
+      }
+    });
+  }
+}
+
+/*** 8) JOIN / ROOM FLOW (Option B reuse + bidirectional renegotiation) ***/
 joinBtn.addEventListener('click', async () => {
   if (isJoined) return;
   const roomId = (roomIdEl.value || '').trim();
@@ -247,9 +278,9 @@ joinBtn.addEventListener('click', async () => {
     pc = new RTCPeerConnection({ iceServers: [{urls:'stun:stun.l.google.com:19302'}] });
     setConnBadge(); setIceBadge();
 
-    // create recv/send m-line up front; we attach mic on press later
-    audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
-    micSender = audioTransceiver.sender;
+    // Prepare an audio m-line up front but without a track.
+    const transceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
+    sender = transceiver.sender;
 
     pc.onconnectionstatechange = () => { setConnBadge(); setStatus(`Peer: ${pc.connectionState}`); };
     pc.oniceconnectionstatechange = () => setIceBadge();
@@ -260,25 +291,21 @@ joinBtn.addEventListener('click', async () => {
       else        await calleeCandidates.add(cand);
     };
 
-    // HARDENED receiver
+    // Hardened receiver (works even if event.streams is empty or track starts muted)
     pc.ontrack = (event) => {
       const attach = () => {
-        const stream = (event.streams && event.streams[0])
-          ? event.streams[0]
-          : new MediaStream([event.track]);
-
+        const stream = (event.streams && event.streams[0]) ? event.streams[0] : new MediaStream([event.track]);
         if (remoteAudio.srcObject !== stream) remoteAudio.srcObject = stream;
         remoteAudio.muted = false;
         remoteAudio.volume = 1.0;
         remoteAudio.play?.().catch(()=>{});
       };
-
       if (event.track && event.track.muted) {
         event.track.onunmute = () => { attach(); event.track.onunmute = null; };
       } else {
         attach();
       }
-
+      // Background friendliness on Android
       if ('mediaSession' in navigator) {
         navigator.mediaSession.metadata = new MediaMetadata({
           title: 'Walkie-Talkie',
@@ -288,10 +315,13 @@ joinBtn.addEventListener('click', async () => {
         navigator.mediaSession.setActionHandler('play',  () => remoteAudio.play());
         navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
       }
+      console.log('Remote track:', event.track.kind, 'muted=', event.track.muted, 'readyState=', event.track.readyState);
+    };
 
-      console.log('Remote track:', event.track.kind,
-                  'muted=', event.track.muted,
-                  'readyState=', event.track.readyState);
+    // Some engines will fire this; some won’t—our maybeOffer() also gets called from PTT ops.
+    pc.onnegotiationneeded = () => {
+      console.log('onnegotiationneeded fired');
+      maybeOffer();
     };
 
     // Firestore room doc
@@ -304,17 +334,38 @@ joinBtn.addEventListener('click', async () => {
       callerCandidates = roomDoc.collection('callerCandidates');
       calleeCandidates = roomDoc.collection('calleeCandidates');
 
-      const offer = await pc.createOffer({ offerToReceiveAudio:true });
-      await pc.setLocalDescription(offer);
-      await roomDoc.set({ offer: { type: offer.type, sdp: offer.sdp }, created: Date.now() });
+      // Initialize doc (no offer yet so callee can detect host presence)
+      await roomDoc.set({ created: Date.now() });
 
+      // First offer
+      maybeOffer();
+
+      // Listen for answers and remote renegotiation offers
       roomDoc.onSnapshot(async (s) => {
-        const data = s.data();
-        if (!pc.currentRemoteDescription && data && data.answer){
-          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        const data = s.data() || {};
+        // Remote offer (from callee)
+        if (data.offer && data.offer.sid !== myId && (data.offer.seq ?? -1) > lastSeenOfferSeq) {
+          lastSeenOfferSeq = data.offer.seq;
+          console.log('[REMOTE OFFER] seq', lastSeenOfferSeq, 'from', data.offer.sid);
+          await pc.setRemoteDescription({ type: 'offer', sdp: data.offer.sdp });
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          await roomDoc.update({
+            answer: { sdp: answer.sdp, type: answer.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
+          });
+          console.log('[ANSWERED] seq', lastSeenOfferSeq);
+        }
+        // Remote answer (to our latest offer)
+        if (data.answer && data.answer.sid !== myId && (data.answer.seq ?? -1) > lastSeenAnswerSeq) {
+          lastSeenAnswerSeq = data.answer.seq;
+          console.log('[REMOTE ANSWER] seq', lastSeenAnswerSeq, 'from', data.answer.sid);
+          if (pc.signalingState !== 'stable') {
+            await pc.setRemoteDescription({ type: 'answer', sdp: data.answer.sdp }).catch(()=>{});
+          }
         }
       });
 
+      // ICE from callee
       calleeCandidates.onSnapshot(s => {
         s.docChanges().forEach(ch => {
           if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
@@ -323,7 +374,7 @@ joinBtn.addEventListener('click', async () => {
 
       setStatus(`Created room ${roomId}. Share this ID with your partner.`);
     } else {
-      // Existing: callee if offer-only; otherwise reset + host
+      // Existing: callee if there's an offer to answer; else reset + host
       const data = snap.data();
       const hasOffer = !!(data && data.offer && data.offer.sdp);
       const hasAnswer = !!(data && data.answer && data.answer.sdp);
@@ -334,11 +385,42 @@ joinBtn.addEventListener('click', async () => {
         callerCandidates = roomDoc.collection('callerCandidates');
         calleeCandidates = roomDoc.collection('calleeCandidates');
 
-        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        // Answer the existing offer
+        await pc.setRemoteDescription({ type: 'offer', sdp: data.offer.sdp });
+        lastSeenOfferSeq = data.offer.seq ?? 0;
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        await roomDoc.update({ answer: { type: answer.type, sdp: answer.sdp }, answered: Date.now() });
+        await roomDoc.update({
+          answer: { sdp: answer.sdp, type: answer.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
+        });
+        console.log('[ANSWERED initial] seq', lastSeenOfferSeq);
 
+        // Listen for future offers from host (or renegotiations from either side)
+        roomDoc.onSnapshot(async (s) => {
+          const d = s.data() || {};
+          // Remote offer (new)
+          if (d.offer && d.offer.sid !== myId && (d.offer.seq ?? -1) > lastSeenOfferSeq) {
+            lastSeenOfferSeq = d.offer.seq;
+            console.log('[REMOTE OFFER] seq', lastSeenOfferSeq, 'from', d.offer.sid);
+            await pc.setRemoteDescription({ type: 'offer', sdp: d.offer.sdp });
+            const ans = await pc.createAnswer();
+            await pc.setLocalDescription(ans);
+            await roomDoc.update({
+              answer: { sdp: ans.sdp, type: ans.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
+            });
+            console.log('[ANSWERED] seq', lastSeenOfferSeq);
+          }
+          // Remote answer (if host offered again later)
+          if (d.answer && d.answer.sid !== myId && (d.answer.seq ?? -1) > lastSeenAnswerSeq) {
+            lastSeenAnswerSeq = d.answer.seq;
+            console.log('[REMOTE ANSWER] seq', lastSeenAnswerSeq, 'from', d.answer.sid);
+            if (pc.signalingState !== 'stable') {
+              await pc.setRemoteDescription({ type: 'answer', sdp: d.answer.sdp }).catch(()=>{});
+            }
+          }
+        });
+
+        // ICE from caller
         callerCandidates.onSnapshot(s => {
           s.docChanges().forEach(ch => {
             if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
@@ -354,21 +436,39 @@ joinBtn.addEventListener('click', async () => {
         callerCandidates = roomDoc.collection('callerCandidates');
         calleeCandidates = roomDoc.collection('calleeCandidates');
 
-        const offer = await pc.createOffer({ offerToReceiveAudio:true });
-        await pc.setLocalDescription(offer);
-        await roomDoc.set({ offer: { type: offer.type, sdp: offer.sdp }, created: Date.now() });
+        await roomDoc.set({ created: Date.now() });
+
+        // First offer
+        maybeOffer();
 
         roomDoc.onSnapshot(async (s) => {
-          const d = s.data();
-          if (!pc.currentRemoteDescription && d && d.answer){
-            await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+          const d = s.data() || {};
+          if (d.offer && d.offer.sid !== myId && (d.offer.seq ?? -1) > lastSeenOfferSeq) {
+            lastSeenOfferSeq = d.offer.seq;
+            console.log('[REMOTE OFFER] seq', lastSeenOfferSeq, 'from', d.offer.sid);
+            await pc.setRemoteDescription({ type: 'offer', sdp: d.offer.sdp });
+            const ans = await pc.createAnswer();
+            await pc.setLocalDescription(ans);
+            await roomDoc.update({
+              answer: { sdp: ans.sdp, type: ans.type, ts: Date.now(), seq: lastSeenOfferSeq, sid: myId }
+            });
+            console.log('[ANSWERED] seq', lastSeenOfferSeq);
+          }
+          if (d.answer && d.answer.sid !== myId && (d.answer.seq ?? -1) > lastSeenAnswerSeq) {
+            lastSeenAnswerSeq = d.answer.seq;
+            console.log('[REMOTE ANSWER] seq', lastSeenAnswerSeq, 'from', d.answer.sid);
+            if (pc.signalingState !== 'stable') {
+              await pc.setRemoteDescription({ type: 'answer', sdp: d.answer.sdp }).catch(()=>{});
+            }
           }
         });
+
         calleeCandidates.onSnapshot(s => {
           s.docChanges().forEach(ch => {
             if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
           });
         });
+
         setStatus(`Recreated room ${roomId}. Share this ID with your partner.`);
       }
     }
@@ -387,7 +487,7 @@ joinBtn.addEventListener('click', async () => {
   }
 });
 
-/*** 8) OPTIONAL LEAVE ***/
+/*** 9) OPTIONAL LEAVE ***/
 async function leave(){
   await stopTalking();
   if (pc) pc.close();
