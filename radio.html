@@ -190,7 +190,11 @@ async function startTalking(){
       audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
     });
     currentMicTrack = stream.getAudioTracks()[0];
-    await micSender.replaceTrack(currentMicTrack);
+    if (!micSender) return;                // safety
+if (currentMicTrack.readyState === 'ended') return;
+await micSender.replaceTrack(currentMicTrack);
+
+	await micSender.replaceTrack(currentMicTrack);
     talkBtn.classList.add('talking');
     setMicBadge(true);
   }catch(e){
@@ -207,6 +211,11 @@ async function stopTalking(){
     currentMicTrack.stop();            // fully release hardware (saves battery)
     currentMicTrack = null;
   }
+  if (currentMicTrack) {
+  try { currentMicTrack.stop(); } catch {}
+  currentMicTrack = null;
+}
+
   talkBtn.classList.remove('talking');
   setMicBadge(false);
 }
@@ -249,17 +258,29 @@ joinBtn.addEventListener('click', async () => {
     };
 
 pc.ontrack = (event) => {
-  // Use provided stream if present; otherwise build one from the track
-  const stream = event.streams && event.streams[0]
-    ? event.streams[0]
-    : new MediaStream([event.track]);
+  // Some browsers deliver a muted track first and/or no streams array.
+  const attach = () => {
+    const stream = (event.streams && event.streams[0])
+      ? event.streams[0]
+      : new MediaStream([event.track]);
 
-  remoteAudio.srcObject = stream;
-  remoteAudio.muted = false;
-  remoteAudio.volume = 1.0;
-  remoteAudio.play?.().catch(()=>{});
+    if (remoteAudio.srcObject !== stream) remoteAudio.srcObject = stream;
+    remoteAudio.muted = false;
+    remoteAudio.volume = 1.0;
+    remoteAudio.play?.().catch(()=>{});
+  };
 
-  // Media Session (helps Android keep audio in background)
+  if (event.track && event.track.muted) {
+    // Wait until remote starts sending actual audio
+    event.track.onunmute = () => {
+      attach();
+      event.track.onunmute = null;
+    };
+  } else {
+    attach();
+  }
+
+  // Keep Android playing in background
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: 'Walkie-Talkie',
@@ -270,9 +291,11 @@ pc.ontrack = (event) => {
     navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
   }
 
-  console.log('Remote track received:', event.track.kind, 
+  console.log('Remote track:', event.track.kind,
+              'muted=', event.track.muted,
               'readyState=', event.track.readyState);
 };
+
 
 
 
