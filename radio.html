@@ -248,14 +248,18 @@ joinBtn.addEventListener('click', async () => {
       else        await calleeCandidates.add(cand);
     };
 
-    pc.ontrack = (event) => {
-  // remote audio stream
-  remoteAudio.srcObject = event.streams[0];
+pc.ontrack = (event) => {
+  // Use provided stream if present; otherwise build one from the track
+  const stream = event.streams && event.streams[0]
+    ? event.streams[0]
+    : new MediaStream([event.track]);
+
+  remoteAudio.srcObject = stream;
   remoteAudio.muted = false;
   remoteAudio.volume = 1.0;
   remoteAudio.play?.().catch(()=>{});
 
-  // === Media Session: helps Android keep audio playing in background ===
+  // Media Session (helps Android keep audio in background)
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: 'Walkie-Talkie',
@@ -265,7 +269,11 @@ joinBtn.addEventListener('click', async () => {
     navigator.mediaSession.setActionHandler('play',  () => remoteAudio.play());
     navigator.mediaSession.setActionHandler('pause', () => remoteAudio.pause());
   }
+
+  console.log('Remote track received:', event.track.kind, 
+              'readyState=', event.track.readyState);
 };
+
 
 
     // Firestore room doc
