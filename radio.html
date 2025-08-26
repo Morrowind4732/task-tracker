@@ -15,16 +15,15 @@
   h1{font-size:20px;margin:0;color:#e9edff}
   .card{background:var(--card);border:1px solid #1e2a44;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  input[type=text]{flex:1;min-width:220px;background:#0c1424;border:1px solid #243153;color:var(--ink);padding:10px 12px;border-radius:10px}
+  input[type=text]{flex:1;min-width:180px;background:#0c1424;border:1px solid #243153;color:var(--ink);padding:10px 12px;border-radius:10px}
   button{background:#1a2a4d;border:1px solid #2c3d6b;color:#edf2ff;padding:10px 14px;border-radius:10px;cursor:pointer}
   button.primary{background:linear-gradient(180deg,#345eea 0%,#2747b8 100%);border-color:#2747b8}
+  button.chip{font-size:12px;padding:6px 10px;border-radius:999px;background:#0e1830;border:1px solid #21315a;color:#a9bbff}
   button:disabled{opacity:.5;cursor:not-allowed}
   .status{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
   .grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:16px}
   .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;background:#0e1830;border:1px solid #21315a;color:#a9bbff;font-size:12px}
-  .ptt{
-    display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:10px
-  }
+  .ptt{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:10px}
   .ptt button#talk{
     width:100%;height:72px;font-size:20px;font-weight:700;border-radius:18px;
     background:radial-gradient(60% 100% at 50% 0%, #5b8cff 0%, #345eea 100%);
@@ -39,6 +38,7 @@
   .small{font-size:12px;color:#a9bbff}
   .hint{font-size:12px;color:#7a8bcb;margin-top:8px}
   .hr{height:1px;background:#1e2a44;margin:16px 0}
+  .recents{display:flex;gap:8px;flex-wrap:wrap}
 </style>
 </head>
 <body>
@@ -50,10 +50,16 @@
 
   <div class="card">
     <div class="row">
-      <input id="roomId" placeholder="Room ID (share this with your partner)" />
+      <input id="roomId" placeholder="Room ID (share this)" />
       <button id="makeId">Random</button>
       <button id="join" class="primary">Join</button>
     </div>
+    <div class="recents" style="margin-top:8px">
+      <button class="chip" id="recent1" disabled>-</button>
+      <button class="chip" id="recent2" disabled>-</button>
+      <button class="chip" id="recent3" disabled>-</button>
+    </div>
+
     <div class="status" id="status">Not connected.</div>
 
     <div class="grid">
@@ -65,7 +71,9 @@
         </div>
         <div class="ptt">
           <button id="talk" disabled>Hold to Talk</button>
-          <div class="hint">Press & hold to speak. Release to stop. The other side always plays audio automatically after they click <b>Join</b>.</div>
+          <div class="hint">
+            True PTT: mic hardware is only active while pressed. Release to stop sending.
+          </div>
           <audio id="remoteAudio" autoplay playsinline></audio>
           <div class="small">If you don’t hear anything, ensure both sides pressed <b>Join</b> and granted mic permission.</div>
         </div>
@@ -77,8 +85,8 @@
       Tips:
       <ul>
         <li>Both sides must use the same <b>Room ID</b>.</li>
-        <li>Audio capture needs a user gesture (click/tap <b>Join</b>).</li>
-        <li>Echo cancellation & noise suppression are enabled.</li>
+        <li>First person to Join becomes host; second person joins as callee.</li>
+        <li>Reusing an old ID? This page auto-resets stale rooms for you.</li>
       </ul>
     </div>
   </div>
@@ -89,7 +97,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <script>
-/*** 1) FIREBASE CONFIG — fill this with your project config ***/
+/*** 1) FIREBASE CONFIG ***/
 const firebaseConfig = {
   apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
   authDomain: "task-tracker-73b77.firebaseapp.com",
@@ -97,176 +105,246 @@ const firebaseConfig = {
   storageBucket: "task-tracker-73b77.appspot.com",
   appId: "1:795274673000:web:0ea07130e45c72384134dd"
 };
-// Important: only initialize once per page
-firebase.initializeApp(firebaseConfig);   // <-- no guard
+firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
-console.log('Firebase options:', firebase.app().options);
 
-
-
-/*** 2) DOM HANDLES ***/
-const roomIdEl   = document.getElementById('roomId');
-const makeIdBtn  = document.getElementById('makeId');
-const joinBtn    = document.getElementById('join');
-const talkBtn    = document.getElementById('talk');
-const statusEl   = document.getElementById('status');
-const micStateEl = document.getElementById('micState');
-const connStateEl= document.getElementById('connState');
-const iceStateEl = document.getElementById('iceState');
-const remoteAudio= document.getElementById('remoteAudio');
+/*** 2) DOM ***/
+const roomIdEl    = document.getElementById('roomId');
+const makeIdBtn   = document.getElementById('makeId');
+const joinBtn     = document.getElementById('join');
+const talkBtn     = document.getElementById('talk');
+const statusEl    = document.getElementById('status');
+const micStateEl  = document.getElementById('micState');
+const connStateEl = document.getElementById('connState');
+const iceStateEl  = document.getElementById('iceState');
+const remoteAudio = document.getElementById('remoteAudio');
+const recentBtns  = [document.getElementById('recent1'), document.getElementById('recent2'), document.getElementById('recent3')];
 
 /*** 3) STATE ***/
-let pc, localStream, audioTrack, roomDoc, callerCandidates, calleeCandidates;
+let pc, roomDoc, callerCandidates, calleeCandidates;
 let isJoined = false;
 let isHost = false;
 
+// WebRTC: create an audio transceiver; we attach/detach mic tracks on press.
+// This keeps the mic **off** (no capture) when you're not talking, saving battery.
+let audioTransceiver = null;
+let micSender = null;
+let currentMicTrack = null;
+
 /*** 4) UTILITIES ***/
 const genId = () => Math.random().toString(36).slice(2,8).toUpperCase();
-makeIdBtn.addEventListener('click', () => roomIdEl.value = genId());
+makeIdBtn.addEventListener('click', () => { roomIdEl.value = genId(); });
 
 function setStatus(msg){ statusEl.textContent = msg; }
 function setMicBadge(on){ micStateEl.textContent = `Mic: ${on ? 'on (PTT)' : 'off'}`; }
 function setConnBadge(){ connStateEl.textContent = `Peer: ${pc ? pc.connectionState : 'idle'}`; }
 function setIceBadge(){ iceStateEl.textContent = `ICE: ${pc ? pc.iceConnectionState : '-'}`; }
 
+function saveRecent(id){
+  if (!id) return;
+  const key = 'ptt_recent_rooms';
+  const list = JSON.parse(localStorage.getItem(key) || '[]');
+  const next = [id, ...list.filter(x => x !== id)].slice(0,3);
+  localStorage.setItem(key, JSON.stringify(next));
+  renderRecents();
+}
+function renderRecents(){
+  const list = JSON.parse(localStorage.getItem('ptt_recent_rooms') || '[]');
+  for (let i=0;i<3;i++){
+    const b = recentBtns[i];
+    const label = list[i];
+    if (label){
+      b.textContent = label;
+      b.disabled = false;
+      b.onclick = () => { roomIdEl.value = label; joinBtn.click(); };
+    } else {
+      b.textContent = '-';
+      b.disabled = true;
+      b.onclick = null;
+    }
+  }
+}
+renderRecents();
+
+/*** 5) ROOM CLEANUP HELPERS (used by Option B) ***/
+async function deleteCollection(collRef){
+  const snap = await collRef.get();
+  const batch = db.batch();
+  snap.forEach(doc => batch.delete(doc.ref));
+  return batch.commit();
+}
+async function clearRoomDoc(ref){
+  await deleteCollection(ref.collection('callerCandidates'));
+  await deleteCollection(ref.collection('calleeCandidates'));
+  await ref.delete();
+}
+
+/*** 6) PTT (true push-to-talk mic lifecycle) ***/
+async function startTalking(){
+  if (!isJoined || !micSender) return;
+  if (currentMicTrack) return; // already talking
+
+  // Ask for mic **when pressed** (user gesture), then attach to the sender.
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    });
+    currentMicTrack = stream.getAudioTracks()[0];
+    await micSender.replaceTrack(currentMicTrack);
+    talkBtn.classList.add('talking');
+    setMicBadge(true);
+  }catch(e){
+    console.error('Mic error:', e);
+    setStatus('Mic error: ' + (e.message || e));
+  }
+}
+async function stopTalking(){
+  if (!micSender) return;
+  try{
+    await micSender.replaceTrack(null); // stop sending
+  }catch{}
+  if (currentMicTrack){
+    currentMicTrack.stop();            // fully release hardware (saves battery)
+    currentMicTrack = null;
+  }
+  talkBtn.classList.remove('talking');
+  setMicBadge(false);
+}
 function attachPTTHandlers(){
   const downEvts = ['pointerdown','touchstart','mousedown'];
   const upEvts   = ['pointerup','pointercancel','touchend','mouseup','mouseleave'];
 
-  const startTalk = () => {
-    if (!audioTrack) return;
-    audioTrack.enabled = true;
-    talkBtn.classList.add('talking');
-    setMicBadge(true);
-  };
-  const stopTalk = () => {
-    if (!audioTrack) return;
-    audioTrack.enabled = false;
-    talkBtn.classList.remove('talking');
-    setMicBadge(false);
-  };
+  downEvts.forEach(e => talkBtn.addEventListener(e, startTalking));
+  upEvts.forEach(e => talkBtn.addEventListener(e, stopTalking));
 
-  downEvts.forEach(e => talkBtn.addEventListener(e, startTalk));
-  upEvts.forEach(e => talkBtn.addEventListener(e, stopTalk));
-  // Safety: stop talking when tab loses focus
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopTalk();
-  });
+  // stop if tab hidden or page is unloading
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopTalking(); });
+  window.addEventListener('beforeunload', () => { stopTalking(); });
+  talkBtn.addEventListener('contextmenu', e => e.preventDefault()); // no long-press menu
 }
 
-/*** 5) CORE: CREATE OR JOIN ROOM ***/
+/*** 7) WEBRTC + OPTION B JOIN FLOW ***/
 joinBtn.addEventListener('click', async () => {
   if (isJoined) return;
   const roomId = (roomIdEl.value || '').trim();
   if (!roomId){ roomIdEl.value = genId(); return; }
-
   joinBtn.disabled = true;
 
   try{
-    // Get mic early (permission prompt requires gesture)
-    localStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      }
-    });
-    // PTT: start with track disabled
-    audioTrack = localStream.getAudioTracks()[0];
-    audioTrack.enabled = false;
-    setMicBadge(false);
+    pc = new RTCPeerConnection({ iceServers: [{urls:'stun:stun.l.google.com:19302'}] });
+    setConnBadge(); setIceBadge();
 
-    pc = new RTCPeerConnection({
-      iceServers: [{urls:'stun:stun.l.google.com:19302'}]
-    });
+    // Prepare transceiver so remote can receive even before we attach a mic track.
+    audioTransceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
+    micSender = audioTransceiver.sender;
 
-    // Keep only audio
-    pc.addTrack(audioTrack, localStream);
-
-    pc.onconnectionstatechange = () => {
-      setConnBadge();
-      setStatus(`Peer: ${pc.connectionState}`);
-    };
+    pc.onconnectionstatechange = () => { setConnBadge(); setStatus(`Peer: ${pc.connectionState}`); };
     pc.oniceconnectionstatechange = () => setIceBadge();
+
     pc.onicecandidate = async (event) => {
       if (!event.candidate) return;
       const cand = event.candidate.toJSON();
-      if (isHost) {
-        await callerCandidates.add(cand);
-      } else {
-        await calleeCandidates.add(cand);
-      }
+      if (isHost) await callerCandidates.add(cand);
+      else        await calleeCandidates.add(cand);
     };
+
     pc.ontrack = (event) => {
-      // remote audio stream
       remoteAudio.srcObject = event.streams[0];
+      remoteAudio.muted = false;
+      remoteAudio.volume = 1.0;
+      remoteAudio.play?.().catch(()=>{});
     };
 
     // Firestore room doc
     roomDoc = db.collection('ptt_rooms').doc(roomId);
+    const snap = await roomDoc.get();
 
-    const roomSnap = await roomDoc.get();
-    if (!roomSnap.exists){
-      // Create room as HOST (offerer)
+    if (!snap.exists) {
+      // Fresh ID -> HOST
       isHost = true;
       callerCandidates = roomDoc.collection('callerCandidates');
-      calleeCandidates = roomDoc.collection('calleeCandidates'); // will exist for symmetry
+      calleeCandidates = roomDoc.collection('calleeCandidates');
 
-      const offer = await pc.createOffer({offerToReceiveAudio: true});
+      const offer = await pc.createOffer({ offerToReceiveAudio:true });
       await pc.setLocalDescription(offer);
-
       await roomDoc.set({ offer: { type: offer.type, sdp: offer.sdp }, created: Date.now() });
 
-      // Listen for answer
-      roomDoc.onSnapshot(async (snap) => {
-        const data = snap.data();
+      // Wait for answer
+      roomDoc.onSnapshot(async (s) => {
+        const data = s.data();
         if (!pc.currentRemoteDescription && data && data.answer){
-          const answer = new RTCSessionDescription(data.answer);
-          await pc.setRemoteDescription(answer);
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
         }
       });
 
       // ICE from callee
-      calleeCandidates.onSnapshot(snap => {
-        snap.docChanges().forEach(change => {
-          if (change.type === 'added') {
-            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
-          }
+      calleeCandidates.onSnapshot(s => {
+        s.docChanges().forEach(ch => {
+          if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
         });
       });
 
       setStatus(`Created room ${roomId}. Share this ID with your partner.`);
     } else {
-      // Join existing room as CALLEE (answerer)
-      isHost = false;
-      callerCandidates = roomDoc.collection('callerCandidates');
-      calleeCandidates = roomDoc.collection('calleeCandidates');
+      // Room exists. OPTION B logic:
+      // - If it has a live offer waiting (no answer yet) => become CALLEE
+      // - Otherwise, it's stale => wipe and become HOST
+      const data = snap.data();
+      const hasOffer = !!(data && data.offer && data.offer.sdp);
+      const hasAnswer = !!(data && data.answer && data.answer.sdp);
 
-      const data = roomSnap.data();
-      if (!data.offer) throw new Error('Room has no offer yet.');
+      if (hasOffer && !hasAnswer){
+        // CALLEE path
+        isHost = false;
+        callerCandidates = roomDoc.collection('callerCandidates');
+        calleeCandidates = roomDoc.collection('calleeCandidates');
 
-      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await roomDoc.update({ answer: { type: answer.type, sdp: answer.sdp }, answered: Date.now() });
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await roomDoc.update({ answer: { type: answer.type, sdp: answer.sdp }, answered: Date.now() });
 
-      // ICE from caller
-      callerCandidates.onSnapshot(snap => {
-        snap.docChanges().forEach(change => {
-          if (change.type === 'added') {
-            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+        // ICE from caller
+        callerCandidates.onSnapshot(s => {
+          s.docChanges().forEach(ch => {
+            if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
+          });
+        });
+
+        setStatus(`Joined room ${roomId}.`);
+      } else {
+        // Stale room: auto-reset and become HOST
+        await clearRoomDoc(roomDoc);
+
+        isHost = true;
+        callerCandidates = roomDoc.collection('callerCandidates');
+        calleeCandidates = roomDoc.collection('calleeCandidates');
+
+        const offer = await pc.createOffer({ offerToReceiveAudio:true });
+        await pc.setLocalDescription(offer);
+        await roomDoc.set({ offer: { type: offer.type, sdp: offer.sdp }, created: Date.now() });
+
+        roomDoc.onSnapshot(async (s) => {
+          const d = s.data();
+          if (!pc.currentRemoteDescription && d && d.answer){
+            await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
           }
         });
-      });
-
-      setStatus(`Joined room ${roomId}.`);
+        calleeCandidates.onSnapshot(s => {
+          s.docChanges().forEach(ch => {
+            if (ch.type === 'added') pc.addIceCandidate(new RTCIceCandidate(ch.doc.data()));
+          });
+        });
+        setStatus(`Recreated room ${roomId}. Share this ID with your partner.`);
+      }
     }
 
     // Enable UI
-    talkBtn.disabled = false;
     isJoined = true;
+    talkBtn.disabled = false;
     attachPTTHandlers();
-    setConnBadge(); setIceBadge();
+    saveRecent(roomId);
+    joinBtn.disabled = false;
 
   } catch(err){
     console.error(err);
@@ -275,10 +353,10 @@ joinBtn.addEventListener('click', async () => {
   }
 });
 
-/*** 6) CLEANUP HELPERS (optional) ***/
-// (You can add a "Leave" button and call this)
+/*** 8) OPTIONAL LEAVE (close PC and release mic if pressed) ***/
+// (Not shown as a button, but kept here in case you want it)
 async function leave(){
-  if (audioTrack) audioTrack.stop();
+  await stopTalking();
   if (pc) pc.close();
   isJoined = false;
 }
