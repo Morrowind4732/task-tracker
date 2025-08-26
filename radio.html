@@ -139,6 +139,10 @@ let lastSeenAnswerSeq = -1;
 let sender = null;
 let currentMicTrack = null;
 
+let xcv = null;              // the audio transceiver
+let currentMicStream = null; // the full stream so we can stop() every track
+
+
 // Buffer ICE until subcollections exist
 let pendingIce = [];
 
@@ -209,33 +213,52 @@ async function startTalking(){
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
     });
+
+    currentMicStream = stream;
     const track = stream.getAudioTracks()[0];
     if (!track) return;
 
     currentMicTrack = track;
-    await sender.replaceTrack(track); // attach
+
+    // enable sending
+    if (xcv && xcv.direction !== 'sendrecv') xcv.direction = 'sendrecv';
+
+    await sender.replaceTrack(track);
     talkBtn.classList.add('talking');
     setMicBadge(true);
 
-    // attaching may need renegotiation
+    // renegotiate because direction/track changed
     maybeOffer();
   }catch(e){
     console.error('Mic error:', e);
     setStatus('Mic error: ' + (e.message || e));
   }
 }
+
 async function stopTalking(){
   if (!sender) return;
+
   try { await sender.replaceTrack(null); } catch {}
-  if (currentMicTrack){
+
+  if (currentMicTrack) {
     try { currentMicTrack.stop(); } catch {}
     currentMicTrack = null;
   }
+  if (currentMicStream) {
+    try { currentMicStream.getTracks().forEach(t => t.stop()); } catch {}
+    currentMicStream = null;
+  }
+
+  // no sending -> no mic indicator
+  if (xcv && xcv.direction !== 'recvonly') xcv.direction = 'recvonly';
+
   talkBtn.classList.remove('talking');
   setMicBadge(false);
-  // detaching may need renegotiation
+
+  // renegotiate because direction changed
   maybeOffer();
 }
+
 function attachPTTHandlers(){
   const downEvts = ['pointerdown','touchstart','mousedown'];
   const upEvts   = ['pointerup','pointercancel','touchend','mouseup','mouseleave'];
@@ -285,8 +308,9 @@ joinBtn.addEventListener('click', async () => {
     setConnBadge(); setIceBadge();
 
     // Prepare an audio m-line up front (no track yet).
-    const transceiver = pc.addTransceiver('audio', { direction: 'sendrecv' });
-    sender = transceiver.sender;
+xcv = pc.addTransceiver('audio', { direction: 'recvonly' }); // start with NO mic
+sender = xcv.sender;
+
 
     pc.onconnectionstatechange = () => { setConnBadge(); setStatus(`Peer: ${pc.connectionState}`); };
     pc.oniceconnectionstatechange = () => setIceBadge();
