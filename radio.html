@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Web PTT (Walkie-Talkie)</title>
+<style>
+  :root{
+    --bg:#0b1220; --card:#121a2a; --ink:#dbe2ff; --muted:#8ca0ff; --accent:#5b8cff; --ok:#39d98a; --warn:#ffb020;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b1220 0%, #0f1830 100%);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  .wrap{max-width:780px;margin:0 auto;padding:24px}
+  header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  h1{font-size:20px;margin:0;color:#e9edff}
+  .card{background:var(--card);border:1px solid #1e2a44;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  input[type=text]{flex:1;min-width:220px;background:#0c1424;border:1px solid #243153;color:var(--ink);padding:10px 12px;border-radius:10px}
+  button{background:#1a2a4d;border:1px solid #2c3d6b;color:#edf2ff;padding:10px 14px;border-radius:10px;cursor:pointer}
+  button.primary{background:linear-gradient(180deg,#345eea 0%,#2747b8 100%);border-color:#2747b8}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .status{font-size:13px;color:var(--muted);margin-top:8px;min-height:18px}
+  .grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:16px}
+  .pill{display:inline-flex;gap:8px;align-items:center;padding:6px 10px;border-radius:999px;background:#0e1830;border:1px solid #21315a;color:#a9bbff;font-size:12px}
+  .ptt{
+    display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:10px
+  }
+  .ptt button#talk{
+    width:100%;height:72px;font-size:20px;font-weight:700;border-radius:18px;
+    background:radial-gradient(60% 100% at 50% 0%, #5b8cff 0%, #345eea 100%);
+    border:1px solid #2747b8;box-shadow:0 12px 28px rgba(39,71,184,.45), inset 0 0 0 2px rgba(255,255,255,.06)
+  }
+  .ptt button#talk.talking{
+    background:radial-gradient(60% 100% at 50% 0%, #39d98a 0%, #1d9c64 100%);
+    border-color:#1d9c64;box-shadow:0 12px 28px rgba(29,156,100,.45), inset 0 0 0 2px rgba(255,255,255,.1)
+  }
+  .badgelist{display:flex;flex-wrap:wrap;gap:8px}
+  audio{width:100%;margin-top:6px;background:#0e1830;border-radius:10px}
+  .small{font-size:12px;color:#a9bbff}
+  .hint{font-size:12px;color:#7a8bcb;margin-top:8px}
+  .hr{height:1px;background:#1e2a44;margin:16px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Web Push-To-Talk</h1>
+    <span class="pill">Secure origin required (HTTPS)</span>
+  </header>
+
+  <div class="card">
+    <div class="row">
+      <input id="roomId" placeholder="Room ID (share this with your partner)" />
+      <button id="makeId">Random</button>
+      <button id="join" class="primary">Join</button>
+    </div>
+    <div class="status" id="status">Not connected.</div>
+
+    <div class="grid">
+      <div>
+        <div class="badgelist">
+          <span class="pill" id="micState">Mic: off</span>
+          <span class="pill" id="connState">Peer: idle</span>
+          <span class="pill" id="iceState">ICE: -</span>
+        </div>
+        <div class="ptt">
+          <button id="talk" disabled>Hold to Talk</button>
+          <div class="hint">Press & hold to speak. Release to stop. The other side always plays audio automatically after they click <b>Join</b>.</div>
+          <audio id="remoteAudio" autoplay playsinline></audio>
+          <div class="small">If you don’t hear anything, ensure both sides pressed <b>Join</b> and granted mic permission.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hr"></div>
+    <div class="small">
+      Tips:
+      <ul>
+        <li>Both sides must use the same <b>Room ID</b>.</li>
+        <li>Audio capture needs a user gesture (click/tap <b>Join</b>).</li>
+        <li>Echo cancellation & noise suppression are enabled.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Firebase SDKs -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<script>
+/*** 1) FIREBASE CONFIG — fill this with your project config ***/
+const firebaseConfig = {
+  apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
+  authDomain: "task-tracker-73b77.firebaseapp.com",
+  projectId: "task-tracker-73b77",
+  storageBucket: "task-tracker-73b77.appspot.com",
+  appId: "1:795274673000:web:0ea07130e45c72384134dd"
+};
+// Important: only initialize once per page
+firebase.initializeApp(firebaseConfig);   // <-- no guard
+const db = firebase.firestore();
+console.log('Firebase options:', firebase.app().options);
+
+
+
+/*** 2) DOM HANDLES ***/
+const roomIdEl   = document.getElementById('roomId');
+const makeIdBtn  = document.getElementById('makeId');
+const joinBtn    = document.getElementById('join');
+const talkBtn    = document.getElementById('talk');
+const statusEl   = document.getElementById('status');
+const micStateEl = document.getElementById('micState');
+const connStateEl= document.getElementById('connState');
+const iceStateEl = document.getElementById('iceState');
+const remoteAudio= document.getElementById('remoteAudio');
+
+/*** 3) STATE ***/
+let pc, localStream, audioTrack, roomDoc, callerCandidates, calleeCandidates;
+let isJoined = false;
+let isHost = false;
+
+/*** 4) UTILITIES ***/
+const genId = () => Math.random().toString(36).slice(2,8).toUpperCase();
+makeIdBtn.addEventListener('click', () => roomIdEl.value = genId());
+
+function setStatus(msg){ statusEl.textContent = msg; }
+function setMicBadge(on){ micStateEl.textContent = `Mic: ${on ? 'on (PTT)' : 'off'}`; }
+function setConnBadge(){ connStateEl.textContent = `Peer: ${pc ? pc.connectionState : 'idle'}`; }
+function setIceBadge(){ iceStateEl.textContent = `ICE: ${pc ? pc.iceConnectionState : '-'}`; }
+
+function attachPTTHandlers(){
+  const downEvts = ['pointerdown','touchstart','mousedown'];
+  const upEvts   = ['pointerup','pointercancel','touchend','mouseup','mouseleave'];
+
+  const startTalk = () => {
+    if (!audioTrack) return;
+    audioTrack.enabled = true;
+    talkBtn.classList.add('talking');
+    setMicBadge(true);
+  };
+  const stopTalk = () => {
+    if (!audioTrack) return;
+    audioTrack.enabled = false;
+    talkBtn.classList.remove('talking');
+    setMicBadge(false);
+  };
+
+  downEvts.forEach(e => talkBtn.addEventListener(e, startTalk));
+  upEvts.forEach(e => talkBtn.addEventListener(e, stopTalk));
+  // Safety: stop talking when tab loses focus
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopTalk();
+  });
+}
+
+/*** 5) CORE: CREATE OR JOIN ROOM ***/
+joinBtn.addEventListener('click', async () => {
+  if (isJoined) return;
+  const roomId = (roomIdEl.value || '').trim();
+  if (!roomId){ roomIdEl.value = genId(); return; }
+
+  joinBtn.disabled = true;
+
+  try{
+    // Get mic early (permission prompt requires gesture)
+    localStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      }
+    });
+    // PTT: start with track disabled
+    audioTrack = localStream.getAudioTracks()[0];
+    audioTrack.enabled = false;
+    setMicBadge(false);
+
+    pc = new RTCPeerConnection({
+      iceServers: [{urls:'stun:stun.l.google.com:19302'}]
+    });
+
+    // Keep only audio
+    pc.addTrack(audioTrack, localStream);
+
+    pc.onconnectionstatechange = () => {
+      setConnBadge();
+      setStatus(`Peer: ${pc.connectionState}`);
+    };
+    pc.oniceconnectionstatechange = () => setIceBadge();
+    pc.onicecandidate = async (event) => {
+      if (!event.candidate) return;
+      const cand = event.candidate.toJSON();
+      if (isHost) {
+        await callerCandidates.add(cand);
+      } else {
+        await calleeCandidates.add(cand);
+      }
+    };
+    pc.ontrack = (event) => {
+      // remote audio stream
+      remoteAudio.srcObject = event.streams[0];
+    };
+
+    // Firestore room doc
+    roomDoc = db.collection('ptt_rooms').doc(roomId);
+
+    const roomSnap = await roomDoc.get();
+    if (!roomSnap.exists){
+      // Create room as HOST (offerer)
+      isHost = true;
+      callerCandidates = roomDoc.collection('callerCandidates');
+      calleeCandidates = roomDoc.collection('calleeCandidates'); // will exist for symmetry
+
+      const offer = await pc.createOffer({offerToReceiveAudio: true});
+      await pc.setLocalDescription(offer);
+
+      await roomDoc.set({ offer: { type: offer.type, sdp: offer.sdp }, created: Date.now() });
+
+      // Listen for answer
+      roomDoc.onSnapshot(async (snap) => {
+        const data = snap.data();
+        if (!pc.currentRemoteDescription && data && data.answer){
+          const answer = new RTCSessionDescription(data.answer);
+          await pc.setRemoteDescription(answer);
+        }
+      });
+
+      // ICE from callee
+      calleeCandidates.onSnapshot(snap => {
+        snap.docChanges().forEach(change => {
+          if (change.type === 'added') {
+            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+          }
+        });
+      });
+
+      setStatus(`Created room ${roomId}. Share this ID with your partner.`);
+    } else {
+      // Join existing room as CALLEE (answerer)
+      isHost = false;
+      callerCandidates = roomDoc.collection('callerCandidates');
+      calleeCandidates = roomDoc.collection('calleeCandidates');
+
+      const data = roomSnap.data();
+      if (!data.offer) throw new Error('Room has no offer yet.');
+
+      await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      await roomDoc.update({ answer: { type: answer.type, sdp: answer.sdp }, answered: Date.now() });
+
+      // ICE from caller
+      callerCandidates.onSnapshot(snap => {
+        snap.docChanges().forEach(change => {
+          if (change.type === 'added') {
+            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+          }
+        });
+      });
+
+      setStatus(`Joined room ${roomId}.`);
+    }
+
+    // Enable UI
+    talkBtn.disabled = false;
+    isJoined = true;
+    attachPTTHandlers();
+    setConnBadge(); setIceBadge();
+
+  } catch(err){
+    console.error(err);
+    setStatus('Error: ' + (err.message || err.toString()));
+    joinBtn.disabled = false;
+  }
+});
+
+/*** 6) CLEANUP HELPERS (optional) ***/
+// (You can add a "Leave" button and call this)
+async function leave(){
+  if (audioTrack) audioTrack.stop();
+  if (pc) pc.close();
+  isJoined = false;
+}
+</script>
+</body>
+</html>
