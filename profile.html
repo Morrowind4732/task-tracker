@@ -1957,56 +1957,78 @@ btn.addEventListener('pointercancel', end);
 
 /* ---------------- Speech engine ---------------- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec=null, activeId=null, activeFix=null; // activeFix = { itemId, phrase, suggestKey }
+let rec = null, activeId = null, activeFix = null; // activeFix = { itemId, phrase, suggestKey }
 let listeningToastId = null;
 let finalChunks = [];
 
-if (SR){
+// Debug state (read by the debug overlay)
+window.debugState = {
+  heard: { chunks: [], alts: [], assembled: '' },
+  parsed: null,
+  summary: null,
+  ts: 0
+};
+
+if (SR) {
   rec = new SR();
   rec.lang = 'en-US';
   rec.interimResults = false;
   rec.continuous = false;
-  rec.maxAlternatives = 1;
+  rec.maxAlternatives = 3;
 
   rec.onstart = () => {
     setStatus('listening…');
     if (listeningToastId) hideToast(listeningToastId);
     listeningToastId = showToast('🎤 Listening…', { duration: 0, size: 'xxl' });
-    finalChunks = []; // start a new buffer for this utterance
+    finalChunks = [];
+    // reset debug buffer
+    window.debugState.heard.chunks = [];
+    window.debugState.heard.alts = [];
+    window.debugState.heard.assembled = '';
+    window.debugState.parsed = null;
+    window.debugState.summary = null;
   };
 
-  rec.onerror = e => {
+  rec.onerror = (e) => {
     setStatus('error: ' + (e.error || 'unknown'));
-    if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
-    showToast('Speech error', { type:'error', sub:String(e.error || ''), duration:2000 });
+    if (listeningToastId) { hideToast(listeningToastId); listeningToastId = null; }
+    showToast('Speech error', { type: 'error', sub: String(e.error || ''), duration: 2000 });
     endListen();
   };
 
-  // Collect only final segments; do all parsing in onend (mobile-safe)
+  // Buffer finals (mobile-safe) and collect alternatives
   rec.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++){
-      const r = e.results[i];
-      if (r.isFinal){
-        finalChunks.push((r[0]?.transcript || '').trim());
+    const alts = [];
+    for (const r of Array.from(e.results)) {
+      if (r.isFinal) {
+        const t0 = (r[0]?.transcript || '').trim();
+        if (t0) finalChunks.push(t0);
+        for (const a of Array.from(r)) {
+          const t = (a?.transcript || '').trim();
+          if (t) alts.push(t);
+        }
       }
     }
+    window.debugState.heard.chunks = finalChunks.slice();
+    window.debugState.heard.alts = alts;
   };
 
   rec.onend = () => {
     setStatus('idle');
-    if (listeningToastId){ hideToast(listeningToastId); listeningToastId = null; }
+    if (listeningToastId) { hideToast(listeningToastId); listeningToastId = null; }
 
-    // Stitch every final piece together – this is the full utterance on mobile/desktop
+    // Assemble everything we heard during this session
     const best = finalChunks.join(' ').trim();
     finalChunks = [];
+    window.debugState.heard.assembled = best;
+    window.debugState.ts = Date.now();
 
     if (!best) { endListen(); return; }
 
-    // ---- Dog-name listening fast-path ----
+    // Dog-name fast-path
     if (dogListenActive) {
       const cmd = normalize(best);
 
-      // Voice shortcuts
       if (/\bgo\s+to\s+gps\b/.test(cmd)) {
         dogListenActive = false;
         dogMicBtn?.classList.remove('listening');
@@ -2020,7 +2042,6 @@ if (SR){
         return;
       }
 
-      // Dog-name match
       const name = matchDogName(best);
       if (name) {
         setSelectedDog(name);
@@ -2034,21 +2055,13 @@ if (SR){
       return;
     }
 
-    // ---- Debug (final) ----
-    console.groupCollapsed(
-      `%cSpeech(final) → %c${best}`,
-      'color:#888', 'color:#111;font-weight:700'
-    );
-    console.log('activeId:', activeId, 'activeFix:', activeFix);
-    console.groupEnd();
-
+    // Apply to items
     let summary = null;
 
-    // ---- Missed-phrase “fix” mode ----
     if (activeFix) {
       const before = snapshotFlags(items.find(x => x.id === activeFix.itemId));
       summary = applyTranscript(activeFix.itemId, best);
-      const after  = snapshotFlags(items.find(x => x.id === activeFix.itemId));
+      const after = snapshotFlags(items.find(x => x.id === activeFix.itemId));
       const changed = diffFlags(before, after);
 
       const matchedSuggestion =
@@ -2068,12 +2081,15 @@ if (SR){
       }
       activeFix = null;
 
-    // ---- Normal per-item flow ----
     } else if (activeId) {
       summary = applyTranscript(activeId, best);
     }
 
-    // ---- Result toasts / feedback ----
+    // Capture parse + summary for the debug overlay
+    try { window.debugState.parsed = parseUtterance(best); } catch { window.debugState.parsed = null; }
+    window.debugState.summary = summary || null;
+
+    // Result feedback
     if (summary?.batchApplied) {
       const range =
         summary.batchApplied > 1
@@ -2103,14 +2119,10 @@ if (SR){
     endListen();
   };
 
-
-
-
-
-
-}else{
+} else {
   setStatus('Speech API not supported in this browser.');
 }
+
 function setStatus(s){ statusEl.textContent='Status: '+s; }
 function startListeningFor(id){
   if(!rec){ alert('Speech API not supported'); return; }
@@ -2752,7 +2764,8 @@ function bestSuggestion(seg){
       if (!best || sim > best.sim) best = { key:f.key, label:f.label, sim };
     }
   }
-  return (best && best.sim >= 0.55) ? best : null; // threshold
+  return (best && best.sim >= 0.50) ? best : null; // slightly more generous
+
 }
 
 let DOG_NAMES = [];
@@ -2979,6 +2992,16 @@ function applyTranscript(itemId, raw){
 
   const parsed = parseUtterance(raw);
   const { intents, missed, groups } = parsed;
+// Generous fallback: if we didn't target specific groups and didn't get an explicit score,
+// but we *can* see multiple numbers anywhere, treat them as a batch (current lane onward).
+if ((!groups || groups.length === 0) &&
+    (!intents.batchScores || intents.batchScores.length === 0) &&
+    !(Number.isFinite(intents.score))) {
+  const numsAny = parseScoreListFlexible(raw);
+  if (numsAny.length > 1) {
+    intents.batchScores = numsAny.map(n => quant05(Math.max(0, Math.min(10, n))));
+  }
+}
 
   // ----- Addressed group path (“Mark 3 …”, “Blind 2 …”) -----
 if (groups && groups.length){
@@ -3252,6 +3275,114 @@ function bootAfterUser(){
 // Always ask who it is
 showUserOverlay();
 
+
+// ---------- Debug overlay ----------
+(function ensureDebugUI(){
+  if (document.getElementById('debugBtn')) return;
+
+  const btn = document.createElement('button');
+  btn.id = 'debugBtn';
+  btn.className = 'btn';
+  btn.textContent = '🧪 Debug';
+  Object.assign(btn.style, {
+    position:'fixed', right:'14px', bottom:'14px', zIndex: 10001,
+    boxShadow:'0 8px 24px rgba(16,24,40,.18)', fontWeight:'800'
+  });
+  document.body.appendChild(btn);
+
+  const ov = document.createElement('div');
+  ov.id = 'debugOverlay';
+  ov.className = 'overlay';
+  ov.setAttribute('aria-hidden','true');
+  ov.innerHTML = `
+    <div class="sheet" style="max-width:860px">
+      <div class="sheet-head" style="gap:8px;flex-wrap:wrap">
+        <strong>Speech Debug</strong>
+        <div class="hint">Shows the last heard chunks, the assembled text, parsed intents, and what was applied.</div>
+      </div>
+      <div class="sheet-body" id="debugBody" style="display:flex;flex-direction:column;gap:12px"></div>
+      <div class="sheet-foot">
+        <button class="btn" id="dbgClose">Close</button>
+        <button class="btn ghost" id="dbgRefresh">Refresh</button>
+        <button class="btn primary" id="dbgReapply">Re-apply to current pane</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+
+  const open = () => {
+    document.documentElement.classList.add('overlay-open');
+    ov.classList.add('open');
+    ov.setAttribute('aria-hidden','false');
+    render();
+  };
+  const close = () => {
+    ov.classList.remove('open');
+    ov.setAttribute('aria-hidden','true');
+    if (!document.querySelector('.overlay.open')) {
+      document.documentElement.classList.remove('overlay-open');
+    }
+  };
+  const esc = (e) => { if (e.key === 'Escape') close(); };
+
+  function escHtml(s){ return String(s||'').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+  function render(){
+    const el = document.getElementById('debugBody');
+    const d = (window.debugState || {});
+    const heard = d.heard || {};
+    const parsed = d.parsed || {};
+    const intents = parsed.intents || {};
+    const groups = parsed.groups || [];
+
+    const lines = [];
+    lines.push(`<div><strong>Heard chunks (${(heard.chunks||[]).length}):</strong><br><code>${escHtml((heard.chunks||[]).join(' | '))}</code></div>`);
+    if ((heard.alts||[]).length){
+      lines.push(`<div><strong>Alternatives:</strong><br><code>${escHtml([...new Set(heard.alts)].join(' | '))}</code></div>`);
+    }
+    lines.push(`<div><strong>Assembled:</strong><br><code>${escHtml(heard.assembled||'')}</code></div>`);
+
+    if (parsed && Object.keys(parsed).length){
+      lines.push(`<hr style="border:none;border-top:1px solid #eee">`);
+      lines.push(`<div><strong>Parsed → batchScores:</strong> <code>${escHtml((intents.batchScores||[]).join(', '))}</code></div>`);
+      lines.push(`<div><strong>Parsed → score/adjust/clear:</strong> <code>score=${escHtml(intents.score)} adjust=${escHtml(intents.adjust)} clearAll=${Boolean(intents.clearAll)}</code></div>`);
+      lines.push(`<div><strong>Parsed → flags (add/remove/toggle):</strong> <code>+${escHtml(Array.from(intents.add||[]).join(','))} –${escHtml(Array.from(intents.remove||[]).join(','))} ~${escHtml(Array.from(intents.toggle||[]).join(','))}</code></div>`);
+      if (groups.length){
+        lines.push(`<div><strong>Parsed → addressed groups:</strong> <code>${escHtml(groups.map(g=>`${g.kind}#${g.index}`).join(', '))}</code></div>`);
+      }
+    }
+
+    if (d.summary){
+      lines.push(`<hr style="border:none;border-top:1px solid #eee">`);
+      const s = d.summary;
+      if (s.batchApplied){
+        lines.push(`<div><strong>Applied (batch):</strong> <code>${escHtml(s.batchApplied)} ${escHtml(s.batchKind)}(s) ${escHtml(s.batchFrom)} → ${escHtml(s.batchTo)}</code></div>`);
+      } else {
+        const parts = [];
+        if ((s.added||[]).length) parts.push(`Added: ${s.added.join(', ')}`);
+        if ((s.removed||[]).length) parts.push(`Removed: ${s.removed.join(', ')}`);
+        if (s.setScore) parts.push(`Score set: ${s.score?.toFixed?.(1)}`);
+        else if (s.adjust) parts.push(`Adjust: ${s.adjust>0?'+':''}${s.adjust} → ${s.score?.toFixed?.(1)}`);
+        lines.push(`<div><strong>Applied:</strong> <code>${escHtml(parts.join(' • ') || '—')}</code></div>`);
+      }
+    }
+
+    el.innerHTML = lines.join('\n');
+  }
+
+  btn.addEventListener('click', open);
+  document.getElementById('dbgClose').addEventListener('click', close);
+  document.getElementById('dbgRefresh').addEventListener('click', render);
+  document.getElementById('dbgReapply').addEventListener('click', () => {
+    const tx = (window.debugState?.heard?.assembled || '').trim();
+    if (!tx || !activeId) { showToast('Nothing to re-apply', { type:'info', duration:1200 }); return; }
+    const summary = applyTranscript(activeId, tx);
+    window.debugState.summary = summary || null;
+    render();
+  });
+  // click backdrop to close
+  ov.addEventListener('click', (e)=>{ if (e.target === ov) close(); });
+  document.addEventListener('keydown', esc);
+})();
 
 
 
