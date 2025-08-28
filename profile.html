@@ -817,6 +817,43 @@ html, body { max-width:100%; overflow-x:hidden; overscroll-behavior-x:none; }
   </div>
 </div>
 
+<!-- Dog manual search overlay (ADD) -->
+<div id="dogManualOverlay" class="overlay" aria-hidden="true">
+  <div class="sheet" style="max-width:520px">
+    <div class="sheet-head" style="gap:8px;flex-wrap:wrap">
+      <strong>Dog not detected</strong>
+      <div class="hint" id="dogManualHint">Want to search manually?</div>
+    </div>
+
+    <!-- Step 1: Yes/No -->
+    <div class="sheet-body" id="dogManualStep1" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+      <button class="btn" id="dogManualNo">No</button>
+      <button class="btn primary" id="dogManualYes">Yes</button>
+    </div>
+
+    <!-- Step 2: letter grid -->
+    <div class="sheet-body" id="dogManualStep2" style="display:none;gap:8px;flex-wrap:wrap">
+      <div class="hint" style="width:100%">Pick the first letter:</div>
+      <div id="dogLetterWrap" style="display:flex;gap:8px;flex-wrap:wrap">
+        <!-- A–Z buttons injected by JS -->
+      </div>
+    </div>
+
+    <!-- Step 3: names list -->
+    <div class="sheet-body" id="dogManualStep3" style="display:none;gap:8px;flex-wrap:wrap">
+      <div class="hint" id="dogManualLetterNote" style="width:100%"></div>
+      <div id="dogNameWrap" style="display:flex;gap:8px;flex-wrap:wrap">
+        <!-- dog buttons injected by JS -->
+      </div>
+    </div>
+
+    <div class="sheet-foot" style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="dogManualClose">Close</button>
+    </div>
+  </div>
+</div>
+
+
   
 <!-- Active-flags peek (hold the red circle, swipe down to clear) -->
 <div id="peekOverlay" class="overlay" aria-hidden="true">
@@ -993,7 +1030,7 @@ async function loadDogRun(dogName){
     const s = saved[it.id];
 
     // NEW: hard reset to a clean baseline first
-    const newScore = Number.isFinite(s?.score) ? quant05(s.score) : 0;
+    const newScore = Number.isFinite(s?.score) ? quant05(s.score) : 10;
     const newFlags = (s?.flags && typeof s.flags === 'object') ? { ...s.flags } : {};
 
     // Only mark changed if values differ (prevents noisy re-renders)
@@ -1031,7 +1068,7 @@ function attachRunListener(dogName){
     items.forEach(it => {
       const s = saved[it.id];
 
-      const newScore = Number.isFinite(s?.score) ? quant05(s.score) : 0;
+      const newScore = Number.isFinite(s?.score) ? quant05(s.score) : 10;
       const newFlags = (s?.flags && typeof s.flags === 'object') ? { ...s.flags } : {};
 
       const flagsChanged = JSON.stringify(it.flags || {}) !== JSON.stringify(newFlags);
@@ -2077,11 +2114,13 @@ if (SR) {
         setStatus('Dog: ' + name);
       } else {
         setStatus('Heard: "' + best + '", didn’t match a dog');
+        openDogManualPrompt(best); // ← show fallback overlay
       }
       dogListenActive = false;
       dogMicBtn?.classList.remove('listening');
       endListen();
       return;
+
     }
 
     // Apply to items
@@ -2877,6 +2916,110 @@ function setSelectedDog(name){
     }, { merge:true }).catch(console.error);
   }
 }
+
+/* ================= Manual dog picker (fallback) ================= */
+let lastHeardDogQuery = '';
+
+const dogManualOverlay = document.getElementById('dogManualOverlay');
+const dogManualHint    = document.getElementById('dogManualHint');
+const step1            = document.getElementById('dogManualStep1');
+const step2            = document.getElementById('dogManualStep2');
+const step3            = document.getElementById('dogManualStep3');
+const letterWrap       = document.getElementById('dogLetterWrap');
+const nameWrap         = document.getElementById('dogNameWrap');
+const letterNote       = document.getElementById('dogManualLetterNote');
+
+document.getElementById('dogManualYes').addEventListener('click', () => {
+  showLetters();
+});
+document.getElementById('dogManualNo').addEventListener('click', () => {
+  closeDogManualOverlay();
+});
+document.getElementById('dogManualClose').addEventListener('click', () => {
+  closeDogManualOverlay();
+});
+
+// Click backdrop to close
+dogManualOverlay.addEventListener('click', (e) => {
+  if (e.target === dogManualOverlay) closeDogManualOverlay();
+});
+
+function openDogManualPrompt(transcript='') {
+  lastHeardDogQuery = transcript || '';
+  dogManualHint.textContent = lastHeardDogQuery
+    ? `Heard “${lastHeardDogQuery}”. Search manually?`
+    : 'Want to search manually?';
+
+  // reset steps
+  step1.style.display = 'flex';
+  step2.style.display = 'none';
+  step3.style.display = 'none';
+  nameWrap.innerHTML = '';
+  letterWrap.innerHTML = '';
+
+  // open overlay
+  dogManualOverlay.classList.add('open');
+  dogManualOverlay.setAttribute('aria-hidden','false');
+  document.documentElement.classList.add('overlay-open');
+}
+
+function closeDogManualOverlay(){
+  dogManualOverlay.classList.remove('open');
+  dogManualOverlay.setAttribute('aria-hidden','true');
+  if (!document.querySelector('.overlay.open')) {
+    document.documentElement.classList.remove('overlay-open');
+  }
+}
+
+// Step 2: render A–Z buttons
+function showLetters(){
+  step1.style.display = 'none';
+  step2.style.display = 'flex';
+  step3.style.display = 'none';
+  letterWrap.innerHTML = '';
+
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  for (const L of letters){
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.textContent = L;
+    b.dataset.letter = L;
+    b.addEventListener('click', () => showNamesFor(L));
+    letterWrap.appendChild(b);
+  }
+}
+
+// Step 3: filter names by first letter and render buttons
+function showNamesFor(letter){
+  step2.style.display = 'none';
+  step3.style.display = 'flex';
+  nameWrap.innerHTML = '';
+  letterNote.textContent = `Showing names starting with “${letter}”.`;
+
+  // Ensure DOG_NAMES is ready (your fetchDogNames() already runs on load)
+  const list = (DOG_NAMES || []).filter(n => (String(n).trim().toUpperCase().startsWith(letter)));
+
+  if (!list.length){
+    const empty = document.createElement('div');
+    empty.className = 'hint';
+    empty.textContent = 'No names for this letter.';
+    nameWrap.appendChild(empty);
+    return;
+  }
+
+  for (const n of list){
+    const b = document.createElement('button');
+    b.className = 'btn primary';
+    b.textContent = n;
+    b.addEventListener('click', () => {
+      setSelectedDog(n);
+      setStatus('Dog: ' + n + ' (manual)');
+      closeDogManualOverlay();
+    });
+    nameWrap.appendChild(b);
+  }
+}
+
 
 // We’ll reuse your existing SpeechRecognition instance `rec`
 let dogListenActive = false;
