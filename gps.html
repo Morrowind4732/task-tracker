@@ -1684,7 +1684,27 @@ pressTimer = setTimeout(async () => {
 map.on('mouseup',  () => clearTimeout(pressTimer));
 map.on('mouseout', () => clearTimeout(pressTimer));
 
+// Change trainer — reuse the existing "change user" logic
+document.getElementById('fabChangeTrainer')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  closeFab();
+  document.getElementById('changeUserLink')?.click();   // triggers your existing handler
+});
 
+// Load setup — open the date picker like clicking the calendar
+document.getElementById('fabLoadSetup')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  closeFab();
+  const dp = document.getElementById('dayPicker');
+  if (!dp) return;
+  if (typeof dp.showPicker === 'function') {
+    dp.showPicker();           // modern browsers
+  } else {
+    dp.focus();                // fallback
+    dp.click();                // some browsers open the picker on click
+  }
+});
+	
 
 
   /* HUD outside map on mobile */
@@ -1718,4 +1738,5 @@ await switchDay(dayPicker.value);
 </script>
 </body>
 </html>
+
 
