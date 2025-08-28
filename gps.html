@@ -121,6 +121,65 @@
   .muted { color:#666; font-size:12px; }
   #fitBtn { display: none !important; }
 
+/* Place overlay should stack its rows */
+#placeList{
+  display:flex;
+  flex-direction:column;   /* stack rows */
+  gap:10px;                /* space between rows */
+}
+
+/* Each row: normal button flow, not stretched */
+#placeList .overlay-actions{
+  justify-content:flex-start; /* not space-between */
+  flex-wrap:wrap;
+}
+
+/* FAB */
+.fab {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25);
+  z-index: 1100;            /* above HUD/Dock, below overlays */
+  display: grid; place-items: center;
+}
+.fab:active { transform: translateY(1px); }
+
+/* 3 dashes icon */
+.fab .bars { display: grid; gap: 4px; }
+.fab .bars i { display:block; width:22px; height:2px; background:#fff; border-radius:2px; }
+
+/* FAB menu */
+.fab-menu {
+  position: fixed;
+  right: 16px;
+  bottom: 80px;             /* sits above the button */
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.2);
+  padding: 8px;
+  z-index: 1100;
+  display: none;
+  min-width: 160px;
+}
+.fab-menu.open { display: block; }
+.fab-menu a {
+  display: block;
+  padding: 10px 12px;
+  border-radius: 8px;
+  color: #111;
+  text-decoration: none;
+}
+.fab-menu a:hover { background: #f5f5f5; }
+
+
 </style>
 </head>
 <body>
@@ -163,6 +222,18 @@
   </div>
 </div>
 
+<!-- Group picker overlay (ADD) -->
+<div class="overlay" id="groupOverlay">
+  <div class="overlay-card" style="min-width:320px;">
+    <h3>Choose a group</h3>
+    <div id="groupList" class="overlay-actions" style="justify-content:flex-start"></div>
+    <div class="overlay-actions" style="justify-content:flex-end">
+      <button class="btn" id="groupCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- HUD -->
 <div class="hud" id="hud">
   <div class="row">
@@ -198,14 +269,27 @@
 
 <div id="map"></div>
 
+<button id="fab" class="fab" aria-haspopup="true" aria-controls="fabMenu" aria-label="More">
+  <span class="bars">
+    <i></i><i></i><i></i>
+  </span>
+</button>
+
+<div id="fabMenu" class="fab-menu" role="menu" aria-hidden="true">
+  <a id="fabSetup"  href="#" role="menuitem">Setup</a>
+  <a id="fabScores" href="#" role="menuitem">Scores</a>
+</div>
+
+
 <script type="module">
   /* ---------------- Firebase (v10) ---------------- */
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
   import {
-    getFirestore, doc, setDoc, updateDoc, onSnapshot,
-    collection, query, orderBy, deleteField,
-    getDocs, limit
-  } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+  getFirestore, doc, setDoc, updateDoc, onSnapshot,
+  collection, query, orderBy, deleteField,
+  getDocs, getDoc, limit, runTransaction
+} from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
 
   const firebaseConfig = {
     apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
@@ -265,6 +349,142 @@ function qualSuffix(mark){
 /* ---- UI scale knob (0.7 = smaller, 1 = current, 1.3 = larger) ---- */
 const PILL_SCALE = 0.5;   // try 0.85 first on phone
 const SETUPS_URL = 'https://morrowind4732.github.io/task-tracker/setups.html';
+const PROFILE_URL = 'https://morrowind4732.github.io/task-tracker/profile.html';
+
+
+
+/* ================= Setup ensure + append helpers (ADD) ================= */
+
+function newId(prefix){
+  // short unique id (e.g., "m_x7k3f9")
+  return `${prefix}_${Math.random().toString(36).slice(2,8)}`;
+}
+
+async function ensureActiveSetupExists(){
+  // Ensure trainer/day is chosen
+  if (!trainerId) throw new Error('No trainer selected');
+  if (!currentDateKey) currentDateKey = ymd(new Date());
+
+  // If we already have an active setup id, we're good
+  if (activeSetupId) return activeSetupId;
+
+  // See if there is any setup doc — if so, the listener will set activeSetupId
+  const snap = await getDocs(query(setupsColl(), limit(1)));
+  if (!snap.empty){
+    // pick first; listener will populate activeSetupId
+    const first = snap.docs[0];
+    activeSetupId = first.id;
+    return activeSetupId;
+  }
+
+  // Create a new setup (order=1) with 2 default groups
+  const ref = doc(setupsColl());
+  const seed = {
+    order: 1,
+    name: 'Setup 1',
+    items: [],
+    blinds: [],
+    columns: {
+      dock: [],
+      cols: [ { items: [] }, { items: [] } ]   // default two groups
+    },
+    geo: {}
+  };
+  await setDoc(ref, seed, { merge: true });
+  activeSetupId = ref.id;
+  renderTabs();        // show the tab
+  attachSetupDocListener(); // begin listening to the new doc
+  return activeSetupId;
+}
+
+function openGroupPicker({ onPick, allowAdd=true }){
+  const ov   = document.getElementById('groupOverlay');
+  const list = document.getElementById('groupList');
+  const cancel = document.getElementById('groupCancel');
+
+  // Build current groups (fallback to 2 if missing)
+  const cols = Array.isArray(activeSetupData.columns?.cols) && activeSetupData.columns.cols.length
+    ? activeSetupData.columns.cols
+    : [{items:[]},{items:[]}];
+
+  list.innerHTML = '';
+
+  cols.forEach((_, i) => {
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.textContent = `Group ${i+1}`;
+    b.addEventListener('click', () => {
+      close(); onPick({ index: i, addedNew: false });
+    }, { once:true });
+    list.appendChild(b);
+  });
+
+  if (allowAdd){
+    const add = document.createElement('button');
+    add.className = 'btn primary';
+    add.textContent = '+ Group';
+    add.addEventListener('click', () => {
+      close(); onPick({ index: cols.length, addedNew: true });
+    }, { once:true });
+    list.appendChild(add);
+  }
+
+  function close(){
+    ov.classList.remove('open');
+  }
+  cancel.onclick = close;
+  ov.classList.add('open');
+}
+
+/** Append a new Mark/Blind into the setup safely (transaction; no overwrites). */
+async function appendSetupItem({ kind, groupIndex }){
+  if (kind !== 'mark' && kind !== 'blind') throw new Error('kind must be "mark" or "blind"');
+
+  await ensureActiveSetupExists();
+  const sref = setupDoc();
+  if (!sref) throw new Error('No setup doc');
+
+  const newItemId = newId(kind === 'mark' ? 'm' : 'b');
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(sref);
+    const d = snap.exists() ? (snap.data() || {}) : {};
+
+    // Ensure shapes
+    const items  = Array.isArray(d.items)  ? d.items.slice()  : [];
+    const blinds = Array.isArray(d.blinds) ? d.blinds.slice() : [];
+    const cols   = Array.isArray(d.columns?.cols) ? d.columns.cols.map(c => ({ items: Array.isArray(c.items)?c.items.slice():[] })) : [{items:[]},{items:[]}];
+    const dock   = Array.isArray(d.columns?.dock) ? d.columns.dock.slice() : [];
+
+    // Expand groups if needed (e.g., "+ Group" case)
+    while (groupIndex >= cols.length) cols.push({ items: [] });
+
+    if (kind === 'mark'){
+      items.push({ id: newItemId, dist: 0 });
+      cols[groupIndex].items.push(newItemId);
+      tx.set(sref, { items, columns: { dock, cols } }, { merge: true });
+    } else {
+      blinds.push({ id: newItemId, dist: 0 });
+      // Blinds are not grouped in columns; nothing to push to group
+      tx.set(sref, { blinds, columns: { dock, cols } }, { merge: true });
+    }
+  });
+
+  return newItemId;
+}
+
+
+
+/* Place a newly added item at current GPS (same offsets & distance writers) */
+async function placeNewlyAdded(kind, id){
+  const p = await getGPS();
+  const P = applyPlaceOffset(p);
+  const payload = { type: kind, id, label: '' }; // label not needed by placeItem()
+
+  await placeItem(payload, L.latLng(P.lat, P.lng));
+  // Center the map like other "place at me" actions
+  map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration: 0.6 });
+}
 
 
   /* Mobile placement state */
@@ -282,7 +502,8 @@ const SETUPS_URL = 'https://morrowind4732.github.io/task-tracker/setups.html';
 
   let trainerId = (new URL(location.href)).searchParams.get('trainer') || '';
   updateSetupsLink();
-  
+  updateFabLinks();
+
   $('#changeUserLink').addEventListener('click', (e)=> {
   e.preventDefault();
   const url = new URL(location.href);
@@ -290,6 +511,7 @@ const SETUPS_URL = 'https://morrowind4732.github.io/task-tracker/setups.html';
   history.replaceState(null,'',url.toString());
   trainerId = '';
   updateSetupsLink();
+  updateFabLinks();
   showTrainerPrompt();
 });
 
@@ -300,6 +522,7 @@ const SETUPS_URL = 'https://morrowind4732.github.io/task-tracker/setups.html';
     history.replaceState(null,'',url.toString());
     ctxEl.textContent = `Trainer: ${trainerId}`;
 	updateSetupsLink();
+	updateFabLinks();
     boot();
   }
   
@@ -467,6 +690,22 @@ function updateSetupsLink() {
   if (trainerId) url.searchParams.set('trainer', trainerId);
   a.href = url.toString();
 }
+
+
+function makeTrainerUrl(base){
+  const url = new URL(base);
+  if (trainerId) url.searchParams.set('trainer', trainerId);
+  return url.toString();
+}
+
+function updateFabLinks(){
+  const setupA  = document.getElementById('fabSetup');
+  const scoresA = document.getElementById('fabScores');
+  if (!setupA || !scoresA) return;
+  setupA.href  = makeTrainerUrl(SETUPS_URL);
+  scoresA.href = makeTrainerUrl(PROFILE_URL);
+}
+
 
 
   /* pill size helper */
@@ -1247,55 +1486,149 @@ function applyPlaceOffset(ll){
 }
 
 
-  $('#placeBtn').addEventListener('click', ()=>{
-    const opts = [];
+// FAB open/close behavior
+const fab     = document.getElementById('fab');
+const fabMenu = document.getElementById('fabMenu');
 
-    // Trainer if unplaced
-    if (!activeSetupData.geo?.trainer){
-      opts.push({ type:'trainer', id:'TR', label:'Trainer (TR)' });
-    }
+function closeFab(){ fabMenu.classList.remove('open'); fabMenu.setAttribute('aria-hidden','true'); }
 
-    // Marks (unplaced)
-    const marksPlaced = activeSetupData.geo?.marks || {};
-    (activeSetupData.items||[]).forEach((m, idx)=>{
-      if (!marksPlaced[m.id]) opts.push({ type:'mark', id:m.id, label:`Mark M${idx+1}${qualSuffix(m)}` });
+fab.addEventListener('click', (e)=>{
+  e.stopPropagation();
+  const open = !fabMenu.classList.contains('open');
+  if (open){
+    fabMenu.classList.add('open');
+    fabMenu.setAttribute('aria-hidden','false');
+    updateFabLinks(); // ensure links include current trainer
+  } else {
+    closeFab();
+  }
+});
 
-    });
-
-    // Blinds (unplaced)
-    const blindsPlaced = activeSetupData.geo?.blinds || {};
-    (activeSetupData.blinds||[]).forEach((b, i)=>{
-      if (!blindsPlaced[b.id]) opts.push({ type:'blind', id:b.id, label:`Blind B${i+1}` });
-    });
-
-    if (!opts.length){ alert('Everything is already placed.'); return; }
-
-    const list = $('#placeList'); list.innerHTML = '';
-    opts.forEach(o=>{
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.textContent = o.label;
-      btn.addEventListener('click', async ()=>{
-        try{
-          btn.disabled = true; btn.textContent = 'Placing…';
-          const p = await getGPS();
-const P = applyPlaceOffset(p);
-
-await placeItem(o, L.latLng(P.lat, P.lng));   // uses your distance writers
+// click-away + Esc to close
+document.addEventListener('click', (e)=>{
+  if (!fabMenu.contains(e.target) && e.target !== fab) closeFab();
+});
+window.addEventListener('keydown', (e)=>{ if (e.key === 'Escape') closeFab(); });
 
 
-          placeOverlay.classList.remove('open');
-          map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration:0.6 });
-        }catch(e){
-          alert('Unable to get your location.');
-          btn.disabled = false; btn.textContent = o.label;
+
+ $('#placeBtn').addEventListener('click', ()=>{
+  const list = $('#placeList'); 
+  list.innerHTML = '';
+
+  // Gather unplaced
+  const marksPlaced  = activeSetupData.geo?.marks  || {};
+  const blindsPlaced = activeSetupData.geo?.blinds || {};
+  const unplacedMarks  = (activeSetupData.items  || []).map((m,idx)=>({m,idx})).filter(({m})=>!marksPlaced[m.id]);
+  const unplacedBlinds = (activeSetupData.blinds || []).map((b,idx)=>({b,idx})).filter(({b})=>!blindsPlaced[b.id]);
+  const trainerUnplaced = !activeSetupData.geo?.trainer;
+
+  // Helper to make a button
+  const makeBtn = (label, classes='btn') => {
+    const b = document.createElement('button');
+    b.className = classes;
+    b.textContent = label;
+    return b;
+  };
+
+  // Helper to place an existing item at GPS
+  const wirePlaceExisting = (payload, btn, originalLabel) => {
+    btn.addEventListener('click', async ()=>{
+      try{
+        btn.disabled = true; btn.textContent = 'Placing…';
+        const p = await getGPS();
+        const P = applyPlaceOffset(p);
+        await placeItem(payload, L.latLng(P.lat, P.lng));
+        placeOverlay.classList.remove('open');
+        map.flyTo([p.lat, p.lng], Math.min(MAX_COMFORT_ZOOM, 18), { duration:0.6 });
+      }catch(e){
+        alert('Unable to get your location.');
+        btn.disabled = false; btn.textContent = originalLabel;
+      }
+    }, { once:true });
+  };
+
+  // ---------- ROW 1: Trainer (if available), + Mark, + Blind ----------
+  const row1 = document.createElement('div');
+  row1.className = 'overlay-actions';
+
+  if (trainerUnplaced){
+    const tBtn = makeBtn('Trainer (TR)', 'btn');
+    wirePlaceExisting({ type:'trainer', id:'TR', label:'Trainer (TR)' }, tBtn, 'Trainer (TR)');
+    row1.appendChild(tBtn);
+  }
+
+  // + Mark (blue)
+  const addMarkBtn = makeBtn('+ Mark', 'btn primary');
+  addMarkBtn.addEventListener('click', async ()=>{
+    try{
+      await ensureActiveSetupExists();
+      openGroupPicker({
+        onPick: async ({ index }) => {
+          const newId = await appendSetupItem({ kind:'mark', groupIndex:index });
+          try {
+            await placeNewlyAdded('mark', newId);
+            placeOverlay.classList.remove('open');
+          }catch(e){
+            alert('Added Mark to setup, but could not get your location to place it.');
+          }
         }
-      }, { once:true });
-      list.appendChild(btn);
-    });
-
-    placeOverlay.classList.add('open');
+      });
+    }catch(e){ alert('Could not add mark'); }
   });
+  row1.appendChild(addMarkBtn);
+
+  // + Blind (blue)
+  const addBlindBtn = makeBtn('+ Blind', 'btn primary');
+  addBlindBtn.addEventListener('click', async ()=>{
+    try{
+      await ensureActiveSetupExists();
+      openGroupPicker({
+        onPick: async ({ index }) => {
+          const newId = await appendSetupItem({ kind:'blind', groupIndex:index });
+          try {
+            await placeNewlyAdded('blind', newId);
+            placeOverlay.classList.remove('open');
+          }catch(e){
+            alert('Added Blind to setup, but could not get your location to place it.');
+          }
+        }
+      });
+    }catch(e){ alert('Could not add blind'); }
+  });
+  row1.appendChild(addBlindBtn);
+
+  list.appendChild(row1);
+
+  // ---------- ROW 2: all unplaced Marks ----------
+  if (unplacedMarks.length){
+    const rowM = document.createElement('div');
+    rowM.className = 'overlay-actions';
+    unplacedMarks.forEach(({m,idx})=>{
+      const label = `Mark M${idx+1}${qualSuffix(m)}`;
+      const btn = makeBtn(label, 'btn');
+      wirePlaceExisting({ type:'mark', id:m.id, label }, btn, label);
+      rowM.appendChild(btn);
+    });
+    list.appendChild(rowM);
+  }
+
+  // ---------- ROW 3: all unplaced Blinds ----------
+  if (unplacedBlinds.length){
+    const rowB = document.createElement('div');
+    rowB.className = 'overlay-actions';
+    unplacedBlinds.forEach(({b,idx})=>{
+      const label = `Blind B${idx+1}`;
+      const btn = makeBtn(label, 'btn');
+      wirePlaceExisting({ type:'blind', id:b.id, label }, btn, label);
+      rowB.appendChild(btn);
+    });
+    list.appendChild(rowB);
+  }
+
+  placeOverlay.classList.add('open');
+});
+
 
   $('#raysChk').addEventListener('change', renderRays);
 
@@ -1340,6 +1673,8 @@ document.getElementById('fitBtn').style.display = 'none';
     await switchDay(dayPicker.value);
   }
   if (trainerId) boot(); else showTrainerPrompt();
+  
+  
 </script>
 </body>
 </html>
