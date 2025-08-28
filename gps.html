@@ -736,10 +736,12 @@ function updateFabDockLabel(){
   a.textContent = isDockVisible() ? 'Hide dock' : 'Show dock';
 }
 
-document.getElementById('fabDockToggle')?.addEventListener('click', (e)=>{
+document.getElementById('fabDockToggle')?.addEventListener('click', (e) => {
   e.preventDefault();
   setDockVisible(!isDockVisible());
+  closeFab();                         // ⬅ close the menu after toggling
 });
+
 
 
 
@@ -1738,5 +1740,6 @@ await switchDay(dayPicker.value);
 </script>
 </body>
 </html>
+
 
 
