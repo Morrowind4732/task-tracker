@@ -182,7 +182,13 @@
 /* allow hiding the dock */
 .dock.hidden { display: none !important; }
 
+/* Minimal HUD: show only Location / Place at me / Distances */
+body.min-hud .hud .row:nth-child(1),
+body.min-hud .hud .row:nth-child(2) {
+  display: none !important;
+}
 
+	
 </style>
 </head>
 <body>
@@ -1732,7 +1738,8 @@ document.getElementById('fitBtn').style.display = 'none';
     ctxEl.textContent = `Trainer: ${trainerId}`;
 updateFabDockLabel();   // <-- add here
 await switchDay(dayPicker.value);
-
+document.body.classList.add('min-hud');
+	
   }
   if (trainerId) boot(); else showTrainerPrompt();
   
@@ -1740,6 +1747,7 @@ await switchDay(dayPicker.value);
 </script>
 </body>
 </html>
+
 
 
 
