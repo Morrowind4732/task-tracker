@@ -2659,30 +2659,415 @@ document.getElementById('numBtn').addEventListener('click', ()=>{
   document.getElementById('numWrapper').classList.toggle('open');
 });
 
-// Pick 1/2/3 players, close, and reset turn to Player 1
+// Pick 1/2/3 players, close, and reset turn to Player 1 (SERVER SOURCE OF TRUTH)
 document.querySelectorAll('#numActions .pbtn').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
+  btn.addEventListener('click', async ()=>{
     const n = parseInt(btn.dataset.n, 10);
     NUM_PLAYERS = Math.max(1, Math.min(3, n));
-    turnPlayer = 1;  // ALWAYS reset to P1 when # changes
+    turnPlayer  = 1; // keep local in sync after we write
+
     document.getElementById('numWrapper').classList.remove('open');
     showToast(`Players: ${NUM_PLAYERS} • Turn: P${turnPlayer}`);
+
+    // >>> write to Firestore so both phones agree
+    try{
+      await writeTurnToServer(turnPlayer, NUM_PLAYERS);
+    }catch(e){ console.warn('[turn] write failed:', e); }
   });
 });
 
-// (+) stub
-document.getElementById('plusBtn').addEventListener('click', ()=>{
-  console.log('[+] pressed'); 
-  showToast('(+): pressed (todo)');
+
+// Sword Combat stub
+// Sword button (Battle picker): read server turn first, THEN choose
+document.getElementById('plusBtn')?.addEventListener('click', async ()=>{
+  try{
+    const data = await readCombatFresh(); // force server
+    const serverTurn = Number(data.turnPlayer || turnPlayer);
+    const serverN    = Number(data.numPlayers || NUM_PLAYERS);
+
+    // keep locals in sync (no local-only truth)
+    turnPlayer  = serverTurn;
+    NUM_PLAYERS = serverN;
+
+    console.log('[battle] server turn:', serverTurn, 'me:', Number(currentPlayer));
+    if (serverTurn === Number(currentPlayer)){
+      openAttackOverlay();
+    } else {
+      openDefenseOverlay();
+    }
+  }catch(e){
+    console.warn('[battle] failed to read server turn, using local', e);
+    if (Number(turnPlayer) === Number(currentPlayer)) openAttackOverlay();
+    else openDefenseOverlay();
+  }
 });
 
-// END turn with confirm; rotate 1..N
-document.getElementById('endBtn').addEventListener('click', ()=>{
+
+// COMBAT HELPERS -----------
+// --- Identity (use your data-cid consistently)
+function ensureCid(card){
+  if(!card.dataset.cid) card.dataset.cid = String(Math.random()).slice(2);
+  return card.dataset.cid;
+}
+function cardFrontUrl(card){
+  const img = card.querySelector('.face.front img');
+  if (img && img.src) return img.src;
+  return ''; // (hydration may fill later; we still store empty safely)
+}
+function cardName(card){
+  return card.getAttribute('data-name') || card._data?.name || '(Unnamed)';
+}
+
+// --- Compute current P/T exactly like your badge math (base + attachments + manual extras)
+function computeCurrentPT(base){
+  const [bp, bt] = basePT(base);
+  if (bp==null || bt==null) return ['--','--'];
+  let sumP = 0, sumT = 0;
+  if (base._stack && base._stack.length > 1){
+    for (let i=1;i<base._stack.length;i++){
+      const att = base._stack[i];
+      const {dp, dt} = extractPTDeltaFromText(oracleText(att));
+      sumP += dp; sumT += dt;
+    }
+  }
+  // include manual dp/dt edits saved via the editor
+  sumP += Number(base._extras?.dp || 0);
+  sumT += Number(base._extras?.dt || 0);
+  return [bp + sumP, bt + sumT];
+}
+
+// --- Ownership (your cards vs others). If no owner marker, we treat all as yours.
+function isOwnedByMe(card){
+  const owner = (getStackBase(card)||card).getAttribute('data-owner');
+  return !owner || String(owner) === String(currentPlayer);
+}
+function myCreatureBases(){
+  const all = Array.from(document.querySelectorAll('#world .card'));
+  const seen = new Set();
+  const out = [];
+  for (const c of all){
+    const base = getStackBase(c) || c;
+    if (!isCreatureCard(base)) continue;
+    if (!isOwnedByMe(base)) continue;
+    const id = ensureCid(base);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(base);
+  }
+  return out;
+}
+
+function combatDoc(){
+  // games/{GAME_ID}/combat/current
+  return db.collection('games').doc(GAME_ID).collection('combat').doc('current');
+}
+
+async function readCombat(){
+  await firebaseReady;
+  if(!db) return {};
+  // Force server so both phones see each other immediately
+  const snap = await combatDoc().get({ source: 'server' });
+  return snap.exists ? (snap.data() || {}) : {};
+}
+
+async function readCombatFresh(){
+  await firebaseReady;
+  if(!db) return {};
+  // Force server so both phones see each other immediately
+  const snap = await combatDoc().get({ source: 'server' });
+  return snap.exists ? (snap.data() || {}) : {};
+}
+
+async function writeTurnToServer(nextTurn, nextNumPlayers){
+  await firebaseReady; if(!db) return;
+  await combatDoc().set({
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    turnPlayer: Number(nextTurn),
+    numPlayers: Number(nextNumPlayers)
+  }, { merge: true });
+  console.log('[turn] wrote to server:', { turnPlayer: Number(nextTurn), numPlayers: Number(nextNumPlayers) });
+}
+
+
+
+async function saveAttacksForCurrentPlayer(attackMap){
+  // attackMap: { attackerCid -> targetPlayer or null }
+  await firebaseReady; if(!db) return;
+  const list = [];
+  for (const [cid, target] of Object.entries(attackMap)){
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+    if(!el) continue;
+    list.push({
+      attackerId: cid,
+      name: cardName(el),
+      url: cardFrontUrl(el),
+      targetPlayer: target == null ? null : Number(target),
+      seat: Number(currentPlayer)
+    });
+  }
+  const ref = combatDoc();
+await ref.set({
+  updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  turnPlayer: Number(turnPlayer),
+  numPlayers: Number(NUM_PLAYERS),
+  attacksByPlayer: {
+    [String(currentPlayer)]: list
+  }
+}, { merge: true });
+
+}
+
+async function saveBlocksForDefender(defenderSeat, orderedMap){
+  // orderedMap: { [attackerId]: [blockerCid, ...] }  (order = damage order)
+  await firebaseReady; if(!db) return;
+  const ref = combatDoc();
+await ref.set({
+  updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  turnPlayer: Number(turnPlayer),
+  numPlayers: Number(NUM_PLAYERS),
+  blocksByDefender: {
+    [String(defenderSeat)]: orderedMap
+  }
+}, { merge: true });
+
+}
+
+async function clearCombatForNewTurn(){
+  await firebaseReady; if(!db) return;
+  await combatDoc().set({
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    turnPlayer: Number(turnPlayer),
+    numPlayers: Number(NUM_PLAYERS),
+    attacksByPlayer: {},
+    blocksByDefender: {}
+  }, { merge: false }); // replace entirely
+}
+
+function openAttackOverlay(){
+  // preload existing choices (if you re-open)
+  let currentChoices = {}; // { attackerCid: targetPlayer or null }
+  readCombat().then(data=>{
+    const mine = data?.attacksByPlayer?.[String(currentPlayer)] || [];
+    for (const row of mine){
+      currentChoices[row.attackerId] = row.targetPlayer;
+    }
+    render(currentChoices);
+  });
+
+  function render(choices){
+    const bases = myCreatureBases();
+    const oppSeats = Array.from({length:NUM_PLAYERS}, (_,i)=>i+1).filter(p => p !== Number(currentPlayer));
+
+    const ov = document.createElement('div');
+    ov.className = 'overlay battle-overlay';
+    ov.style.cssText = `
+      position:fixed; inset:0; background:rgba(5,7,12,.86); z-index:11000;
+      display:flex; flex-direction:column; padding:14px; gap:10px;
+    `;
+    ov.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h2 style="margin:0;font:600 18px/1 ui-sans-serif,system-ui">Attacking — Player ${currentPlayer}</h2>
+        <button id="atkClose" class="btn" style="padding:6px 10px;border-radius:10px;background:#1b2a47;color:#d8e7ff">✕</button>
+      </div>
+      <div id="atkScroll" style="flex:1; overflow:auto; padding-right:6px;"></div>
+      <div style="display:flex; gap:8px; justify-content:flex-end">
+        <button id="atkReset" class="btn" style="border-radius:10px;background:#1b2a47;color:#d8e7ff">Reset</button>
+        <button id="atkConfirm" class="btn" style="border-radius:10px;background:#6aa9ff;color:#091323;font-weight:800">Confirm Attacks</button>
+      </div>
+    `;
+    document.body.appendChild(ov);
+
+    const list = ov.querySelector('#atkScroll');
+    list.innerHTML = '';
+
+    bases.forEach(base=>{
+      const cid = ensureCid(base);
+      const [p,t] = computeCurrentPT(base);
+      const atts = (base._stack||[]).slice(1).map(a => cardName(a));
+      const row = document.createElement('div');
+      row.className = 'atk-row';
+      row.dataset.cid = cid;
+      row.style.cssText = `border:1px solid #2b3344;border-radius:10px;background:#141823;padding:10px;margin-bottom:10px;`;
+
+      const oppButtons = oppSeats.map(seat=>{
+        const on = choices[cid] === seat ? 'outline:2px solid #6aa9ff;box-shadow:0 0 0 6px rgba(106,169,255,.18) inset;' : '';
+        return `<button class="pbtn choose" data-target="${seat}" style="${on}">${seat}</button>`;
+      }).join('');
+
+      const noneOn = (choices[cid] == null) ? 'outline:2px solid #6aa9ff;box-shadow:0 0 0 6px rgba(106,169,255,.18) inset;' : '';
+      row.innerHTML = `
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+          <img src="${cardFrontUrl(base)}" alt="" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>
+          <div style="flex:1;min-width:180px">
+            <div style="font-weight:700">${escapeHTML(cardName(base))}</div>
+            <div style="opacity:.8">P/T: ${p}/${t}</div>
+            ${atts.length ? `<div style="opacity:.75;font-size:12px;margin-top:2px">Attachments: ${escapeHTML(atts.join(', '))}</div>`:''}
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="pbtn choose" data-target="" style="${noneOn}">—</button>
+            ${oppButtons}
+          </div>
+        </div>
+      `;
+      row.addEventListener('click', (e)=>{
+        const btn = e.target.closest('.choose');
+        if(!btn) return;
+        const target = btn.dataset.target === '' ? null : Number(btn.dataset.target);
+        choices[cid] = target;
+        // refresh selection styles quickly
+        row.querySelectorAll('.choose').forEach(b=> b.style.outline='');
+        row.querySelectorAll('.choose').forEach(b=> b.style.boxShadow='');
+        btn.style.outline='2px solid #6aa9ff';
+        btn.style.boxShadow='0 0 0 6px rgba(106,169,255,.18) inset';
+      });
+      list.appendChild(row);
+    });
+
+    ov.querySelector('#atkClose').onclick = ()=> ov.remove();
+    ov.querySelector('#atkReset').onclick = ()=>{
+      if(!confirm('Clear all your attack choices?')) return;
+      choices = {};
+      list.querySelectorAll('.atk-row').forEach(r=>{
+        r.querySelectorAll('.choose').forEach(b=> {
+          b.style.outline=''; b.style.boxShadow='';
+          if (b.dataset.target===''){ b.style.outline='2px solid #6aa9ff'; b.style.boxShadow='0 0 0 6px rgba(106,169,255,.18) inset'; }
+        });
+      });
+      showToast('Attacks reset');
+    };
+    ov.querySelector('#atkConfirm').onclick = async ()=>{
+      await saveAttacksForCurrentPlayer(choices);
+      showToast('Attacks set');
+      ov.remove();
+    };
+  }
+}
+
+
+async function openDefenseOverlay(){
+  try{
+    // Force server so both phones agree immediately
+    const data = await readCombatFresh();
+
+    // Start with the normal nested map…
+    let byPlayer = data?.attacksByPlayer || {};
+
+    // Back-compat: if older writes created top-level fields like "attacksByPlayer.1",
+    // fold those into a proper map so reads work.
+    if (!Object.keys(byPlayer).length) {
+      for (const [k, v] of Object.entries(data)) {
+        if (k.startsWith('attacksByPlayer.')) {
+          const seat = k.split('.')[1];
+          byPlayer[seat] = Array.isArray(v) ? v : [];
+        }
+      }
+    }
+
+    const mySeat = Number(currentPlayer);
+
+    // Flatten all attackers from everyone, then keep only those aimed at me
+    const all = Object.values(byPlayer).flat();
+    console.log('[DEF overlay] byPlayer keys=', Object.keys(byPlayer),
+                'turnPlayer=', Number(data.turnPlayer),
+                'numPlayers=', Number(data.numPlayers),
+                'mySeat=', mySeat,
+                'all attackers count=', all.length);
+
+
+    // Log each row before filtering, so you can see raw target vs mySeat
+    all.forEach((row, i)=>{
+      console.log(`[DEF row ${i}] attackerId=${row?.attackerId} seat=${row?.seat} name="${row?.name}" targetPlayer(raw)=`, row?.targetPlayer, '→ Number=', Number(row?.targetPlayer));
+    });
+
+    const vsMe = all.filter(a => Number(a?.targetPlayer) === mySeat);
+    console.log('[DEF overlay] vsMe count=', vsMe.length);
+
+    // === Overlay shell + rows ===
+    const ov = document.createElement('div');
+    ov.className = 'overlay battle-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(5,7,12,0.86);z-index:11000;display:flex;flex-direction:column;padding:14px;gap:10px;';
+    ov.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+        '<h2 style="margin:0;font:600 18px/1 ui-sans-serif,system-ui">Defending — Player ' + mySeat + '</h2>' +
+        '<button id="boClose" class="btn" style="padding:6px 10px;border-radius:10px;background:#1b2a47;color:#d8e7ff">✕</button>' +
+      '</div>' +
+      '<div id="boScroll" style="flex:1; overflow:auto; padding-right:6px;"></div>' +
+      '<div style="display:flex; gap:8px; justify-content:flex-end">' +
+        '<button id="boReset" class="btn" style="border-radius:10px;background:#1b2a47;color:#d8e7ff">Reset</button>' +
+        '<button id="boConfirm" class="btn" style="border-radius:10px;background:#6aa9ff;color:#091323;font-weight:800">Confirm Blocks</button>' +
+      '</div>';
+    document.body.appendChild(ov);
+
+    const rows = ov.querySelector('#boScroll');
+    if (!vsMe.length){
+      rows.innerHTML = '<div style="opacity:.8">No creatures are attacking you.</div>';
+    } else {
+      rows.innerHTML = '';
+      for (const atk of vsMe){
+        const row = document.createElement('div');
+        row.className = 'atk-row';
+        row.dataset.attackerId = atk.attackerId;
+        row.style.cssText = 'border:1px solid #2b3344;border-radius:10px;background:#141823;padding:10px;margin-bottom:10px;';
+        row.innerHTML =
+          '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">' +
+            (atk.url ? `<img src="${atk.url}" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>` : '') +
+            `<div style="flex:1;min-width:200px">
+               <div style="font-weight:700">${(typeof escapeHTML==='function'?escapeHTML(atk.name):atk.name)}
+                 <span style="opacity:.7">(P${atk.seat})</span></div>
+               <div style="opacity:.8">Assign blockers (order matters) — wire-up next.</div>
+             </div>` +
+          '</div>';
+        rows.appendChild(row);
+      }
+    }
+
+    // Extra summary logs (keep for debugging)
+    console.log('[DEF overlay] byPlayer keys=', Object.keys(byPlayer));
+    for (const [k, arr] of Object.entries(byPlayer)) {
+      console.log(' [DEF overlay] seat', k, 'rows=', Array.isArray(arr)?arr.length:0,
+                  'first.targetPlayer=', arr?.[0]?.targetPlayer);
+    }
+
+    ov.querySelector('#boClose').onclick = ()=> ov.remove();
+    ov.querySelector('#boReset').onclick  = ()=> (typeof showToast==='function' && showToast('Blocks reset'));
+    ov.querySelector('#boConfirm').onclick= ()=> { if (typeof showToast==='function') showToast('Blocks set'); ov.remove(); };
+
+  } catch (err){
+    console.error('[defense overlay]', err);
+  }
+}
+
+
+
+//---------------------------
+
+// END turn with confirm; rotate 1..N (server source of truth)
+document.getElementById('endBtn').addEventListener('click', async ()=>{
   const ok = confirm(`End Player ${turnPlayer}'s turn?`);
   if(!ok) return;
-  turnPlayer = (turnPlayer % NUM_PLAYERS) + 1;
+
+  const nextTurn = (Number(turnPlayer) % Number(NUM_PLAYERS)) + 1;
+  turnPlayer = nextTurn; // keep local mirror
+
   showToast(`Turn: Player ${turnPlayer}`);
+
+  try{
+    // Clear combat rows and write new turn/players atomically
+    await firebaseReady; if(!db) return;
+    await combatDoc().set({
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      turnPlayer: Number(nextTurn),
+      numPlayers: Number(NUM_PLAYERS),
+      attacksByPlayer: {},
+      blocksByDefender: {}
+    }, { merge: false }); // replace
+    console.log('[turn] advanced on server to P' + nextTurn);
+  }catch(e){
+    console.warn('[turn] end turn write failed:', e);
+  }
 });
+
+
 
 // Optional: clicking outside closes the # popout (like others)
 document.addEventListener('click', (e)=>{
