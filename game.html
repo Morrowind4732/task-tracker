@@ -1159,6 +1159,24 @@ function updateCreaturePT(card){
 }
 
 /* Convenience: when a stack changes or a card loads data, refresh the base creature P/T. */
+/* Return the creature's current numeric P/T by summing base and attachment buffs.
+   Mirrors updateCreaturePT but returns numbers instead of drawing a badge. */
+function computeCurrentPTFromBase(base){
+  const [bp, bt] = basePT(base);
+  if(bp==null || bt==null) return {power:null, toughness:null};
+  let sumP = 0, sumT = 0;
+  if(base._stack && base._stack.length > 1){
+    for(let i=1;i<base._stack.length;i++){
+      const att = base._stack[i];
+      const delta = extractPTDeltaFromText(oracleText(att));
+      if(delta && (delta.dp || delta.dt)){
+        sumP += delta.dp; sumT += delta.dt;
+      }
+    }
+  }
+  return {power: bp + sumP, toughness: bt + sumT};
+}
+
 function refreshPTForCard(card){
   const base = getStackBase(card) || card;
   updateCreaturePT(base);
@@ -2796,14 +2814,19 @@ async function saveAttacksForCurrentPlayer(attackMap){
   const list = [];
   for (const [cid, target] of Object.entries(attackMap)){
     const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-    if(!el) continue;
-    list.push({
-      attackerId: cid,
-      name: cardName(el),
-      url: cardFrontUrl(el),
-      targetPlayer: target == null ? null : Number(target),
-      seat: Number(currentPlayer)
-    });
+if(!el) continue;
+const base = getStackBase(el) || el;
+const pt   = computeCurrentPTFromBase(base);
+list.push({
+  attackerId: cid,
+  name: cardName(el),
+  url: cardFrontUrl(el),
+  power: pt.power,
+  toughness: pt.toughness,
+  targetPlayer: target == null ? null : Number(target),
+  seat: Number(currentPlayer)
+});
+
   }
   const ref = combatDoc();
 await ref.set({
@@ -2999,6 +3022,96 @@ async function openDefenseOverlay(){
     document.body.appendChild(ov);
 
     const rows = ov.querySelector('#boScroll');
+	function openBlockerPicker(atk){
+  const seatKey = String(mySeat);
+  const seatMap = (data.blocksByDefender && data.blocksByDefender[seatKey]) || {};
+  const used = new Set();
+  for(const arr of Object.values(seatMap)){ (arr||[]).forEach(id=>used.add(String(id))); }
+
+  // All my creature BASE cards that aren't already committed to block something else
+  const basesAll = myCreatureBases();
+  const bases = basesAll.filter(b => !used.has(ensureCid(b)));
+  const chosen = []; // ordered list of blocker CIDs
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(5,7,12,0.9);z-index:12000;display:flex;flex-direction:column;padding:14px;gap:10px;';
+  overlay.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center">' +
+      `<h2 style="margin:0;font:600 18px/1 ui-sans-serif,system-ui">Blocker Order — vs ${atk.name}</h2>` +
+      '<button id="blkClose" class="btn" style="padding:6px 10px;border-radius:10px;background:#1b2a47;color:#d8e7ff">✕</button>' +
+    '</div>' +
+    '<div id="blkAvail" style="flex:1;overflow:auto;padding-right:6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px"></div>' +
+    '<div id="blkChosen" style="min-height:32px;opacity:.9"></div>' +
+    '<div style="display:flex; gap:8px; justify-content:flex-end">' +
+      '<button id="blkReset" class="btn" style="border-radius:10px;background:#1b2a47;color:#d8e7ff">Reset</button>' +
+      '<button id="blkSave" class="btn" style="border-radius:10px;background:#6aa9ff;color:#091323;font-weight:800">Save</button>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const avail = overlay.querySelector('#blkAvail');
+  const chosenDiv = overlay.querySelector('#blkChosen');
+
+  function renderChosen(){
+    const names = chosen.map((id,i)=>{
+      const el = document.querySelector(`.card[data-cid="${CSS.escape(id)}"]`);
+      return `${i+1}. ${el ? (typeof cardName==='function'? cardName(el) : id) : id}`;
+    });
+    chosenDiv.innerHTML = '<div><strong>Order:</strong> ' + (names.length? names.join(' → ') : '(none)') + '</div>';
+  }
+
+  for (const base of bases) {
+  const id = ensureCid(base);
+  const pt = computeCurrentPTFromBase(base);
+  const item = document.createElement('button');
+  item.className = 'blk-item';
+  // force light text on dark button + add a small image and layout
+  item.style.cssText = 'text-align:left;border:1px solid #2b3344;border-radius:10px;background:#141823;color:#e7e9ee;padding:10px;display:flex;gap:10px;align-items:center;';
+  item.innerHTML =
+    (cardFrontUrl(base) ? `<img src="${cardFrontUrl(base)}" alt="" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>` : '') +
+    `<div style="flex:1;min-width:180px">
+       <div style="font-weight:700">${cardName(base)} <span style="opacity:.7">${(pt.power!=null&&pt.toughness!=null)?'('+pt.power+'/'+pt.toughness+')':''}</span></div>
+       <div style="opacity:.8">Tap to add to block order</div>
+     </div>`;
+  item.addEventListener('click', ()=>{
+    if (chosen.includes(id)) return;
+    chosen.push(id);
+    item.style.opacity = '.55';
+    item.style.pointerEvents = 'none';
+    renderChosen();
+  });
+  avail.appendChild(item);
+}
+
+  renderChosen();
+
+  overlay.querySelector('#blkReset').onclick = ()=>{
+    chosen.length = 0;
+    for(const btn of avail.querySelectorAll('.blk-item')){
+      btn.style.opacity='1'; btn.style.pointerEvents='auto';
+    }
+    renderChosen();
+  };
+  overlay.querySelector('#blkClose').onclick = ()=> overlay.remove();
+  overlay.querySelector('#blkSave').onclick = async ()=>{
+  try{
+    // Merge with what’s already saved for my seat
+    const seatKey = String(mySeat);
+    const currentSeatMap = (data.blocksByDefender && data.blocksByDefender[seatKey]) || {};
+    const nextSeatMap = { ...currentSeatMap, [atk.attackerId]: chosen };
+
+    await saveBlocksForDefender(mySeat, nextSeatMap);
+
+    overlay.remove();
+    ov.remove();
+    openDefenseOverlay(); // refresh list; chosen blockers will be filtered out
+  }catch(e){
+    console.warn('saveBlocks failed', e);
+    overlay.remove();
+  }
+};
+
+}
+
     if (!vsMe.length){
       rows.innerHTML = '<div style="opacity:.8">No creatures are attacking you.</div>';
     } else {
@@ -3009,14 +3122,16 @@ async function openDefenseOverlay(){
         row.dataset.attackerId = atk.attackerId;
         row.style.cssText = 'border:1px solid #2b3344;border-radius:10px;background:#141823;padding:10px;margin-bottom:10px;';
         row.innerHTML =
-          '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">' +
-            (atk.url ? `<img src="${atk.url}" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>` : '') +
-            `<div style="flex:1;min-width:200px">
-               <div style="font-weight:700">${(typeof escapeHTML==='function'?escapeHTML(atk.name):atk.name)}
-                 <span style="opacity:.7">(P${atk.seat})</span></div>
-               <div style="opacity:.8">Assign blockers (order matters) — wire-up next.</div>
-             </div>` +
-          '</div>';
+  '<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; cursor:pointer">' +
+    (atk.url ? `<img src="${atk.url}" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>` : '') +
+    `<div style="flex:1;min-width:200px">
+       <div style="font-weight:700">${(typeof escapeHTML==='function'?escapeHTML(atk.name):atk.name)}
+         <span style="opacity:.7">(P${atk.seat}${(atk.power!=null&&atk.toughness!=null)?' • '+atk.power+'/'+atk.toughness:''})</span></div>
+       <div style="opacity:.8">Tap to assign blockers (order matters).</div>
+     </div>` +
+  '</div>';
+row.addEventListener('click', ()=> openBlockerPicker(atk));
+
         rows.appendChild(row);
       }
     }
@@ -3030,13 +3145,149 @@ async function openDefenseOverlay(){
 
     ov.querySelector('#boClose').onclick = ()=> ov.remove();
     ov.querySelector('#boReset').onclick  = ()=> (typeof showToast==='function' && showToast('Blocks reset'));
-    ov.querySelector('#boConfirm').onclick= ()=> { if (typeof showToast==='function') showToast('Blocks set'); ov.remove(); };
+    ov.querySelector('#boConfirm').onclick = ()=> 
+  openOutcomeOverlay({ data, vsMe, mySeat: Number(currentPlayer), ov });
+
+
 
   } catch (err){
     console.error('[defense overlay]', err);
   }
 }
 
+function openOutcomeOverlay(ctx){
+  // pull everything from the context so we don't rely on outer scope
+  const data   = (ctx && ctx.data)   || {};
+  const vsMe   = (ctx && ctx.vsMe)   || [];
+  const mySeat = (ctx && ctx.mySeat != null) ? Number(ctx.mySeat) : Number(currentPlayer);
+  const ov     = (ctx && ctx.ov)     || null;
+
+  const seatKey = String(mySeat);
+  const seatMap = (data.blocksByDefender && data.blocksByDefender[seatKey]) || {};
+
+  // helper: current P/T + element + name for a blocker by cid
+  function ptForCid(cid){
+    const el0 = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+    const base = el0 ? (getStackBase(el0) || el0) : null;
+    const pt = base ? computeCurrentPTFromBase(base) : { power: 0, toughness: 999 }; // 999 = “don’t claim kill if unknown”
+    return {
+      cid,
+      el: base,
+      name: base ? cardName(base) : cid,
+      power: Number(pt.power)||0,
+      toughness: Number(pt.toughness)||0
+    };
+  }
+
+  // Build recommended outcomes for every line of attack (simple rules: no first strike, trample, etc.)
+  const outcomes = vsMe.map(atk=>{
+    const blockers = (seatMap[atk.attackerId] || []).map(ptForCid);
+
+    // attacker DOM (to delete if it dies)
+    const attEl   = document.querySelector(`.card[data-cid="${CSS.escape(atk.attackerId)}"]`);
+    const attName = attEl ? cardName(attEl) : (atk.name || 'Attacker');
+
+    // attacker’s P/T came from the saved attack row
+    const AP = Number(atk.power) || 0;
+    const AT = Number(atk.toughness) || 999;
+
+    // damage assignment recommendation from attacker → blockers (order matters)
+    let remaining = AP;
+    const assigns = blockers.map(b=>{
+      const dmg = Math.min(remaining, b.toughness || 0);
+      remaining -= dmg;
+      return {
+        blocker: b,
+        dmgToBlocker: dmg,
+        blockerDies: (b.toughness != null && dmg >= b.toughness)
+      };
+    });
+
+    // all blockers hit back simultaneously
+    const dmgToAttacker = blockers.reduce((s,b)=> s + (b.power||0), 0);
+    const attackerDies  = (AT != null) && (dmgToAttacker >= AT);
+
+    // unblocked → damage to player (placeholder life logic)
+    const playerDamage = blockers.length ? 0 : AP;
+
+    return { atk, attEl, attName, assigns, attackerDies, playerDamage };
+  });
+
+  // === Outcome overlay UI ===
+  const ov2 = document.createElement('div');
+  ov2.style.cssText = 'position:fixed;inset:0;background:rgba(5,7,12,0.9);z-index:12000;display:flex;flex-direction:column;padding:14px;gap:10px;';
+  ov2.innerHTML =
+    '<div style="display:flex;justify-content:space-between;align-items:center">' +
+      `<h2 style="margin:0;font:600 18px/1 ui-sans-serif,system-ui">Combat Outcome — Player ${mySeat}</h2>` +
+      '<button id="outClose" class="btn" style="padding:6px 10px;border-radius:10px;background:#1b2a47;color:#d8e7ff">✕</button>' +
+    '</div>' +
+    '<div id="outScroll" style="flex:1;overflow:auto;padding-right:6px;"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+      '<button id="outApply" class="btn" style="border-radius:10px;background:#6aa9ff;color:#091323;font-weight:800">Apply</button>' +
+    '</div>';
+  document.body.appendChild(ov2);
+
+  const list = ov2.querySelector('#outScroll');
+  list.innerHTML = '';
+
+  outcomes.forEach((o, idx)=>{
+    const killedNames = o.assigns.filter(x=>x.blockerDies).map(x=> x.blocker.name);
+    const lineText = (o.playerDamage > 0)
+      ? `Unblocked — recommend ${o.playerDamage} damage to Player ${mySeat}.`
+      : `${o.attackerDies ? (o.atk.name || o.attName)+' dies' : (o.atk.name || o.attName)+' survives'}`
+        + (killedNames.length ? `; your ${killedNames.join(', ')} die` : '');
+
+    const row = document.createElement('label');
+    row.style.cssText = 'display:block;border:1px solid #2b3344;border-radius:10px;background:#141823;padding:10px;margin-bottom:10px;';
+    row.innerHTML =
+      '<div style="display:flex;gap:10px;align-items:center">' +
+        (o.atk.url ? `<img src="${o.atk.url}" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>` : '') +
+        `<div style="flex:1">
+           <div style="font-weight:700">${(typeof escapeHTML==='function'?escapeHTML(o.atk.name||o.attName):(o.atk.name||o.attName))}</div>
+           <div style="opacity:.85">${lineText}</div>
+         </div>` +
+        `<input type="checkbox" class="outChk" data-i="${idx}" checked />` +
+      '</div>';
+    list.appendChild(row);
+  });
+
+  ov2.querySelector('#outClose').onclick = ()=> ov2.remove();
+
+  ov2.querySelector('#outApply').onclick = async ()=>{
+    // Apply all checked outcomes
+    const chks = Array.from(ov2.querySelectorAll('.outChk'));
+    chks.forEach(ch=>{
+      if(!ch.checked) return;
+      const o = outcomes[Number(ch.dataset.i)];
+
+      // Placeholder life loss (no life total yet)
+      if (o.playerDamage > 0 && typeof showToast === 'function'){
+        showToast(`Player ${mySeat} takes ${o.playerDamage} damage (placeholder)`);
+      }
+
+      // Remove dead attacker
+      if (o.attackerDies && o.attEl){
+        /* TODO: replace this delete with “move to graveyard/exile” */
+        o.attEl.remove();
+      }
+
+      // Remove dead blockers
+      o.assigns.forEach(a=>{
+        if (a.blockerDies && a.blocker.el){
+          /* TODO: replace this delete with “move to graveyard/exile” */
+          a.blocker.el.remove();
+        }
+      });
+    });
+
+    // Close overlays
+    ov2.remove();
+    ov.remove();
+
+    // Optional: clear combat rows server-side so the next turn is clean
+    // await clearCombatForNewTurn();  // ← uncomment when you’re ready for this behavior
+  };
+}
 
 
 //---------------------------
