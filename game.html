@@ -454,6 +454,140 @@ body.viewer .card .cardBody {
   width:220px; height:260px;
 }
 
+/* Left-side action column (mirrors the right-side .actions look) */
+.actions-left{
+  position:fixed;
+  left:24px;
+  /* 180px slider bottom + 260px slider height + 16px gap */
+  bottom:calc(180px + 260px + 16px);
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  z-index:5;
+}
+
+/* --- Deck placement and look --- */
+:root{
+  /* Put the Deck directly above Commander by the same vertical gap as Exile is above Graveyard */
+  --DECK_X:   var(--CMD_X);
+  --DECK_TOP: calc( (var(--CMD_Y) * -1) + var(--EX_TOP) ); /* = -(CMD_Y) + (-400px) */
+  --ZONE_W: 220px;  /* match Exile/Graveyard */
+  --ZONE_H: 260px;   /* height used by Graveyard/Exile */
+
+}
+
+/* Deck zone (same footprint as Graveyard/Exile) */
+.deck{
+  position: absolute;
+  left: var(--DECK_X) !important;
+  top:  var(--DECK_TOP) !important;
+  right: auto !important;
+  bottom: auto !important;
+
+  width: var(--ZONE_W);
+  height: var(--ZONE_H);
+  border-radius: 12px;
+  border: 2px dashed rgba(255,255,255,.18);
+
+  /* card back + subtle overlay */
+  background:
+    linear-gradient(180deg, rgba(0,0,0,.18), rgba(0,0,0,.06)),
+    url('https://i.imgur.com/LdOBU1I.jpeg') center/cover no-repeat;
+
+  /* thickness shadow (JS updates via box-shadow) */
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+}
+
+
+/* Simple “thickness” hint: layered drop shadows (JS updates this inline) */
+.deck{ box-shadow: 0 0 0 rgba(0,0,0,0); }
+
+/* Buttons to the immediate left of the deck (vertically centered) */
+.deck-actions{
+  position: absolute;
+  left: calc(var(--DECK_X) - 56px);
+  top:  calc(var(--DECK_TOP) + (var(--ZONE_H) / 2) - 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: var(--z-controls);
+}
+
+/* Commander uses the same footprint as other zones */
+.zone.commander,
+#commanderZone{
+  width: var(--ZONE_W) !important;
+  height: var(--ZONE_H) !important;
+  border-radius: 12px !important;
+}
+
+/* Graveyard — bottom */
+.graveyard{
+  left: var(--GY_X) !important;
+  bottom: var(--GY_Y) !important;
+  top:auto !important; right:auto !important;
+  width: var(--ZONE_W); height: var(--ZONE_H);
+}
+
+/* Exile — top */
+.exile{
+  left: var(--EX_X) !important;
+  top: var(--EX_TOP) !important;
+  bottom:auto !important; right:auto !important;
+  width: var(--ZONE_W); height: var(--ZONE_H);
+}
+
+/* Commander uses the same footprint */
+.zone.commander,
+#commanderZone{
+  width: var(--ZONE_W) !important;
+  height: var(--ZONE_H) !important;
+  border-radius: 12px !important;
+}
+
+:root{
+  /* Deck at the same Y as Exile */
+  --DECK_X:  var(--CMD_X);
+  --DECK_TOP: var(--EX_TOP);   /* was: calc((var(--CMD_Y) * -1) + var(--EX_TOP)) */
+}
+
+/* Commander aligned to Graveyard row (same footprint & vertical position) */
+#commanderZone,
+.zone.commander{
+  left: var(--CMD_X) !important;
+
+  /* use the SAME vertical anchor as Graveyard */
+  bottom: var(--GY_Y) !important;
+  top: auto !important; right: auto !important;
+
+  /* same size/shape as other zones */
+  width: var(--ZONE_W) !important;
+  height: var(--ZONE_H) !important;
+  border-radius: 12px !important;
+}
+
+  /* Bigger deck action buttons + more spacing */
+.deck-actions{
+  position: absolute;
+  left: calc(var(--DECK_X) - 64px);          /* nudge a bit farther left */
+  top:  calc(var(--DECK_TOP) + (var(--ZONE_H) / 2) - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;                                  /* <- more space between buttons */
+  z-index: var(--z-controls);
+}
+
+/* Only affect the three buttons next to the deck */
+.deck-actions .sbtn{
+  width: 44px;                                /* larger hit target */
+  height: 44px;
+  border-radius: 12px;
+  font-size: 20px;                            /* bigger icon/glyphs (+, 🔍, …) */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
 
   
 </style>
@@ -508,6 +642,19 @@ body.viewer .card .cardBody {
   <!-- Table (world surface + zones) -->
   <main class="table" id="table">
     <div class="world" id="world">
+	<!-- DECK (above Commander) -->
+		<div class="zone deck" id="deckZone">
+		  <span class="label">Deck</span>
+		</div>
+
+		<!-- Left-of-deck actions (add + magnifier + more) -->
+		<div class="deck-actions" id="deckActions">
+		  <button class="sbtn" id="deckAddBtn"    title="Add card / token">＋</button>
+		  <button class="sbtn" id="deckSearchBtn" title="Search Deck">🔍</button>
+		  <button class="sbtn" id="deckMoreBtn"   title="Deck Tools">…</button>
+		</div>
+
+	
       <div class="zone graveyard"><span class="label">Graveyard</span></div>
       <div class="zone exile"><span class="label">Exile</span></div>
       <div class="zone commander"><span class="label">Commander</span></div>
@@ -550,6 +697,136 @@ body.viewer .card .cardBody {
     </div>
     <input id="zoomSlider" type="range" min="35" max="200" step="1" value="100" />
   </div>
+
+<!-- INFO button (left side, above the zoom slider) -->
+<div class="actions-left" id="leftActions">
+  <button class="fab" id="infoBtn" title="Turn Info" aria-label="Turn Info">i</button>
+</div>
+
+<!-- Turn Log overlay (reuses the chat overlay look/feel) -->
+<div id="turnLogOverlay" class="chatOverlay" aria-hidden="true">
+  <div class="chatPanel" role="dialog" aria-label="Turn Log">
+    <div class="chatHeader">
+      <span id="turnLogTitle">Turn Log</span>
+      <button id="turnLogClose" class="chatClose" title="Close">✕</button>
+    </div>
+    <div id="turnLogList" class="chatLog" style="gap:6px;"></div>
+  </div>
+</div>
+
+<!-- ===== Deck Search Overlay (🔍) ===== -->
+<div id="deckSearchOverlay" class="chatOverlay" aria-hidden="true">
+  <div class="chatPanel" role="dialog" aria-label="Deck Search">
+    <div class="chatHeader">
+      <span>Deck Search</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="deckSearchFilter" title="Filter by type" style="
+          background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px; font-weight:700;">
+          <option value="ALL">All</option>
+          <option value="LAND">Lands</option>
+          <option value="ARTIFACT">Artifacts</option>
+          <option value="CREATURE">Creatures</option>
+          <option value="INSTANT">Instants</option>
+          <option value="SORCERY">Sorceries</option>
+          <option value="ENCHANTMENT">Enchantments</option>
+          <option value="PLANESWALKER">Planeswalkers</option>
+        </select>
+        <button id="deckSearchClose" class="chatClose" title="Close">✕</button>
+      </div>
+    </div>
+    <div id="deckSearchGrid" style="
+      flex:1; overflow:auto; padding:12px; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;">
+    </div>
+  </div>
+</div>
+
+<!-- ===== Deck Tools Overlay (…) ===== -->
+<div id="deckToolsOverlay" class="chatOverlay" aria-hidden="true">
+  <div class="chatPanel" role="dialog" aria-label="Deck Tools">
+    <div class="chatHeader">
+      <span>Deck Tools</span>
+      <button id="deckToolsClose" class="chatClose" title="Close">✕</button>
+    </div>
+    <div style="padding:12px; display:grid; gap:14px;">
+      <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;">
+        <label style="color:#b9c3d9;font-weight:700;">Draw X</label>
+        <div style="display:flex; gap:8px;">
+          <input id="drawXInput" type="number" min="1" value="1" style="width:100px;border:1px solid #24304a;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+          <button id="drawXBtn" class="btn sm">Draw</button>
+        </div>
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;">
+        <label style="color:#b9c3d9;font-weight:700;">Mill X (to Graveyard)</label>
+        <div style="display:flex; gap:8px;">
+          <input id="millXInput" type="number" min="1" value="1" style="width:100px;border:1px solid #24304a;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+          <button id="millXBtn" class="btn sm">Mill</button>
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #1f2738; padding-top:12px; display:grid; gap:10px;">
+        <div style="font-weight:800;color:#dbe5ff">Cascade</div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:center;">
+          <select id="cascadeMode" title="Cascade mode" style="background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px;font-weight:700;">
+            <option value="NONLAND">Until nonland card</option>
+            <option value="TYPE">Until card type…</option>
+            <option value="MVLE">Until MV ≤ N</option>
+          </select>
+
+          <select id="cascadeType" style="background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px;font-weight:700;">
+            <option value="CREATURE">Creature</option>
+            <option value="ARTIFACT">Artifact</option>
+            <option value="ENCHANTMENT">Enchantment</option>
+            <option value="INSTANT">Instant</option>
+            <option value="SORCERY">Sorcery</option>
+            <option value="PLANESWALKER">Planeswalker</option>
+          </select>
+
+          <div style="display:flex;gap:8px;align-items:center;">
+            <label for="cascadeMV" style="color:#b9c3d9;">MV ≤</label>
+            <input id="cascadeMV" type="number" min="0" value="3" style="width:80px;border:1px solid #24304a;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+          </div>
+        </div>
+
+        <button id="cascadeBtn" class="btn sm" style="justify-self:end;">Run Cascade</button>
+
+        <div id="cascadeReveal" style="max-height:260px; overflow:auto; display:none; gap:8px; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Add Any (cards or tokens) Overlay (＋) ===== -->
+<div id="deckAddAnyOverlay" class="chatOverlay" aria-hidden="true">
+  <div class="chatPanel" role="dialog" aria-label="Add Card or Token">
+    <div class="chatHeader">
+      <span>Add Card / Token</span>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="addAnyQuery" type="text" placeholder="Search by name (e.g., Zombie, Treasure, Lightning Bolt)…"
+               style="min-width:320px;border:1px solid #2b3f63;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+        <select id="addAnyMode" title="Cards/Tokens filter"
+                style="background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px;font-weight:700;">
+          <option value="BOTH">Cards + Tokens</option>
+          <option value="CARDS">Cards only</option>
+          <option value="TOKENS">Tokens only</option>
+        </select>
+        <button id="deckAddAnyClose" class="chatClose" title="Close">✕</button>
+      </div>
+    </div>
+
+    <!-- Quick token picks -->
+    <div id="addAnyQuickRow" style="display:flex;flex-wrap:wrap;gap:8px;padding:8px 12px;">
+      <!-- chips are created in JS -->
+    </div>
+
+    <div id="addAnyGrid" style="
+      flex:1; overflow:auto; padding:12px;
+      display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;">
+      <!-- search results go here -->
+    </div>
+  </div>
+</div>
 
 
 <div class="actions">
@@ -649,6 +926,840 @@ body.viewer .card .cardBody {
 
 
 <script>
+/* =====================  ＋ Add Any: cards or tokens  ===================== */
+// ---- Global deck helpers (used by + overlay and others) ----
+if (typeof window.syncDeckCount !== 'function') {
+  window.syncDeckCount = function(){
+    const dc = document.getElementById('deckCount');
+    if (dc) dc.textContent = Array.isArray(window.drawPile) ? window.drawPile.length : 0;
+    if (typeof window.updateDeckVisual === 'function') window.updateDeckVisual();
+  };
+}
+
+if (typeof window.shuffleInPlace !== 'function') {
+  window.shuffleInPlace = function(arr){
+    for (let i = arr.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  };
+}
+
+if (typeof window.persistDeckAndMaybeLog !== 'function') {
+  window.persistDeckAndMaybeLog = async function(text){
+    try{
+      if (typeof window.savePlayerState === 'function') {
+        await window.savePlayerState(Number(window.currentPlayer || 1));
+      }
+      if (text && typeof window.logTurnAction === 'function') {
+        window.logTurnAction(Number(window.currentPlayer || 1), 'deck', { text });
+      }
+      if (typeof window.updateDeckVisual === 'function') window.updateDeckVisual();
+    }catch(e){
+      console.warn('[deck] persist failed', e);
+    }
+  };
+}
+
+// --- GLOBAL overlay helpers (make available to all overlays) ---
+if (typeof window.showOverlay !== 'function') {
+  window.showOverlay = function(el){
+    if (!el) return;
+    el.style.display = 'block';
+    el.setAttribute('aria-hidden','false');
+  };
+}
+if (typeof window.hideOverlay !== 'function') {
+  window.hideOverlay = function(el){
+    if (!el) return;
+    el.style.display = 'none';
+    el.setAttribute('aria-hidden','true');
+  };
+}
+// Entry point – open overlay
+function openAddAny(){
+  const ov = ensureAddAnyOverlay();
+  const grid  = document.getElementById('addAnyGrid');
+  const qIn   = document.getElementById('addAnyQuery');
+  const mode  = document.getElementById('addAnyMode');
+  const close = document.getElementById('deckAddAnyClose');
+  const quick = document.getElementById('addAnyQuickRow');
+
+  // one-time quick chips
+  if (!quick.dataset.ready){
+    [
+      'Treasure','Clue','Food','Blood','Powerstone','Gold',
+      'Soldier 1/1','Goblin 1/1','Zombie 2/2','Spirit 1/1',
+      'Saproling 1/1','Thopter 1/1','Eldrazi Scion','Eldrazi Spawn'
+    ].forEach(label=>{
+      const b = document.createElement('button');
+      b.className = 'btn sm';
+      b.textContent = label;
+      b.style.cssText = 'background:#142136;border:1px solid #35527d;color:#e9f2ff;border-radius:10px;'
+      b.onclick = ()=>{ qIn.value = label; mode.value = 'TOKENS'; render(); };
+      quick.appendChild(b);
+    });
+    quick.dataset.ready = '1';
+  }
+
+  close.onclick = ()=> hideOverlay(ov);
+  ov.onclick    = (e)=>{ if (e.target === ov) hideOverlay(ov); };
+
+  qIn.onkeydown = (e)=>{ if (e.key === 'Enter') render(); };
+  mode.onchange = render;
+
+  render();
+  showOverlay(ov);
+
+  // ------- render results -------
+  async function render(){
+    grid.innerHTML = '';
+    const query = (qIn.value || '').trim();
+    const want  = mode.value; // BOTH/CARDS/TOKENS
+
+    const results = await scrySearch(query, want);
+    if (!results.length){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'opacity:.85';
+      empty.textContent = query ? 'No results.' : 'Type a name to search Scryfall.';
+      grid.appendChild(empty);
+      return;
+    }
+
+    for (const d of results){
+      const name = d.name || 'Unknown';
+      const tile = document.createElement('div');
+      tile.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px;display:flex;flex-direction:column;';
+
+      const img = document.createElement('img');
+      img.alt = name; img.draggable = false;
+      img.style.cssText = 'width:100%;aspect-ratio:223/310;object-fit:cover;border-radius:8px;background:#06080e;';
+      img.src = candidateImgFromScry(d);
+      tile.appendChild(img);
+
+      const label = document.createElement('div');
+      label.textContent = name;
+      label.style.cssText = 'margin-top:6px;font-weight:800;';
+      tile.appendChild(label);
+
+      tile.appendChild(buildAddAnyMenu(d, ()=>{ /* for now we simply close */ }));
+      grid.appendChild(tile);
+    }
+  }
+}
+
+// Menu for “Add Any” results (cards + tokens)
+function buildAddAnyMenu(scryData, after){
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:10px;';
+
+  function mk(label, dest){
+    const b = document.createElement('button');
+    b.className = 'btn sm';
+    b.style.cssText = 'width:100%;background:#142136;border:1px solid #35527d;color:#e9f2ff;padding:8px 10px;border-radius:10px;font-weight:800;';
+    b.textContent = label;
+    b.onclick = async (e)=>{
+      e.stopPropagation();
+      wrap.querySelectorAll('button').forEach(x => x.disabled = true);
+
+      const isToken = ((scryData.type_line || '').toUpperCase()).includes('TOKEN');
+
+      if (dest === 'hand'){
+        const c = spawnCard(scryData.name, 0, 0);
+        if (isToken) applyScryImageToCard(c, scryData);
+        moveToHand(c);
+        await persistDeckAndMaybeLog(`added(any) → ${scryData.name} to Hand`);
+      } else if (dest === 'table'){
+        const c = spawnCard(scryData.name, world.clientWidth/2, world.clientHeight/2);
+        applyScryImageToCard(c, scryData);
+        world.appendChild(c);
+        await persistDeckAndMaybeLog(`added(any) → ${scryData.name} to Table`);
+      } else if (dest === 'graveyard' || dest === 'exile'){
+        const zoneKind = dest === 'graveyard' ? 'Graveyard' : 'Exile';
+        try{
+          await appendEntryToPlayerZone({ role:'self', seat:Number(window.currentPlayer||1) },
+                                        zoneKind, { id:String(Math.random()).slice(2), name:scryData.name });
+        }catch(e){ console.warn('[addAny] zone write failed', e); }
+        await persistDeckAndMaybeLog(`added(any) → ${scryData.name} to ${zoneKind}`);
+      }
+
+      after?.(); // optional callback
+      hideOverlay(document.getElementById('deckAddAnyOverlay'));
+    };
+    return b;
+  }
+
+  wrap.appendChild(mk('Table','table'));
+  wrap.appendChild(mk('Hand','hand'));
+  wrap.appendChild(mk('Graveyard','graveyard'));
+  wrap.appendChild(mk('Exile','exile'));
+  return wrap;
+}
+
+
+// Make/return overlay DOM once
+function ensureAddAnyOverlay(){
+  let ov = document.getElementById('deckAddAnyOverlay');
+  if (ov) return ov;
+  // If you pasted the HTML block above, it already exists; this is just a guard.
+  // (We still return it by id.)
+  return document.getElementById('deckAddAnyOverlay');
+}
+
+// Run a Scryfall search. Mode: BOTH / CARDS / TOKENS
+async function scrySearch(query, mode){
+  let q = (query || '').trim();
+  if (!q) q = '*';
+  if (mode === 'TOKENS')  q = `is:token ${q}`;
+  if (mode === 'CARDS')   q = `-is:token ${q}`;
+  // prefer images we can show; unique=cards keeps it tidy
+  const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(q)}&order=name&unique=cards`;
+  try{
+    const r = await fetch(url);
+    const j = await r.json();
+    return Array.isArray(j.data) ? j.data.slice(0, 64) : [];
+  }catch(e){
+    console.warn('[addAny] scry search failed', e);
+    return [];
+  }
+}
+
+// Get a usable image from a Scryfall card object (front face / normal)
+function candidateImgFromScry(d){
+  try{
+    if (d.image_uris && d.image_uris.normal) return d.image_uris.normal;
+    if (d.card_faces && d.card_faces[0] && d.card_faces[0].image_uris)
+      return d.card_faces[0].image_uris.normal || d.card_faces[0].image_uris.large;
+  }catch{}
+  return CARD_BACK;
+}
+
+// After we spawnCard(name), force the front image to match a given Scryfall record.
+// This makes tokens look correct even if the “named” endpoint wouldn’t match a token.
+function applyScryImageToCard(cardEl, scryData){
+  if (!cardEl || !scryData) return;
+  const imgUrl = candidateImgFromScry(scryData);
+  const img = cardEl.querySelector('.face.front img');
+  if (img && imgUrl) img.src = imgUrl;
+  // stash for saving
+  cardEl.dataset.img = imgUrl;
+}
+
+/* ---- hook the + button ---- */
+document.getElementById('deckAddBtn')?.addEventListener('click', openAddAny);
+
+
+/* ===================== Deck zone: behavior + thickness ===================== */
+(function deckZoneModule(){
+  const deckEl  = document.getElementById('deckZone');
+  const countEl = document.getElementById('deckCount');
+
+  if (!deckEl || !countEl) return;
+
+  // Build a stacked shadow string based on remaining cards
+  function stackShadowFor(n){
+    // 0..6 layers, roughly 1 per 10 cards (tweak as you like)
+    const layers = Math.max(0, Math.min(6, Math.ceil(n / 10)));
+    const parts = [];
+    for (let i = 0; i < layers; i++){
+      // small offset + subtle darkness
+      parts.push(`${i}px ${-i}px 0 rgba(0,0,0,${0.10 + i*0.04})`);
+    }
+    return parts.join(', ');
+  }
+
+  // Update the deck’s visual thickness + label
+  function updateDeckVisual(n){
+    const num = Number.isFinite(n) ? n : (Array.isArray(drawPile) ? drawPile.length : 0);
+    deckEl.style.boxShadow = stackShadowFor(num);
+    const lab = deckEl.querySelector('.label');
+    if (lab) lab.textContent = num > 0 ? `Deck (${num})` : 'Deck (empty)';
+  }
+
+  // Click deck to draw 1
+  deckEl.addEventListener('click', async ()=>{
+    try{
+      drawToHand(1);
+      if (typeof logTurnAction === 'function'){
+        logTurnAction(Number(window.currentPlayer || 1), 'draw', { count: 1 });
+      }
+      // save happens in drawToHand; just refresh the visual
+      const n = parseInt(countEl.textContent || '0', 10);
+      updateDeckVisual(n);
+    }catch(e){
+      console.warn('[deck] draw failed', e);
+    }
+  });
+
+  // Keep deck visual in sync with your deck counter (no matter who updates it)
+  const mo = new MutationObserver(()=>{
+    const n = parseInt(countEl.textContent || '0', 10);
+    updateDeckVisual(n);
+  });
+  mo.observe(countEl, { childList:true, characterData:true, subtree:true });
+
+  // On load / after reloads where renderFullState sets drawPile & #deckCount
+  window.addEventListener('load', ()=>{
+    const n = parseInt(countEl.textContent || '0', 10);
+    updateDeckVisual(n);
+  });
+
+  // Expose for other modules if needed
+  window.updateDeckVisual = updateDeckVisual;
+})();
+
+/* ===================== Deck buttons (🔍 and …) ===================== */
+(function deckButtons(){
+  const searchBtn = document.getElementById('deckSearchBtn');
+  const moreBtn   = document.getElementById('deckMoreBtn');
+
+  // ---------- guards / small helpers ----------
+  const isViewer = () => !!(window.viewerMode && window.viewerPlayer);
+  const me = () => Number(window.currentPlayer || 1);
+  const $  = (s) => document.querySelector(s);
+
+  function showOverlay(el){ el.style.display = 'block'; el.setAttribute('aria-hidden','false'); }
+  function hideOverlay(el){ el.style.display = 'none';  el.setAttribute('aria-hidden','true'); }
+
+  function shuffleInPlace(arr){
+    for (let i = arr.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+  function syncDeckCount(){
+    const dc = document.getElementById('deckCount');
+    if (dc) dc.textContent = Array.isArray(drawPile) ? drawPile.length : 0;
+    if (typeof updateDeckVisual === 'function') updateDeckVisual();
+  }
+  function removeTopNFromDeck(n){
+    if (!Array.isArray(drawPile) || !n) return [];
+    const out = [];
+    for (let i=0;i<n;i++){
+      const name = drawPile.pop();
+      if (!name) break;
+      out.push(name);
+    }
+    syncDeckCount();
+    return out;
+  }
+  function removeOneFromDeckByName(name){
+    if (!Array.isArray(drawPile) || !name) return false;
+    const idx = drawPile.lastIndexOf(name); // top at end → search from top
+    if (idx >= 0) { drawPile.splice(idx, 1); syncDeckCount(); return true; }
+    return false;
+  }
+  async function persistDeckAndMaybeLog(text){
+    try{
+      if (typeof savePlayerState === 'function') await savePlayerState(me());
+      if (text && typeof logTurnAction === 'function') logTurnAction(me(), 'deck', { text });
+    }catch(e){ console.warn('[deck] persist failed', e); }
+  }
+
+  // ---------- lazy-build overlays if missing ----------
+  function ensureSearchOverlay(){
+    let ov = document.getElementById('deckSearchOverlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'deckSearchOverlay';
+    ov.className = 'chatOverlay';
+    ov.setAttribute('aria-hidden','true');
+    ov.innerHTML = `
+      <div class="chatPanel" role="dialog" aria-label="Deck Search">
+        <div class="chatHeader">
+          <span>Deck Search</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="deckSearchFilter" title="Filter by type" style="background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px;font-weight:700;">
+              <option value="ALL">All</option>
+              <option value="LAND">Lands</option>
+              <option value="ARTIFACT">Artifacts</option>
+              <option value="CREATURE">Creatures</option>
+              <option value="INSTANT">Instants</option>
+              <option value="SORCERY">Sorceries</option>
+              <option value="ENCHANTMENT">Enchantments</option>
+              <option value="PLANESWALKER">Planeswalkers</option>
+            </select>
+            <button id="deckSearchClose" class="chatClose" title="Close">✕</button>
+          </div>
+        </div>
+        <div id="deckSearchGrid" style="flex:1; overflow:auto; padding:12px; display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;"></div>
+      </div>`;
+    document.body.appendChild(ov);
+    return ov;
+  }
+
+  function ensureToolsOverlay(){
+    let ov = document.getElementById('deckToolsOverlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'deckToolsOverlay';
+    ov.className = 'chatOverlay';
+    ov.setAttribute('aria-hidden','true');
+    ov.innerHTML = `
+      <div class="chatPanel" role="dialog" aria-label="Deck Tools">
+        <div class="chatHeader">
+          <span>Deck Tools</span>
+          <button id="deckToolsClose" class="chatClose" title="Close">✕</button>
+        </div>
+        <div style="padding:12px; display:grid; gap:14px;">
+          <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;">
+            <label style="color:#b9c3d9;font-weight:700;">Draw X</label>
+            <div style="display:flex; gap:8px;">
+              <input id="drawXInput" type="number" min="1" value="1" style="width:100px;border:1px solid #24304a;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+              <button id="drawXBtn" class="btn sm">Draw</button>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;">
+            <label style="color:#b9c3d9;font-weight:700;">Mill X (to Graveyard)</label>
+            <div style="display:flex; gap:8px;">
+              <input id="millXInput" type="number" min="1" value="1" style="width:100px;border:1px solid #24304a;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+              <button id="millXBtn" class="btn sm">Mill</button>
+            </div>
+          </div>
+
+          <div style="border-top:1px solid #1f2738; padding-top:12px; display:grid; gap:10px;">
+            <div style="font-weight:800;color:#dbe5ff">Cascade</div>
+
+            <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:center;">
+              <select id="cascadeMode" title="Cascade mode" style="background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px;font-weight:700;">
+                <option value="NONLAND">Until nonland card</option>
+                <option value="TYPE">Until card type…</option>
+                <option value="MVLE">Until MV ≤ N</option>
+              </select>
+
+              <select id="cascadeType" style="background:#0d1421;border:1px solid #2b3f63;color:#dbe5ff;border-radius:10px;padding:6px 8px;font-weight:700;">
+                <option value="CREATURE">Creature</option>
+                <option value="ARTIFACT">Artifact</option>
+                <option value="ENCHANTMENT">Enchantment</option>
+                <option value="INSTANT">Instant</option>
+                <option value="SORCERY">Sorcery</option>
+                <option value="PLANESWALKER">Planeswalker</option>
+              </select>
+
+              <div style="display:flex;gap:8px;align-items:center;">
+                <label for="cascadeMV" style="color:#b9c3d9;">MV ≤</label>
+                <input id="cascadeMV" type="number" min="0" value="3" style="width:80px;border:1px solid #24304a;background:#0a0f16;color:#e7e9ee;border-radius:10px;padding:8px;">
+              </div>
+            </div>
+
+            <button id="cascadeBtn" class="btn sm" style="justify-self:end;">Run Cascade</button>
+
+            <div id="cascadeReveal" style="display:none; max-height:260px; overflow:auto; gap:8px; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));"></div>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    return ov;
+  }
+
+  // ---------- fetch + type helpers ----------
+  async function getCardData(name){
+    try { return await fetchCard(name); }
+    catch { return null; }
+  }
+  function candidateImg(d){
+    try{
+      const uris = candidateUris(d);
+      return (uris && uris[0]) || CARD_BACK;
+    }catch{ return CARD_BACK; }
+  }
+  function typeMatches(d, want){
+    if (!d) return false;
+    const line = (d.type_line || '').toUpperCase();
+    if (want === 'ALL') return true;
+    return line.includes(want);
+  }
+  function manaValue(d){
+    if (!d) return NaN;
+    if (typeof d.cmc === 'number') return d.cmc; // Scryfall field
+    return NaN;
+  }
+
+  // ---------- shared action: send found card ----------
+  async function sendFoundCard(name, dest){
+    if (!name) return;
+    const pid = me();
+
+    if (dest === 'hand'){
+      const c = spawnCard(name, 0, 0);
+      moveToHand(c);
+      await persistDeckAndMaybeLog(`searched → ${name} to Hand`);
+      return;
+    }
+    if (dest === 'table'){
+      const c = spawnCard(name, world.clientWidth/2, world.clientHeight/2);
+      world.appendChild(c);
+      await persistDeckAndMaybeLog(`searched → ${name} to Table`);
+      return;
+    }
+    if (dest === 'graveyard' || dest === 'exile'){
+      const zoneKind = dest === 'graveyard' ? 'Graveyard' : 'Exile';
+      try{
+        await appendEntryToPlayerZone({ role:'self', seat:pid }, zoneKind, { id: String(Math.random()).slice(2), name });
+      }catch(e){ console.warn('[deck] zone write failed', e); }
+      await persistDeckAndMaybeLog(`searched → ${name} to ${zoneKind}`);
+      return;
+    }
+  }
+
+// Build a small action menu for a given card tile
+// refreshFn = callback to re-render the grid after moving a card
+function buildSendMenu(name, refreshFn){
+  const wrap = document.createElement('div');
+  // responsive grid → wraps automatically (2-up, falls to 1-up if narrow)
+  wrap.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-top:10px;';
+
+  function mk(label, dest){
+    const b = document.createElement('button');
+    b.className = 'btn sm';
+    // high-contrast & full-width per grid cell
+    b.style.cssText = 'width:100%;background:#142136;border:1px solid #35527d;color:#e9f2ff;padding:8px 10px;border-radius:10px;font-weight:800;';
+    b.textContent = label;
+    b.addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      if (typeof isViewer === 'function' && isViewer()) { window.showToast?.('Read-only in viewer mode'); return; }
+
+      // prevent double-click
+      wrap.querySelectorAll('button').forEach(x => x.disabled = true);
+
+      // remove from deck, shuffle, persist, then send
+      if (!removeOneFromDeckByName(name)) { refreshFn?.(); return; }
+      shuffleInPlace(drawPile);
+      syncDeckCount();
+
+      await sendFoundCard(name, dest);
+      await persistDeckAndMaybeLog(`searched → ${name} to ${dest}`);
+
+      // re-render grid so this tile disappears
+      refreshFn?.();
+    });
+    return b;
+  }
+
+  wrap.appendChild(mk('Hand','hand'));
+  wrap.appendChild(mk('Table','table'));
+  wrap.appendChild(mk('Graveyard','graveyard'));
+  wrap.appendChild(mk('Exile','exile'));
+  return wrap;
+}
+
+
+
+  // ================== SEARCH OVERLAY ==================
+  function openSearch(){
+    const ov = ensureSearchOverlay();
+    const grid   = document.getElementById('deckSearchGrid');
+    const filter = document.getElementById('deckSearchFilter');
+    const close  = document.getElementById('deckSearchClose');
+
+    async function render(){
+      grid.innerHTML = '';
+      const names = Array.isArray(drawPile) ? Array.from(new Set(drawPile)) : [];
+      if (!names.length){
+        const empty = document.createElement('div');
+        empty.style.cssText = 'opacity:.85';
+        empty.textContent = 'Deck is empty.';
+        grid.appendChild(empty);
+        return;
+      }
+      const want = filter.value; // ALL / LAND / …
+
+      // count duplicates so we can show a badge
+      const counts = new Map();
+      drawPile.forEach(n => counts.set(n, 1 + (counts.get(n) || 0)));
+
+      for (const name of names){
+        const tile = document.createElement('div');
+        tile.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:10px;display:flex;flex-direction:column;';
+        const img = document.createElement('img');
+        img.alt = name; img.draggable = false; img.style.cssText = 'width:100%;aspect-ratio:223/310;object-fit:cover;border-radius:8px;background:#06080e;';
+        img.src = CARD_BACK;
+
+        const label = document.createElement('div');
+        label.textContent = name;
+        label.style.cssText = 'margin-top:6px;font-weight:800;display:flex;justify-content:space-between;align-items:center;';
+
+        const cnt = document.createElement('span');
+        cnt.textContent = `×${counts.get(name) || 1}`;
+        cnt.style.cssText = 'opacity:.8;font-weight:700;font-size:12px;';
+        label.appendChild(cnt);
+
+        tile.appendChild(img);
+        tile.appendChild(label);
+
+        (async ()=>{
+          const d = await getCardData(name);
+          if (d) img.src = candidateImg(d);
+          if (d && !typeMatches(d, want)) {
+            tile.remove();
+            return;
+          }
+          tile.appendChild(buildSendMenu(name, render));
+
+        })();
+
+        grid.appendChild(tile);
+      }
+    }
+
+    // wire once
+    filter.onchange = render;
+    close.onclick   = ()=> hideOverlay(ov);
+    ov.onclick      = (e)=>{ if (e.target === ov) hideOverlay(ov); };
+
+    render();
+    showOverlay(ov);
+  }
+
+  // ================== TOOLS OVERLAY (draw / mill / cascade) ==================
+  function openTools(){
+    const ov = ensureToolsOverlay();
+    const close = document.getElementById('deckToolsClose');
+    const drawXInput = document.getElementById('drawXInput');
+    const drawXBtn   = document.getElementById('drawXBtn');
+    const millXInput = document.getElementById('millXInput');
+    const millXBtn   = document.getElementById('millXBtn');
+
+    const cascadeMode = document.getElementById('cascadeMode');
+    const cascadeType = document.getElementById('cascadeType');
+    const cascadeMV   = document.getElementById('cascadeMV');
+    const cascadeBtn  = document.getElementById('cascadeBtn');
+    const revealGrid  = document.getElementById('cascadeReveal');
+
+    close.onclick = ()=> hideOverlay(ov);
+    ov.onclick    = (e)=>{ if (e.target === ov) hideOverlay(ov); };
+
+    drawXBtn.onclick = async ()=>{
+      if (isViewer()) { showToast?.('Read-only in viewer mode'); return; }
+      const n = Math.max(1, parseInt(drawXInput.value || '1', 10));
+      drawToHand(n);
+      await persistDeckAndMaybeLog(`draw ${n}`);
+      syncDeckCount();
+    };
+
+    millXBtn.onclick = async ()=>{
+      if (isViewer()) { showToast?.('Read-only in viewer mode'); return; }
+      const n = Math.max(1, parseInt(millXInput.value || '1', 10));
+      const names = removeTopNFromDeck(n);
+      for (const name of names){
+        try{
+          await appendEntryToPlayerZone({ role:'self', seat:me() }, 'Graveyard',
+            { id: String(Math.random()).slice(2), name });
+        }catch(e){ console.warn('[deck] mill write failed', e); }
+      }
+      shuffleInPlace(drawPile);
+      await persistDeckAndMaybeLog(`mill ${names.length}`);
+    };
+
+    cascadeBtn.onclick = async ()=>{
+      if (isViewer()) { showToast?.('Read-only in viewer mode'); return; }
+      revealGrid.style.display = 'grid';
+      revealGrid.innerHTML = '';
+
+      const mode = cascadeMode.value;     // NONLAND / TYPE / MVLE
+      const wantType = cascadeType.value; // CREATURE, …
+      const wantMV   = Math.max(0, parseInt(cascadeMV.value || '0', 10));
+
+      const revealed = [];
+      let hitName = null, hitData = null;
+
+      while (drawPile.length){
+        const name = drawPile.pop();      // reveal from the top
+        revealed.push(name);
+        const d = await getCardData(name);
+        const img = candidateImg(d);
+
+        // paint tile for reveal
+        const tile = document.createElement('div');
+        tile.style.cssText = 'background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:8px;';
+        tile.innerHTML = `<img src="${img}" alt="${name}" style="width:100%;aspect-ratio:223/310;object-fit:cover;border-radius:8px;background:#06080e;"><div style="margin-top:6px;font-weight:800">${name}</div>`;
+        revealGrid.appendChild(tile);
+
+        const typeLine = (d?.type_line || '').toUpperCase();
+        const isLand = typeLine.includes('LAND');
+        const mv = manaValue(d);
+
+        let match = false;
+        if (mode === 'NONLAND') match = !isLand;
+        else if (mode === 'TYPE') match = typeLine.includes(wantType);
+        else if (mode === 'MVLE') match = Number.isFinite(mv) && mv <= wantMV;
+
+        if (match){
+          hitName = name; hitData = d;
+          // add send-to menu for the hit
+          const menu = buildSendMenu(name);
+          revealGrid.appendChild(menu);
+          break;
+        }
+      }
+
+      // Return the non-hit revealed cards to deck, then shuffle
+      if (hitName){
+        // remove one copy of the hit (we already popped it), leave revealed others out then return them
+        const rejects = revealed.filter(n => n !== hitName);
+        // bottom (front) of deck first, but we’ll shuffle anyway
+        drawPile = drawPile.concat(rejects);
+      }else{
+        // no match found → put everything back
+        drawPile = drawPile.concat(revealed);
+        const msg = (mode === 'MVLE') ? `No card with MV ≤ ${wantMV}` :
+                    (mode === 'TYPE') ? `No ${wantType.toLowerCase()} found` : 'No nonland found';
+        showToast?.(msg);
+      }
+
+      shuffleInPlace(drawPile);
+      syncDeckCount();
+      await persistDeckAndMaybeLog('cascade');
+    };
+
+    showOverlay(ov);
+  }
+
+  // ---------- wire buttons ----------
+  if (searchBtn){ searchBtn.addEventListener('click', openSearch); }
+  if (moreBtn)  { moreBtn.addEventListener('click',  openTools ); }
+})();
+
+
+// -------- Turn Log button + overlay wiring --------
+
+// Decide which player's log to show:
+// - If you're viewing someone: that player's seat
+// - Otherwise: your own seat (currentPlayer)
+function targetPlayerForInfo(){
+  const me = Number(window.currentPlayer || 1);
+  if (window.viewerMode && window.viewerPlayer) return Number(window.viewerPlayer);
+  return me;
+}
+
+// Open overlay and populate with that player's current-turn actions
+async function openTurnLogOverlay(playerId){
+  await firebaseReady;
+  if (!db) { console.warn('[turnlog] no Firestore'); return; }
+
+  // Title
+  const title = document.getElementById('turnLogTitle');
+  if (title) title.textContent = `Turn Log — P${playerId}`;
+
+  // games/{GAME_ID}/turn/current/log/{playerId}
+  const ref = db
+    .collection('games').doc(GAME_ID)
+    .collection('turn').doc('current')
+    .collection('log').doc(String(playerId));
+
+  let moves = [];
+  try{
+    const snap = await ref.get();
+    const data = snap.exists ? (snap.data() || {}) : {};
+    moves = Array.isArray(data.moves) ? data.moves.slice() : [];
+  }catch(e){
+    console.warn('[turnlog] read failed', e);
+  }
+
+  const list = document.getElementById('turnLogList');
+  list.innerHTML = '';
+
+  if (!moves.length){
+    const empty = document.createElement('div');
+    empty.className = 'chatLine';
+    empty.innerHTML = `
+      <div class="chatWho">P${playerId}</div>
+      <div class="chatText">No actions logged yet this turn.</div>
+      <div class="chatTime"></div>
+      <div></div>
+    `;
+    list.appendChild(empty);
+  } else {
+    // sort by time (supports tsMs or Firestore Timestamp)
+    moves.sort((a,b)=>{
+      const ta = (typeof a.tsMs === 'number') ? a.tsMs :
+                 (a.ts && a.ts.seconds ? a.ts.seconds * 1000 : 0);
+      const tb = (typeof b.tsMs === 'number') ? b.tsMs :
+                 (b.ts && b.ts.seconds ? b.ts.seconds * 1000 : 0);
+      return ta - tb;
+    });
+
+    for (const m of moves){
+      const whenDate =
+        (m.ts && typeof m.ts.toDate === 'function' && m.ts.toDate()) ||
+        (m.ts && m.ts.seconds ? new Date(m.ts.seconds * 1000) : null) ||
+        (typeof m.tsMs === 'number' ? new Date(m.tsMs) : null);
+      const whenTxt = whenDate ? whenDate.toLocaleTimeString() : '';
+
+      const action = (m.action ? String(m.action) : 'action');
+      const name   = m.name ? ` — ${m.name}` : (m.id ? ` — ${m.id}` : '');
+      const text   = m.text || (action + name);
+
+      const line = document.createElement('div');
+      line.className = 'chatLine';
+      line.innerHTML = `
+        <div class="chatWho">P${playerId}</div>
+        <div class="chatText">${text}</div>
+        <div class="chatTime">${whenTxt}</div>
+        <div></div>
+      `;
+      list.appendChild(line);
+    }
+  }
+
+  // show overlay
+  const ov = document.getElementById('turnLogOverlay');
+  ov.style.display = 'block';
+  ov.setAttribute('aria-hidden','false');
+}
+
+
+// close overlay
+(function wireTurnLogOverlay(){
+  const closeBtn = document.getElementById('turnLogClose');
+  const ov = document.getElementById('turnLogOverlay');
+  if (closeBtn) closeBtn.addEventListener('click', ()=> {
+    ov.style.display = 'none';
+    ov.setAttribute('aria-hidden','true');
+  });
+  // click outside panel to close
+  if (ov) ov.addEventListener('click', (e)=>{
+    if (e.target === ov) { ov.style.display = 'none'; ov.setAttribute('aria-hidden','true'); }
+  });
+})();
+
+// Button click → open correct player's log
+document.getElementById('infoBtn')?.addEventListener('click', ()=>{
+  const pid = targetPlayerForInfo();
+  openTurnLogOverlay(pid);
+});
+
+// -------- Minimal logger (fixed) --------
+async function logTurnAction(playerId, action, data = {}) {
+  await firebaseReady;
+  if (!db) return;
+
+  const ref = db
+    .collection('games').doc(GAME_ID)
+    .collection('turn').doc('current')
+    .collection('log').doc(String(playerId));
+
+  // Client clock for ordering inside the array element
+  const tsMs = Date.now();
+
+  const entry = { action: String(action || 'action'), ...data, tsMs };
+  // strip undefineds
+  Object.keys(entry).forEach(k => entry[k] === undefined && delete entry[k]);
+
+  await ref.set({
+    moves: firebase.firestore.FieldValue.arrayUnion(entry),
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+
+  console.log('[turnlog] +', { playerId, entry });
+}
+
+
+
+
 
 /* ===== Life overlay + strip updater ===== */
 (function lifeModule(){
@@ -1009,7 +2120,7 @@ async function startDefenseOutcomePoller(intervalMs = 100){
       const flag = Number(d.defenseOutcome ?? d.defensiveOutcome ?? 0);
       const np   = Number(d.numPlayers || window.NUM_PLAYERS || 2);
 
-      console.log(`[poller] snapshot (path: ${path}) →`, { defenseOutcome: d.defenseOutcome, defensiveOutcome: d.defensiveOutcome, flag, numPlayers: np });
+   
 
       if (flag === 1) {
         console.log(`[poller] detected defenseOutcome == 1 — running cleanup (path: ${path})`, new Date().toISOString());
@@ -1148,7 +2259,8 @@ function renderFullState(data){
   clearHand();
   (data?.Hand || []).forEach(spawnCardToHandFromSaved);
   layoutHand();
-
+// ensure thickness matches saved Deck
+if (typeof updateDeckVisual === 'function') updateDeckVisual();
   // 4) Make sure we are NOT in viewer mode when resuming a player
   viewerMode = false;
   viewerPlayer = null;
@@ -1172,16 +2284,22 @@ async function hydrateCardData(card){
     const d = await fetchCard(name);
     card._data = d;
 
-    // If the front image was empty in the saved snapshot, fill it now
     const imgEl = card.querySelector('.face.front img');
-    if(imgEl && (!imgEl.src || imgEl.src === window.location.href)) {
-      const uris = candidateUris(d);
+    const domLooksBlank = !imgEl?.src || imgEl.src === window.location.href;
+    const uris = candidateUris(d);
+
+    if (domLooksBlank && imgEl) {
       await loadFirstWorking(imgEl, uris);
     }
+
+    // keep a cached copy for serializeCard fallbacks
+    card._imgSrc = (imgEl && imgEl.src) || (uris && uris[0]) || card._imgSrc || '';
+
     refreshPTForCard(card);
-    if(selectedCard === card) updateHint();
+    if (selectedCard === card) updateHint();
   }catch(e){ /* ignore */ }
 }
+
 
 
 
@@ -1224,30 +2342,43 @@ console.log('[firebase] ready');
 /* Utility: Serialise one card DOM -> plain object for saving (with extras) */
 function serializeCard(card){
   if(!card) return null;
+
   const rectLeft = parseFloat(card.style.left) || 0;
   const rectTop  = parseFloat(card.style.top)  || 0;
 
   const name = card.getAttribute('data-name') || (card._data && card._data.name) || '';
 
-  // image url if loaded
+  // Prefer the DOM src if it's a real URL; otherwise fall back to _imgSrc,
+  // then fall back to first candidate Scryfall URI from _data (no network).
   const imgEl = card.querySelector('.face.front img');
-  const img = imgEl ? imgEl.src : '';
+  let img = '';
+
+  const domSrc = imgEl ? imgEl.src : '';
+  const domLooksBlank = !domSrc || domSrc === window.location.href;
+
+  if (!domLooksBlank) {
+    img = domSrc;
+  } else if (card._imgSrc) {
+    img = card._imgSrc;
+  } else if (card._data) {
+    try {
+      const uris = candidateUris(card._data); // uses already-loaded card data
+      img = (uris && uris[0]) || '';
+    } catch (_) { img = ''; }
+  }
 
   const id = card.dataset.cid || (card.dataset.cid = String(Math.random()).slice(2));
 
-  // tap/flip
   const c3 = card.querySelector('.card3d');
   const tapped  = !!(c3 && (c3.style.transform||'').includes('rotate(90deg)'));
   const flipped = card.classList.contains('flipped');
 
-  // extras (manual edits + chosen/type/effect metadata)
   const ex = card._extras || {};
   const extras = {
     addTypes:   Array.from(ex.addTypes   || []),
     addEffects: Array.from(ex.addEffects || []),
     dp: Number.isFinite(ex.dp) ? ex.dp : 0,
     dt: Number.isFinite(ex.dt) ? ex.dt : 0,
-    // optional “chosen type” for cards like Metallic Mimic or “choose a creature type”
     chosenType: (ex.chosenType || '') + ''
   };
 
@@ -2765,23 +3896,30 @@ function spawnCard(name, x=300, y=150){
   // default extras container
   if (!card._extras) card._extras = { addTypes:new Set(), addEffects:new Set(), dp:0, dt:0, chosenType:'' };
 
-  // fetch art + oracle text
-  fetchCard(name).then(async d=>{
-    card._data=d;
-    const uris=candidateUris(d);
-    await loadFirstWorking(imgF,uris);
+// fetch art + oracle text
+fetchCard(name).then(async d=>{
+  card._data = d;
+  const uris = candidateUris(d);
+  await loadFirstWorking(imgF, uris);
 
-    // P/T badge if creature
-    refreshPTForCard(card);
+  // remember the resolved image URL
+  card._imgSrc = imgF.src || (uris && uris[0]) || '';
 
-    // Only update tooltip if this card is currently selected
-    if(selectedCard===card) updateHint();
+  // NEW: if the card is currently in the Hand, persist immediately so "draw" saves get the URL
+  try {
+    if (card.parentElement === handZone && typeof savePlayerState === 'function') {
+      await savePlayerState(Number(currentPlayer || 1));
+    }
+  } catch (e) {
+    console.warn('[draw/save] post-art save failed', e);
+  }
 
-    // OPTIONAL one-liner: handle ETB choose-type prompts (e.g., Metallic Mimic)
-    // If you don’t want this, comment the next call out.
-    maybePromptChooseTypeOnETB(card);
+  refreshPTForCard(card);
+  if (selectedCard === card) updateHint();
+  maybePromptChooseTypeOnETB(card);
+}).catch(()=>{});
 
-  }).catch(()=>{});
+
 
   return card;
 }
@@ -3215,19 +4353,22 @@ function attachCenterHandDrag(card){
       return;
     }
 
-    // Up swipe → lift into world
-    if(!lifted && dy<-30 && Math.abs(dy)>Math.abs(dx)){
-      removeFromHand(card);
-world.appendChild(card);
+// Up swipe → lift into world
+if (!lifted && dy < -30 && Math.abs(dy) > Math.abs(dx)) {
+  removeFromHand(card);
+  world.appendChild(card);
 
-// Select card + everything below it in any stack (currently just itself)
-setSelectionFromCard(card);
+  // --- turn log: played to battlefield ---
+  try {
+    logTurnAction(Number(currentPlayer || 0), 'play', {
+      id: ensureCid(card),
+      name: card.getAttribute('data-name') || ''
+    });
+  } catch (e) { console.warn('[turnlog] play failed', e); }
 
-// re-run lords/anthems when a new permanent hits the table
-recomputeContinuousEffects();
-
-
-      // Place under finger (world coords)
+  // (existing code continues…)
+  setSelectionFromCard(card);
+  recomputeContinuousEffects();
       const r=table.getBoundingClientRect();
       const worldX=(e.clientX - r.left - state.tx)/state.scale;
       const worldY=(e.clientY - r.top  - state.ty)/state.scale;
@@ -3271,17 +4412,26 @@ $('#shuffleBtn').addEventListener('click', ()=>{
   alert('Shuffled.');
 });
 function drawToHand(n){
-  if(!drawPile.length) return;
-  for(let i=0;i<n;i++){
-    const name=drawPile.pop(); if(!name) break;
-    $('#deckCount').textContent=drawPile.length;
-    const c=spawnCard(name,0,0);
-    moveToHand(c);
-	    // persist after draw
-    if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
+  if (!drawPile.length) return;
 
+  let drawn = 0;
+  for (let i = 0; i < n; i++) {
+    const name = drawPile.pop(); if (!name) break;
+    $('#deckCount').textContent = drawPile.length;
+    const c = spawnCard(name, 0, 0);
+    moveToHand(c);
+    drawn++;
+  }
+
+  // persist board after draw
+  if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
+
+  // turn log: one entry per draw action
+  if (drawn > 0 && typeof logTurnAction === 'function') {
+    logTurnAction(Number(currentPlayer || 0), 'draw', { count: drawn });
   }
 }
+
 $('#draw7').addEventListener('click', ()=>drawToHand(7));
 $('#draw1').addEventListener('click', ()=>drawToHand(1));
 
@@ -3292,12 +4442,31 @@ $('#draw1').addEventListener('click', ()=>drawToHand(1));
 // Toggle tap state for a single card
 function toggleTapOne(card){
   const t = card.querySelector('.card3d');
-  const tapped = (t.style.transform || '').includes('rotate(90deg)');
-  t.style.transform = tapped ? 'rotate(0deg)' : 'rotate(90deg)';
+  const wasTapped = (t.style.transform || '').includes('rotate(90deg)');
+  t.style.transform = wasTapped ? 'rotate(0deg)' : 'rotate(90deg)';
+
+  // --- turn log: tap or untap ---
+  try {
+    logTurnAction(Number(currentPlayer || 0), wasTapped ? 'untap' : 'tap', {
+      id: ensureCid(card),
+      name: card.getAttribute('data-name') || ''
+    });
+  } catch(e){ console.warn('[turnlog] tap log failed', e); }
 }
 
 // Flip still acts on just the selected card
-function toggleFlip(card){ card.classList.toggle('flipped'); }
+function toggleFlip(card){
+  card.classList.toggle('flipped');
+
+  // --- turn log: flip ---
+  try {
+    logTurnAction(Number(currentPlayer || 0), 'flip', {
+      id: ensureCid(card),
+      name: card.getAttribute('data-name') || ''
+    });
+  } catch(e){ console.warn('[turnlog] flip log failed', e); }
+}
+
 
 // T: tap/untap the slice from stack base up through the selected card
 $('#tapBtn').addEventListener('click', ()=>{
@@ -4699,6 +5868,15 @@ async function appendEntryToPlayerZone(playerSeat, zoneKind, entry, role){
   );
 
   console.log(`[graveyard][${role||'unknown'}] OK (by id) → games/${GAME_ID}/players/${seatStr}  zone=${zoneKind}  id=${clean.id}`);
+
+// --- turn log: generic zone move ---
+try {
+  logTurnAction(Number(currentPlayer || 0), `to_${zoneKind}`, {
+    id: clean.id,
+    name: clean.name
+  });
+} catch(e){ console.warn('[turnlog] zone log failed', e); }
+
 }
 
 
@@ -4708,31 +5886,68 @@ async function appendEntryToPlayerZone(playerSeat, zoneKind, entry, role){
 
 //---------------------------
 
+async function clearTurnLogsForAllPlayers(){
+  await firebaseReady; if (!db) return;
+  const base = db.collection('games').doc(GAME_ID)
+                 .collection('turn').doc('current')
+                 .collection('log');
+
+  const batch = db.batch();
+  const total = Number(NUM_PLAYERS || 1);
+  for (let p = 1; p <= total; p++) {
+    const ref = base.doc(String(p));
+    batch.set(ref, {
+      moves: [],
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+  }
+  await batch.commit();
+  console.log('[turnlog] cleared for new turn');
+}
+
+
 // END turn with confirm; rotate 1..N (server source of truth)
-document.getElementById('endBtn').addEventListener('click', async ()=>{
+document.getElementById('endBtn').addEventListener('click', async () => {
   const ok = confirm(`End Player ${turnPlayer}'s turn?`);
-  if(!ok) return;
+  if (!ok) return;
 
   const nextTurn = (Number(turnPlayer) % Number(NUM_PLAYERS)) + 1;
   turnPlayer = nextTurn; // keep local mirror
-
   showToast(`Turn: Player ${turnPlayer}`);
 
-  try{
-    // Clear combat rows and write new turn/players atomically
-    await firebaseReady; if(!db) return;
+  try {
+    await firebaseReady; 
+    if (!db) return;
+
+    // Read current to preserve lifeByPlayer (and anything else we don't intend to overwrite)
+    const snap = await combatDoc().get();
+    const prev = snap.exists ? (snap.data() || {}) : {};
+    const keepLife = (prev && typeof prev.lifeByPlayer === 'object') ? prev.lifeByPlayer : {};
+
     await combatDoc().set({
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       turnPlayer: Number(nextTurn),
       numPlayers: Number(NUM_PLAYERS),
+
+      // keep life totals intact for all players
+      lifeByPlayer: keepLife,
+
+      // clear per-turn combat data
       attacksByPlayer: {},
       blocksByDefender: {}
-    }, { merge: false }); // replace
+    }, { merge: true }); // <— do NOT replace the whole doc
+
     console.log('[turn] advanced on server to P' + nextTurn);
-  }catch(e){
+
+    // also wipe this turn’s logs (if available)
+    try { await clearTurnLogsForAllPlayers(); } 
+    catch (e) { console.warn('[turnlog] clear failed', e); }
+
+  } catch (e) {
     console.warn('[turn] end turn write failed:', e);
   }
 });
+
 
 
 
