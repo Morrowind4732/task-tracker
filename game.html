@@ -1175,6 +1175,86 @@ function captureLocalSnapshot(){
   };
 }
 
+
+// Generate/ensure a stable card id (cid) on a DOM element
+function ensureCid(el){
+  if (!el) return '';
+  if (!el.dataset.cid) el.dataset.cid = String(Math.random()).slice(2);
+  return el.dataset.cid;
+}
+
+/* Remove a card with id=cardId from a player's Table array in Firestore.
+   Uses a transaction so we don't depend on exact object matching (arrayRemove). */
+async function removeCardFromPlayerTable(playerSeat, cardId){
+  await firebaseReady; if (!db) return;
+  const seat = String(playerSeat);
+  const docRef = db.collection('games').doc(GAME_ID).collection('players').doc(seat);
+  const pathStr = `games/${GAME_ID}/players/${seat}`;
+
+  return db.runTransaction(async (tx)=>{
+    const snap = await tx.get(docRef);
+    const data = snap.exists ? (snap.data() || {}) : {};
+    const before = Array.isArray(data.Table) ? data.Table : [];
+    const after  = before.filter(c => String(c?.id) !== String(cardId));
+
+    console.log(`[table-remove] FROM ${pathStr}  id=${cardId}  before=${before.length} after=${after.length}`);
+    tx.set(docRef, {
+      Table: after,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge:true });
+  });
+}
+
+
+
+/* Append a dying card to a player's zone list in Firestore (e.g., Graveyard)
+   and drop a hidden DOM marker so future savePlayerState() won't wipe it.
+   `role` is only for logging: 'attacker' | 'blocker' */
+async function appendCardToPlayerZone(playerSeat, zoneKind /* 'Graveyard' | 'Exile' */, cardEl, role){
+  try{
+    await firebaseReady; if (!db) return;
+    const seat = String(playerSeat);
+    const pathStr = `games/${GAME_ID}/players/${seat}`;
+    const docRef = db.collection('games').doc(GAME_ID).collection('players').doc(seat);
+
+    const cid = ensureCid(cardEl);
+
+    // Reuse your serializer so name/img/extras stay consistent
+    const s = (typeof serializeCard === 'function') ? (serializeCard(cardEl) || {}) : {};
+
+    const entry = {
+      id: cid,
+      name: s.name || cardEl.getAttribute('data-name') || '',
+      img:  s.img  || (cardEl.querySelector('.face.front img')?.src || ''),
+      extras: s.extras || cardEl._extras || undefined
+    };
+
+    // Keep DOM in sync so a subsequent save won't wipe the zone write
+    const zoneSel = (zoneKind === 'Graveyard') ? '.graveyard' : '.exile';
+    const zoneDom = document.querySelector(zoneSel);
+    if (zoneDom && !zoneDom.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)){
+      const stub = document.createElement('div');
+      stub.className = 'card';
+      stub.dataset.cid = cid;
+      stub.style.cssText = 'display:none;left:0;top:0;';
+      zoneDom.appendChild(stub);
+    }
+
+    console.log(`[graveyard][${role||'unknown'}] WRITE → ${pathStr}  zone=${zoneKind}`, { id: entry.id, name: entry.name });
+    await docRef.set({
+      [zoneKind]: firebase.firestore.FieldValue.arrayUnion(entry),
+      updatedAt:  firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge:true });
+    console.log(`[graveyard][${role||'unknown'}] OK   → ${pathStr}  zone=${zoneKind}  id=${entry.id}`);
+  }catch(e){
+    console.warn('[appendCardToPlayerZone] failed', e);
+  }
+}
+
+
+
+
+
 function clearBoard(){
   // remove only table/zone cards (not the zones themselves)
   document.querySelectorAll('#world .card').forEach(el => el.remove());
@@ -1280,7 +1360,9 @@ let handIndex=0;
 let stackMode=null;
 
 // Which player we are controlling / saving as
-let currentPlayer = 1; // default to player 1 (1/2/3)
+var currentPlayer = 1; // default to player 1 (1/2/3)
+window.currentPlayer = currentPlayer;
+
 /* Turn / player count state */
 let NUM_PLAYERS = 2;   // default; change via the # popout
 let turnPlayer  = 1;   // whose turn it is (1..NUM_PLAYERS)
@@ -3150,18 +3232,26 @@ playerActionButtons.forEach(b=>{
       playerWrapper.classList.remove('open');
       return;
     }
+
+    // If we were viewing someone else, exit viewer so zone overlays use me
+    if (window.viewerMode) exitViewer();
+
     // highlight UI
     playerActionButtons.forEach(x=>x.classList.remove('on'));
     b.classList.add('on');
 
     currentPlayer = p;
+window.currentPlayer = currentPlayer;
+console.log('[player select] set currentPlayer =', currentPlayer);
 
-    // resume that player's saved state (deck/hand/table)
-    await resumeOrInitForPlayer(currentPlayer);
+// resume that player's saved state (deck/hand/table)
+await resumeOrInitForPlayer(currentPlayer);
+
 
     playerWrapper.classList.remove('open');
   });
 });
+
 
 // Eye → view another player's field (no hands, no auto swap back)
 viewActionButtons.forEach(b=>{
@@ -3377,10 +3467,12 @@ function isOwnedByMe(card){
   return !owner || String(owner) === String(currentPlayer);
 }
 function myCreatureBases(){
-  const all = Array.from(document.querySelectorAll('#world .card'));
+  // Only battlefield cards: direct children of #world (not inside zones)
+  const all = Array.from(document.querySelectorAll('#world > .card'));
   const seen = new Set();
   const out = [];
   for (const c of all){
+    if (c.parentElement !== document.getElementById('world')) continue;
     const base = getStackBase(c) || c;
     if (!isCreatureCard(base)) continue;
     if (!isOwnedByMe(base)) continue;
@@ -3391,6 +3483,7 @@ function myCreatureBases(){
   }
   return out;
 }
+
 
 function combatDoc(){
   // games/{GAME_ID}/combat/current
@@ -3876,8 +3969,13 @@ ov2.querySelector('#outApply').onclick = async ()=>{
     const chks = Array.from(ov2.querySelectorAll('.outChk'));
 
     let totalDamageToMe = 0;
-    const toRemoveAttackers = [];
-    const toRemoveBlockers  = [];
+
+    // collect removals with ownership so we can route to correct graveyards
+    const toRemoveAttackers = []; // { seat:number, el:HTMLElement }
+    const toRemoveBlockers  = []; // { seat:number, el:HTMLElement }
+
+    // helper to read a card name cleanly for logs
+    const nameOf = (el)=> (el?.getAttribute?.('data-name')) || (el?._data?.name) || '';
 
     // Log each row and sum only the CHECKED ones
     chks.forEach(ch => {
@@ -3887,26 +3985,53 @@ ov2.querySelector('#outApply').onclick = async ()=>{
       const dmg = Number(o?.playerDamage || 0);
 
       console.log(`[outcome][row ${idx}] checked=${checked} playerDamage=${dmg}`, {
-        attacker: o?.attacker?.name,
+        attacker: o?.atk?.name,
+        attackerSeat: o?.atk?.seat,
         targetSeat: mySeat,
-        assigns: o?.assigns?.map(a => ({
+        assigns: (o?.assigns || []).map(a => ({
           blocker: a?.blocker?.name, blockerDies: a?.blockerDies
-        })) || []
+        }))
       });
 
       if (!checked) return;
 
       totalDamageToMe += dmg;
 
-      if (o?.attackerDies && o?.attEl) toRemoveAttackers.push(o.attEl);
+      // if the attacker dies, send to ATTACKER'S graveyard
+      if (o?.attackerDies && o?.attEl) {
+        const atkSeat = Number(o?.atk?.seat || 0);
+        toRemoveAttackers.push({ seat: atkSeat, el: o.attEl });
+      }
+
+      // for each blocking assignment that dies, send to DEFENDER'S graveyard (mySeat)
       (o?.assigns || []).forEach(a => {
-        if (a?.blockerDies && a?.blocker?.el) toRemoveBlockers.push(a.blocker.el);
+        if (a?.blockerDies && a?.blocker?.el) {
+          toRemoveBlockers.push({ seat: Number(mySeat), el: a.blocker.el });
+        }
       });
     });
 
+    // ======= YOUR REQUESTED SUMMARY LINES (pre-writes) =======
+    const atkNames = toRemoveAttackers.map(x => nameOf(x.el)).filter(Boolean);
+    const blkNames = toRemoveBlockers.map(x => nameOf(x.el)).filter(Boolean);
+
+    // attacker seat(s) (usually just currentPlayer)
+    const attackerSeats = Array.from(new Set(toRemoveAttackers.map(x => x.seat).filter(n => n>0)));
+    const blockerSeat   = Number(mySeat || 0);
+
+    // If we have an attacker seat, show the exact Firebase directory
+    const attackerPath  = attackerSeats.length
+      ? `games/${GAME_ID}/players/${attackerSeats[0]}`
+      : '(none)';
+
+    console.log(`Attackers Destroyed Creatures: ${atkNames.join(', ') || '(none)'}; Blockers Destroyed Creatures: ${blkNames.join(', ') || '(none)'};`);
+    console.log(`Attacker Player:${attackerSeats.join(',') || '(unknown)'}; Blocker Player:${blockerSeat || '(unknown)'}`);
+    console.log(`THE EXACT FIREBASE DIRECTORY FOR ATTACKER THAT THE GRAVEYARD ADDING IS HAPPENING: ${attackerPath}`);
+    // =========================================================
+
     console.log(`[outcome][sum] defenderSeat=${mySeat} totalDamage=${totalDamageToMe}`);
 
-    // === Atomic life write using nested FieldPath ===
+    // === Atomic life write using nested FieldPath (unchanged) ===
     if (totalDamageToMe > 0) {
       await firebaseReady;
 
@@ -3960,9 +4085,26 @@ ov2.querySelector('#outApply').onclick = async ()=>{
       console.log('[outcome] no player damage selected; skipping life write');
     }
 
-    // Remove creatures that died (unchanged)
-    toRemoveAttackers.forEach(el => { try{ el.remove(); }catch(_){} });
-    toRemoveBlockers.forEach(el  => { try{ el.remove(); }catch(_){} });
+    // === Persist deaths BEFORE removing DOM ===
+// ATTACKERS → remove from ATTACKER'S Table, then append to ATTACKER'S Graveyard
+for (const a of toRemoveAttackers) {
+  const cid = ensureCid(a.el);
+  console.log(`[death][attacker] seat=${a.seat} id=${cid}`);
+  await removeCardFromPlayerTable(a.seat, cid);
+  await appendCardToPlayerZone(a.seat, 'Graveyard', a.el, 'attacker');
+}
+
+// BLOCKERS → remove from DEFENDER'S Table (mySeat), then append to DEFENDER'S Graveyard
+for (const b of toRemoveBlockers) {
+  const cid = ensureCid(b.el);
+  console.log(`[death][blocker] seat=${b.seat} id=${cid}`);
+  await removeCardFromPlayerTable(b.seat, cid);
+  await appendCardToPlayerZone(b.seat, 'Graveyard', b.el, 'blocker');
+}
+
+// Then, remove from the battlefield DOM
+toRemoveAttackers.forEach(obj => { const el = obj.el; try{ el.remove(); }catch(_){} });
+toRemoveBlockers.forEach(obj  => { const el = obj.el; try{ el.remove(); }catch(_){} });
 
     // Close overlays
     ov2.remove();
@@ -3971,6 +4113,8 @@ ov2.querySelector('#outApply').onclick = async ()=>{
     console.error('[outcome][apply] FAILED', err);
   }
 };
+
+
 
 
 
@@ -4306,8 +4450,10 @@ function renderLifeStrip(data){
 async function openZoneOverlay(kind /* 'Graveyard' | 'Exile' */){
   try{
     await firebaseReady;
-    const pid   = (window.viewerMode && window.viewerPlayer) ? window.viewerPlayer : window.currentPlayer || 1;
-    const data  = await loadPlayerState(pid);
+const pid = (window.viewerMode && window.viewerPlayer) ? window.viewerPlayer : window.currentPlayer || 1;
+console.log(`[zone overlay] kind=${kind} viewerMode=${!!window.viewerMode} viewerPlayer=${window.viewerPlayer||'(none)'} currentPlayer=${window.currentPlayer} → pid=${pid}`);
+const data = await loadPlayerState(pid);
+
     const cards = (data && Array.isArray(data[kind])) ? data[kind] : [];
 
     // lazy-build or reuse one overlay node
