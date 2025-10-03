@@ -851,22 +851,55 @@ document.getElementById('resetBtn')?.addEventListener('click', async () => {
   }
 });
 
-  // Wire buttons + live updates once the page & firebase are ready
+    // Wire buttons + live updates once the page & firebase are ready
   function wireLifeUI(){
     document.getElementById('lifeBtn')?.addEventListener('click', openLifeOverlay);
-    
 
-    // Subscribe to life changes when firebase helpers exist
+    // Wait until firebase helpers exist, then wire snapshot once
     const tick = setInterval(async ()=>{
       try{
         if (!window.db || typeof combatDoc!=='function' || typeof readCombatFresh!=='function') return;
         clearInterval(tick);
 
-        combatDoc().onSnapshot((snap)=>{
-          const d = snap.exists ? (snap.data()||{}) : {};
-          updateLifeStrip(d.lifeByPlayer || {}, Number(d.numPlayers || window.NUM_PLAYERS || 2));
+        let handlingDefenseOutcome = false; // guard against re-entry
+
+        console.log('[watch] wiring combat/current snapshot…');
+
+        combatDoc().onSnapshot(async (snap)=>{
+          const d  = snap.exists ? (snap.data()||{}) : {};
+          const np = Number(d.numPlayers || window.NUM_PLAYERS || 2);
+
+          // Keep existing life-strip update
+          if (typeof updateLifeStrip === 'function') {
+            updateLifeStrip(d.lifeByPlayer || {}, np);
+          }
+
+          // Read either spelling and normalize to a flag
+          const flag = Number(d.defenseOutcome ?? d.defensiveOutcome ?? 0);
+          console.log('[watch] snapshot received — defenseOutcome:', d.defenseOutcome, 'defensiveOutcome:', d.defensiveOutcome, 'flag:', flag);
+
+          if (flag === 1 && !handlingDefenseOutcome){
+            console.log('[watch] defenseOutcome==1 — starting cleanup…', new Date().toISOString(), d);
+            handlingDefenseOutcome = true;
+            try {
+              await handleDefenseOutcomeCleanup(np);
+              console.log('[watch] cleanup finished — resetting flag(s) to 0');
+              await combatDoc().set({
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                defenseOutcome: 0,      // reset both spellings
+                defensiveOutcome: 0,
+                outcomeHandledAt: firebase.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+              console.log('[cleanup] defenseOutcome handled → reset to 0');
+            } catch (e) {
+              console.warn('[cleanup] failed', e);
+            } finally {
+              handlingDefenseOutcome = false;
+            }
+          }
         });
 
+        // initial paint
         const d = await readCombatFresh();
         updateLifeStrip(d.lifeByPlayer || {}, Number(d.numPlayers || window.NUM_PLAYERS || 2));
       }catch(e){ /* keep waiting until ready */ }
@@ -874,10 +907,183 @@ document.getElementById('resetBtn')?.addEventListener('click', async () => {
   }
 
   window.addEventListener('load', wireLifeUI);
+  
+
   // expose for troubleshooting if needed
-  window.openLifeOverlay = openLifeOverlay;
-  window.updateLifeStrip = updateLifeStrip;
+  window.openLifeOverlay  = openLifeOverlay;
+  window.updateLifeStrip  = updateLifeStrip;
+
 })();
+
+// Removes any on-table cards whose ids are now present in ANY player's Graveyard.
+// Reads players/1..N docs directly so both phones stay in sync.
+async function handleDefenseOutcomeCleanup(numPlayers){
+  try{
+    await firebaseReady; if (!db) return;
+    const seats = Array.from({ length: Number(numPlayers)||2 }, (_,i)=> i+1);
+
+    const idsToRemove = new Set();
+
+    // Pull Graveyard arrays from each player and collect ids to remove from #world
+    for (const seat of seats){
+      const ref  = db.collection('games').doc(GAME_ID).collection('players').doc(String(seat));
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      const data = snap.data() || {};
+      const gy = Array.isArray(data.Graveyard) ? data.Graveyard : [];
+      for (const c of gy){
+        const cid = c && c.id ? String(c.id) : '';
+        if (cid) idsToRemove.add(cid);
+      }
+    }
+
+    // Remove any world card that matches those ids (ignore if already gone)
+    let removed = 0;
+    idsToRemove.forEach(cid=>{
+      const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+      if (el && el.parentElement === world) {
+        el.remove();
+        removed++;
+      }
+    });
+
+    console.log(`[cleanup] removed ${removed} world card(s) present in Graveyards across players`);
+  } catch (e){
+    console.warn('[cleanup] exception', e);
+  }
+}
+
+
+// ------------------------------
+// NEW: aggressive poller for defenseOutcome (100ms)
+// ------------------------------
+let __defOutcomePoller = null;
+let __defOutcomePolling = false; // guard against re-entry
+
+// REPLACE your entire startDefenseOutcomePoller with this
+async function startDefenseOutcomePoller(intervalMs = 100){
+  if (__defOutcomePoller) {
+    clearInterval(__defOutcomePoller);
+    __defOutcomePoller = null;
+  }
+
+  const gid  = String(window.GAME_ID || 'default-game');
+  const path = `games/${gid}/combat/current`;
+  console.log(`[poller] starting defenseOutcome poller @ ${intervalMs}ms  →  path: ${path}`);
+
+  let lastSkipLog = 0;
+
+  __defOutcomePoller = setInterval(async () => {
+    if (__defOutcomePolling) return;
+    try{
+      __defOutcomePolling = true;
+
+      // Ensure Firebase is ready. If db isn't set yet, wait for it now.
+      if (!window.db && typeof firebaseReady !== 'undefined') {
+        try { await firebaseReady; } catch(e) {}
+      }
+
+      // Re-check after awaiting
+      const hasDb   = !!window.db;
+      const hasDoc  = typeof window.combatDoc === 'function';
+      const hasRead = typeof window.readCombatFresh === 'function';
+
+      if (!hasDb || !hasDoc || !hasRead) {
+        const now = Date.now();
+        if (now - lastSkipLog > 1000) {
+          console.log(`[poller] skip — ready? path: ${path}`, { hasDb, hasDoc, hasRead });
+          lastSkipLog = now;
+        }
+        return;
+      }
+
+      let snap;
+      try {
+        snap = await window.combatDoc().get({ source: 'server' });
+      } catch (err) {
+        console.warn(`[poller] combatDoc.get() failed — path: ${path}`, err && err.message ? err.message : err);
+        return;
+      }
+
+      const d    = snap.exists ? (snap.data() || {}) : {};
+      const flag = Number(d.defenseOutcome ?? d.defensiveOutcome ?? 0);
+      const np   = Number(d.numPlayers || window.NUM_PLAYERS || 2);
+
+      console.log(`[poller] snapshot (path: ${path}) →`, { defenseOutcome: d.defenseOutcome, defensiveOutcome: d.defensiveOutcome, flag, numPlayers: np });
+
+      if (flag === 1) {
+        console.log(`[poller] detected defenseOutcome == 1 — running cleanup (path: ${path})`, new Date().toISOString());
+
+        try {
+          await handleDefenseOutcomeCleanup(np);
+
+          // extra visual pass (unchanged)
+          try {
+            const seats = Array.from({ length: Number(np)||2 }, (_,i)=> i+1);
+            const collected = new Set();
+            for (const seat of seats){
+              try{
+                const snapP = await db.collection('games').doc(gid).collection('players').doc(String(seat)).get();
+                if (!snapP.exists) continue;
+                const pdata = snapP.data() || {};
+                const gy = Array.isArray(pdata.Graveyard) ? pdata.Graveyard : [];
+                for (const c of gy){
+                  const cid = c && c.id ? String(c.id) : '';
+                  if (cid) collected.add(cid);
+                }
+              }catch(e){}
+            }
+            let removed = 0;
+            collected.forEach(cid=>{
+              const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+              if (el && el.parentElement === world) { el.remove(); removed++; }
+            });
+            console.log(`[poller] visual removal pass removed ${removed} world card(s) (path: ${path})`);
+          }catch(e){
+            console.warn(`[poller] visual removal extra pass failed (path: ${path})`, e);
+          }
+
+          try{
+            await window.combatDoc().set({
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+              defenseOutcome: 0,
+              defensiveOutcome: 0,
+              outcomeHandledAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+            console.log(`[poller] cleared defenseOutcome → 0 (merge:true) (path: ${path})`);
+          }catch(e){
+            console.warn(`[poller] failed to reset flag (path: ${path})`, e);
+          }
+
+        } catch (errCleanup) {
+          console.warn(`[poller] handleDefenseOutcomeCleanup failed (path: ${path})`, errCleanup);
+        }
+      }
+
+    } catch (e) {
+      console.warn('[poller] unexpected error', e);
+    } finally {
+      __defOutcomePolling = false;
+    }
+  }, intervalMs);
+}
+
+
+window.combatDoc = combatDoc;
+window.readCombatFresh = readCombatFresh;
+
+
+
+// Stop helper (optional, useful for debugging)
+function stopDefenseOutcomePoller(){
+  if (__defOutcomePoller) {
+    clearInterval(__defOutcomePoller);
+    __defOutcomePoller = null;
+    console.log('[poller] stopped defenseOutcome poller');
+  } else {
+    console.log('[poller] poller was not running');
+  }
+}
 
 
 
@@ -903,6 +1109,9 @@ function clearHand(){
 function spawnCardToHandFromSaved(c){
   // simplified version of spawnCardFromSaved that appends to the hand zone
   const card = document.createElement('div');
+  card.dataset.cid = c.id ? String(c.id) : (card.dataset.cid || String(Math.random()).slice(2));
+  card.id = `card-${card.dataset.cid}`;
+
   card.className = 'card in-hand';
   card.setAttribute('data-name', c.name || '');
   card.style.zIndex = ++zCounter;
@@ -1001,6 +1210,9 @@ let firebaseReady = (async () => {
     catch (e) { console.warn('Anon auth failed (ok if your rules are public):', e.message); }
 
     db = firebase.firestore();
+window.db = db;              // <-- make it global so poller & wireLifeUI see it
+console.log('[firebase] ready');
+
     console.log('[firebase] ready');
   } catch (err) {
     console.warn('Firebase init error:', err);
@@ -1228,6 +1440,9 @@ async function appendCardToPlayerZone(playerSeat, zoneKind /* 'Graveyard' | 'Exi
       img:  s.img  || (cardEl.querySelector('.face.front img')?.src || ''),
       extras: s.extras || cardEl._extras || undefined
     };
+	
+	// 🔧 Firestore-safe: no undefined fields
+if (entry.extras === undefined) delete entry.extras;
 
     // Keep DOM in sync so a subsequent save won't wipe the zone write
     const zoneSel = (zoneKind === 'Graveyard') ? '.graveyard' : '.exile';
@@ -2821,6 +3036,10 @@ function spawnCardFromSaved(c){
   // build DOM
   const card = document.createElement('div');
   card.className = 'card';
+    // ensure DOM id matches saved record so cleanup can find it
+  card.dataset.cid = c.id ? String(c.id) : (card.dataset.cid || String(Math.random()).slice(2));
+  card.id = `card-${card.dataset.cid}`;
+
   const isZone = (c.parent === 'hand' || c.parent === 'zone-hand' ||
                   c.parent === 'graveyard' || c.parent === 'exile' ||
                   c.parent === 'commander');
@@ -3105,6 +3324,9 @@ function clearHand(){
 }
 function spawnCardToHandFromSaved(c){
   const card = document.createElement('div');
+  card.dataset.cid = c.id ? String(c.id) : (card.dataset.cid || String(Math.random()).slice(2));
+  card.id = `card-${card.dataset.cid}`;
+
   card.className = 'card in-hand';
   card.setAttribute('data-name', c.name || '');
   card.style.zIndex = ++zCounter;
@@ -3490,6 +3712,19 @@ function combatDoc(){
   return db.collection('games').doc(GAME_ID).collection('combat').doc('current');
 }
 
+async function readCombatFresh(){
+  await firebaseReady;
+  if(!db) return {};
+  // Force server so both phones see each other immediately
+  const snap = await combatDoc().get({ source: 'server' });
+  return snap.exists ? (snap.data() || {}) : {};
+}
+
+// NEW: expose to global so the poller can see them
+window.combatDoc = combatDoc;
+window.readCombatFresh = readCombatFresh;
+
+
 async function readCombat(){
   await firebaseReady;
   if(!db) return {};
@@ -3498,13 +3733,7 @@ async function readCombat(){
   return snap.exists ? (snap.data() || {}) : {};
 }
 
-async function readCombatFresh(){
-  await firebaseReady;
-  if(!db) return {};
-  // Force server so both phones see each other immediately
-  const snap = await combatDoc().get({ source: 'server' });
-  return snap.exists ? (snap.data() || {}) : {};
-}
+
 
 async function writeTurnToServer(nextTurn, nextNumPlayers){
   await firebaseReady; if(!db) return;
@@ -4212,7 +4441,7 @@ ov2.querySelector('#outApply').onclick = async ()=>{
     let totalDamageToMe = 0;
 
     // collect removals with ownership so we can route to correct graveyards
-    const toRemoveAttackers = []; // { seat:number, el:HTMLElement }
+    const toRemoveAttackers = []; // { seat:number, el:HTMLElement, id?:string, name?:string }
     const toRemoveBlockers  = []; // { seat:number, el:HTMLElement }
 
     // helper to read a card name cleanly for logs
@@ -4238,43 +4467,31 @@ ov2.querySelector('#outApply').onclick = async ()=>{
 
       totalDamageToMe += dmg;
 
-      // if the attacker dies, send to ATTACKER'S graveyard (robustly reacquire the DOM element by cid)
-if (o?.attackerDies) {
-  const atkSeat = Number(o?.atk?.seat || 0);
+      // === attacker death queuing (ALWAYS use attackerSeat; DOM is optional) ===
+      if (o?.attackerDies) {
+        // seat: prefer row.atk.seat, then row.attackerSeat (fallback)
+        const atkSeat = Number(o?.atk?.seat ?? o?.attackerSeat ?? 0);
 
-  // attacker id might be on o.atk.attackerId (preferred), or cid, or attId in older shapes
-  const attackerId = String(
-    (o?.atk?.attackerId ?? o?.atk?.cid ?? o?.attId ?? '')
-  );
-  
-  if (o?.attackerDies && !o?.attEl) {
-  console.log('[diagnostic] attackerDies=true but o.attEl was null; attempted DOM reacquire by cid.', {
-    attackerId: (o?.atk?.attackerId ?? o?.atk?.cid ?? o?.attId ?? ''),
-    seat: o?.atk?.seat
-  });
-}
+        // id: prefer atk.attackerId, else atk.cid, else legacy attId
+        const attackerId = String(o?.atk?.attackerId ?? o?.atk?.cid ?? o?.attId ?? '');
 
+        // try to use the element we already had; otherwise reacquire by cid; if still none, proceed headless
+        let aEl = o?.attEl || null;
+        if (!aEl && attackerId) {
+          aEl = document.querySelector(`.card[data-cid="${CSS.escape(attackerId)}"]`);
+        }
 
-  // try to use the element we already had; otherwise, reacquire from the DOM
-  let aEl = o?.attEl || null;
-  if (!aEl && attackerId) {
-    aEl = document.querySelector(`.card[data-cid="${CSS.escape(attackerId)}"]`);
-  }
+        toRemoveAttackers.push({
+          seat: atkSeat,
+          el: aEl || null,
+          id: attackerId,
+          name: o?.atk?.name || o?.attacker || ''
+        });
 
-  if (!atkSeat || atkSeat <= 0) {
-    console.warn('[death][attacker] missing/invalid seat; skipping', { seat: atkSeat, attackerId, row:o });
-  } else if (!aEl) {
-    console.warn('[death][attacker] MISSING DOM ELEMENT; cannot move to graveyard', {
-      seat: atkSeat, attackerId, attackerName: (o?.atk?.name || '')
-    });
-  } else {
-    toRemoveAttackers.push({ seat: atkSeat, el: aEl, id: attackerId });
-    console.log('[death][attacker] queued', {
-      seat: atkSeat, id: attackerId, name: aEl.getAttribute('data-name') || (o?.atk?.name || '')
-    });
-  }
-}
-
+        console.log(aEl ? '[death][attacker] queued'
+                        : '[death][attacker] queued (no DOM element; will write/remove by id)',
+                    { seat: atkSeat, id: attackerId, name: (aEl?.getAttribute?.('data-name') || o?.atk?.name || '') });
+      }
 
       // for each blocking assignment that dies, send to DEFENDER'S graveyard (mySeat)
       (o?.assigns || []).forEach(a => {
@@ -4285,21 +4502,31 @@ if (o?.attackerDies) {
     });
 
     // ======= YOUR REQUESTED SUMMARY LINES (pre-writes) =======
-    const atkNames = toRemoveAttackers.map(x => (x?.el?.getAttribute?.('data-name') || '(unnamed)')).filter(Boolean);
-const blkNames = toRemoveBlockers.map(x => (x?.el?.getAttribute?.('data-name') || '(unnamed)')).filter(Boolean);
+    const atkNames = toRemoveAttackers.map(x => (nameOf(x.el) || x.name || '')).filter(Boolean);
+    const blkNames = toRemoveBlockers.map(x => nameOf(x.el)).filter(Boolean);
 
-    // attacker seat(s) (usually just currentPlayer)
-    const attackerSeats = Array.from(new Set(toRemoveAttackers.map(x => x.seat).filter(n => n>0)));
+    // attacker seat(s) — prefer seats of attackers that died; fallback to seats from the checked rows
+    const seatsFromDeaths  = toRemoveAttackers.map(x => Number(x.seat || 0)).filter(n => n > 0);
+
+    // collect seats from checked rows directly (uses row.attackerSeat fallback)
+    const seatsFromChecked = [];
+    chks.forEach(ch => {
+      const row = ch.closest('.row');
+      if (!row) return;
+      const obj = row._outcomeObj || row._o || null; // whichever you stored the outcome on
+      if (!obj) return;
+      if (ch.checked) seatsFromChecked.push(Number(obj?.atk?.seat ?? obj?.attackerSeat ?? 0));
+    });
+
+    const attackerSeats = Array.from(new Set((seatsFromDeaths.length ? seatsFromDeaths : seatsFromChecked).filter(n => n > 0)));
     const blockerSeat   = Number(mySeat || 0);
 
-    // If we have an attacker seat, show the exact Firebase directory
-    const attackerPath  = attackerSeats.length
-      ? `games/${GAME_ID}/players/${attackerSeats[0]}`
-      : '(none)';
+    // pretty strings
+    const attackerSeatStr = attackerSeats.length ? attackerSeats.join(',') : '(unknown)';
 
-    console.log(`Attackers Destroyed Creatures: ${atkNames.join(', ') || '(none)'}; Blockers Destroyed Creatures: ${blkNames.join(', ') || '(none)'};`);
-    console.log(`Attacker Player:${attackerSeats.join(',') || '(unknown)'}; Blocker Player:${blockerSeat || '(unknown)'}`);
-    console.log(`THE EXACT FIREBASE DIRECTORY FOR ATTACKER THAT THE GRAVEYARD ADDING IS HAPPENING: ${attackerPath}`);
+    console.log(`Attackers Destroyed Creatures: ${atkNames.length ? atkNames.join(', ') : '(none)'}; Blockers Destroyed Creatures: ${blkNames.length ? blkNames.join(', ') : '(none)'};`);
+    console.log(`Attacker Player:${attackerSeatStr}; Blocker Player:${blockerSeat}`);
+    console.log(`THE EXACT FIREBASE DIRECTORY FOR ATTACKER THAT THE GRAVEYARD ADDING IS HAPPENING: ${attackerSeats.length ? `games/${GAME_ID}/players/${attackerSeats[0]}` : '(none)'}`);
     // =========================================================
 
     console.log(`[outcome][sum] defenderSeat=${mySeat} totalDamage=${totalDamageToMe}`);
@@ -4358,60 +4585,81 @@ const blkNames = toRemoveBlockers.map(x => (x?.el?.getAttribute?.('data-name') |
       console.log('[outcome] no player damage selected; skipping life write');
     }
 
-// ==== MOVE DEATHS TO GRAVEYARDS + REMOVE FROM TABLE (ATTACKERS first, then BLOCKERS) ====
-try {
-  // helper to promise-ize per-card moves
-  const moveToGY = async ({ seat, el }, role) => {
-    const cid = ensureCid(el);
-    if (!seat || seat <= 0) {
-      console.warn(`[graveyard] SKIP ${role} seat invalid`, { seat, id: cid, name: el?.getAttribute?.('data-name') });
-      return;
-    }
-    const pathStr = `games/${GAME_ID}/players/${seat}`;
-    console.log(`[graveyard] ${role} → ${pathStr}/Graveyard  id=${cid}  name="${el?.getAttribute?.('data-name') || ''}"`);
+    // ==== MOVE DEATHS TO GRAVEYARDS + REMOVE FROM TABLE (ATTACKERS first, then BLOCKERS) ====
+    try {
+      // helper to promise-ize per-card moves (works with or without a DOM element)
+// ⬇️ DROP THIS WHOLE FUNCTION IN, replacing your current moveToGY
+const moveToGY = async ({ seat, el, id, name }, role) => {
+  const cid = el ? ensureCid(el) : String(id || '');
+  if (!seat || seat <= 0) {
+    console.warn(`[graveyard] SKIP ${role} seat invalid`, { seat, id: cid, name: el?.getAttribute?.('data-name') || name || '' });
+    return;
+  }
+  const pathStr = `games/${GAME_ID}/players/${seat}`;
+  console.log(`[graveyard] ${role} → ${pathStr}/Graveyard  id=${cid}  name="${el?.getAttribute?.('data-name') || name || ''}"`);
 
+  if (el) {
+    // DOM path already serializes name/img/extras
     await appendCardToPlayerZone(seat, 'Graveyard', el, role);
-    await removeCardFromPlayerTable(seat, cid);
-    // keep DOM tidy so local UI matches
-    el.remove();
-  };
+  } else {
+    // HEADLESS PATH: pull img/extras from the player's Table entry so the GY entry keeps artwork + metadata
+    let img = '', extras;
+    try {
+      await firebaseReady;
+      const docRef = db.collection('games').doc(GAME_ID).collection('players').doc(String(seat));
+      const snap = await docRef.get();
+      if (snap.exists) {
+        const data = snap.data() || {};
+        const tbl = Array.isArray(data.Table) ? data.Table : [];
+        const hit = tbl.find(c => String(c?.id) === String(cid));
+        if (hit) {
+          img = String(hit.img || '');
+          if (hit.extras !== undefined) extras = hit.extras;
+        }
+      }
+    } catch (e) {
+      console.warn('[moveToGY] headless lookup failed', e);
+    }
 
-  // attackers (use ATTACKER’S seat collected earlier)
-  for (const item of toRemoveAttackers) {
-    await moveToGY(item, 'attacker');
+    const entry = { id: cid, name: name || '' };
+    if (img) entry.img = img;
+    if (extras !== undefined) entry.extras = extras;
+
+    await appendEntryToPlayerZone(seat, 'Graveyard', entry, role);
   }
 
-  // blockers (always defender’s seat = mySeat; we already recorded that in toRemoveBlockers)
-  for (const item of toRemoveBlockers) {
-    await moveToGY(item, 'blocker');
-  }
-
-  console.log(`[graveyard][done] moved ${toRemoveAttackers.length} attacker(s) and ${toRemoveBlockers.length} blocker(s).`);
-} catch (e) {
-  console.error('[graveyard] error while moving deaths', e);
-}
+  if (cid) await removeCardFromPlayerTable(seat, cid);
+  if (el && el.remove) el.remove();
+};
 
 
-    // === Persist deaths BEFORE removing DOM ===
-// ATTACKERS → remove from ATTACKER'S Table, then append to ATTACKER'S Graveyard
-for (const a of toRemoveAttackers) {
-  const cid = ensureCid(a.el);
-  console.log(`[death][attacker] seat=${a.seat} id=${cid}`);
-  await removeCardFromPlayerTable(a.seat, cid);
-  await appendCardToPlayerZone(a.seat, 'Graveyard', a.el, 'attacker');
-}
+      // attackers (use ATTACKER’S seat collected earlier)
+      for (const item of toRemoveAttackers) {
+        await moveToGY(item, 'attacker');
+      }
 
-// BLOCKERS → remove from DEFENDER'S Table (mySeat), then append to DEFENDER'S Graveyard
-for (const b of toRemoveBlockers) {
-  const cid = ensureCid(b.el);
-  console.log(`[death][blocker] seat=${b.seat} id=${cid}`);
-  await removeCardFromPlayerTable(b.seat, cid);
-  await appendCardToPlayerZone(b.seat, 'Graveyard', b.el, 'blocker');
-}
+      // blockers (always defender’s seat = mySeat; we already recorded that in toRemoveBlockers)
+      for (const item of toRemoveBlockers) {
+        await moveToGY(item, 'blocker');
+      }
 
-// Then, remove from the battlefield DOM
-toRemoveAttackers.forEach(obj => { const el = obj.el; try{ el.remove(); }catch(_){} });
-toRemoveBlockers.forEach(obj  => { const el = obj.el; try{ el.remove(); }catch(_){} });
+      console.log(`[graveyard][done] moved ${toRemoveAttackers.length} attacker(s) and ${toRemoveBlockers.length} blocker(s).`);
+    } catch (e) {
+      console.error('[graveyard] error while moving deaths', e);
+    }
+	
+	    // Flip defenseOutcome → 1 so both devices clean up their boards
+    try{
+      await firebaseReady; if (!db) throw new Error('no db');
+      await combatDoc().set({
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        defenseOutcome: 1
+      }, { merge: true });
+      console.log('[outcome] defenseOutcome set → 1');
+    } catch(e){
+      console.warn('[outcome] failed to set defenseOutcome', e);
+    }
+
 
     // Close overlays
     ov2.remove();
@@ -4422,6 +4670,36 @@ toRemoveBlockers.forEach(obj  => { const el = obj.el; try{ el.remove(); }catch(_
 };
 
 
+
+// Write a saved entry directly to a player's zone (works without a DOM element)
+async function appendEntryToPlayerZone(playerSeat, zoneKind, entry, role){
+  await firebaseReady;
+  if (!db) return;
+
+  const seatStr = String(playerSeat);
+  const docRef  = db.collection('games').doc(GAME_ID).collection('players').doc(seatStr);
+
+  // Build a Firestore-safe object (NO undefined fields)
+  const clean = {
+    id:   String(entry?.id || ''),
+    name: String(entry?.name || ''),
+    img:  String(entry?.img  || '')
+    // extras will be attached below only if defined
+  };
+  if (entry && entry.extras !== undefined) clean.extras = entry.extras;
+
+  console.log(`[graveyard][${role||'unknown'}] WRITE (by id) → games/${GAME_ID}/players/${seatStr}  zone=${zoneKind}`, clean);
+
+  await docRef.set(
+    {
+      [zoneKind]: firebase.firestore.FieldValue.arrayUnion(clean),
+      updatedAt:  firebase.firestore.FieldValue.serverTimestamp()
+    },
+    { merge:true }
+  );
+
+  console.log(`[graveyard][${role||'unknown'}] OK (by id) → games/${GAME_ID}/players/${seatStr}  zone=${zoneKind}  id=${clean.id}`);
+}
 
 
 
@@ -4986,6 +5264,10 @@ async function wireLifeRealtime(){
   }
 }
 wireLifeRealtime();
+window.addEventListener('load', async () => {
+  try { await firebaseReady; } catch(e) {}
+  startDefenseOutcomePoller(100);
+});
 
 /* =========================================================
    Seed deck + boot
