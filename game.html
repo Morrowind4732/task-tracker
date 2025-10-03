@@ -21,7 +21,7 @@
   body{
     margin:0; color:var(--fg); background:#0e1015;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
-    display:grid; grid-template-rows: 64px auto 1fr; grid-template-columns: 1fr;
+    display:grid; grid-template-rows: 64px auto auto 1fr; grid-template-columns: 1fr;
   }
 
   /* Top bar */
@@ -65,9 +65,7 @@
     background:rgba(0,0,0,.12); user-select:none; display:flex; align-items:center; justify-content:center;
   }
   .zone .label{ color:#c9cfdb; font-size:16px; transform:scale(var(--inv-scale)); transform-origin:center; pointer-events:none;}
-  .graveyard{bottom:20px; right:20px; width:160px; height:210px}
-  .exile{top:20px; right:20px; width:160px; height:210px}
-  .commander{bottom:20px; left:20px; width:170px; height:120px}
+  
 
   /* Hand zone anchored into the world with transform math */
   .handZone{ pointer-events:auto; }
@@ -314,7 +312,150 @@ body.viewer .card .cardBody {
 }
 .num-wrapper.open .num-actions{ display:flex; }
 
+/* Life strip (under top bar) */
+.life-strip{
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr; /* we hide the 3rd cell for 2 players */
+  gap: 8px;
+  padding: 6px 10px 8px;
+}
+.life-cell{
+  background:#0f141c;
+  border:1px solid #2b3344;
+  border-radius:12px;
+  padding:8px 10px;
+  display:flex; align-items:center; justify-content:space-between;
+  min-height:42px;
+}
+.life-cell .life-label{ opacity:.85; font-size:.9rem }
+.life-cell .life-value{ font-weight:800; font-size:1.2rem }
 
+/* Drawer tool row */
+.drawer-tools{ display:flex; gap:8px; padding:6px 8px 4px }
+.btn.sm{ padding:6px 10px; border-radius:10px; border:1px solid #2b3344; background:#141a24; font-weight:600 }
+.btn.sm:active{ transform:translateY(1px) }
+
+
+/* === Vertical zoom slider: forced rotate + fixed position === */
+.zoomWrap{
+  position: fixed;
+  left: 12px;              /* nudge horizontally */
+  bottom: 180px;           /* sit above your hand; tweak as needed */
+  z-index: var(--z-controls);
+  width: 32px;             /* visible column width */
+  height: 260px;           /* visible column height (slider length) */
+  pointer-events: auto;
+}
+
+/* Center the slider inside the column and rotate it so it's vertical */
+#zoomSlider{
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  transform-origin: center;
+
+  /* sizing AFTER rotation:
+     width = visual length, height = visual thickness */
+  width: 260px;            /* length of the vertical slider */
+  height: 28px;            /* thickness of the control */
+
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  outline: none;
+  touch-action: none;      /* avoid page scroll while sliding */
+}
+
+/* Track */
+#zoomSlider::-webkit-slider-runnable-track{
+  height: 6px; border-radius: 4px; background:#23324d;
+}
+#zoomSlider::-moz-range-track{
+  height: 6px; border-radius: 4px; background:#23324d;
+}
+
+/* Thumb */
+#zoomSlider::-webkit-slider-thumb{
+  -webkit-appearance: none;
+  width: 16px; height: 16px; border-radius: 50%;
+  background:#6aa9ff; border:2px solid #0a1426; cursor: pointer;
+  /* slight vertical centering for rotated control */
+  transform: translateY(-5px);
+}
+#zoomSlider::-moz-range-thumb{
+  width: 16px; height: 16px; border-radius: 50%;
+  background:#6aa9ff; border:2px solid #0a1426; cursor: pointer;
+}
+
+/* If you keep the +/− marks, stack them beside the column */
+.zoomMarks{
+  position:absolute;
+  left: -14px;                 /* position the marks just outside the column */
+  top: 50%;
+  transform: translateY(-50%);
+  display:flex; flex-direction:column; gap:8px;
+  user-select:none; font-weight:700;
+}
+
+/* Show the zoom slider only when the deck input drawer is hidden */
+.zoomWrap { display: block; }                  /* default = visible */
+.drawer-wrap.expanded ~ .zoomWrap { display: none; }  /* hide while drawer is open */
+
+/* Life overlay controls */
+.overlay .btn.sm{
+  background:#1b2433;
+  color:#dbe6ff;
+  border:1px solid #2b3344;
+  box-shadow:none;
+  min-width:44px;        /* tight chip width */
+  padding:8px 10px;
+}
+.overlay .btn.sm:hover{ background:#233049; }
+.overlay input[type="number"]{ height:40px; }
+
+/* ===== AUTHORITATIVE ZONE PLACEMENT — no overlap ===== */
+:root{
+  /* Commander (already good) */
+  --CMD_X:  60px;
+  --CMD_Y:  80px;
+
+  /* Graveyard pinned to bottom-left column */
+  --GY_X:   520px;
+  --GY_Y:    0px;   /* smaller = closer to bottom = bigger vertical gap */
+
+  /* Exile pinned to top-left column (same X) */
+  --EX_X:   520px;
+  --EX_TOP:  -400px;   /* smaller = closer to top = bigger vertical gap */
+}
+
+/* Commander */
+.commander{
+  left: var(--CMD_X) !important;
+  bottom: var(--CMD_Y) !important;
+  top:auto !important; right:auto !important;
+  width:170px; height:120px;
+}
+
+/* Graveyard — bottom */
+.graveyard{
+  left: var(--GY_X) !important;
+  bottom: var(--GY_Y) !important;
+  top:auto !important; right:auto !important;
+  width:220px; height:260px;
+}
+
+/* Exile — top */
+.exile{
+  left: var(--EX_X) !important;
+  top: var(--EX_TOP) !important;
+  bottom:auto !important; right:auto !important;
+  width:220px; height:260px;
+}
+
+
+  
 </style>
 
   
@@ -332,11 +473,37 @@ body.viewer .card .cardBody {
   </div>
 
   <!-- Collapsible deck input -->
+  <!-- ===== Life strip (under top bar) ===== -->
+  <div id="lifeStrip" class="life-strip">
+    <div class="life-cell you">
+      <div class="life-label">P1</div>
+      <div class="life-value" id="lifeMe">20</div>
+    </div>
+    <div class="life-cell opp1">
+      <div class="life-label" id="lifeP2Label">P2</div>
+      <div class="life-value" id="lifeP2">20</div>
+    </div>
+    <div class="life-cell opp2" id="lifeP3Wrap" style="display:none">
+      <div class="life-label">P3</div>
+      <div class="life-value" id="lifeP3">20</div>
+    </div>
+  </div>
+  
   <div id="drawerWrap" class="drawer-wrap expanded">
     <div class="drawer">
+      <!-- Tool row -->
+      <div class="drawer-tools" id="drawerTools">
+        <button id="resetBtn" class="pill">Reset</button>
+        <button id="lifeBtn"  class="pill">Life</button>
+      </div>
+
       <textarea id="deckIn" placeholder="Paste your deck list here (e.g., `3 Lightning Bolt`)"></textarea>
     </div>
   </div>
+
+  
+    
+
 
   <!-- Table (world surface + zones) -->
   <main class="table" id="table">
@@ -374,6 +541,15 @@ body.viewer .card .cardBody {
     <!-- Toast -->
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
+
+    <!-- Zoom slider (fixed, left side, above the hand) -->
+  <div class="zoomWrap" id="zoomWrap" aria-label="Zoom control">
+    <div class="zoomMarks">
+      <span>+</span>
+      <span>−</span>
+    </div>
+    <input id="zoomSlider" type="range" min="35" max="200" step="1" value="100" />
+  </div>
 
 
 <div class="actions">
@@ -473,6 +649,238 @@ body.viewer .card .cardBody {
 
 
 <script>
+
+/* ===== Life overlay + strip updater ===== */
+(function lifeModule(){
+  // Update numbers shown in the life strip (handles 2p vs 3p layout)
+  function updateLifeStrip(lifeByPlayer={}, numPlayers=2){
+    const me = Number(window.currentPlayer || 1);
+    const strip  = document.getElementById('lifeStrip');
+    if(!strip) return;
+
+    const p3Wrap = document.getElementById('lifeP3Wrap');
+    if (numPlayers === 3){
+      p3Wrap.style.display = '';
+      strip.style.gridTemplateColumns = '1fr 1fr 1fr';
+    } else {
+      p3Wrap.style.display = 'none';
+      strip.style.gridTemplateColumns = '1fr 1fr';
+    }
+
+    const others = [1,2,3].filter(x=>x!==me).slice(0, Math.max(0, numPlayers-1));
+
+    const meEl = document.getElementById('lifeMe');
+    const p2El = document.getElementById('lifeP2');
+    const p3El = document.getElementById('lifeP3');
+
+    meEl.textContent = lifeByPlayer[me] ?? 20;
+    p2El.textContent = lifeByPlayer[others[0]] ?? 20;
+    if (numPlayers === 3) p3El.textContent = lifeByPlayer[others[1]] ?? 20;
+
+    const p2Lab = document.getElementById('lifeP2Label');
+    if (others[0]) p2Lab.textContent = `P${others[0]}`;
+  }
+
+  // Build + open the Life overlay
+  async function openLifeOverlay() {
+  await firebaseReady;
+
+  // Read current values and how many players from Firestore
+  const snap = await combatDoc().get();
+  const data = snap.exists ? (snap.data() || {}) : {};
+  const nPlayers = Math.max(1, Math.min(3, Number(data.numPlayers || 1)));
+  const current = data.lifeByPlayer || {}; // {1: 20, 2: 20, 3: 20}
+
+  // Build overlay lazily (one global element we reuse)
+  let ov = document.getElementById('lifeOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'lifeOverlay';
+    ov.style.cssText = `
+      position:fixed; inset:0; z-index:10000; display:flex; align-items:center; justify-content:center;
+      background:rgba(6,10,16,.72);
+    `;
+    ov.innerHTML = `
+      <div class="panel" style="
+        width:min(560px,94vw); background:linear-gradient(180deg,#0d1118,#0a0f16);
+        border:1px solid #24324a; border-radius:14px; padding:14px; color:#e7e9ee;
+        box-shadow:0 24px 48px rgba(0,0,0,.5); max-height:80vh; overflow:auto;">
+        <div style="font-weight:800; margin:0 0 10px; font-size:18px;">Life Totals</div>
+        <div class="rows"></div>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+          <button class="btn cancel" style="border:0;border-radius:10px;padding:9px 12px;background:#1b2a47;color:#d8e7ff;">Cancel</button>
+          <button class="btn apply"  style="border:0;border-radius:10px;padding:9px 12px;background:#6aa9ff;color:#091323;font-weight:800;">Apply</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(ov);
+  }
+
+  // Build rows
+  const rows = ov.querySelector('.rows');
+  rows.innerHTML = '';
+  for (let p = 1; p <= nPlayers; p++) {
+    const val = Number.isFinite(current[p]) ? current[p] : 20;
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.style.cssText = 'display:grid;grid-template-columns:60px 1fr auto;gap:10px;align-items:center;margin:8px 0;';
+    row.dataset.player = String(p);
+    row.innerHTML = `
+      <div style="opacity:.9">P${p}</div>
+      <input type="number" inputmode="numeric" value="${val}" style="
+        width:100%; border:1px solid #24304a; background:#0a0f16; color:#e7e9ee;
+        border-radius:10px; padding:8px; font:13px/1.4 ui-monospace, Menlo, Consolas, monospace;">
+      <div class="btns" style="display:grid;grid-auto-flow:column;gap:6px;">
+        <button data-d="-5" style="border:1px solid #2b3344;background:#141a24;color:#d8e7ff;border-radius:10px;padding:6px 9px;">-5</button>
+        <button data-d="-1" style="border:1px solid #2b3344;background:#141a24;color:#d8e7ff;border-radius:10px;padding:6px 9px;">-1</button>
+        <button data-d="+1" style="border:1px solid #2b3344;background:#141a24;color:#d8e7ff;border-radius:10px;padding:6px 9px;">+1</button>
+        <button data-d="+5" style="border:1px solid #2b3344;background:#141a24;color:#d8e7ff;border-radius:10px;padding:6px 9px;">+5</button>
+      </div>
+    `;
+    rows.appendChild(row);
+  }
+
+  // Button wiring (event delegation)
+  rows.onclick = (e) => {
+    const b = e.target.closest('button[data-d]');
+    if (!b) return;
+    const row = e.target.closest('.row');
+    const inp = row.querySelector('input[type="number"]');
+    const delta = parseInt(b.dataset.d, 10);
+    const now = parseInt(inp.value || '0', 10);
+    inp.value = String(now + delta);
+  };
+
+  // Cancel / Apply
+  ov.querySelector('.cancel').onclick = () => ov.style.display = 'none';
+
+  ov.querySelector('.apply').onclick = async () => {
+    // Gather new values
+    const newLife = {};
+    rows.querySelectorAll('.row').forEach(r => {
+      const p = parseInt(r.dataset.player, 10);
+      const v = parseInt(r.querySelector('input').value || '0', 10);
+      newLife[p] = v;
+    });
+
+    try {
+      await firebaseReady;
+      await combatDoc().set({
+        lifeByPlayer: newLife,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    } catch (e) {
+      console.warn('[life] write failed:', e.message || e);
+    }
+
+    ov.style.display = 'none';
+  };
+
+  ov.style.display = 'flex';
+}
+
+
+// --- Reset helpers -----------------------------------------------------------
+function defaultLifeMap(nPlayers){
+  const m = {};
+  for (let i = 1; i <= nPlayers; i++) m[i] = 40; // Commander default
+  return m;
+}
+
+async function hardResetGame(){
+  await firebaseReady;
+  if (!db) { console.warn('[reset] no Firestore'); return; }
+
+  const nPlayers = Number(window.NUM_PLAYERS || 2);
+  const gameRef  = db.collection('games').doc(GAME_ID);
+  const players  = gameRef.collection('players');
+
+  const batch = db.batch();
+
+  // Clear players/1..N
+  for (let seat = 1; seat <= nPlayers; seat++){
+    const pdoc = players.doc(String(seat));
+    batch.set(pdoc, {
+      Commander: [],
+      Deck:      [],
+      Exile:     [],
+      Graveyard: [],
+      Hand:      [],
+      Table:     [],
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: false }); // hard reset of each doc
+  }
+
+  // Clear combat/current + set lifeByPlayer to 40
+  const life = defaultLifeMap(nPlayers);
+  batch.set(combatDoc(), { // games/{GAME_ID}/combat/current
+    updatedAt:        firebase.firestore.FieldValue.serverTimestamp(),
+    turnPlayer:       1,
+    numPlayers:       nPlayers,
+    lifeByPlayer:     life,
+    attacksByPlayer:  {},
+    blocksByDefender: {}
+  }, { merge: false });
+
+  await batch.commit();
+
+  // --- Local UI cleanup
+  try {
+    // remove any cards currently on-screen
+    document.querySelectorAll('.card').forEach(el => el.remove());
+    // zero the deck counter if you show it
+    const dc = document.getElementById('deckCount'); if (dc) dc.textContent = '0';
+    // refresh the life strip
+    if (typeof updateLifeStrip === 'function') updateLifeStrip(life, nPlayers);
+    if (typeof showToast === 'function') showToast('Table reset. Life set to 40.');
+  } catch(e){
+    console.warn('[reset] UI refresh failed', e);
+  }
+}
+
+// --- Reset button wiring (asks for confirmation) -----------------------------
+document.getElementById('resetBtn')?.addEventListener('click', async () => {
+  const ok = window.confirm(
+    'Reset the table for a new game?\n\nThis clears Deck/Hand/Table for all players and sets life to 40.'
+  );
+  if (!ok) return;
+  try { await hardResetGame(); }
+  catch (e) {
+    console.error('[reset] failure', e);
+    if (typeof showToast === 'function') showToast('Reset failed — see console.');
+  }
+});
+
+  // Wire buttons + live updates once the page & firebase are ready
+  function wireLifeUI(){
+    document.getElementById('lifeBtn')?.addEventListener('click', openLifeOverlay);
+    
+
+    // Subscribe to life changes when firebase helpers exist
+    const tick = setInterval(async ()=>{
+      try{
+        if (!window.db || typeof combatDoc!=='function' || typeof readCombatFresh!=='function') return;
+        clearInterval(tick);
+
+        combatDoc().onSnapshot((snap)=>{
+          const d = snap.exists ? (snap.data()||{}) : {};
+          updateLifeStrip(d.lifeByPlayer || {}, Number(d.numPlayers || window.NUM_PLAYERS || 2));
+        });
+
+        const d = await readCombatFresh();
+        updateLifeStrip(d.lifeByPlayer || {}, Number(d.numPlayers || window.NUM_PLAYERS || 2));
+      }catch(e){ /* keep waiting until ready */ }
+    }, 300);
+  }
+
+  window.addEventListener('load', wireLifeUI);
+  // expose for troubleshooting if needed
+  window.openLifeOverlay = openLifeOverlay;
+  window.updateLifeStrip = updateLifeStrip;
+})();
+
+
+
 /* =========================================================
    Refs & state
    ========================================================= */
@@ -542,6 +950,10 @@ function renderFullState(data){
   goHome();
 }
 
+function scaleToSlider(s){
+  const t = (s - SC_MAX) / (SC_MIN - SC_MAX);        // invert back to 0..1
+  return Math.round(SL_MIN + t * (SL_MAX - SL_MIN));  // 35..200
+}
 
 // Get full Scryfall data for a card element by name and refresh its UI bits.
 async function hydrateCardData(card){
@@ -801,15 +1213,7 @@ function renderSavedStateToWorld(data){
   // battlefield
   (data.Table || []).forEach(spawnCardFromSaved);
 
-  // optional zones
-  (data.Graveyard || []).forEach(c => {
-    const el = spawnCardFromSaved(c);
-    document.querySelector('.graveyard').appendChild(el);
-  });
-  (data.Exile || []).forEach(c => {
-    const el = spawnCardFromSaved(c);
-    document.querySelector('.exile').appendChild(el);
-  });
+
   (data.Commander || []).forEach(c => {
     const el = spawnCardFromSaved(c);
     document.querySelector('.commander').appendChild(el);
@@ -928,13 +1332,17 @@ function goHome(){
 
    
 function applyTransform(){
-  world.style.transform=`translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
-  document.documentElement.style.setProperty('--inv-scale',(1/state.scale).toString());
+  world.style.transform = `translate(${state.tx}px, ${state.ty}px) scale(${state.scale})`;
+  document.documentElement.style.setProperty('--inv-scale', (1/state.scale).toString());
   positionHandZone();
   layoutHand();           // keep in-hand cards visually stable
 
-
+  // keep the slider reflecting current zoom (wheel, pinch, home, etc.)
+const zs = document.getElementById('zoomSlider');
+if (zs) zs.value = scaleToSlider(state.scale); // inverted mapping
+;
 }
+
 
 function positionHandZone(){
   // Visual target rect in screen px…
@@ -1003,6 +1411,128 @@ table.addEventListener('wheel', (e)=>{
 
   applyTransform();
 }, { passive:false });
+
+// === Zoom slider wiring (SMOOTH + focus-anchored) ===
+// Slider range 35..200 == scale 0.35..2.00
+(function attachZoomSlider(){
+  const slider = document.getElementById('zoomSlider');
+  // Inverted mapping: slider 35..200  ↔  scale 2.00..0.35
+const SL_MIN = 35,  SL_MAX = 200;
+const SC_MIN = 0.35, SC_MAX = 2.0; // scale bounds
+
+function sliderToScale(v){
+  const t = (v - SL_MIN) / (SL_MAX - SL_MIN);        // 0 at min, 1 at max
+  // lerp 2.0 -> 0.35 (inverted)
+  return clamp(SC_MAX + t * (SC_MIN - SC_MAX), SC_MIN, SC_MAX);
+}
+
+function scaleToSlider(s){
+  const t = (s - SC_MAX) / (SC_MIN - SC_MAX);        // invert back to 0..1
+  return Math.round(SL_MIN + t * (SL_MAX - SL_MIN));  // 35..200
+}
+
+  if (!slider) return;
+
+  // initialize to current scale
+  slider.value = scaleToSlider(state.scale);
+
+
+  // Find a good screen point to anchor (center of visible card cluster);
+  // fallback to table center.
+  function getFocusScreenPoint(){
+    const rt = table.getBoundingClientRect();
+    const all = Array.from(document.querySelectorAll('.card'));
+    const vis = all.filter(el=>{
+      const r = el.getBoundingClientRect();
+      // "visible" if intersects viewport
+      return r.right  > 0 &&
+             r.bottom > 0 &&
+             r.left   < window.innerWidth &&
+             r.top    < window.innerHeight;
+    });
+    if (vis.length){
+      let sx=0, sy=0, n=0;
+      // sample up to 20 for speed
+      for (let i=0; i<vis.length && i<20; i++){
+        const r = vis[i].getBoundingClientRect();
+        sx += (r.left + r.width/2);
+        sy += (r.top  + r.height/2);
+        n++;
+      }
+      return { x: sx/n, y: sy/n };
+    }
+    // fallback: table center in viewport coords
+    return { x: rt.left + rt.width/2, y: rt.top + rt.height/2 };
+  }
+
+  let _zoomAnim = null;
+  let _anchor   = null;  // { cx, cy, wp:{x,y} } in TABLE-local coords
+
+  function captureAnchor(){
+    const rt = table.getBoundingClientRect();
+    const fp = getFocusScreenPoint();        // viewport coords
+    // convert to table-local coords for worldPointAt
+    const cx = clamp(fp.x, rt.left, rt.right)   - rt.left;
+    const cy = clamp(fp.y, rt.top,  rt.bottom)  - rt.top;
+    const wp = worldPointAt(cx, cy, { scale: state.scale, tx: state.tx, ty: state.ty });
+    _anchor = { cx, cy, wp };
+  }
+
+  function animateZoomTo(targetScale){
+    if (!_anchor) captureAnchor();
+    const { cx, cy, wp } = _anchor;
+
+    cancelAnimationFrame(_zoomAnim);
+    const easing = 0.18;
+    const eps    = 0.001;
+
+    function step(){
+      const diff = targetScale - state.scale;
+      if (Math.abs(diff) < eps){
+        state.scale = targetScale;
+        state.tx = cx - wp.x * state.scale;
+        state.ty = cy - wp.y * state.scale;
+        applyTransform();
+        return;
+      }
+      state.scale += diff * easing;
+      state.tx = cx - wp.x * state.scale;
+      state.ty = cy - wp.y * state.scale;
+      applyTransform();
+      _zoomAnim = requestAnimationFrame(step);
+    }
+    step();
+  }
+
+  // Anchor on first touch/press of the slider, and reset when done.
+  slider.addEventListener('pointerdown', captureAnchor);
+  slider.addEventListener('touchstart',  captureAnchor, { passive: true });
+  slider.addEventListener('pointerup',   ()=>{ _anchor = null; });
+  slider.addEventListener('touchend',    ()=>{ _anchor = null; });
+
+  // If the browser fires input without pointerdown (rare), capture on first input.
+  slider.addEventListener('input', (e)=>{
+    if (!_anchor) captureAnchor();
+    const target = sliderToScale(parseInt(e.target.value, 10));
+
+    animateZoomTo(target);
+  });
+})();
+
+// Inverted mapping: slider 35..200  ↔  scale 2.00..0.35
+const SL_MIN = 35,  SL_MAX = 200;
+const SC_MIN = 0.35, SC_MAX = 2.0; // scale bounds
+
+function sliderToScale(v){
+  const t = (v - SL_MIN) / (SL_MAX - SL_MIN);        // 0 at min, 1 at max
+  // lerp 2.0 -> 0.35 (inverted)
+  return clamp(SC_MAX + t * (SC_MIN - SC_MAX), SC_MIN, SC_MAX);
+}
+
+function scaleToSlider(s){
+  const t = (s - SC_MAX) / (SC_MIN - SC_MAX);        // invert back to 0..1
+  return Math.round(SL_MIN + t * (SL_MAX - SL_MIN));  // 35..200
+}
 
 
 /* ========= Creature P/T badge helpers ========= */
@@ -1684,96 +2214,174 @@ hint.style.display = 'none';
     }
   });
 
+function deleteCardVisual(card){
+  if(!card) return;
+  const cid = card.dataset && card.dataset.cid;
+  if (cid) {
+    document.querySelectorAll(`.card[data-cid="${cid}"]`).forEach(el => el.remove());
+  } else {
+    card.remove();
+  }
+}
+
+// Move → hide → save (KEEP the DOM node so future saves see ALL zone cards)
+async function transferToZoneThenSaveThenDelete(card, zoneEl, playerId){
+  if (!card || !zoneEl) return;
+
+  // stable id so multiple DOM copies won't confuse anything
+  const cid = card.dataset.cid || (card.dataset.cid = String(Math.random()).slice(2));
+
+  // 1) Reparent into the zone so serialize() will include it
+  zoneEl.appendChild(card);
+  restoreTableSize(card);
+  card.style.left = '0px';
+  card.style.top  = '0px';
+
+  // 2) Hide so it disappears immediately from the table view and can't block clicks
+  card.style.display = 'none';
+  card.style.pointerEvents = 'none';
+  card.dataset.inZone = '1';   // optional marker
+
+  // 3) Save — now the zone contains A, then A+B, then A+B+C, etc.
+  try {
+    if (typeof savePlayerState === 'function') {
+      await savePlayerState(playerId);
+    }
+  } catch (e) {
+    console.warn('[zone-save] failed:', e);
+  }
+
+  // IMPORTANT CHANGE: DO NOT REMOVE THE CARD FROM THE DOM.
+  // Keeping it (hidden) means future saves will include ALL cards in the zone.
+}
+
+
+
+
   function stop(e){
-  if(!dragging) return; 
-  dragging=false;
+  if(!dragging) return;
+  dragging = false;
 
   // helper so we don't forget to re-show it
   const showHintIfSelected = ()=>{
-    hintSuppressed = false;   // <-- clear suppression
-    updateHint();             // <-- show again if selected
+    hintSuppressed = false;
+    updateHint();
   };
 
-  // Hand overlap → goes to hand (no hint wanted)
-  const hz = handZone.getBoundingClientRect();
+  // AABB overlap helper
+  const rectsOverlap = (a,b) => !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
+
+  // current rects
   const cr = card.getBoundingClientRect();
-  const overlapHand = !(cr.right<hz.left || cr.left>hz.right || cr.bottom<hz.top || cr.top>hz.bottom);
-  if (overlapHand){
-    const base=getStackBase(card);
-    if(base && base!==card) removeFromStack(base,card);
+  const hz = handZone.getBoundingClientRect();
+  const gyEl = document.querySelector('.graveyard');
+  const exEl = document.querySelector('.exile');
+  const gy = gyEl ? gyEl.getBoundingClientRect() : null;
+  const ex = exEl ? exEl.getBoundingClientRect() : null;
+
+  // Hand overlap → goes to hand (no hint wanted)
+  if (rectsOverlap(cr, hz)){
+    const base = getStackBase(card);
+    if (base && base !== card) removeFromStack(base, card);
     moveToHand(card);
     clearSelection();
-    return; // (no hint)
+    // no hint here (hand behavior matched)
+    return;
   }
+  // Graveyard overlap
+if (gy && rectsOverlap(cr, gy)){
+  const base = getStackBase(card);
+  if (base && base !== card) removeFromStack(base, card);
+  // kick off move→hide→save→delete (no await; stop(e) stays sync)
+  transferToZoneThenSaveThenDelete(card, gyEl, currentPlayer);
+  return;
+}
 
-  // Stack modes
-  if(stackMode){
+// Exile overlap
+if (ex && rectsOverlap(cr, ex)){
+  const base = getStackBase(card);
+  if (base && base !== card) removeFromStack(base, card);
+  transferToZoneThenSaveThenDelete(card, exEl, currentPlayer);
+  return;
+}
+
+
+
+  // Stack modes (existing behavior preserved)
+  if (stackMode){
     const target = topCardAtClient(e.clientX, e.clientY, card);
-    if(target){
-      if(stackMode==='up'){
+    if (target){
+      if (stackMode === 'up'){
         const base = getStackBase(target) || target;
-        if(card.parentElement!==world) world.appendChild(card);
+        if (card.parentElement !== world) world.appendChild(card);
         const oldBase = getStackBase(card);
-        if(oldBase && oldBase!==base) removeFromStack(oldBase,card);
+        if (oldBase && oldBase !== base) removeFromStack(oldBase, card);
         addToStack(base, card);
         setSelectionFromCard(card);
-        showHintIfSelected();      // <-- add this
+        showHintIfSelected();
+        recomputeContinuousEffects();
+        if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
         return;
       }
+
       // left / right row placement
       const tgt3d = target.querySelector('.card3d') || target.querySelector('.cardBody');
-      const tapped = (tgt3d && (tgt3d.style.transform||'').includes('rotate(90deg)'));
-      const w=parseFloat(getComputedStyle(target).width), h=parseFloat(getComputedStyle(target).height);
-      const pad=12, delta=(tapped?h:w)+pad;
-      const baseX=parseFloat(target.style.left)||0;
-      const baseY=parseFloat(target.style.top)||0;
-      const newX = (stackMode==='right') ? (baseX + delta) : (baseX - delta);
+      const tapped = (tgt3d && (tgt3d.style.transform || '').includes('rotate(90deg)'));
+      const w = parseFloat(getComputedStyle(target).width) || 0;
+      const h = parseFloat(getComputedStyle(target).height) || 0;
+      const pad = 12, delta = (tapped ? h : w) + pad;
+      const baseX = parseFloat(target.style.left) || 0;
+      const baseY = parseFloat(target.style.top) || 0;
+      const newX = (stackMode === 'right') ? (baseX + delta) : (baseX - delta);
 
       const oldBase = getStackBase(card);
-      if(oldBase) removeFromStack(oldBase,card);
+      if (oldBase) removeFromStack(oldBase, card);
 
-      card.style.left=newX+'px';
-      card.style.top =baseY+'px';
+      // ensure card is on world
+      if (card.parentElement !== world) world.appendChild(card);
+
+      card.style.left = newX + 'px';
+      card.style.top  = baseY + 'px';
 
       setSelectionFromCard(card);
       refreshPTForCard(card);
-      showHintIfSelected();        // <-- add this
+      showHintIfSelected();
+      recomputeContinuousEffects();
+      if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
       return;
     }
   }
 
-// detach-or-restack case… (neighbor-based)
-const base = getStackBase(card);
-if (base && base !== card && Array.isArray(base._stack)) {
-  const arr = base._stack;
-  const idx = arr.indexOf(card);
-  if (idx > 0) {
-    const below = arr[idx - 1];                // the card I’m attached to
-    const br = below.getBoundingClientRect();
-    const mr = card.getBoundingClientRect();
+  // detach-or-restack case… (neighbor-based)
+  const base = getStackBase(card);
+  if (base && base !== card && Array.isArray(base._stack)){
+    const arr = base._stack;
+    const idx = arr.indexOf(card);
+    if (idx > 0){
+      const below = arr[idx - 1];
+      const br = below.getBoundingClientRect();
+      const mr = card.getBoundingClientRect();
 
-    // If I'm no longer overlapping the card directly below me, detach.
-    if (!rectsOverlap(mr, br)) {
-      removeFromStack(base, card);
-    } else {
-      // still overlapping -> snap back into vertical stack
-      layoutStack(base);
-      refreshPTForCard(base);
+      // If I'm no longer overlapping the card directly below me, detach.
+      if (!rectsOverlap(mr, br)){
+        removeFromStack(base, card);
+      } else {
+        // still overlapping -> snap back into vertical stack
+        layoutStack(base);
+        refreshPTForCard(base);
+      }
     }
   }
-}
-
 
   // final: keep selection on table drops so T/F works immediately
   setSelectionFromCard(card);
-showHintIfSelected();
-// refresh global static effects after moves/stacks
-recomputeContinuousEffects();
-// persist after drag/drop/stack operations
-if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
-
-
+  showHintIfSelected();
+  // refresh global static effects after moves/stacks
+  recomputeContinuousEffects();
+  // persist after drag/drop/stack operations
+  if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
 }
+
 
 
 
@@ -2131,9 +2739,18 @@ function spawnCardFromSaved(c){
   // build DOM
   const card = document.createElement('div');
   card.className = 'card';
-  card.style.left   = (c.x || 0) + 'px';
-  card.style.top    = (c.y || 0) + 'px';
-  card.style.zIndex = (c.z || 10);
+  const isZone = (c.parent === 'hand' || c.parent === 'zone-hand' ||
+                  c.parent === 'graveyard' || c.parent === 'exile' ||
+                  c.parent === 'commander');
+  if (isZone){
+    card.style.left = '0px';
+    card.style.top  = '0px';
+    card.style.zIndex = (c.z || 10);
+  } else {
+    card.style.left   = (c.x || 0) + 'px';
+    card.style.top    = (c.y || 0) + 'px';
+    card.style.zIndex = (c.z || 10);
+  }
   if (c.name) card.setAttribute('data-name', c.name);
 
   const body  = document.createElement('div'); body.className = 'cardBody';
@@ -3253,40 +3870,110 @@ function openOutcomeOverlay(ctx){
 
   ov2.querySelector('#outClose').onclick = ()=> ov2.remove();
 
-  ov2.querySelector('#outApply').onclick = async ()=>{
-    // Apply all checked outcomes
+  // ===== Apply outcomes (defender) =====
+ov2.querySelector('#outApply').onclick = async ()=>{
+  try{
     const chks = Array.from(ov2.querySelectorAll('.outChk'));
-    chks.forEach(ch=>{
-      if(!ch.checked) return;
-      const o = outcomes[Number(ch.dataset.i)];
 
-      // Placeholder life loss (no life total yet)
-      if (o.playerDamage > 0 && typeof showToast === 'function'){
-        showToast(`Player ${mySeat} takes ${o.playerDamage} damage (placeholder)`);
-      }
+    let totalDamageToMe = 0;
+    const toRemoveAttackers = [];
+    const toRemoveBlockers  = [];
 
-      // Remove dead attacker
-      if (o.attackerDies && o.attEl){
-        /* TODO: replace this delete with “move to graveyard/exile” */
-        o.attEl.remove();
-      }
+    // Log each row and sum only the CHECKED ones
+    chks.forEach(ch => {
+      const idx = Number(ch.dataset.i);
+      const o   = outcomes[idx];
+      const checked = !!ch.checked;
+      const dmg = Number(o?.playerDamage || 0);
 
-      // Remove dead blockers
-      o.assigns.forEach(a=>{
-        if (a.blockerDies && a.blocker.el){
-          /* TODO: replace this delete with “move to graveyard/exile” */
-          a.blocker.el.remove();
-        }
+      console.log(`[outcome][row ${idx}] checked=${checked} playerDamage=${dmg}`, {
+        attacker: o?.attacker?.name,
+        targetSeat: mySeat,
+        assigns: o?.assigns?.map(a => ({
+          blocker: a?.blocker?.name, blockerDies: a?.blockerDies
+        })) || []
+      });
+
+      if (!checked) return;
+
+      totalDamageToMe += dmg;
+
+      if (o?.attackerDies && o?.attEl) toRemoveAttackers.push(o.attEl);
+      (o?.assigns || []).forEach(a => {
+        if (a?.blockerDies && a?.blocker?.el) toRemoveBlockers.push(a.blocker.el);
       });
     });
+
+    console.log(`[outcome][sum] defenderSeat=${mySeat} totalDamage=${totalDamageToMe}`);
+
+    // === Atomic life write using nested FieldPath ===
+    if (totalDamageToMe > 0) {
+      await firebaseReady;
+
+      if (typeof combatDoc !== 'function') {
+        console.warn('[outcome] combatDoc() missing; cannot write life');
+      } else {
+        const ref = combatDoc();
+
+        // Read once for BEFORE/AFTER + full map for a correct local UI nudge
+        let before = 20, after = null, np = 2, lifeMapAtRead = {1:20,2:20,3:20};
+        try{
+          const snap = await ref.get();
+          const d = snap.exists ? (snap.data() || {}) : {};
+          const life = d.lifeByPlayer || {};
+          lifeMapAtRead = {1:20,2:20,3:20, ...life};   // keep defaults for empty seats
+          np = Number(d.numPlayers || window.NUM_PLAYERS || 2);
+          before = Number(lifeMapAtRead[mySeat] ?? 20);
+          after  = Math.max(0, before - totalDamageToMe);
+        }catch(e){
+          console.warn('[outcome] initial life read failed for logging', e);
+        }
+
+        console.log('[outcome][write] applying damage', {
+          defenderSeat: mySeat,
+          damage: totalDamageToMe,
+          lifeBefore: before,
+          lifeAfter: after
+        });
+
+        // lifeByPlayer.<mySeat> -= totalDamageToMe
+        const path = new firebase.firestore.FieldPath('lifeByPlayer', String(mySeat));
+        await ref.update(
+          path, firebase.firestore.FieldValue.increment(-totalDamageToMe),
+          'updatedAt', firebase.firestore.FieldValue.serverTimestamp()
+        );
+
+        // Local UI nudge — use the FULL map so the strip layout doesn't shift
+        if (after != null) {
+          const fullLife = { ...lifeMapAtRead, [mySeat]: after };
+          if (typeof renderLifeStrip === 'function') {
+            renderLifeStrip({ lifeByPlayer: fullLife, numPlayers: np });
+          } else if (typeof updateLifeStrip === 'function') {
+            updateLifeStrip(fullLife, np);
+          }
+          console.log('[outcome][write] local strip updated (full map)');
+        }
+
+        console.log('[outcome][write] commit OK');
+      }
+    } else {
+      console.log('[outcome] no player damage selected; skipping life write');
+    }
+
+    // Remove creatures that died (unchanged)
+    toRemoveAttackers.forEach(el => { try{ el.remove(); }catch(_){} });
+    toRemoveBlockers.forEach(el  => { try{ el.remove(); }catch(_){} });
 
     // Close overlays
     ov2.remove();
     ov.remove();
+  }catch(err){
+    console.error('[outcome][apply] FAILED', err);
+  }
+};
 
-    // Optional: clear combat rows server-side so the next turn is clean
-    // await clearCombatForNewTurn();  // ← uncomment when you’re ready for this behavior
-  };
+
+
 }
 
 
@@ -3587,6 +4274,265 @@ function endPointer(e){
 table.addEventListener('pointerup', endPointer);
 table.addEventListener('pointercancel', endPointer);
 window.addEventListener('resize', applyTransform);
+
+// ===== Life strip <-> Firestore wiring =====
+function renderLifeStrip(data){
+  const life = (data && data.lifeByPlayer) || {};
+  const np   = Math.max(1, Math.min(3, Number((data && data.numPlayers) || 1)));
+
+  const wrap3 = document.getElementById('lifeP3Wrap');
+  const meEl  = document.getElementById('lifeMe');
+  const p2El  = document.getElementById('lifeP2');
+  const p2Lb  = document.getElementById('lifeP2Label');
+  const p3El  = document.getElementById('lifeP3');
+
+  if (!meEl || !p2El) return; // life strip not present; nothing to render
+
+  // NOTE: we don’t depend on mySeat here; we just render P1/P2/P3.
+  meEl.textContent = Number.isFinite(life[1]) ? life[1] : 20;
+  p2El.textContent = Number.isFinite(life[2]) ? life[2] : 20;
+
+  if (np === 3) {
+    if (wrap3) wrap3.style.display = '';
+    if (p2Lb) p2Lb.textContent = 'P2';
+    if (p3El) p3El.textContent = Number.isFinite(life[3]) ? life[3] : 20;
+  } else {
+    if (wrap3) wrap3.style.display = 'none';
+    if (p2Lb) p2Lb.textContent = 'P2';
+  }
+}
+
+/* ===== Graveyard / Exile Overlays ===== */
+async function openZoneOverlay(kind /* 'Graveyard' | 'Exile' */){
+  try{
+    await firebaseReady;
+    const pid   = (window.viewerMode && window.viewerPlayer) ? window.viewerPlayer : window.currentPlayer || 1;
+    const data  = await loadPlayerState(pid);
+    const cards = (data && Array.isArray(data[kind])) ? data[kind] : [];
+
+    // lazy-build or reuse one overlay node
+    let ov = document.getElementById('zoneOverlay');
+    if (!ov){
+      ov = document.createElement('div');
+      ov.id = 'zoneOverlay';
+      ov.style.cssText = "position:fixed; inset:0; z-index:10000; display:none; align-items:center; justify-content:center; background:rgba(6,10,16,.72);";
+      ov.innerHTML =
+        '<div class="panel" style="width:min(680px,94vw); max-height:80vh; overflow:auto; background:linear-gradient(180deg,#0d1118,#0a0f16); border:1px solid #24324a; border-radius:14px; padding:14px; color:#e7e9ee; box-shadow:0 24px 48px rgba(0,0,0,.5)">'+
+          '<div class="hdr" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">'+
+            '<div class="title" style="font-weight:800;font-size:18px;"></div>'+
+            '<button class="close" style="border:1px solid #2b3f63; background:#1a2a45; color:#cfe1ff; border-radius:10px; padding:6px 10px; font-weight:700">✕</button>'+
+          '</div>'+
+          '<div class="content" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:10px"></div>'+
+        '</div>';
+      document.body.appendChild(ov);
+    }
+
+    const title   = ov.querySelector('.title');
+    const content = ov.querySelector('.content');
+    title.textContent = `${kind} — ${cards.length || 0} card${cards.length===1?'':'s'}`;
+
+    // Render each saved card with its CID as a data attribute (so we can remove the exact DOM node from the zone)
+    const rows = cards.map((c, i)=>{
+      const cid = (c && c.id != null) ? String(c.id) : '';
+      const nm  = (c && c.name) || 'Card';
+      const img = (c && c.img)  || '';
+      return (
+        '<div class="zItem" data-idx="'+i+'" data-cid="'+cid+'" style="border:1px solid #2b3344; border-radius:10px; background:#141823; padding:10px; cursor:pointer;">'+
+          '<div style="display:flex; gap:10px; align-items:center">'+
+            '<img src="'+img+'" alt="" style="width:44px;height:62px;object-fit:cover;border-radius:6px;border:1px solid #2b3344"/>'+
+            '<div style="flex:1;min-width:160px">'+
+              '<div style="font-weight:700">'+escapeHTML(nm)+'</div>'+
+              '<div style="opacity:.75;font-size:12px">Tap to return to battlefield</div>'+
+            '</div>'+
+          '</div>'+
+        '</div>'
+      );
+    }).join('');
+    content.innerHTML = rows;
+
+    // Clicking a card: remove from zone → spawn to table at screen center → select → recompute → save → refresh overlay
+    content.querySelectorAll('.zItem').forEach(el=>{
+      el.addEventListener('click', async ()=>{
+        const cid = el.getAttribute('data-cid') || '';
+        await playCardOutOfZone(kind, cid);
+        // Re-render overlay list to reflect removal
+        openZoneOverlay(kind);
+      });
+    });
+
+    ov.style.display = 'flex';
+    ov.querySelector('.close').onclick = ()=> { ov.style.display='none'; };
+
+  } catch (err){
+    console.error('[zone overlay]', err);
+  }
+}
+
+async function playCardOutOfZone(kind, cid /* string id from saved zone card */){
+  await firebaseReady;
+  const pid = (window.viewerMode && window.viewerPlayer) ? window.viewerPlayer : window.currentPlayer || 1;
+  const data = await loadPlayerState(pid);
+  const list = (data && Array.isArray(data[kind])) ? data[kind] : [];
+
+  // Find the saved card details (for name/img/extras), if available
+  const saved = list.find(c => String(c?.id) === String(cid)) || null;
+  const name  = saved?.name || '';
+  const img   = saved?.img  || '';
+
+  // Remove the matching DOM node inside the hidden zone container so savePlayerState won’t keep it there
+  const zoneSelector = (kind === 'Graveyard') ? '.graveyard' : '.exile';
+  if (cid) {
+    const zoneDomCard = document.querySelector(`${zoneSelector} .card[data-cid="${CSS.escape(cid)}"]`);
+    if (zoneDomCard) zoneDomCard.remove();
+  }
+
+  // Compute world coordinates at the screen center (same transform math you already use)
+  const r  = table.getBoundingClientRect();
+  const cx = r.left + r.width / 2;
+  const cy = r.top  + r.height/ 2;
+  const pt = worldPointAt(cx, cy, { scale: state.scale, tx: state.tx, ty: state.ty }); /* existing helper */
+
+  // Spawn onto the battlefield, center the card visually, reapply extras, select, recompute
+  const newCard = spawnCardFromSaved({ name, img, x: pt.x, y: pt.y, id: cid, extras: saved?.extras });
+  // center the element on its own width/height
+  newCard.style.left = (pt.x - newCard.offsetWidth  / 2) + 'px';
+  newCard.style.top  = (pt.y - newCard.offsetHeight / 2) + 'px';
+
+  if (saved && saved.extras) applySavedCardExtras(newCard, saved);   /* rehydrates P/T etc. */  // :contentReference[oaicite:3]{index=3}
+  if (typeof attachGearButton === 'function') attachGearButton(newCard);                         // :contentReference[oaicite:4]{index=4}
+  if (typeof setSelectionFromCard === 'function') setSelectionFromCard(newCard);
+  if (typeof recomputeContinuousEffects === 'function') recomputeContinuousEffects();
+
+  // Persist new world + zones snapshot (Table from #world, zones from .graveyard/.exile DOM)
+  await savePlayerState(pid);  // :contentReference[oaicite:5]{index=5}
+}
+
+
+function openGraveyardOverlay(){ return openZoneOverlay('Graveyard'); }
+function openExileOverlay(){ return openZoneOverlay('Exile'); }
+
+function wireZoneOverlays(){
+  // make the world zones clickable to open overlays
+  document.querySelector('.zone.graveyard')
+    ?.addEventListener('click', (e)=>{ e.stopPropagation(); openGraveyardOverlay(); });
+
+  document.querySelector('.zone.exile')
+    ?.addEventListener('click', (e)=>{ e.stopPropagation(); openExileOverlay(); });
+}
+
+// ensure it runs after the DOM is ready (you already do this for life)
+window.addEventListener('load', wireZoneOverlays);
+
+
+/* ===== Zone drop helpers (Graveyard/Exile) ===== */
+function elRect(el){ return el.getBoundingClientRect(); }
+function pointInRect(px, py, r){ return px >= r.left && px <= r.right && py >= r.top && py <= r.bottom; }
+
+function cardCenterScreen(card){
+  const r = card.getBoundingClientRect();
+  return { x: r.left + r.width/2, y: r.top + r.height/2 };
+}
+
+function isOverZone(card, zoneSel){
+  const zone = document.querySelector(zoneSel);
+  if (!zone) return false;
+  const p = cardCenterScreen(card);
+  const zr = elRect(zone);
+  return pointInRect(p.x, p.y, zr);
+}
+
+let _zoneFan = { grave:0, exile:0 }; // simple vertical fan per zone this session
+
+function clearDragTransform(card){
+  const body = card.querySelector('.cardBody');
+  if (!body) return;
+  // Temporarily disable transition, clear transform, force reflow, restore transition
+  const prev = body.style.transition;
+  body.style.transition = 'none';
+  body.style.transform  = '';
+  // force reflow so the browser applies left/top again
+  // eslint-disable-next-line no-unused-expressions
+  body.offsetHeight;
+  body.style.transition = prev || '';
+}
+
+
+async function moveCardToZoneAndSave(card, zoneSel, kind /* 'Graveyard' | 'Exile' */){
+  try{
+    const zone = document.querySelector(zoneSel);
+    if (!zone) return;
+
+    // Let your drag-end math finish committing for this frame
+    await new Promise(r => requestAnimationFrame(r));
+
+    // Kill any leftover drag translate() so left/top will take effect
+    clearDragTransform(card);
+
+    // Make sure it’s not in the hand
+    if (card.parentElement === handZone) return;
+
+    // Clean selection/gear halos
+    card.classList.remove('selected', 'show-gear');
+
+    // Reparent into the zone
+    zone.appendChild(card);
+
+    // Compact vertical fan inside the zone
+    const idx = zone.querySelectorAll('.card').length - 1; // 0-based
+    card.style.left = '6px';
+    card.style.top  = (6 + idx * 24) + 'px';
+
+    // Persist by re-serializing everything (uses your existing saver)
+    await savePlayerState(window.currentPlayer || 1);
+
+    if (typeof showToast === 'function') showToast(`${kind}: card moved.`);
+  }catch(e){
+    console.warn('[zone drop] save failed:', e);
+  }
+}
+
+
+/* Called when a drag ends on a table card */
+async function handleZoneDrop(card){
+  if (window.viewerMode) return; // don’t mutate while viewing others
+  // Only consider cards that live directly on the battlefield (#world children)
+  if (card.parentElement !== world) return;
+
+  if (isOverZone(card, '.zone.graveyard')){
+    await moveCardToZoneAndSave(card, '.zone.graveyard', 'Graveyard');
+  } else if (isOverZone(card, '.zone.exile')){
+    await moveCardToZoneAndSave(card, '.zone.exile', 'Exile');
+  }
+}
+
+function wireZoneDropWatcher(){
+  document.addEventListener('pointerup', (e)=>{
+    const body = e.target.closest('.card .cardBody');
+    if (!body) return;
+
+    const card = body.closest('.card');
+    if (!card) return;
+
+    // Ignore “in-hand” cards — only move battlefield cards to zones
+    if (card.parentElement === handZone) return;
+
+    // Defer slightly so any drag math in your handler settles
+    setTimeout(()=> handleZoneDrop(card), 0);
+  }, { passive:true });
+}
+window.addEventListener('load', wireZoneDropWatcher);
+
+
+
+async function wireLifeRealtime(){
+  await firebaseReady;
+  try{
+    combatDoc().onSnapshot(s => renderLifeStrip(s.exists ? s.data() : {}));
+  }catch(e){
+    console.warn('[life] snapshot error:', e.message || e);
+  }
+}
+wireLifeRealtime();
 
 /* =========================================================
    Seed deck + boot
