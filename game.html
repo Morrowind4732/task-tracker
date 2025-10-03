@@ -3889,39 +3889,280 @@ function openOutcomeOverlay(ctx){
     };
   }
 
-  // Build recommended outcomes for every line of attack (simple rules: no first strike, trample, etc.)
-  const outcomes = vsMe.map(atk=>{
-    const blockers = (seatMap[atk.attackerId] || []).map(ptForCid);
+    // === Ability helpers (read from card._extras.addEffects + attachments text if you later wire it) ===
+  function effectsFor(el){
+    // store effects in lowercase keys; your card editor already writes addEffects Set
+    const set = new Set();
+    const ex  = el? (el._extras || {}) : {};
+    (ex.addEffects || []).forEach(e => set.add(String(e||'').trim().toLowerCase()));
+    return set;
+  }
+  const has = (set, key) => set.has(String(key).toLowerCase());
 
-    // attacker DOM (to delete if it dies)
+  // true if this permanent ignores destroy-from-damage
+  const isIndestructible = (fx) => has(fx,'indestructible');
+
+  // does this source have first strike / double strike?
+  const hasFirstStrike   = (fx) => has(fx,'first strike') || has(fx,'first-strike');
+  const hasDoubleStrike  = (fx) => has(fx,'double strike') || has(fx,'double-strike');
+
+  // combat damage deathtouch check (any amount ≥1 is lethal to creatures that aren't indestructible)
+  const hasDeathtouch    = (fx) => has(fx,'deathtouch');
+
+  // trampling over assigned blockers
+  const hasTrample       = (fx) => has(fx,'trample');
+
+  // lifelink life gain tally (we only compute; applying life total is optional and UI-level)
+  const hasLifelink      = (fx) => has(fx,'lifelink');
+
+  // ultra-generic “protection” toggle (since color/quality isn’t modeled yet)
+  // if either party has 'protection', treat incoming damage from the other as prevented.
+  const hasProtection    = (fx) => has(fx,'protection');
+
+  // compute lethal assignment needed for a blocker, considering deathtouch
+  function lethalNeededAgainst(sourceFx, blocker){
+    if (hasDeathtouch(sourceFx) && !isIndestructible(effectsFor(blocker.el))) return 1;
+    return Math.max(0, Number(blocker.toughness||0));
+  }
+
+  // assign damage from A (the attacker) into an ordered list of blockers, supporting trample + deathtouch
+  function assignDamageFromAttacker(AP, aFx, blockers){
+    let remaining = Number(AP||0);
+    const assigns = [];
+
+    for (const b of blockers){
+      const bFx    = effectsFor(b.el);
+      // if blocker has generic protection, it takes 0 from attacker
+      if (hasProtection(bFx)) {
+        assigns.push({ blocker:b, dmgToBlocker:0, blockerDies:false });
+        continue;
+      }
+
+      // minimum lethal needed into this blocker (1 if attacker has deathtouch, unless the blocker is indestructible)
+      const lethal = lethalNeededAgainst(aFx, b);
+      const dmg    = Math.min(remaining, lethal);
+
+      remaining -= dmg;
+
+      const dies = !isIndestructible(bFx) && (dmg >= lethal && lethal > 0);
+      assigns.push({ blocker:b, dmgToBlocker:dmg, blockerDies:dies });
+
+      // if attacker doesn't have trample, it must assign all damage to blockers; but your UI already orders all blockers.
+      // We'll keep walking; “remaining” goes to next blocker; only with trample will anything spill to player after all blockers.
+    }
+
+    const trampleToPlayer = hasTrample(aFx) ? Math.max(0, remaining) : 0;
+    return { assigns, trampleToPlayer };
+  }
+
+  // resolve one “damage step” (first strike or regular) and return casualties + life swing
+  function resolveDamageStep(attacker, aFx, blockers, stepKind /* 'first' | 'regular' */){
+    // Step rules:
+    // - First strike step: only creatures with first strike (or double strike) assign/receive. Others don’t deal damage in this step.
+    // - Regular step: creatures without first strike deal (plus double strike creatures deal again if still alive).
+    const stepNeedsFS = (stepKind === 'first');
+
+    // Who is active on this step?
+    const atkActive = stepNeedsFS ? (hasFirstStrike(aFx) || hasDoubleStrike(aFx)) : (!hasFirstStrike(aFx) || hasDoubleStrike(aFx));
+    const liveBlockers = blockers.filter(b => !b._dead); // carry-over flag between steps if you call twice
+
+    let attackerDeals = 0, attackerLifelinkGain = 0, playerDamage = 0;
+    const deadBlockers = new Set();
+
+    // 1) Attacker assigns to blockers (if active)
+    if (atkActive && liveBlockers.length){
+      const { assigns, trampleToPlayer } = assignDamageFromAttacker(attacker.power, aFx, liveBlockers);
+      playerDamage += trampleToPlayer;
+
+      for (const a of assigns){
+        attackerDeals += a.dmgToBlocker;
+        if (a.blockerDies) deadBlockers.add(a.blocker.cid);
+      }
+      if (hasLifelink(aFx) && attackerDeals > 0) attackerLifelinkGain += attackerDeals;
+    } else if (atkActive && !liveBlockers.length){
+      // unblocked → all damage to player
+      playerDamage += Number(attacker.power||0);
+      if (hasLifelink(aFx) && attacker.power>0) attackerLifelinkGain += Number(attacker.power||0);
+    }
+
+    // 2) Blockers hit attacker in this step if THEY are active this step
+    let dmgToAttacker = 0;
+    if (liveBlockers.length){
+      for (const b of liveBlockers){
+        const bFx  = effectsFor(b.el);
+        const bFS  = hasFirstStrike(bFx) || hasDoubleStrike(bFx);
+        const bActsNow = stepNeedsFS ? bFS : (!bFS || hasDoubleStrike(bFx));
+
+        if (!bActsNow) continue;
+        if (hasProtection(aFx)) continue; // attacker has generic protection → prevent damage from blockers
+
+        let dealt = Number(b.power||0);
+        // deathtouch from blocker matters only for lethality check; that’s applied later when we mark deaths.
+        dmgToAttacker += dealt;
+      }
+    }
+
+    return { dmgToAttacker, deadBlockers, playerDamage, attackerLifelinkGain };
+  }
+
+  // Mark deaths after a step, considering indestructible & deathtouch that connected during this step.
+  function computeCasualtiesAfterStep(attacker, aFx, blockers, stepResult){
+    const { dmgToAttacker, deadBlockers } = stepResult;
+
+    // Attacker death check:
+    // - If any blocker with deathtouch dealt ≥1 to attacker this step and the attacker is not indestructible → dies.
+    // - Else normal toughness check.
+    let attackerDies = false;
+    if (!isIndestructible(aFx)){
+      // Did any active blocker with deathtouch connect for ≥1 this step?
+      let touched = false;
+      for (const b of blockers){
+        if (deadBlockers.has(b.cid)) { /* it still dealt damage in this step */ }
+        // We can’t reconstruct per-blocker damage precisely without per-blocker tallies;
+        // a simple robust rule: if b was alive for this step AND had deathtouch AND (b acted in this step) AND attacker took damage > 0 → lethal.
+        // We already know total damage to attacker; check whether any b had deathtouch and would act this step (mirrors resolveDamageStep).
+        const bFx = effectsFor(b.el);
+        if (hasDeathtouch(bFx)) touched = true;
+      }
+      if (touched && dmgToAttacker > 0) attackerDies = true;
+      else attackerDies = (Number(attacker.toughness||0) <= Number(dmgToAttacker||0));
+    }
+
+    // Blocker deaths are already computed via deadBlockers (lethal assignment / deathtouch handling)
+    return { attackerDies, deadBlockers };
+  }
+
+  // === Build recommended outcomes (with combat abilities) ===
+  const outcomes = vsMe.map(atk=>{
+    // Build blockers with reliable P/T: prefer saved row, fall back to live DOM
+const blockerCids = (seatMap[atk.attackerId] || []);
+const blockers = blockerCids.map(cid => {
+  const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+  let name = '';
+  let liveP = 0, liveT = 0;
+  if (el) {
+    try {
+      name = (typeof cardName === 'function') ? cardName(el) : (el.getAttribute('data-name') || '');
+      const base = (typeof getStackBase === 'function') ? (getStackBase(el) || el) : el;
+      const cur  = (typeof computeCurrentPTFromBase === 'function') ? (computeCurrentPTFromBase(base) || null) : null;
+      if (cur && Number.isFinite(cur.p) && Number.isFinite(cur.t)) {
+        liveP = Number(cur.p) || 0;
+        liveT = Number(cur.t) || 0;
+      }
+    } catch (e) {
+      console.warn('[combat] live PT read failed for blocker', e);
+    }
+  }
+
+  // Saved row (if any)
+  const row = (typeof ptForCid === 'function') ? (ptForCid(cid) || {}) : {};
+  const power     = (row.power     != null) ? Number(row.power)     : liveP;
+  const toughness = (row.toughness != null) ? Number(row.toughness) : liveT;
+
+  return { cid, el, name, power, toughness };
+});
+console.log('[combat] blockers live PT',
+  blockers.map(b => ({ cid: b.cid, name: b.name, p: b.power, t: b.toughness }))
+);
+
+
+    // Attacker DOM + name
     const attEl   = document.querySelector(`.card[data-cid="${CSS.escape(atk.attackerId)}"]`);
     const attName = attEl ? cardName(attEl) : (atk.name || 'Attacker');
 
-    // attacker’s P/T came from the saved attack row
-    const AP = Number(atk.power) || 0;
-    const AT = Number(atk.toughness) || 999;
+    // Attacker P/T — prefer saved row, but FALL BACK to live DOM P/T if row is missing
+let livePT = { p: 0, t: 0 };
+if (attEl) {
+  try {
+    const base = getStackBase(attEl) || attEl;
+    const cur  = (typeof computeCurrentPTFromBase === 'function')
+      ? (computeCurrentPTFromBase(base) || null)
+      : null;
+    if (cur && Number.isFinite(cur.p) && Number.isFinite(cur.t)) {
+      livePT = { p: Number(cur.p)||0, t: Number(cur.t)||0 };
+    }
+  } catch (e) {
+    console.warn('[combat] live PT read failed for attacker', e);
+  }
+}
 
-    // damage assignment recommendation from attacker → blockers (order matters)
-    let remaining = AP;
-    const assigns = blockers.map(b=>{
-      const dmg = Math.min(remaining, b.toughness || 0);
-      remaining -= dmg;
+const attacker = {
+  power: (atk.power     != null ? Number(atk.power)     : livePT.p) || 0,
+  toughness: (atk.toughness != null ? Number(atk.toughness) : livePT.t) || 0
+};
+
+console.log('[combat] attacker PT source',
+  {
+    attackerId: atk.attackerId,
+    seat: atk.seat,
+    savedPower: atk.power, savedToughness: atk.toughness,
+    livePower: livePT.p, liveToughness: livePT.t,
+    used: { power: attacker.power, toughness: attacker.toughness }
+  }
+);
+
+const aFx = effectsFor(attEl);
+
+
+    // If there are no blockers, simplest case: all damage to player (with lifelink)
+    if (!blockers.length){
+      const playerDamage = attacker.power;
+      const lifegain = hasLifelink(aFx) ? attacker.power : 0;
       return {
-        blocker: b,
-        dmgToBlocker: dmg,
-        blockerDies: (b.toughness != null && dmg >= b.toughness)
+        atk, attEl, attName,
+        assigns: [],                      // no per-blocker assigns
+        attackerDies: false,
+        playerDamage,
+        lifegainAttacker: lifegain,
+        notes: ['unblocked']
       };
-    });
+    }
 
-    // all blockers hit back simultaneously
-    const dmgToAttacker = blockers.reduce((s,b)=> s + (b.power||0), 0);
-    const attackerDies  = (AT != null) && (dmgToAttacker >= AT);
+    // PHASE 1: First-strike step (only first/double strikers act)
+    const firstRes  = resolveDamageStep(attacker, aFx, blockers, 'first');
+    const firstCas  = computeCasualtiesAfterStep(attacker, aFx, blockers, firstRes);
 
-    // unblocked → damage to player (placeholder life logic)
-    const playerDamage = blockers.length ? 0 : AP;
+    // Remove dead blockers before regular step
+    const remainingBlockers = blockers.map(b => ({...b, _dead: firstCas.deadBlockers.has(b.cid)}))
+                                      .filter(b => !b._dead);
 
-    return { atk, attEl, attName, assigns, attackerDies, playerDamage };
+    // If attacker died in first-strike step, regular step is skipped for it
+    if (firstCas.attackerDies){
+      return {
+        atk, attEl, attName,
+        assigns: [],   // we don’t show per-blocker assigns in first strike UI; you can expand if desired
+        attackerDies: true,
+        playerDamage: firstRes.playerDamage || 0,
+        lifegainAttacker: firstRes.attackerLifelinkGain || 0,
+        notes: ['first-strike: attacker died', ...Array.from(firstCas.deadBlockers).map(x=>'blocker died')]
+      };
+    }
+
+    // PHASE 2: Regular damage step
+    const regRes = resolveDamageStep(attacker, aFx, remainingBlockers, 'regular');
+    const regCas = computeCasualtiesAfterStep(attacker, aFx, remainingBlockers, regRes);
+
+    const attackerDies = regCas.attackerDies;
+    const totalPlayerDmg = (firstRes.playerDamage||0) + (regRes.playerDamage||0);
+    const totalLifeGain  = (firstRes.attackerLifelinkGain||0) + (regRes.attackerLifelinkGain||0);
+
+    // For UI parity with your original, construct a compact “assigns” list from the *regular* step’s attacker output.
+    // (If you want, you can also surface a first-step “assigns1” separately.)
+    // We’ll recompute the attacker→blocker distribution on the remaining blockers for display:
+    const { assigns } = assignDamageFromAttacker(attacker.power, aFx, remainingBlockers);
+
+    return {
+      atk, attEl, attName,
+      assigns,                    // who the attacker hit (regular step remaining)
+      attackerDies,
+      playerDamage: totalPlayerDmg,
+      lifegainAttacker: totalLifeGain,
+      notes: [
+        firstRes.playerDamage ? `first-strike trample ${firstRes.playerDamage}` : '',
+      ].filter(Boolean)
+    };
   });
+
 
   // === Outcome overlay UI ===
   const ov2 = document.createElement('div');
@@ -3997,11 +4238,43 @@ ov2.querySelector('#outApply').onclick = async ()=>{
 
       totalDamageToMe += dmg;
 
-      // if the attacker dies, send to ATTACKER'S graveyard
-      if (o?.attackerDies && o?.attEl) {
-        const atkSeat = Number(o?.atk?.seat || 0);
-        toRemoveAttackers.push({ seat: atkSeat, el: o.attEl });
-      }
+      // if the attacker dies, send to ATTACKER'S graveyard (robustly reacquire the DOM element by cid)
+if (o?.attackerDies) {
+  const atkSeat = Number(o?.atk?.seat || 0);
+
+  // attacker id might be on o.atk.attackerId (preferred), or cid, or attId in older shapes
+  const attackerId = String(
+    (o?.atk?.attackerId ?? o?.atk?.cid ?? o?.attId ?? '')
+  );
+  
+  if (o?.attackerDies && !o?.attEl) {
+  console.log('[diagnostic] attackerDies=true but o.attEl was null; attempted DOM reacquire by cid.', {
+    attackerId: (o?.atk?.attackerId ?? o?.atk?.cid ?? o?.attId ?? ''),
+    seat: o?.atk?.seat
+  });
+}
+
+
+  // try to use the element we already had; otherwise, reacquire from the DOM
+  let aEl = o?.attEl || null;
+  if (!aEl && attackerId) {
+    aEl = document.querySelector(`.card[data-cid="${CSS.escape(attackerId)}"]`);
+  }
+
+  if (!atkSeat || atkSeat <= 0) {
+    console.warn('[death][attacker] missing/invalid seat; skipping', { seat: atkSeat, attackerId, row:o });
+  } else if (!aEl) {
+    console.warn('[death][attacker] MISSING DOM ELEMENT; cannot move to graveyard', {
+      seat: atkSeat, attackerId, attackerName: (o?.atk?.name || '')
+    });
+  } else {
+    toRemoveAttackers.push({ seat: atkSeat, el: aEl, id: attackerId });
+    console.log('[death][attacker] queued', {
+      seat: atkSeat, id: attackerId, name: aEl.getAttribute('data-name') || (o?.atk?.name || '')
+    });
+  }
+}
+
 
       // for each blocking assignment that dies, send to DEFENDER'S graveyard (mySeat)
       (o?.assigns || []).forEach(a => {
@@ -4012,8 +4285,8 @@ ov2.querySelector('#outApply').onclick = async ()=>{
     });
 
     // ======= YOUR REQUESTED SUMMARY LINES (pre-writes) =======
-    const atkNames = toRemoveAttackers.map(x => nameOf(x.el)).filter(Boolean);
-    const blkNames = toRemoveBlockers.map(x => nameOf(x.el)).filter(Boolean);
+    const atkNames = toRemoveAttackers.map(x => (x?.el?.getAttribute?.('data-name') || '(unnamed)')).filter(Boolean);
+const blkNames = toRemoveBlockers.map(x => (x?.el?.getAttribute?.('data-name') || '(unnamed)')).filter(Boolean);
 
     // attacker seat(s) (usually just currentPlayer)
     const attackerSeats = Array.from(new Set(toRemoveAttackers.map(x => x.seat).filter(n => n>0)));
@@ -4084,6 +4357,40 @@ ov2.querySelector('#outApply').onclick = async ()=>{
     } else {
       console.log('[outcome] no player damage selected; skipping life write');
     }
+
+// ==== MOVE DEATHS TO GRAVEYARDS + REMOVE FROM TABLE (ATTACKERS first, then BLOCKERS) ====
+try {
+  // helper to promise-ize per-card moves
+  const moveToGY = async ({ seat, el }, role) => {
+    const cid = ensureCid(el);
+    if (!seat || seat <= 0) {
+      console.warn(`[graveyard] SKIP ${role} seat invalid`, { seat, id: cid, name: el?.getAttribute?.('data-name') });
+      return;
+    }
+    const pathStr = `games/${GAME_ID}/players/${seat}`;
+    console.log(`[graveyard] ${role} → ${pathStr}/Graveyard  id=${cid}  name="${el?.getAttribute?.('data-name') || ''}"`);
+
+    await appendCardToPlayerZone(seat, 'Graveyard', el, role);
+    await removeCardFromPlayerTable(seat, cid);
+    // keep DOM tidy so local UI matches
+    el.remove();
+  };
+
+  // attackers (use ATTACKER’S seat collected earlier)
+  for (const item of toRemoveAttackers) {
+    await moveToGY(item, 'attacker');
+  }
+
+  // blockers (always defender’s seat = mySeat; we already recorded that in toRemoveBlockers)
+  for (const item of toRemoveBlockers) {
+    await moveToGY(item, 'blocker');
+  }
+
+  console.log(`[graveyard][done] moved ${toRemoveAttackers.length} attacker(s) and ${toRemoveBlockers.length} blocker(s).`);
+} catch (e) {
+  console.error('[graveyard] error while moving deaths', e);
+}
+
 
     // === Persist deaths BEFORE removing DOM ===
 // ATTACKERS → remove from ATTACKER'S Table, then append to ATTACKER'S Graveyard
