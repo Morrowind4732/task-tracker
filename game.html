@@ -10,6 +10,8 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
 
+
+
 <style>
   :root{
     /* Theme + sizing tokens. Kept the same so existing styles/layout keep working. */
@@ -1573,6 +1575,7 @@ function buildSendMenu(name, refreshFn){
       // count duplicates so we can show a badge
       const counts = new Map();
       drawPile.forEach(n => counts.set(n, 1 + (counts.get(n) || 0)));
+await fetchCardsBatch(names);
 
       for (const name of names){
         const tile = document.createElement('div');
@@ -1593,18 +1596,15 @@ function buildSendMenu(name, refreshFn){
         tile.appendChild(img);
         tile.appendChild(label);
 
-        (async ()=>{
-          const d = await getCardData(name);
-          if (d) img.src = candidateImg(d);
-          if (d && !typeMatches(d, want)) {
-            tile.remove();
-            return;
-          }
-          tile.appendChild(buildSendMenu(name, render));
+        const d = cache.get(name.toLowerCase());
+if (d) img.src = candidateImg(d);
+if (d && !typeMatches(d, want)) {
+  // filtered out — don’t show the tile
+  continue;
+}
+tile.appendChild(buildSendMenu(name, render));
+grid.appendChild(tile);
 
-        })();
-
-        grid.appendChild(tile);
       }
     }
 
@@ -2475,8 +2475,21 @@ async function hydrateCardData(card){
     const uris = candidateUris(d);
 
     if (domLooksBlank && imgEl) {
-      await loadFirstWorking(imgEl, uris);
-    }
+  await loadFirstWorking(imgEl, uris);
+}
+
+// also load the back face art if present so the Flip button shows the other face
+try {
+  const backImg = card.querySelector('.face.back img');
+  const faces = Array.isArray(d?.card_faces) ? d.card_faces : null;
+  if (backImg && faces && faces[1] && faces[1].image_uris) {
+    const u = faces[1].image_uris;
+    const backUris = ['large','normal','png','border_crop','art_crop','small']
+      .map(k => u[k]).filter(Boolean);
+    if (backUris.length) await loadFirstWorking(backImg, backUris);
+  }
+} catch(e) { /* ignore */ }
+
 
     // keep a cached copy for serializeCard fallbacks
     card._imgSrc = (imgEl && imgEl.src) || (uris && uris[0]) || card._imgSrc || '';
@@ -3403,6 +3416,60 @@ async function fetchCard(name){
   const r=await fetch(url,{mode:'cors'}); if(!r.ok) throw new Error('scryfall '+r.status);
   const d=await r.json(); cache.set(key,d); return d;
 }
+// === NEW: batch fetch up to 75 cards at once (fills global `cache`) ===
+async function fetchCardsBatch(names){
+  if (!Array.isArray(names) || names.length === 0) return new Map();
+
+  // unique, truthy, not already cached
+  const wanted = Array.from(
+    new Set(names.filter(Boolean).map(n => String(n).trim()))
+  ).filter(n => !cache.has(n.toLowerCase()));
+
+  if (wanted.length === 0) return new Map();
+
+  const out = new Map();
+
+  // Scryfall allows up to 75 identifiers per POST
+  for (let i = 0; i < wanted.length; i += 75){
+    const chunk = wanted.slice(i, i + 75).map(n => ({ name: n }));
+
+    const r = await fetch('https://api.scryfall.com/cards/collection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifiers: chunk })
+    });
+
+    if (!r.ok) continue;
+
+    const j = await r.json();
+
+    // success entries
+    for (const d of (j.data || [])){
+      const key = (d.name || '').toLowerCase();
+      if (!key) continue;
+      cache.set(key, d);
+      out.set(key, d);
+    }
+
+    // any misses → fall back to your fuzzy single-card fetch
+    if (Array.isArray(j.not_found)){
+      for (const miss of j.not_found){
+        const nm = miss?.name;
+        if (!nm) continue;
+        try{
+          const d = await fetchCard(nm);
+          if (d){
+            const k = nm.toLowerCase();
+            cache.set(k, d);
+            out.set(k, d);
+          }
+        }catch{}
+      }
+    }
+  }
+  return out;
+}
+
 function candidateUris(card){
   const list=[]; function push(u){ if(!u) return; ['large','normal','png','border_crop','art_crop','small'].forEach(k=>u[k]&&list.push(u[k])); }
   if(card && card.image_uris) push(card.image_uris);
@@ -3556,10 +3623,13 @@ function renderManaCost(cost, withRing=true){
 // Only sets text; showing/positioning is handled by updateHint()
 function fillHintContent(card){
   const d = card?._data || {};
-  const face = (d?.card_faces && d.card_faces[0]) || null;
+  const faces = Array.isArray(d.card_faces) ? d.card_faces : null;
+  const isAlt = !!(faces && card?.classList.contains('flipped'));
+  const face = faces ? (isAlt ? faces[1] : faces[0]) : null;
 
   const mana = (d?.mana_cost || face?.mana_cost || '') || '';
   const type = (d?.type_line  || face?.type_line  || '') || '';
+
 
   const p = (d?.power ?? face?.power);
   const t = (d?.toughness ?? face?.toughness);
@@ -3567,7 +3637,8 @@ function fillHintContent(card){
   const loyalty = (d?.loyalty ?? face?.loyalty) ? `Loyalty ${d?.loyalty ?? face?.loyalty}` : '';
   const defense = (d?.defense ?? face?.defense) ? `Defense ${d?.defense ?? face?.defense}` : '';
 
-  hTitle.textContent = d?.name || card?.getAttribute('data-name') || '';
+  hTitle.textContent = (face?.name || d?.name || card?.getAttribute('data-name') || '');
+
   const stat = pt || loyalty || defense;
   // Build the meta line with icons for the cost
   const manaHTML = renderManaCost(mana, true); // true = show cost ring style
@@ -3579,9 +3650,12 @@ function fillHintContent(card){
 
   // Base oracle (single- or multi-faced)
   let oracle = d?.oracle_text || '';
-  if (!oracle && d?.card_faces){
-    oracle = d.card_faces.map(f => (f.name||'') + "\n" + (f.oracle_text||'')).join("\n—\n");
-  }
+if (faces) {
+  // When flipped, show only that face’s oracle; otherwise show the front.
+  oracle = (face?.oracle_text) ||
+           faces.map(f => (f.name||'') + "\n" + (f.oracle_text||'')).join("\n—\n");
+}
+
 
   // If the selected card itself grants to an equipped/enchanted creature, summarize it.
   let selfExtra = '';
@@ -4182,8 +4256,21 @@ fetchCard(name).then(async d=>{
   const uris = candidateUris(d);
   await loadFirstWorking(imgF, uris);
 
-  // remember the resolved image URL
-  card._imgSrc = imgF.src || (uris && uris[0]) || '';
+// if the card has a second face, preload it into the existing “back” <img>
+try {
+  const backImg = card.querySelector('.face.back img');
+  const faces = Array.isArray(d?.card_faces) ? d.card_faces : null;
+  if (backImg && faces && faces[1] && faces[1].image_uris) {
+    const u = faces[1].image_uris;
+    const backUris = ['large','normal','png','border_crop','art_crop','small']
+      .map(k => u[k]).filter(Boolean);
+    if (backUris.length) await loadFirstWorking(backImg, backUris);
+  }
+} catch(e) { /* ignore */ }
+
+// remember the resolved image URL
+card._imgSrc = imgF.src || (uris && uris[0]) || '';
+
 
   // NEW: if the card is currently in the Hand, persist immediately so "draw" saves get the URL
   try {
@@ -4606,71 +4693,90 @@ function rotateHand(dir){
 
 /* Center-card swipe/lift (bind to .cardBody for reliable hits) */
 function attachCenterHandDrag(card){
-  if(card._handBound) return;
+  if (card._handBound) return;
 
   const body = card.querySelector('.cardBody');
-  let start=null, lifted=false;
+  let start = null, lifted = false, t0 = 0;
 
   function down(e){
-    if(card.parentElement!==handZone) return;
+    if (card.parentElement !== handZone) return;
     e.preventDefault();
-    start={x:e.clientX,y:e.clientY};
-    lifted=false;
+    start = { x: e.clientX, y: e.clientY };
+    lifted = false;
+    t0 = e.timeStamp || performance.now();
     body.setPointerCapture(e.pointerId);
   }
-  function move(e){
-    if(!start) return;
-    if(card.parentElement!==handZone){ start=null; return; }
 
-    const dx=e.clientX-start.x, dy=e.clientY-start.y;
+  function move(e){
+    if (!start) return;
+    if (card.parentElement !== handZone){ start = null; return; }
+
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
 
     // Horizontal swipe → rotate carousel
-    if(!lifted && Math.abs(dx)>40 && Math.abs(dx)>Math.abs(dy)){
+    if (!lifted && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)){
       // Clear any table selection immediately, then rotate (which selects center)
       clearSelection();
-      rotateHand(dx<0 ? +1 : -1);
-      start={x:e.clientX,y:e.clientY};
+      rotateHand(dx < 0 ? +1 : -1);
+      start = { x: e.clientX, y: e.clientY };
       return;
     }
 
-// Up swipe → lift into world
-if (!lifted && dy < -30 && Math.abs(dy) > Math.abs(dx)) {
-  removeFromHand(card);
-  world.appendChild(card);
+    // Up swipe → lift into world
+    if (!lifted && dy < -30 && Math.abs(dy) > Math.abs(dx)){
+      removeFromHand(card);
+      world.appendChild(card);
 
-  // --- turn log: played to battlefield ---
-  try {
-    logTurnAction(Number(currentPlayer || 0), 'play', {
-      id: ensureCid(card),
-      name: card.getAttribute('data-name') || ''
-    });
-  } catch (e) { console.warn('[turnlog] play failed', e); }
+      // --- turn log: played to battlefield ---
+      try{
+        logTurnAction(Number(currentPlayer || 0), 'play', {
+          id: ensureCid(card),
+          name: card.getAttribute('data-name') || ''
+        });
+      }catch(e){ console.warn('[turnlog] play failed', e); }
 
-  // (existing code continues…)
-  setSelectionFromCard(card);
-  recomputeContinuousEffects();
-      const r=table.getBoundingClientRect();
-      const worldX=(e.clientX - r.left - state.tx)/state.scale;
-      const worldY=(e.clientY - r.top  - state.ty)/state.scale;
-      const defW=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'))||223;
-      const defH=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'))||310;
-const LIFT_Y_OFFSET = 1000;
-card.style.left = (worldX - defW/2) + 'px';
-card.style.top  = (worldY - LIFT_Y_OFFSET - defH/2) + 'px';
-      card.style.zIndex=++zCounter;
+      setSelectionFromCard(card);
+      recomputeContinuousEffects();
 
-      lifted=true;
+      const r = table.getBoundingClientRect();
+      const worldX = (e.clientX - r.left - state.tx) / state.scale;
+      const worldY = (e.clientY - r.top  - state.ty) / state.scale;
+      const defW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
+      const defH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
+      const LIFT_Y_OFFSET = 1000;
+      card.style.left = (worldX - defW/2) + 'px';
+      card.style.top  = (worldY - LIFT_Y_OFFSET - defH/2) + 'px';
+      card.style.zIndex = ++zCounter;
+
+      lifted = true;
       layoutHand(); // also refreshes tooltip to new center
     }
   }
-  function up(){ start=null; }
 
-  card.addEventListener('pointerdown',down);
-  card.addEventListener('pointermove',move);
-  card.addEventListener('pointerup',up);
-  card.addEventListener('pointercancel',up);
-  card._handBound=true;
+  function up(e){
+    if (!start) return;
+    // TAP-TO-SELECT (small movement + short time, and not lifted)
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    const dt = (e.timeStamp || performance.now()) - t0;
+    if (!lifted && Math.hypot(dx, dy) < 8 && dt < 250){
+      // Select center card so tooltip shows without needing a rotate
+      setSelectionFromCard(card);
+      syncCenterTooltip();
+    }
+    start = null;
+  }
+
+  // IMPORTANT: bind to the body (hit-tested element), not the parent .card
+  body.addEventListener('pointerdown', down);
+  body.addEventListener('pointermove', move);
+  body.addEventListener('pointerup',    up);
+  body.addEventListener('pointercancel',up);
+
+  card._handBound = true;
 }
+
 
 
 
@@ -4693,6 +4799,13 @@ $('#loadBtn').addEventListener('click', ()=>{
     const el = spawnCard(commander, 0, 0);
     document.querySelector('.commander')?.appendChild(el);
   }
+  
+  // NEW: batch-prefetch Scryfall data for the entire deck (and commander)
+(async ()=>{
+  const all = drawPile.concat(commander ? [commander] : []);
+  await fetchCardsBatch(all);
+})();
+
 
   collapseDrawer(); // hide the input
   // optional: persist immediately
@@ -4751,6 +4864,9 @@ function toggleTapOne(card){
 function toggleFlip(card){
   card.classList.toggle('flipped');
 
+  // refresh tooltip to show the correct face data
+  try { if (selectedCard === card) updateHint(); } catch {}
+
   // --- turn log: flip ---
   try {
     logTurnAction(Number(currentPlayer || 0), 'flip', {
@@ -4759,6 +4875,7 @@ function toggleFlip(card){
     });
   } catch(e){ console.warn('[turnlog] flip log failed', e); }
 }
+
 
 
 // T: tap/untap the slice from stack base up through the selected card
