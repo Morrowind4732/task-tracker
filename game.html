@@ -1018,6 +1018,9 @@ body.viewer .card .cardBody {
 
 
 <script>
+
+
+
 /* =====================  ＋ Add Any: cards or tokens  ===================== */
 // ---- Global deck helpers (used by + overlay and others) ----
 if (typeof window.syncDeckCount !== 'function') {
@@ -2759,15 +2762,19 @@ async function appendCardToPlayerZone(playerSeat, zoneKind /* 'Graveyard' | 'Exi
 if (entry.extras === undefined) delete entry.extras;
 
     // Keep DOM in sync so a subsequent save won't wipe the zone write
-    const zoneSel = (zoneKind === 'Graveyard') ? '.graveyard' : '.exile';
-    const zoneDom = document.querySelector(zoneSel);
-    if (zoneDom && !zoneDom.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)){
-      const stub = document.createElement('div');
-      stub.className = 'card';
-      stub.dataset.cid = cid;
-      stub.style.cssText = 'display:none;left:0;top:0;';
-      zoneDom.appendChild(stub);
-    }
+    const zoneSel =
+  zoneKind === 'Graveyard' ? '.graveyard' :
+  zoneKind === 'Exile'     ? '.exile'     :
+  zoneKind === 'Commander' ? '.commander' : null;
+
+const zoneDom = zoneSel ? document.querySelector(zoneSel) : null;
+if (zoneDom && !zoneDom.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)){
+  const stub = document.createElement('div');
+  stub.className = 'card';
+  stub.dataset.cid = cid;
+  stub.style.cssText = 'display:none;left:0;top:0;';
+  zoneDom.appendChild(stub);
+}
 
     console.log(`[graveyard][${role||'unknown'}] WRITE → ${pathStr}  zone=${zoneKind}`, { id: entry.id, name: entry.name });
     await docRef.set({
@@ -3347,21 +3354,49 @@ function collapseDrawer(){
 /* =========================================================
    Deck parsing + Scryfall fetch
    ========================================================= */
-function parseDeck(text){
-  // Accept "3 Name" / "Name x3" / "- Name" etc.
-  var lines=(text||'').split(/\r?\n/), out=[];
-  for (var i=0;i<lines.length;i++){
-    var raw=lines[i]; if(!raw) continue;
-    var l=raw.replace(/[-\u2022\u2023\u25E6\u2043\u2219*\t]+\s*/g,'').replace(/\s+/g,' ').trim();
-    if(!l) continue; if(/^side\s*board\s*:?\s*$/i.test(l)) continue;
-    var m, qty=1, name=l;
-    if((m=/^(\d+)\s*[x×]?\s+(.+)$/.exec(l))){ qty=parseInt(m[1],10); name=m[2]; }
-    else if((m=/^(.+?)\s+[x×]\s*(\d+)$/.exec(l))){ name=m[1]; qty=parseInt(m[2],10); }
-    name=name.replace(/^[-•\s]+/,'').trim(); if(!name) continue;
-    for(var k=0;k<Math.max(1,qty);k++) out.push(name);
+// Parse text into { main:[], commander:String|null }
+// - Main Deck = everything before a "SIDEBOARD" header (if present)
+// - Sideboard = ignored
+// - Commander = last non-empty line (always)
+function parseDeckWithCommander(text){
+  const raw = (text || '').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  if (!raw.length) return { main:[], commander:null };
+
+  // Normalize a copy for control lines
+  const lines = raw.slice();
+
+  // Commander = last non-empty line
+  const commanderLine = lines[lines.length - 1];
+
+  // Where does SIDEBOARD start (if present)?
+  const sideIdx = lines.findIndex(l => /^sideboard\b/i.test(l));
+
+  // Main lines end at SIDEBOARD (if any), otherwise right before commander
+  const commanderIdx = lines.length - 1;
+  const endMain = (sideIdx >= 0 ? sideIdx : commanderIdx);
+  const mainLines = lines.slice(0, endMain);
+
+  // helper: expand "3 Card Name" → ["Card Name","Card Name","Card Name"]
+  const expand = (arr)=>arr.flatMap(line=>{
+    const m = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
+    if (!m) return [];
+    const qty  = Math.max(0, parseInt(m[1],10) || 0);
+    const name = m[2].replace(/\s*\(.*\)\s*$/,'').trim(); // strip set codes like "(MH2)"
+    return Array(qty).fill(name);
+  });
+
+  const main = expand(mainLines);
+
+  // Commander name (strip leading qty if present)
+  let commander = null;
+  {
+    const mQty = commanderLine.match(/^\s*\d+\s+(.+?)\s*$/);
+    commander = (mQty ? mQty[1] : commanderLine).replace(/\s*\(.*\)\s*$/,'').trim();
   }
-  return out;
+
+  return { main, commander };
 }
+
 async function fetchCard(name){
   const key=name.toLowerCase(); if(cache.has(key)) return cache.get(key);
   const url='https://api.scryfall.com/cards/named?'+new URLSearchParams({fuzzy:name});
@@ -3804,6 +3839,19 @@ hint.style.display = 'none';
     const r=targetForOffset.getBoundingClientRect();
     offX=e.clientX-r.left; offY=e.clientY-r.top;
 
+   // ⬇️ NEW: if not already on the battlefield, lift into #world with matching world coords
+    if (card.parentElement !== world) {
+      const rTable = table.getBoundingClientRect();
+      // world-space position of the element’s current screen top/left
+      const worldX = (r.left - rTable.left - state.tx) / state.scale;
+      const worldY = (r.top  - rTable.top  - state.ty) / state.scale;
+      world.appendChild(card);
+      card.style.left = worldX + 'px';
+      card.style.top  = worldY + 'px';
+      // re-measure after reparent so subsequent math is accurate
+      r = card.getBoundingClientRect();
+    }
+
     dragging=true; (draggingBase||card).style.zIndex=++zCounter; body.setPointerCapture(e.pointerId);
   });
 
@@ -3914,6 +3962,55 @@ if (ex && rectsOverlap(cr, ex)){
   if (base && base !== card) removeFromStack(base, card);
   transferToZoneThenSaveThenDelete(card, exEl, currentPlayer);
   return;
+}
+
+  // Commander zone overlap
+const czEl = document.querySelector('.zone.commander, .commander, #commanderZone');
+const cz   = czEl ? czEl.getBoundingClientRect() : null;
+
+if (cz && rectsOverlap(cr, cz)){
+  // If stacked, detach first
+  const base = getStackBase(card);
+  if (base && base !== card) removeFromStack(base, card);
+
+  // Move the element INTO the commander zone (so savePlayerState picks it up)
+  const cid = ensureCid(card);
+  czEl.appendChild(card);
+  card.style.left = '6px';
+  card.style.top  = '6px';
+
+  // Mark so local UI knows it's parked there
+  card.dataset.zone = 'commander';
+  card.classList.add('in-commander');
+
+  // Remove from Table in Firestore (transaction uses card id)
+  if (typeof currentPlayer !== 'undefined') {
+    try { removeCardFromPlayerTable(currentPlayer, cid); } catch {}
+  }
+
+  // Upsert to Commander in Firestore (fire-and-forget; no await here)
+  try {
+    const s = (typeof serializeCard === 'function') ? (serializeCard(card) || {}) : {};
+    appendEntryToPlayerZone(
+      Number(window.currentPlayer || 1),
+      'Commander',
+      { id: cid, name: s.name || card.getAttribute('data-name') || '', img: s.img || (card.querySelector('.face.front img')?.src || '') },
+      'commander-drop'
+    );
+  } catch {}
+
+  // Persist (sync call to your saver; it will now read from .commander .card)
+  if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
+
+  clearSelection();
+  return;
+} else {
+  // If we dropped it NOT overlapping the commander zone, ensure it's back "in play"
+  if (card.dataset.zone === 'commander'){
+    delete card.dataset.zone;
+    card.classList.remove('in-commander');
+    if (typeof currentPlayer !== 'undefined') savePlayerState(currentPlayer);
+  }
 }
 
 
@@ -4581,14 +4678,27 @@ card.style.top  = (worldY - LIFT_Y_OFFSET - defH/2) + 'px';
    Topbar (load/shuffle/draw)
    ========================================================= */
 $('#loadBtn').addEventListener('click', ()=>{
-  const names=parseDeck($('#deckIn').value);
-  if(!names.length){ alert('No cards parsed. Paste your deck and tap Load again.'); return;}
-  drawPile=names.reverse();
-  $('#deckCount').textContent=drawPile.length;
+  const { main, commander } = parseDeckWithCommander($('#deckIn').value);
+  if (!main.length){
+    alert('No cards parsed. Paste your deck and tap Load again.');
+    return;
+  }
 
-  collapseDrawer();          // <-- hide the input
-  // no alert anymore
+  // Only main deck goes into the pile; top of deck is end of array
+  drawPile = main.reverse();
+  $('#deckCount').textContent = drawPile.length;
+
+  // Spawn commander into the commander zone (if present)
+  if (commander){
+    const el = spawnCard(commander, 0, 0);
+    document.querySelector('.commander')?.appendChild(el);
+  }
+
+  collapseDrawer(); // hide the input
+  // optional: persist immediately
+  try{ if (typeof savePlayerState === 'function') savePlayerState(Number(currentPlayer || 1)); }catch{}
 });
+
 
 $('#shuffleBtn').addEventListener('click', ()=>{
   for(let i=drawPile.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); const t=drawPile[i]; drawPile[i]=drawPile[j]; drawPile[j]=t; }
