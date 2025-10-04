@@ -589,7 +589,37 @@ body.viewer .card .cardBody {
   line-height: 1;
 }
 
-  
+ 
+/* ===== Combat Initiated big toast ===== */
+.combat-toast{
+  position: fixed;
+  inset: 0;               /* full screen */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  pointer-events: none;
+}
+.combat-toast .msg{
+  padding: 22px 36px;
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  color: #dff7ff;
+  background: rgba(5,14,20,.92);
+  border: 2px solid #70d9ff;
+  border-radius: 14px;
+  text-shadow: 0 2px 0 rgba(0,0,0,.6);
+  box-shadow: 0 0 40px rgba(112,217,255,.45), inset 0 0 12px rgba(112,217,255,.2);
+  animation: combatPulse 900ms infinite alternate;
+}
+@keyframes combatPulse{
+  from { transform: scale(1);    opacity: .85; box-shadow: 0 0 28px rgba(112,217,255,.35), inset 0 0 10px rgba(112,217,255,.15); }
+  to   { transform: scale(1.05); opacity: 1;    box-shadow: 0 0 60px rgba(112,217,255,.60), inset 0 0 16px rgba(112,217,255,.30); }
+}
+.combat-toast[hidden]{ display:none !important; }
+
+ 
 </style>
 
   
@@ -739,6 +769,12 @@ body.viewer .card .cardBody {
     </div>
   </div>
 </div>
+
+<!-- Big center flash for combat start -->
+<div id="combatToast" class="combat-toast" hidden>
+  <div class="msg">⚔️ Combat Initiated</div>
+</div>
+
 
 <!-- ===== Deck Tools Overlay (…) ===== -->
 <div id="deckToolsOverlay" class="chatOverlay" aria-hidden="true">
@@ -2063,6 +2099,89 @@ async function handleDefenseOutcomeCleanup(numPlayers){
     console.warn('[cleanup] exception', e);
   }
 }
+
+// === Firestore writes for the flag ===
+async function writeCombatInitiated(flag, attackerSeatOpt){
+  const ref = combatDoc('current'); // you already use this helper
+  const data = {
+    combatInitiated: Number(flag) || 0,
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+  };
+  if (typeof attackerSeatOpt === 'number') data.attackingSeat = attackerSeatOpt;
+  await ref.set(data, { merge: true });
+}
+
+// === Big center toast control ===
+function showCombatAlert(){
+  const el = document.getElementById('combatToast');
+  if (el) el.hidden = false;
+}
+function hideCombatAlert(){
+  const el = document.getElementById('combatToast');
+  if (el) el.hidden = true;
+}
+
+// === Poller: combatInitiated -> show flashing toast for DEFENDERS only (with debug) ===
+(function startCombatInitiatedPoller(intervalMs = 250){
+  if (window._combatInitPoller) clearInterval(window._combatInitPoller);
+
+  const gid  = String(window.GAME_ID || 'default-game');
+  const path = `games/${gid}/combat/current`;
+  console.log(`[poller:combatInitiated] starting @ ${intervalMs}ms  →  path: ${path}`);
+
+  let lastSkipLog = 0;
+
+  window._combatInitPoller = setInterval(async () => {
+    try{
+      // Ensure Firebase is ready (mirrors your defenseOutcome poller style)
+      if (!window.db && typeof firebaseReady !== 'undefined') {
+        try { await firebaseReady; } catch(e) {}
+      }
+
+      const hasDb   = !!window.db;
+      const hasDoc  = typeof window.combatDoc === 'function';
+      const hasRead = typeof window.readCombatFresh === 'function';
+
+      if (!hasDb || !hasDoc || !hasRead){
+        const now = Date.now();
+        if (now - lastSkipLog > 1000){
+          console.log(`[poller:combatInitiated] skip — ready? path: ${path}`, { hasDb, hasDoc, hasRead });
+          lastSkipLog = now;
+        }
+        return;
+      }
+
+      // Force a fresh server read so both phones stay in sync
+      let d = {};
+      try{
+        const snap = await window.combatDoc().get({ source: 'server' });
+        d = snap.exists ? (snap.data() || {}) : {};
+      }catch(err){
+        console.warn(`[poller:combatInitiated] combatDoc.get() failed — path: ${path}`, err && err.message ? err.message : err);
+        return;
+      }
+
+      const flag    = Number(d?.combatInitiated ?? 0);
+      const atkSeat = Number(d?.attackingSeat   ?? 0);
+      const mine    = Number(window.mySeat || window.currentPlayer || 0);
+      const iAmDef  = (mine && atkSeat && mine !== atkSeat);
+
+      console.log('[poller:combatInitiated] values', { path, flag, atkSeat, mine, iAmDefender: iAmDef });
+
+      if (flag === 1 && iAmDef){
+        console.log('[poller:combatInitiated] SHOW toast (defender & flag==1)');
+        showCombatAlert();
+      } else {
+        console.log('[poller:combatInitiated] HIDE toast (flag==0 or not defender)');
+        hideCombatAlert();
+      }
+    }catch(e){
+      console.warn('[poller:combatInitiated] unexpected error', e);
+    }
+  }, intervalMs);
+})();
+
+
 
 
 // ------------------------------
@@ -4818,6 +4937,31 @@ document.getElementById('plusBtn')?.addEventListener('click', async ()=>{
   }
 });
 
+// === Defender acknowledgement on sword click =================================
+(function wireDefenderAckOnSword(){
+  const btn = document.getElementById('plusBtn'); // (sword)
+  if (!btn) return;
+
+  btn.addEventListener('click', async (ev)=>{
+    try{
+      const c = await readCombatFresh();
+      const atkSeat = Number(c?.attackingSeat || 0);
+      const flag    = Number(c?.combatInitiated || 0);
+      const mine    = Number(window.currentPlayer || 0);
+
+      // Only defenders should clear the flag, and only if it is set
+      if (flag === 1 && atkSeat && mine && mine !== atkSeat){
+        await writeCombatInitiated(0);
+        hideCombatAlert();
+        console.log('[combat] defender acknowledged — set combatInitiated = 0');
+      }
+    }catch(_e){
+      // ignore; don't block opening your overlay
+    }
+  }, true); // capture=true so we ack before your overlay click logic runs
+})();
+
+
 
 // COMBAT HELPERS -----------
 // --- Identity (use your data-cid consistently)
@@ -5066,11 +5210,23 @@ function openAttackOverlay(){
       });
       showToast('Attacks reset');
     };
-    ov.querySelector('#atkConfirm').onclick = async ()=>{
-      await saveAttacksForCurrentPlayer(choices);
-      showToast('Attacks set');
-      ov.remove();
-    };
+// ===== Confirm attacks (ATTACKER) =====
+ov.querySelector('#atkConfirm').onclick = async ()=>{
+  try{
+    await saveAttacksForCurrentPlayer(choices); // your existing save
+
+    // mark combat initiated & who the attacker is
+    const mine = Number(window.mySeat || window.currentPlayer || 0);
+    await writeCombatInitiated(1, mine);
+
+    if (typeof showToast === 'function') showToast('Attacks sent — waiting on defenders...');
+    hideOverlay(ov);
+  }catch(err){
+    console.error('[combat] confirm attacks failed', err);
+    if (typeof showToast === 'function') showToast('Could not confirm attacks (see console).');
+  }
+};
+
   }
 }
 
