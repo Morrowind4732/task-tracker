@@ -4679,8 +4679,8 @@ card.style.top  = (worldY - LIFT_Y_OFFSET - defH/2) + 'px';
    ========================================================= */
 $('#loadBtn').addEventListener('click', ()=>{
   const { main, commander } = parseDeckWithCommander($('#deckIn').value);
-  if (!main.length){
-    alert('No cards parsed. Paste your deck and tap Load again.');
+ if (!main.length){
+    window.open('https://moxfield.com/decks/public?q=eyJodWIiOiIiLCJmb3JtYXQiOiJjb21tYW5kZXIiLCJkZWNrTmFtZSI6IiIsImNhcmRJZCI6IiIsImNhcmROYW1lIjoiIiwiYm9hcmQiOiIiLCJsYXN0U2VhcmNoIjoiIiwiZmlsdGVyIjoiIiwiYXV0aG9yVXNlck5hbWVzIjoiIiwiY29tbWFuZGVyQ2FyZElkIjoiIiwiY29tbWFuZGVyQ2FyZE5hbWUiOiIiLCJwYXJ0bmVyQ2FyZElkIjoiIiwicGFydG5lckNhcmROYW1lIjoiIiwiY29tbWFuZGVyU2lnbmF0dXJlU3BlbGxDYXJkSWQiOiIiLCJjb21tYW5kZXJTaWduYXR1cmVTcGVsbENhcmROYW1lIjoiIiwicGFydG5lclNpZ25hdHVyZVNwZWxsQ2FyZElkIjoiIiwicGFydG5lclNpZ25hdHVyZVNwZWxsQ2FyZE5hbWUiOiIiLCJjb21wYW5pb25DYXJkSWQiOiIiLCJjb21wYW5pb25DYXJkTmFtZSI6IiIsImJyYWNrZXRTZXR0aW5nIjoiZXF1YWxzIiwiYnJhY2tldCI6IiIsInNvcnRDb2x1bW4iOiJ1cGRhdGVkIiwic29ydERpcmVjdGlvbiI6ImRlc2NlbmRpbmciLCJwYWdlTnVtYmVyIjoxLCJwYWdlU2l6ZSI6NjQsInZpZXciOiJwdWJsaWMiLCJodWJOYW1lIjoiIn0%3D', '_blank', 'noopener');
     return;
   }
 
