@@ -619,6 +619,62 @@ body.viewer .card .cardBody {
 }
 .combat-toast[hidden]{ display:none !important; }
 
+/* Stronger button contrast inside Deck Tools */
+#deckToolsOverlay .btn.sm{
+  background:#6aa9ff;          /* bright */
+  color:#091323;                /* dark text for contrast */
+  border:1px solid #6aa9ff;
+  font-weight:800;
+}
+
+/* Keep number inputs comfortable and readable */
+#deckToolsOverlay input[type="number"]{
+  height:44px;
+  font-size:16px;               /* avoids iOS zoom */
+}
+
+/* Responsive stack so nothing overflows on phones */
+@media (max-width: 600px){
+  #deckToolsOverlay .chatPanel{
+    width: 94vw;
+    max-width: 94vw;
+  }
+  /* Convert the two- and three-column rows into a single column */
+  #deckToolsOverlay .chatPanel > div[style*="display:grid"] > div[style*="grid-template-columns"]{
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 8px !important;
+  }
+  /* Make inputs/buttons span full width */
+  #deckToolsOverlay input[type="number"],
+  #deckToolsOverlay select,
+  #deckToolsOverlay .btn.sm{
+    width: 100% !important;
+  }
+  /* Ensure the cascade reveal grid wraps nicely */
+  #deckToolsOverlay #cascadeReveal{
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+    gap: 8px !important;
+  }
+}
+
+
+/* Make the header wrap nicely on narrow screens and keep the X visible */
+#deckAddAnyOverlay .chatHeader { flex-wrap: wrap; gap: 8px; }
+
+/* Keep the search input from pushing the close button off-screen */
+#deckAddAnyOverlay #addAnyQuery{
+  flex: 1 1 240px !important;
+  min-width: 0 !important;         /* allow it to shrink below any inline min */
+  max-width: 100% !important;
+}
+
+/* Ensure the filter select and X never get squeezed */
+#deckAddAnyOverlay #addAnyMode,
+#deckAddAnyOverlay .chatClose{ flex: 0 0 auto; }
+
+
  
 </style>
 
@@ -1042,7 +1098,15 @@ function openAddAny(){
   close.onclick = ()=> hideOverlay(ov);
   ov.onclick    = (e)=>{ if (e.target === ov) hideOverlay(ov); };
 
-  qIn.onkeydown = (e)=>{ if (e.key === 'Enter') render(); };
+  qIn.onkeydown = (e)=>{
+  if (e.key === 'Enter'){
+    e.preventDefault();   // stop mobile keyboards from shifting focus to the ✕
+    e.stopPropagation();
+    render();
+    qIn.blur();           // dismiss mobile keyboard so results are visible
+  }
+};
+
   mode.onchange = render;
 
   render();
