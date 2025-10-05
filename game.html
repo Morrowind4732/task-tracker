@@ -1021,6 +1021,95 @@ body.viewer .card .cardBody {
 
 <script>
 
+// Fisher–Yates shuffle (in-place)
+function shuffleInPlace(arr){
+  for (let i = arr.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Update visible deck count + thickness (reuse your deck visual if present)
+function syncDeckUI(){
+  const dc = document.getElementById('deckCount');
+  if (dc) dc.textContent = Array.isArray(window.drawPile) ? window.drawPile.length : 0;
+  if (typeof updateDeckVisual === 'function') updateDeckVisual();
+}
+
+// Add a card name back to the deck (Top / Bottom / Shuffle)
+function addNameToDeck(name, mode){
+  if (!name) return;
+  if (!Array.isArray(window.drawPile)) window.drawPile = [];
+
+  // NOTE: if your "top" is drawPile[drawPile.length-1] and you draw with pop(),
+  // then push() adds to top; unshift() adds to bottom. (This matches your draw flow.)
+  if (mode === 'bottom'){
+    window.drawPile.unshift(name);
+  } else if (mode === 'shuffle'){
+    window.drawPile.push(name);
+    shuffleInPlace(window.drawPile);
+  } else { // 'top'
+    window.drawPile.push(name);
+  }
+  syncDeckUI();
+}
+
+// Return a TABLE card to deck by placement mode, update Firestore, and remove from table
+async function returnTableCardToDeck(card, mode, playerSeat){
+  try{
+    const base = (typeof getStackBase === 'function' ? (getStackBase(card) || card) : card);
+    const name = (typeof cardName === 'function') ? cardName(base) : (base.getAttribute('data-name') || '');
+    const cid  = (typeof ensureCid === 'function') ? ensureCid(base) : (base.dataset.cid || (base.dataset.cid = String(Math.random()).slice(2)));
+
+    // If stacked, detach first so layout is clean
+    if (typeof removeFromStack === 'function'){
+      const stackBase = (typeof getStackBase === 'function' ? getStackBase(base) : null);
+      if (stackBase && stackBase !== base) removeFromStack(stackBase, base);
+    }
+
+    // 1) Put name back into deck per mode
+    addNameToDeck(name, mode);
+
+    // 2) Remove from Table in Firestore (by id) so it vanishes from battlefield state
+    if (typeof removeCardFromPlayerTable === 'function' && playerSeat != null){
+      await removeCardFromPlayerTable(Number(playerSeat), String(cid));
+    }
+
+    // 3) Remove the DOM node (table copy) so it disappears visually
+    if (base && base.remove) base.remove();
+
+    // 4) Save player state (Deck now includes the returned card via drawPile)
+    if (typeof savePlayerState === 'function' && playerSeat != null){
+      await savePlayerState(Number(playerSeat));
+    }
+
+    console.log('[deck-return] ok', { seat: playerSeat, cid, name, mode });
+  }catch(e){
+    console.warn('[deck-return] failed', e);
+  }
+}
+
+// Small inline menu near drop point to choose Top / Bottom / Shuffle-in
+function showDeckDropMenuAt(x, y, onPick){
+  const menu = document.createElement('div');
+  menu.style.cssText = 'position:fixed;z-index:12050;background:#111826;border:1px solid #2b3344;border-radius:10px;padding:6px;display:flex;gap:6px;box-shadow:0 6px 20px rgba(0,0,0,.45)';
+  const mk = (label, mode)=>{
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = 'btn';
+    b.style.cssText = 'border-radius:8px;background:#1b2a47;color:#d8e7ff;padding:6px 10px;font-weight:700';
+    b.onclick = (e)=>{ e.stopPropagation(); try{ onPick(mode); } finally { menu.remove(); } };
+    return b;
+  };
+  menu.append(mk('Top','top'), mk('Bottom','bottom'), mk('Shuffle-in','shuffle'));
+  document.body.appendChild(menu);
+  const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+  const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+  menu.style.left = Math.min(x, vw - 12 - menu.offsetWidth) + 'px';
+  menu.style.top  = Math.min(y, vh - 12 - menu.offsetHeight) + 'px';
+  return menu;
+}
 
 
 /* =====================  ＋ Add Any: cards or tokens  ===================== */
@@ -2233,17 +2322,17 @@ function hideCombatAlert(){
       const mine    = Number(window.mySeat || window.currentPlayer || 0);
       const iAmDef  = (mine && atkSeat && mine !== atkSeat);
 
-      console.log('[poller:combatInitiated] values', { path, flag, atkSeat, mine, iAmDefender: iAmDef });
+    //  console.log('[poller:combatInitiated] values', { path, flag, atkSeat, mine, iAmDefender: iAmDef });
 
       if (flag === 1 && iAmDef){
-        console.log('[poller:combatInitiated] SHOW toast (defender & flag==1)');
+        //console.log('[poller:combatInitiated] SHOW toast (defender & flag==1)');
         showCombatAlert();
       } else {
-        console.log('[poller:combatInitiated] HIDE toast (flag==0 or not defender)');
+       // console.log('[poller:combatInitiated] HIDE toast (flag==0 or not defender)');
         hideCombatAlert();
       }
     }catch(e){
-      console.warn('[poller:combatInitiated] unexpected error', e);
+     // console.warn('[poller:combatInitiated] unexpected error', e);
     }
   }, intervalMs);
 })();
@@ -2660,35 +2749,42 @@ function showGearFor(card){
 
 
 /* Build the player structure and save to Firestore */
-async function savePlayerState(playerId){
-  await firebaseReady;                 // ensure db is set
+async function savePlayerState(playerId, stateOverride){
+  await firebaseReady;
   if(!db) { console.warn('No Firestore (missing config)'); return; }
   try {
-    const deck = Array.from(drawPile).slice().reverse().map(name => ({ name }));
-    const hand = handCards().map(serializeCard);
-    const tableCards = Array.from(world.querySelectorAll('.card'))
-      .filter(c => c.parentElement === world)
-      .map(serializeCard);
+    let payload;
 
-    // NOTE: these zones are currently empty unless you physically append cards into those zone elements
-    const graveyard = Array.from(document.querySelectorAll('.graveyard .card')).map(serializeCard);
-    const exile     = Array.from(document.querySelectorAll('.exile .card')).map(serializeCard);
-    const commander = Array.from(document.querySelectorAll('.commander .card')).map(serializeCard);
+    if (stateOverride) {
+      // use caller-provided snapshot as-is
+      payload = { ...stateOverride };
+    } else {
+      // current DOM serialization path (your existing code)
+      const deck = Array.from(drawPile).slice().reverse().map(name => ({ name }));
+      const hand = handCards().map(serializeCard);
+      const tableCards = Array.from(world.querySelectorAll('.card'))
+        .filter(c => c.parentElement === world)
+        .map(serializeCard);
+      const graveyard = Array.from(document.querySelectorAll('.graveyard .card')).map(serializeCard);
+      const exile     = Array.from(document.querySelectorAll('.exile .card')).map(serializeCard);
+      const commander = Array.from(document.querySelectorAll('.commander .card')).map(serializeCard);
+
+      payload = {
+        Deck: deck, Hand: hand, Table: tableCards,
+        Graveyard: graveyard, Exile: exile, Commander: commander
+      };
+    }
 
     const docRef = db.collection('games').doc(GAME_ID).collection('players').doc(String(playerId));
-    await docRef.set({
-      Deck: deck,
-      Hand: hand,
-      Table: tableCards,
-      Graveyard: graveyard,
-      Exile: exile,
-      Commander: commander,
-      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    await docRef.set(
+      { ...payload, updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
+      { merge: true }
+    );
 
     console.log('[save] player', playerId, 'ok');
   } catch(err){ console.error('savePlayerState err', err); }
 }
+
 
 async function loadPlayerState(playerId){
   await firebaseReady;
@@ -3755,11 +3851,17 @@ function syncCenterTooltip(){ updateHint(); }
 let nextStackId=1;
 
 /* Returns the base (bottom) card of a stack for any member, or null. */
+// null-safe + defensive
 function getStackBase(card){
-  if(card.dataset.stackBase==='1') return card;
-  if(!card.dataset.stackId) return null;
-  return document.querySelector(`.card[data-stack-id="${card.dataset.stackId}"][data-stack-base="1"]`);
+  if (!card) return null;
+  const ds = card.dataset || {};
+  if (ds.stackBase === '1') return card;
+  const id = ds.stackId;
+  if (!id) return card.closest('.card') || card; // fallback
+  return document.querySelector(`.card[data-stack-id="${CSS.escape(id)}"][data-stack-base="1"]`)
+         || card.closest('.card') || card;
 }
+
 /* Ensure a base has a stack id/array and return the id. */
 function initStack(base){
   if(base.dataset.stackId) return base.dataset.stackId;
@@ -4037,6 +4139,29 @@ if (ex && rectsOverlap(cr, ex)){
   transferToZoneThenSaveThenDelete(card, exEl, currentPlayer);
   return;
 }
+
+// Deck overlap (class="zone deck") → return to deck (Top / Bottom / Shuffle-in)
+const dkEl = document.querySelector('.zone.deck');
+const dk   = dkEl ? dkEl.getBoundingClientRect() : null;
+
+if (dk && rectsOverlap(cr, dk)){
+  const seat = Number(window.currentPlayer || window.mySeat || 0);
+
+  // If stacked, detach first (so we return just this card)
+  const base = (typeof getStackBase === 'function' ? (getStackBase(card) || card) : card);
+  if (typeof removeFromStack === 'function'){
+    const stackBase = (typeof getStackBase === 'function' ? getStackBase(base) : null);
+    if (stackBase && stackBase !== base) removeFromStack(stackBase, base);
+  }
+
+  // Show quick menu at drop point
+  showDeckDropMenuAt(e.clientX, e.clientY, async (mode)=>{
+    await returnTableCardToDeck(base, mode, seat);
+  });
+
+  return;
+}
+
 
   // Commander zone overlap
 const czEl = document.querySelector('.zone.commander, .commander, #commanderZone');
@@ -4839,7 +4964,53 @@ function drawToHand(n){
 }
 
 $('#draw7').addEventListener('click', ()=>drawToHand(7));
-$('#draw1').addEventListener('click', ()=>drawToHand(1));
+
+// Turn "Draw 1" into a friendly Mulligan
+const draw1Btn = $('#draw1');
+if (draw1Btn) draw1Btn.textContent = 'Mulligan';
+
+$('#draw1').addEventListener('click', async ()=>{
+  try{
+    // 1) Put current hand back into the deck (by name)
+    const names = handCards()
+      .map(c => (c.getAttribute('data-name') || '').trim())
+      .filter(Boolean);
+    if (!Array.isArray(window.drawPile)) window.drawPile = [];
+    for (const n of names) window.drawPile.push(n);
+
+    // 2) Clear hand UI
+    clearHand(); // you already have this helper in the file
+
+    // 3) Shuffle deck + sync deck counter/visual
+    if (typeof updateDeckVisual === 'function') updateDeckVisual();
+    (function shuffleInPlace(arr){
+      for (let i = arr.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    })(window.drawPile);
+
+    // keep the visible counter + stack thickness correct
+    const dc = document.getElementById('deckCount');
+    if (dc) dc.textContent = Array.isArray(drawPile) ? drawPile.length : 0;
+    if (typeof updateDeckVisual === 'function') updateDeckVisual();
+
+    // 4) Re-draw 7
+    await Promise.resolve(drawToHand(7));
+
+    // 5) Persist
+    if (typeof currentPlayer !== 'undefined') await savePlayerState(currentPlayer);
+
+    // 6) Optional turn log
+    if (typeof logTurnAction === 'function'){
+      logTurnAction(Number(window.currentPlayer || 1), 'mulligan', { to: 7 });
+    }
+  }catch(e){
+    console.warn('[mulligan] failed', e);
+  }
+});
+
 
 /* =========================================================
    Tap / Flip  (T acts on base..selected slice)
@@ -5501,13 +5672,24 @@ function openAttackOverlay(){
       });
       showToast('Attacks reset');
     };
+
 // ===== Confirm attacks (ATTACKER) =====
 ov.querySelector('#atkConfirm').onclick = async ()=>{
   try{
-    await saveAttacksForCurrentPlayer(choices); // your existing save
-
-    // mark combat initiated & who the attacker is
     const mine = Number(window.mySeat || window.currentPlayer || 0);
+    const attackerCids = Object.entries(choices || {})
+      .filter(([, target]) => target != null)
+      .map(([cid]) => String(cid));
+
+    // 1) save the attacks first (if this overwrites player doc, we'll see it)
+    await saveAttacksForCurrentPlayer(choices);
+
+    // 2) NOW flatten & persist effects (forces final state)
+    if (attackerCids.length && typeof writeAddEffectsForAttackers === 'function'){
+      await writeAddEffectsForAttackers(mine, attackerCids);
+    }
+
+    // 3) mark combat initiated
     await writeCombatInitiated(1, mine);
 
     if (typeof showToast === 'function') showToast('Attacks sent — waiting on defenders...');
@@ -5518,8 +5700,266 @@ ov.querySelector('#atkConfirm').onclick = async ()=>{
   }
 };
 
+
+
   }
 }
+
+// === EFFECT FLATTENER: write attackers' effects into Firebase extras.addEffects ===
+async function writeAddEffectsForAttackers(attackingSeat, attackerCids){
+  try{
+    attackingSeat = Number(attackingSeat || window.currentPlayer || window.mySeat || 0);
+    if (!attackingSeat || !Array.isArray(attackerCids) || !attackerCids.length) {
+      console.log('[flatten] skip — no seat or no attackers', { attackingSeat, attackerCids });
+      return;
+    }
+
+    const state = await (typeof loadPlayerState === 'function' ? loadPlayerState(attackingSeat) : null);
+    if (!state){ console.warn('[flatten] no state for seat', attackingSeat); return; }
+
+    const norm = s => String(s||'').toLowerCase().replace(/\s+/g,'');
+    const buckets = Object.entries(state).filter(([,v]) => Array.isArray(v));
+    const rowsWithChildren = (arr)=>{
+      const out=[]; for (const r of (arr||[])){ if(!r)continue; out.push(r); if(Array.isArray(r.children)&&r.children.length) out.push(...rowsWithChildren(r.children)); } return out;
+    };
+
+    const cardElByCid = cid => document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    const baseOf = el => (typeof getStackBase === 'function' ? (getStackBase(el)||el) : el);
+    const childrenOf = base => {
+      if (typeof getStackChildren === 'function'){ try { return getStackChildren(base) || []; } catch{} }
+      const cid = base?.getAttribute?.('data-cid');
+      const g1 = Array.from(document.querySelectorAll(`.card[data-parent-cid="${CSS.escape(String(cid))}"]`));
+      const g2 = Array.from(base?.querySelectorAll?.(':scope .stack .card') || []);
+      return [...new Set([...g1, ...g2])];
+    };
+
+    // Pull effects from EVERYWHERE on an element (extras, meta, _data.keywords, faces, oracle, data-*)
+// Falls back to effectsFor if available.
+const gatherEffectsFromEl = (el)=>{
+  const out = new Set();
+  if (!el) return out;
+
+  // 0) existing pipeline if present
+  try{
+    if (typeof effectsFor === 'function'){
+      for (const f of (effectsFor(el) || [])) out.add(norm(f));
+    }
+  }catch{}
+
+  // 1) editor extras/meta already on the element
+  try{
+    const ex = (el._extras && el._extras.addEffects) ? el._extras.addEffects : [];
+    for (const f of ex) out.add(norm(f));
+  }catch{}
+  try{
+    const meta = (el._meta && el._meta.extraEffects) ? el._meta.extraEffects : [];
+    for (const f of meta) out.add(norm(f));
+  }catch{}
+
+  // 2) scryfall keywords on _data
+  try{
+    const k1 = Array.isArray(el._data?.keywords) ? el._data.keywords : [];
+    for (const f of k1) out.add(norm(f));
+    const faces = Array.isArray(el._data?.card_faces) ? el._data.card_faces : [];
+    for (const face of faces){
+      if (Array.isArray(face?.keywords)){
+        for (const f of face.keywords) out.add(norm(f));
+      }
+    }
+  }catch{}
+
+  // 3) parse oracle text if present on _data (very cheap contains checks)
+  try{
+    const oracle = String(el._data?.oracle_text || '').toLowerCase();
+    if (oracle){
+      if (/\bfirst strike\b/.test(oracle))  out.add('firststrike');
+      if (/\bdouble strike\b/.test(oracle)) out.add('doublestrike');
+      if (/\bdeathtouch\b/.test(oracle))    out.add('deathtouch');
+      if (/\blifelink\b/.test(oracle))      out.add('lifelink');
+      if (/\bindestructible\b/.test(oracle))out.add('indestructible');
+      if (/\btrample\b/.test(oracle))       out.add('trample');
+      if (/\bflying\b/.test(oracle))        out.add('flying');
+      // add others here if needed
+    }
+  }catch{}
+
+  // 4) any dataset hints
+  try{
+    const dk = (el.dataset && el.dataset.keywords) ? el.dataset.keywords : '';
+    if (dk){
+      for (const f of dk.split(/[;,]/)) out.add(norm(f));
+    }
+  }catch{}
+
+  return out;
+};
+
+const collectDomEffectsDeep = (base)=>{
+  const out = new Set();
+  if (!base) return out;
+
+  // base first
+  for (const f of gatherEffectsFromEl(base)) out.add(f);
+
+  // then stacked children (equipment/auras)
+  for (const ch of childrenOf(base)){
+    for (const f of gatherEffectsFromEl(ch)) out.add(f);
+  }
+  return out;
+};
+
+
+    const collectSavedEffectsDeep = (row)=>{
+      const out = new Set();
+      const add = r=>{
+        if (Array.isArray(r?.extras?.addEffects)) for (const f of r.extras.addEffects) out.add(norm(f));
+        if (Array.isArray(r?.children)) for (const ch of r.children) add(ch);
+      };
+      add(row);
+      return out;
+    };
+
+    const findRow = (cid)=>{
+      for (const [name, arr] of buckets){
+        const flat = rowsWithChildren(arr);
+        const row = flat.find(r => String(r.id) === String(cid));
+        if (row) return { bucket: name, row };
+      }
+      return { bucket: '', row: null };
+    };
+
+    const writes = [];
+    let changed = false;
+
+    for (const cidRaw of attackerCids){
+      const cid = String(cidRaw);
+
+      const el = cardElByCid(cid);
+      const base = el ? baseOf(el) : null;
+      const domSet = collectDomEffectsDeep(base);
+
+      let savedSet = new Set();
+      const loc = findRow(cid);
+      if (loc.row) savedSet = collectSavedEffectsDeep(loc.row);
+
+      // union of current DOM-derived + already-saved
+      const finalSet = new Set([...domSet, ...savedSet]);
+
+      // verbose logs per attacker
+      const debugName = (base && base.getAttribute) ? (base.getAttribute('data-name') || '') : (loc.row?.name || '');
+      console.log('[flatten][attacker]', {
+        seat: attackingSeat,
+        cid,
+        name: debugName || `cid:${cid}`,
+        bucket: loc.bucket || '(not found)',
+        domEffects: Array.from(domSet),
+        savedEffectsBefore: Array.from(savedSet),
+        finalToWrite: Array.from(finalSet)
+      });
+
+      if (loc.row){
+        const existing = new Set(Array.isArray(loc.row?.extras?.addEffects) ? loc.row.extras.addEffects.map(norm) : []);
+        const beforeSize = existing.size;
+        for (const f of finalSet) existing.add(f);
+        if (existing.size !== beforeSize){
+          loc.row.extras = { ...(loc.row.extras||{}), addEffects: Array.from(existing) };
+          changed = true;
+        }
+        writes.push({ cid, bucket: loc.bucket, name: loc.row?.name || '' });
+      }else{
+        console.warn('[flatten] attacker not found in any bucket; cannot write addEffects', { cid });
+      }
+    }
+
+    if (changed && window.db){
+  const docRef = db.collection('games')
+    .doc(GAME_ID)
+    .collection('players')
+    .doc(String(attackingSeat));
+
+  // write the whole mutated state we just edited
+  await docRef.set(
+    { ...state, updatedAt: firebase.firestore.FieldValue.serverTimestamp() },
+    { merge: true }
+  );
+
+  console.log('[flatten] direct set OK', { seat: attackingSeat, wrote: writes });
+}
+else{
+      console.log('[flatten] no changes to persist', { seat: attackingSeat, attackers: attackerCids });
+    }
+  }catch(err){
+    console.warn('[flatten] writeAddEffectsForAttackers failed', err);
+  }
+}
+
+
+
+// --- Firebase hydrate: ensure a card's addEffects are loaded from DB by cid+seat
+async function hydrateAddEffectsFromFirebase(cid, seat){
+  try{
+    if (!cid || !seat || !window.loadPlayerState) return [];
+    const wanted = String(cid);
+    const snap = await loadPlayerState(Number(seat));
+
+    // Collect all array-like buckets we might store cards in
+    const buckets = [];
+    for (const [k, v] of Object.entries(snap || {})){
+      if (Array.isArray(v)) buckets.push([k, v]);
+    }
+
+    // Helper to walk a row and its children (stacked)
+    const rowsWithChildren = (arr)=> {
+      const out = [];
+      for (const r of arr){
+        if (!r) continue;
+        out.push(r);
+        if (Array.isArray(r.children) && r.children.length){
+          out.push(...rowsWithChildren(r.children));
+        }
+      }
+      return out;
+    };
+
+    // Find the row (search ALL buckets, including 'world')
+    let found = null, bucketName = '';
+    for (const [name, arr] of buckets){
+      const flat = rowsWithChildren(arr);
+      const hit = flat.find(r => String(r.id) === wanted);
+      if (hit){
+        found = hit;
+        bucketName = name;
+        break;
+      }
+    }
+
+    const effectsRaw = Array.isArray(found?.extras?.addEffects) ? found.extras.addEffects : [];
+    const effects = effectsRaw.map(s => String(s || '').toLowerCase());
+
+    // Merge into the live DOM base card
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(wanted)}"]`);
+    const base = el ? ((typeof getStackBase === 'function' && getStackBase(el)) || el) : null;
+    if (base){
+      const ex = base._extras || {};
+      const merged = new Set([...(ex.addEffects || []), ...effects]);
+      base._extras = { ...ex, addEffects: merged };
+    }
+
+    // Debug so you can SEE where it came from
+    console.log('[combat] hydrateAddEffectsFromFirebase', {
+      seat: Number(seat),
+      cid: wanted,
+      bucket: bucketName || '(not found)',
+      effectsFromDB: effects
+    });
+
+    return effects;
+  }catch(e){
+    console.warn('[combat] hydrateAddEffectsFromFirebase failed', e);
+    return [];
+  }
+}
+
 
 
 async function openDefenseOverlay(){
@@ -5710,7 +6150,8 @@ row.addEventListener('click', ()=> openBlockerPicker(atk));
   }
 }
 
-function openOutcomeOverlay(ctx){
+async function openOutcomeOverlay(ctx){
+
   // pull everything from the context so we don't rely on outer scope
   const data   = (ctx && ctx.data)   || {};
   const vsMe   = (ctx && ctx.vsMe)   || [];
@@ -5735,150 +6176,211 @@ function openOutcomeOverlay(ctx){
   }
 
     // === Ability helpers (read from card._extras.addEffects + attachments text if you later wire it) ===
-  function effectsFor(el){
-    // store effects in lowercase keys; your card editor already writes addEffects Set
-    const set = new Set();
-    const ex  = el? (el._extras || {}) : {};
-    (ex.addEffects || []).forEach(e => set.add(String(e||'').trim().toLowerCase()));
-    return set;
+// === Ability helpers (reads built-in keywords, editor extras, and attachment grants) ===
+function effectsFor(el){
+  const base = (getStackBase && getStackBase(el)) || el;
+  const out  = new Set();
+
+  // 1) Editor-written extras (both _extras and _meta)
+  const ex = base && base._extras ? base._extras : {};
+  (ex.addEffects || []).forEach(e => out.add(String(e||'').trim().toLowerCase()));
+  const m  = base && base._meta ? base._meta : {};
+  (m.extraEffects || []).forEach(e => out.add(String(e||'').trim().toLowerCase()));
+
+  // 2) Built-in Scryfall keywords (handles “First strike”, “Deathtouch”, etc.)
+  const d = (base && base._data) || {};
+  const face = (Array.isArray(d.card_faces) && d.card_faces[0]) || null;
+  const kw = []
+    .concat(d.keywords || [])
+    .concat((face && face.keywords) || []);
+  kw.forEach(k => out.add(String(k||'').trim().toLowerCase()));
+
+  // 3) Parse base oracle text for evergreen abilities (backup if keywords missing)
+  const txt = String((d.oracle_text || (face && face.oracle_text) || '')).toLowerCase();
+  if (/\bfirst[-\s]?strike\b/.test(txt))  out.add('first strike');
+  if (/\bdouble[-\s]?strike\b/.test(txt)) out.add('double strike');
+  if (/\bdeathtouch\b/.test(txt))          out.add('deathtouch');
+  if (/\bindestructible\b/.test(txt))      out.add('indestructible');
+  if (/\btrample\b/.test(txt))             out.add('trample');
+  if (/\blifelink\b/.test(txt))            out.add('lifelink');
+  if (/\bmenace\b/.test(txt))              out.add('menace');
+  if (/\bflying\b/.test(txt))              out.add('flying');
+  if (/\breach\b/.test(txt))               out.add('reach');
+  if (/\bvigilance\b/.test(txt))           out.add('vigilance');
+  if (/\bhexproof\b/.test(txt))            out.add('hexproof');
+  if (/\bward\b/.test(txt))                out.add('ward');
+
+  // 4) Include auras/equipment/attachments that grant abilities
+  if (typeof grantedFromAttachments === 'function'){
+    const g = grantedFromAttachments(base);
+    (g.effects || []).forEach(e => out.add(String(e||'').trim().toLowerCase()));
   }
+
+  return out;
+}
+
+// === Canonicalize effect strings & build flags ===
+const FX_CANON = s => String(s || '').toLowerCase().replace(/\s+|-/g, '');
+
+function flagsFromEffects(effectsSetOrArray){
+  const S = new Set(Array.from(effectsSetOrArray || []).map(FX_CANON));
+  const has = k => S.has(k);
+  return {
+    raw: S,
+    deathtouch:     has('deathtouch'),
+    firstStrike:    has('firststrike'),
+    doubleStrike:   has('doublestrike'),
+    lifelink:       has('lifelink'),
+    trample:        has('trample'),
+    indestructible: has('indestructible'),
+    vigilance:      has('vigilance'),
+    flying:         has('flying'),
+    menace:         has('menace'),
+    reach:          has('reach'),
+    protection:     has('protection'),
+  };
+}
+
+
   const has = (set, key) => set.has(String(key).toLowerCase());
 
-  // true if this permanent ignores destroy-from-damage
-  const isIndestructible = (fx) => has(fx,'indestructible');
+ // === Flag helpers (use canonical flags instead of raw string includes)
+const isIndestructible = fxFlags => !!fxFlags.indestructible;
+const hasFirstStrike   = fxFlags => !!fxFlags.firstStrike;
+const hasDoubleStrike  = fxFlags => !!fxFlags.doubleStrike;
+const hasDeathtouch    = fxFlags => !!fxFlags.deathtouch;
+const hasTrample       = fxFlags => !!fxFlags.trample;
+const hasLifelink      = fxFlags => !!fxFlags.lifelink;
+const hasProtection    = fxFlags => !!fxFlags.protection;
 
-  // does this source have first strike / double strike?
-  const hasFirstStrike   = (fx) => has(fx,'first strike') || has(fx,'first-strike');
-  const hasDoubleStrike  = (fx) => has(fx,'double strike') || has(fx,'double-strike');
-
-  // combat damage deathtouch check (any amount ≥1 is lethal to creatures that aren't indestructible)
-  const hasDeathtouch    = (fx) => has(fx,'deathtouch');
-
-  // trampling over assigned blockers
-  const hasTrample       = (fx) => has(fx,'trample');
-
-  // lifelink life gain tally (we only compute; applying life total is optional and UI-level)
-  const hasLifelink      = (fx) => has(fx,'lifelink');
-
-  // ultra-generic “protection” toggle (since color/quality isn’t modeled yet)
-  // if either party has 'protection', treat incoming damage from the other as prevented.
-  const hasProtection    = (fx) => has(fx,'protection');
 
   // compute lethal assignment needed for a blocker, considering deathtouch
-  function lethalNeededAgainst(sourceFx, blocker){
-    if (hasDeathtouch(sourceFx) && !isIndestructible(effectsFor(blocker.el))) return 1;
-    return Math.max(0, Number(blocker.toughness||0));
-  }
+function lethalNeededAgainst(attackerFxFlags, blocker){
+  const bFxFlags = flagsFromEffects(effectsFor(blocker.el));
+  if (hasDeathtouch(attackerFxFlags) && !isIndestructible(bFxFlags)) return 1;
+  return Math.max(0, Number(blocker.toughness || 0));
+}
+
+
+
 
   // assign damage from A (the attacker) into an ordered list of blockers, supporting trample + deathtouch
-  function assignDamageFromAttacker(AP, aFx, blockers){
-    let remaining = Number(AP||0);
-    const assigns = [];
+function assignDamageFromAttacker(AP, attackerFxSetOrArray, blockers){
+  const aFx = flagsFromEffects(attackerFxSetOrArray);
 
-    for (const b of blockers){
-      const bFx    = effectsFor(b.el);
-      // if blocker has generic protection, it takes 0 from attacker
-      if (hasProtection(bFx)) {
-        assigns.push({ blocker:b, dmgToBlocker:0, blockerDies:false });
-        continue;
-      }
+  let remaining = Number(AP || 0);
+  const assigns = [];
 
-      // minimum lethal needed into this blocker (1 if attacker has deathtouch, unless the blocker is indestructible)
-      const lethal = lethalNeededAgainst(aFx, b);
-      const dmg    = Math.min(remaining, lethal);
+  for (const b of blockers){
+    const bFx = flagsFromEffects(effectsFor(b.el));
 
-      remaining -= dmg;
-
-      const dies = !isIndestructible(bFx) && (dmg >= lethal && lethal > 0);
-      assigns.push({ blocker:b, dmgToBlocker:dmg, blockerDies:dies });
-
-      // if attacker doesn't have trample, it must assign all damage to blockers; but your UI already orders all blockers.
-      // We'll keep walking; “remaining” goes to next blocker; only with trample will anything spill to player after all blockers.
+    // generic protection → attacker can't damage this blocker
+    if (hasProtection(bFx)) {
+      assigns.push({ blocker: b, dmgToBlocker: 0, blockerDies: false });
+      continue;
     }
 
-    const trampleToPlayer = hasTrample(aFx) ? Math.max(0, remaining) : 0;
-    return { assigns, trampleToPlayer };
+    const lethal = lethalNeededAgainst(aFx, b);
+    const dmg    = Math.min(remaining, lethal);
+    remaining   -= dmg;
+
+    const dies = !isIndestructible(bFx) && (lethal > 0) && (dmg >= lethal);
+    assigns.push({ blocker: b, dmgToBlocker: dmg, blockerDies: dies });
   }
+
+  const trampleToPlayer = hasTrample(aFx) ? Math.max(0, remaining) : 0;
+  return { assigns, trampleToPlayer };
+}
+
+
 
   // resolve one “damage step” (first strike or regular) and return casualties + life swing
-  function resolveDamageStep(attacker, aFx, blockers, stepKind /* 'first' | 'regular' */){
-    // Step rules:
-    // - First strike step: only creatures with first strike (or double strike) assign/receive. Others don’t deal damage in this step.
-    // - Regular step: creatures without first strike deal (plus double strike creatures deal again if still alive).
-    const stepNeedsFS = (stepKind === 'first');
+function resolveDamageStep(attacker, attackerFxSetOrArray, blockers, stepKind /* 'first' | 'regular' */){
+  const aFx = flagsFromEffects(attackerFxSetOrArray);
+  const stepNeedsFS = (stepKind === 'first');
 
-    // Who is active on this step?
-    const atkActive = stepNeedsFS ? (hasFirstStrike(aFx) || hasDoubleStrike(aFx)) : (!hasFirstStrike(aFx) || hasDoubleStrike(aFx));
-    const liveBlockers = blockers.filter(b => !b._dead); // carry-over flag between steps if you call twice
+  // Who acts this step?
+  const atkActs = stepNeedsFS ? (hasFirstStrike(aFx) || hasDoubleStrike(aFx))
+                              : (!hasFirstStrike(aFx) || hasDoubleStrike(aFx));
 
-    let attackerDeals = 0, attackerLifelinkGain = 0, playerDamage = 0;
-    const deadBlockers = new Set();
+  const liveBlockers = blockers.filter(b => !b._dead);
 
-    // 1) Attacker assigns to blockers (if active)
-    if (atkActive && liveBlockers.length){
-      const { assigns, trampleToPlayer } = assignDamageFromAttacker(attacker.power, aFx, liveBlockers);
-      playerDamage += trampleToPlayer;
+  let attackerDeals = 0, attackerLifelinkGain = 0, playerDamage = 0;
+  const deadBlockers = new Set();
+  const deathtouchHitFromBlockers = new Set();
+  let trampleApplied = false;
+  let dmgToAttacker = 0;
 
-      for (const a of assigns){
-        attackerDeals += a.dmgToBlocker;
-        if (a.blockerDies) deadBlockers.add(a.blocker.cid);
-      }
-      if (hasLifelink(aFx) && attackerDeals > 0) attackerLifelinkGain += attackerDeals;
-    } else if (atkActive && !liveBlockers.length){
-      // unblocked → all damage to player
-      playerDamage += Number(attacker.power||0);
-      if (hasLifelink(aFx) && attacker.power>0) attackerLifelinkGain += Number(attacker.power||0);
+  // Attacker side
+  let assignsFromAttacker = [];
+  if (atkActs && liveBlockers.length){
+    const { assigns, trampleToPlayer } = assignDamageFromAttacker(attacker.power, aFx.raw, liveBlockers);
+    assignsFromAttacker = assigns;
+    if (trampleToPlayer > 0) { trampleApplied = true; }
+    playerDamage += trampleToPlayer;
+
+    for (const a of assigns){
+      attackerDeals += a.dmgToBlocker;
+      if (a.blockerDies) deadBlockers.add(a.blocker.cid);
     }
-
-    // 2) Blockers hit attacker in this step if THEY are active this step
-    let dmgToAttacker = 0;
-    if (liveBlockers.length){
-      for (const b of liveBlockers){
-        const bFx  = effectsFor(b.el);
-        const bFS  = hasFirstStrike(bFx) || hasDoubleStrike(bFx);
-        const bActsNow = stepNeedsFS ? bFS : (!bFS || hasDoubleStrike(bFx));
-
-        if (!bActsNow) continue;
-        if (hasProtection(aFx)) continue; // attacker has generic protection → prevent damage from blockers
-
-        let dealt = Number(b.power||0);
-        // deathtouch from blocker matters only for lethality check; that’s applied later when we mark deaths.
-        dmgToAttacker += dealt;
-      }
-    }
-
-    return { dmgToAttacker, deadBlockers, playerDamage, attackerLifelinkGain };
+    if (hasLifelink(aFx) && attackerDeals > 0) attackerLifelinkGain += attackerDeals;
+  } else if (atkActs && !liveBlockers.length){
+    playerDamage += Number(attacker.power || 0);
+    if (hasLifelink(aFx) && attacker.power > 0) attackerLifelinkGain += Number(attacker.power || 0);
   }
+
+  // Blockers that act this step
+  for (const b of liveBlockers){
+    const bFx = flagsFromEffects(effectsFor(b.el));
+    const bHasFS = hasFirstStrike(bFx) || hasDoubleStrike(bFx);
+    const bActsNow = stepNeedsFS ? bHasFS : (!bHasFS || hasDoubleStrike(bFx));
+    if (!bActsNow) continue;
+
+    if (hasProtection(aFx)) continue; // attacker's generic protection prevents damage from blockers
+
+    const dealt = Number(b.power || 0);
+    if (dealt > 0) {
+      dmgToAttacker += dealt;
+      if (hasDeathtouch(bFx)) deathtouchHitFromBlockers.add(b.cid);
+    }
+  }
+
+  return {
+    dmgToAttacker,
+    deadBlockers,
+    playerDamage,
+    attackerLifelinkGain,
+    deathtouchHitFromBlockers,
+    assignsFromAttacker,
+    trampleApplied
+  };
+}
+
+
 
   // Mark deaths after a step, considering indestructible & deathtouch that connected during this step.
-  function computeCasualtiesAfterStep(attacker, aFx, blockers, stepResult){
-    const { dmgToAttacker, deadBlockers } = stepResult;
+  function computeCasualtiesAfterStep(attacker, attackerFxSetOrArray, blockers, stepRes){
+  const aFx = flagsFromEffects(attackerFxSetOrArray);
+  const { dmgToAttacker, deadBlockers, deathtouchHitFromBlockers } = stepRes;
 
-    // Attacker death check:
-    // - If any blocker with deathtouch dealt ≥1 to attacker this step and the attacker is not indestructible → dies.
-    // - Else normal toughness check.
-    let attackerDies = false;
-    if (!isIndestructible(aFx)){
-      // Did any active blocker with deathtouch connect for ≥1 this step?
-      let touched = false;
-      for (const b of blockers){
-        if (deadBlockers.has(b.cid)) { /* it still dealt damage in this step */ }
-        // We can’t reconstruct per-blocker damage precisely without per-blocker tallies;
-        // a simple robust rule: if b was alive for this step AND had deathtouch AND (b acted in this step) AND attacker took damage > 0 → lethal.
-        // We already know total damage to attacker; check whether any b had deathtouch and would act this step (mirrors resolveDamageStep).
-        const bFx = effectsFor(b.el);
-        if (hasDeathtouch(bFx)) touched = true;
-      }
-      if (touched && dmgToAttacker > 0) attackerDies = true;
-      else attackerDies = (Number(attacker.toughness||0) <= Number(dmgToAttacker||0));
+  let attackerDies = false;
+
+  if (!isIndestructible(aFx)){
+    // If any blocker with deathtouch actually connected this step → attacker dies
+    if (deathtouchHitFromBlockers.size > 0) {
+      attackerDies = true;
+    } else {
+      attackerDies = (Number(attacker.toughness || 0) <= Number(dmgToAttacker || 0));
     }
-
-    // Blocker deaths are already computed via deadBlockers (lethal assignment / deathtouch handling)
-    return { attackerDies, deadBlockers };
   }
 
+  return { attackerDies, deadBlockers };
+}
+
+
   // === Build recommended outcomes (with combat abilities) ===
-  const outcomes = vsMe.map(atk=>{
+  const outcomes = await Promise.all(vsMe.map(async (atk)=>{
+
     // Build blockers with reliable P/T: prefer saved row, fall back to live DOM
 const blockerCids = (seatMap[atk.attackerId] || []);
 const blockers = blockerCids.map(cid => {
@@ -5946,7 +6448,76 @@ console.log('[combat] attacker PT source',
   }
 );
 
-const aFx = effectsFor(attEl);
+// Use the same base element resolution as blockers so we read addEffects correctly
+const attBase = (typeof getStackBase === 'function' ? (getStackBase(attEl) || attEl) : attEl);
+
+// === FORCE-LOAD & PASS ATTACKER EFFECTS ===
+const attackerSeat = (data && Number(data.attackingSeat)) || atk.seat || Number(currentPlayer);
+
+// 1) Read effects from Firebase for this card
+const dbFxRaw = await hydrateAddEffectsFromFirebase(atk.attackerId, attackerSeat);
+const dbFx    = (dbFxRaw || []).map(s => String(s || '').toLowerCase());
+
+// 2) Merge onto the exact base element (so DOM is correct)
+{
+  const ex = (attBase && attBase._extras) ? attBase._extras : {};
+  const merged = new Set([...(ex.addEffects || []), ...dbFx]);
+  if (attBase) attBase._extras = { ...ex, addEffects: merged };
+}
+
+// 3) Compute full effects set from the (now updated) element
+const baseFx = effectsFor(attBase);
+
+// 4) FINAL EFFECTS we will PASS FORWARD (union of base + db)
+const aFx = new Set([ ...Array.from(baseFx || []), ...dbFx ]);
+
+// 5) PASS IT ALONG EXPLICITLY so downstream code can consume it
+//    (we attach to both the attacker object used locally AND the map's 'atk' record)
+attacker.effects = aFx;   // <- local combat attacker object
+atk.effects      = aFx;   // <- the record from vsMe.map, in case other code reads it
+
+// 6) Logs so you can SEE it landed
+console.log('[combat] EFFECTS (ATTACKER PASSED)', {
+  cid: atk.attackerId, seat: attackerSeat, name: attName,
+  fromDB: dbFx, final: Array.from(aFx)
+});
+console.log('[combat] ATTACKER details', {
+  name: attName, power: attacker.power, toughness: attacker.toughness, effects: Array.from(aFx)
+});
+
+
+
+
+// ---- DEBUG: attacker + blockers full detail (name / P/T / effects) ----
+try {
+  console.log('[combat] ATTACKER details', {
+    name: attName,
+    power: attacker.power,
+    toughness: attacker.toughness,
+    effects: Array.from(aFx || []).slice() // array of effect strings
+  });
+} catch (e) {
+  console.warn('[combat] failed to log attacker details', e);
+}
+
+// Build and log defender/blocker details (name, P/T, effects)
+try {
+  const blkDetails = (blockers || []).map(b => {
+    const base = b.el ? ((typeof getStackBase === 'function' && getStackBase(b.el)) || b.el) : b.el;
+    const fx = effectsFor(base);
+    return {
+      cid: b.cid,
+      name: b.name || (base && base.getAttribute ? base.getAttribute('data-name') : ''),
+      power: Number(b.power) || 0,
+      toughness: Number(b.toughness) || 0,
+      effects: Array.from(fx || [])
+    };
+  });
+  console.log('[combat] BLOCKERS details', blkDetails);
+} catch (e) {
+  console.warn('[combat] failed to log blocker details', e);
+}
+
 
 
     // If there are no blockers, simplest case: all damage to player (with lifelink)
@@ -5983,30 +6554,50 @@ const aFx = effectsFor(attEl);
       };
     }
 
-    // PHASE 2: Regular damage step
-    const regRes = resolveDamageStep(attacker, aFx, remainingBlockers, 'regular');
-    const regCas = computeCasualtiesAfterStep(attacker, aFx, remainingBlockers, regRes);
+// PHASE 2: Regular damage step
+const regRes = resolveDamageStep(attacker, aFx, remainingBlockers, 'regular');
+const regCas = computeCasualtiesAfterStep(attacker, aFx, remainingBlockers, regRes);
 
-    const attackerDies = regCas.attackerDies;
-    const totalPlayerDmg = (firstRes.playerDamage||0) + (regRes.playerDamage||0);
-    const totalLifeGain  = (firstRes.attackerLifelinkGain||0) + (regRes.attackerLifelinkGain||0);
+const attackerDies = regCas.attackerDies;
+const totalPlayerDmg = (firstRes.playerDamage || 0) + (regRes.playerDamage || 0);
+const totalLifeGain  = (firstRes.attackerLifelinkGain || 0) + (regRes.attackerLifelinkGain || 0);
 
-    // For UI parity with your original, construct a compact “assigns” list from the *regular* step’s attacker output.
-    // (If you want, you can also surface a first-step “assigns1” separately.)
-    // We’ll recompute the attacker→blocker distribution on the remaining blockers for display:
-    const { assigns } = assignDamageFromAttacker(attacker.power, aFx, remainingBlockers);
+// Union deaths from both steps
+const deadBlockersAll = new Set([
+  ...Array.from(firstCas?.deadBlockers || []),
+  ...Array.from(regCas?.deadBlockers   || []),
+]);
+const deadBlockerNames = (blockers || [])
+  .filter(b => deadBlockersAll.has(b.cid))
+  .map(b => b.name);
 
-    return {
-      atk, attEl, attName,
-      assigns,                    // who the attacker hit (regular step remaining)
-      attackerDies,
-      playerDamage: totalPlayerDmg,
-      lifegainAttacker: totalLifeGain,
-      notes: [
-        firstRes.playerDamage ? `first-strike trample ${firstRes.playerDamage}` : '',
-      ].filter(Boolean)
-    };
-  });
+// Prefer real assigns from the regular step; if all blockers died in FS, show FS assigns.
+let assigns;
+if (remainingBlockers.length) {
+  assigns = assignDamageFromAttacker(attacker.power, aFx, remainingBlockers).assigns;
+} else {
+  assigns = firstRes.assignsFromAttacker || [];
+}
+
+// Trample note for UI
+const trampleNote = (firstRes.trampleApplied || regRes.trampleApplied) ? ' (trample)' : '';
+
+return {
+  atk, attEl, attName,
+  assigns,
+  attackerDies,
+  playerDamage: totalPlayerDmg,
+  lifegainAttacker: totalLifeGain,
+  trampleNote,
+  deadBlockers: Array.from(deadBlockersAll),
+  deadBlockerNames,
+  notes: [
+    firstRes.playerDamage ? `first-strike trample ${firstRes.playerDamage}` : '',
+  ].filter(Boolean)
+};
+
+  }));
+
 
 
   // === Outcome overlay UI ===
@@ -6028,10 +6619,12 @@ const aFx = effectsFor(attEl);
 
   outcomes.forEach((o, idx)=>{
     const killedNames = o.assigns.filter(x=>x.blockerDies).map(x=> x.blocker.name);
-    const lineText = (o.playerDamage > 0)
-      ? `Unblocked — recommend ${o.playerDamage} damage to Player ${mySeat}.`
-      : `${o.attackerDies ? (o.atk.name || o.attName)+' dies' : (o.atk.name || o.attName)+' survives'}`
-        + (killedNames.length ? `; your ${killedNames.join(', ')} die` : '');
+const lineText = (o.playerDamage > 0)
+  ? `Recommend ${o.playerDamage} damage to Player ${mySeat}${o.trampleNote || ''}.`
+  : `${o.attackerDies ? (o.atk.name || o.attName)+' dies' : (o.atk.name || o.attName)+' survives'}${
+      killedNames.length ? `; your ${killedNames.join(', ')} die` : ''
+    }`;
+
 
     const row = document.createElement('label');
     row.style.cssText = 'display:block;border:1px solid #2b3344;border-radius:10px;background:#141823;padding:10px;margin-bottom:10px;';
@@ -6200,6 +6793,36 @@ ov2.querySelector('#outApply').onclick = async ()=>{
     } else {
       console.log('[outcome] no player damage selected; skipping life write');
     }
+// === Apply lifelink to attackers' seats ===
+try {
+  const gainBySeat = new Map();
+  chks.forEach(ch => {
+    if (!ch.checked) return;
+    const idx = Number(ch.dataset.i);
+    const o   = outcomes[idx];
+    const seat = Number(o?.atk?.seat ?? o?.attackerSeat ?? 0);
+    const gain = Number(o?.lifegainAttacker || 0);
+    if (seat > 0 && gain > 0) {
+      gainBySeat.set(seat, (gainBySeat.get(seat) || 0) + gain);
+    }
+  });
+
+  if (gainBySeat.size) {
+    await firebaseReady;
+    const ref = combatDoc();
+
+    for (const [seat, gain] of gainBySeat.entries()) {
+      const path = new firebase.firestore.FieldPath('lifeByPlayer', String(seat));
+      await ref.update(
+        path, firebase.firestore.FieldValue.increment(+gain),
+        'updatedAt', firebase.firestore.FieldValue.serverTimestamp()
+      );
+      console.log('[lifelink][write] seat', seat, '+=', gain);
+    }
+  }
+} catch (e) {
+  console.warn('[lifelink] failed to apply lifegain', e);
+}
 
     // ==== MOVE DEATHS TO GRAVEYARDS + REMOVE FROM TABLE (ATTACKERS first, then BLOCKERS) ====
     try {
