@@ -7,192 +7,143 @@
 
 <link rel="stylesheet" href="mana-master/css/mana.min.css">
 
-
 <style>
-/* =============== TOKENS =============== */
 :root{
-  /* Theme */
   --bg:#0e1015; --fg:#e7e9ee; --muted:#9aa3b2; --accent:#6aa9ff;
   --ok:#42d392; --warn:#ffb84d; --danger:#ff6b6b;
-
-  /* Sizes */
   --topbar-h:64px;
   --life-h:40px;
   --card-w:223px; --card-h:310px;
   --zone-w:223px; --zone-h:310px;
-
-  /* Z */
   --z-tooltip:20; --z-overlays:30; --z-toolbar:40; --z-hand:35; --z-zoom:45; --z-actions:36;
-
-  /* Mobile hand scaling */
   --hand-scale: .88;
-
-  /* Card flipping/tap (composited in CSS vars) */
-  --flip-rot: 0deg;   /* 0deg (front) or 180deg (back) */
-  --tap-rot: 0deg;    /* 0deg or 90deg */
+  --flip-rot: 0deg;
+  --tap-rot: 0deg;
+  --world-zoom: 1;
 }
-
-/* =============== RESET/BASE =============== */
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
-body{
-  margin:0; background:var(--bg); color:var(--fg);
-  font:14px/1.35 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial, sans-serif;
-  -webkit-tap-highlight-color:transparent;
-  overflow:hidden;
-}
+body{ margin:0; background:var(--bg); color:var(--fg); font:14px/1.35 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; -webkit-tap-highlight-color:transparent; overflow:hidden; }
 button{ font:inherit; color:inherit; cursor:pointer; background:none; border:0; }
 :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:8px; }
 
-/* =============== TOP BAR =============== */
-.topbar{
-  position:sticky; top:0; z-index:10;
-  display:grid; grid-template-columns:auto 1fr;
-  align-items:center; gap:10px; height:var(--topbar-h);
-  padding:10px 12px; border-bottom:1px solid #1f2738;
-  background:linear-gradient(180deg,#10141b,#0c1117);
-}
-.cog{
-  width:42px; height:42px; border-radius:12px; border:1px solid #24324a; background:#111826;
-  display:grid; place-items:center; font-weight:900;
-}
-.life-strip{
-  display:flex; gap:8px; align-items:center; justify-content:flex-start;
-}
-.life-tile{
-  background:#0f141c; border:1px solid #2b3344; border-radius:12px; min-width:90px;
-  padding:6px 10px; display:flex; align-items:center; justify-content:space-between;
-}
+/* Top bar */
+.topbar{ position:sticky; top:0; z-index:10; display:grid; grid-template-columns:auto 1fr; align-items:center; gap:10px; height:var(--topbar-h); padding:10px 12px; border-bottom:1px solid #1f2738; background:linear-gradient(180deg,#10141b,#0c1117); }
+.cog{ width:42px; height:42px; border-radius:12px; border:1px solid #24324a; background:#111826; display:grid; place-items:center; font-weight:900; }
+.life-strip{ display:flex; gap:8px; align-items:center; }
+.life-tile{ background:#0f141c; border:1px solid #2b3344; border-radius:12px; min-width:90px; padding:6px 10px; display:flex; align-items:center; justify-content:space-between; }
 .life-main{ color:#ff6b6b; font-weight:800; }
 .life-cmd{ color:#e7e9ee; background:#000; border-radius:8px; padding:0 6px; margin-left:8px; font-weight:700; }
 
-/* =============== DRAWER (Cog) =============== */
+/* Drawer */
 .drawer-wrap{ overflow:hidden; transition:max-height .25s ease; border-bottom:1px solid #1f2738; }
 .drawer-wrap.collapsed{ max-height:0; border-bottom-color:transparent; }
 .drawer-wrap.expanded{ max-height:420px; }
-.drawer{
-  padding:12px; background:#0b0f15; display:grid; gap:10px;
-}
+.drawer{ padding:12px; background:#0b0f15; display:grid; gap:10px; }
 .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-.pill{
-  background:#1b2a47; color:#d8e7ff; font-weight:700; padding:9px 12px; border-radius:12px; border:1px solid #24324a;
-}
+.pill{ background:#1b2a47; color:#d8e7ff; font-weight:700; padding:9px 12px; border-radius:12px; border:1px solid #24324a; }
 select.pill{ padding:8px 10px; }
-textarea.deck-in{
-  width:100%; height:140px; resize:vertical; padding:10px;
-  border-radius:12px; border:1px solid #24304a; background:#0a0f16; color:var(--fg);
-  font:13px/1.45 ui-monospace, Menlo, Consolas, monospace;
-}
+textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; border-radius:12px; border:1px solid #24304a; background:#0a0f16; color:var(--fg); font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; }
 
-/* =============== TABLE / WORLD =============== */
-.table{
-  position:relative; height:calc(100% - var(--topbar-h)); /* drawer sits inside flow above */
-  background:linear-gradient(180deg,#0d3a1e,#0a2716 40%, #092113); /* green felt */
-}
-.worldWrap{
-  position:absolute; inset:0;
-  overflow:hidden;           /* prevents native scroll */
-  cursor: grab;
-  touch-action: none;        /* allow custom pan/pinch */
-}
-.worldWrap.panning{ cursor: grabbing; }
-.worldScale{
-  position:relative; /* translate + scale applied here */
-  transform-origin:0 0;
-  will-change: transform;
-}
-.world{
-  position:relative; min-width:100%; min-height:100%;
-  padding:24px;
-}
+/* Table */
+.table{ position:relative; height:calc(100% - var(--topbar-h)); background:linear-gradient(180deg,#0d3a1e,#0a2716 40%, #092113); }
+.worldWrap{ position:absolute; inset:0; overflow:hidden; cursor:grab; touch-action:none; }
+.worldWrap.panning{ cursor:grabbing; }
+.worldScale{ position:relative; transform-origin:0 0; will-change:transform; }
+.world{ position:relative; min-width:100%; min-height:100%; padding:24px; }
 
 /* Zones */
-.zone{
-  position:absolute; width:var(--zone-w); height:var(--zone-h);
-  border:2px dashed rgba(255,255,255,.2); border-radius:12px;
-  background:rgba(0,0,0,.12);
-  display:grid; place-items:center; user-select:none;
-}
+.zone{ position:absolute; width:var(--zone-w); height:var(--zone-h); border:2px dashed rgba(255,255,255,.2); border-radius:12px; background:rgba(0,0,0,.12); display:grid; place-items:center; user-select:none; }
 .zone .label{ color:#d0d6e4; font-weight:700; pointer-events:none; }
-
-/* Deck zone looks like a card back */
-#deckZone{
-  background:#000 url('https://i.imgur.com/LdOBU1I.jpeg') center/cover no-repeat;
-  border:1px solid #2b3344;
-}
+#deckZone{ background:#000 url('https://i.imgur.com/LdOBU1I.jpeg') center/cover no-repeat; border:1px solid #2b3344; }
 #deckZone .label{ display:none; }
+#deckZone{ left:24px; top:24px; }
+#cmdZone{ left:24px; top:calc(24px + var(--zone-h) + 12px); }
+#graveyard{ left:calc(24px + var(--zone-w) + 16px); top:24px; }
+#exileZone{ left:calc(24px + var(--zone-w) + 16px); top:calc(24px + var(--zone-h) + 12px); }
 
-/* Default placements (adjust freely) */
-#deckZone     { left:24px; top:24px; }
-#cmdZone      { left:24px; top:calc(24px + var(--zone-h) + 12px); }
-#graveyard    { left:calc(24px + var(--zone-w) + 16px); top:24px; }
-#exileZone    { left:calc(24px + var(--zone-w) + 16px); top:calc(24px + var(--zone-h) + 12px); }
+/* Card shells */
+.card{ position:absolute; width:var(--card-w); height:var(--card-h); border-radius:14px; box-shadow:0 10px 26px rgba(0,0,0,.5); touch-action:none; perspective:1000px; transition: width .18s ease, height .18s ease; overflow:visible; }
+.card.tapped{ width:var(--card-h); height:var(--card-w); }
 
-/* Cards on table (outer shell) */
-.card{
-  position:absolute; width:var(--card-w); height:var(--card-h); border-radius:14px;
-  box-shadow:0 10px 26px rgba(0,0,0,.5);
-  touch-action:none; /* allow custom drag */
-  perspective:1000px; /* for 3D flip */
-}
+/* Inner 3D flipper */
 .cardInner{
-  position:absolute; inset:0; border-radius:14px;
-  transform-style:preserve-3d;
-  transition: transform .35s ease;
-  transform: rotateZ(var(--tap-rot)) rotateY(var(--flip-rot));
+  position:absolute; left:50%; top:50%; width:100%; height:100%; border-radius:14px;
+  transform-style: preserve-3d; /* CRITICAL: render front/back as real faces */
+  transform-origin:center center;
+  transform: translate(-50%,-50%) rotateZ(var(--tap-rot)) rotateY(var(--flip-rot));
+  transition: transform .35s ease, width .18s ease, height .18s ease;
 }
-.face{
-  position:absolute; inset:0; border-radius:14px;
-  backface-visibility:hidden;
-  background:#1a1f2a center/cover no-repeat;
-}
-.face.back{ transform: rotateY(180deg); }
-.card .pt{
-  position:absolute; right:6px; bottom:6px; background:rgba(0,0,0,.7); color:#e7f0ff; border-radius:8px; padding:2px 6px; font-weight:800;
-  z-index:2;
-}
+.cardTooltip{ z-index: calc(var(--z-actions) + 1); }
+
+.card.tapped .cardInner{ width:var(--card-w); height:var(--card-h); }
+
 .card.selected{ outline:2px solid var(--accent); outline-offset:2px; }
 
-/* Quick actions for selected card */
-.cardActions{
-  position:absolute; z-index:var(--z-actions);
-  display:flex; flex-direction:column; gap:8px;
+/* Faces */
+.face{
+  position:absolute; inset:0; border-radius:14px;
+  backface-visibility:hidden;  /* hide reverse of each face */
+  background:#1a1f2a center/cover no-repeat;
 }
-.cardActions .qa{
-  width:42px; height:42px; border-radius:50%;
-  background:#0f1725; color:#cfe1ff; border:1px solid #2b3f63;
-  display:grid; place-items:center; font-weight:900; box-shadow:0 8px 20px rgba(0,0,0,.35);
-}
+.face.back{ transform: rotateY(180deg); } /* back is pre-rotated to face forward when parent flips */
 
-/* =============== CARD TOOLTIP (Scryfall) =============== */
-/* =============== CARD TOOLTIP (Scryfall) =============== */
+.card .pt{ position:absolute; right:6px; bottom:6px; background:rgba(0,0,0,.7); color:#e7f0ff; border-radius:8px; padding:2px 6px; font-weight:800; z-index:2; }
+
+/* Quick actions */
+.cardActions{ position:absolute; z-index:var(--z-actions); display:flex; flex-direction:column; gap:8px; }
+.cardActions .qa{ width:42px; height:42px; border-radius:50%; background:#0f1725; color:#cfe1ff; border:1px solid #2b3f63; display:grid; place-items:center; font-weight:900; box-shadow:0 8px 20px rgba(0,0,0,.35); }
+
+/* Tooltip */
 .cardTooltip{
-  position:absolute; z-index:var(--z-actions);
-  /* width behavior */
-  display:block;
-  min-width: 220px;
-  max-width: min(420px, 92vw);
-  /* visual */
-  background:#0b1220; color:#e7efff;
-  border:1px solid #263a5f; border-radius:12px;
-  box-shadow:0 14px 36px rgba(0,0,0,.55);
-  padding:10px 12px;
-  font-size:13px; line-height:1.35;
-  /* text flow guards */
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  /* make sure it renders independent of 3D card internals */
-  transform: translateZ(0);
+  position:absolute; z-index:var(--z-actions); display:block; min-width:220px; max-width:min(420px,92vw);
+  background:#0b1220; color:#e7efff; border:1px solid #263a5f; border-radius:12px; box-shadow:0 14px 36px rgba(0,0,0,.55);
+  padding:10px 12px; font-size:13px; line-height:1.35; white-space:normal; overflow-wrap:anywhere; word-break:break-word;
+  transform-origin: bottom center; transform: translateX(-50%) scale(calc(1 / var(--world-zoom)));
 }
-
-.cardTooltip h3{
-  margin:0 0 6px 0; font-size:15px; line-height:1.25;
-}
+.cardTooltip h3{ margin:0 0 6px 0; font-size:15px; line-height:1.25; }
 .cardTooltip .typeLine{ color:#9fb4d9; margin-bottom:6px; }
 .cardTooltip .oracle{ white-space:pre-wrap; }
-.cardTooltip .kw{ display:inline-block; background:#13223a; border:1px solid #243a6b; padding:2px 6px; border-radius:999px; margin:4px 4px 0 0; font-size:11px; color:#cfe1ff; }
-.cardTooltip .pt{ margin-top:8px; font-weight:800; color:#ffe093; }
+
+/* Hand */
+.hand{ position:fixed; left:0; right:0; bottom:56px; z-index:var(--z-hand); display:grid; place-items:center; height:calc(var(--card-h) * .9); pointer-events:none; }
+.handTrack{ position:relative; width:100%; height:100%; }
+.handCard{ --dx:0px; --rot:0deg; position:absolute; left:50%; top:50%; transform:translate(calc(-50% + var(--dx)), -50%) scale(var(--hand-scale)) rotate(var(--rot)); transition: transform .18s ease, opacity .18s ease; pointer-events:auto; }
+.handCard.far { opacity:.35; transform: translate(calc(-50% + var(--dx)), -50%) scale(calc(var(--hand-scale) * .78)) rotate(var(--rot)); }
+.handCard.mid { opacity:.7;  transform: translate(calc(-50% + var(--dx)), -50%) scale(calc(var(--hand-scale) * .88)) rotate(var(--rot)); }
+.handCard.focus{ opacity:1; transform: translate(calc(-50% + var(--dx)), -50%) scale(1) rotate(0deg); z-index:2; }
+.handCard .card{ position:relative; }
+.hand.swiping .handCard{ transition:none !important; }
+
+/* Toolbar */
+.toolbar{ position:fixed; left:0; right:0; bottom:0; z-index:var(--z-toolbar); display:grid; grid-auto-flow:column; justify-content:center; gap:12px; padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px)); background:linear-gradient(180deg, rgba(12,18,28,0), rgba(12,18,28,.88)); border-top:1px solid rgba(255,255,255,.08); }
+.fab{ width:50px; height:50px; border-radius:50%; background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63; display:grid; place-items:center; font-size:20px; box-shadow:0 8px 20px rgba(106,169,255,.18); }
+
+/* Zoom */
+.zoomWrap{ position:fixed; left:8px; top:calc(var(--topbar-h) + 8px); z-index:var(--z-zoom); width:32px; height:220px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+#zoom{ position:relative; transform: rotate(-90deg); transform-origin:center; width:180px; height:32px; -webkit-appearance:none; appearance:none; background:transparent; outline:none; }
+#zoom::-webkit-slider-runnable-track{ height:6px; border-radius:4px; background:#23324d; }
+#zoom::-webkit-slider-thumb{ -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:#6aa9ff; border:2px solid #0a1426; transform:translateY(-5px); }
+
+/* Overlays */
+.scrim{ position:fixed; inset:0; background:rgba(6,10,16,.6); display:none; z-index:var(--z-overlays); }
+.panel{ position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); width:min(720px,94vw); max-height:80vh; overflow:auto; background:rgba(12,18,28,.98); border:1px solid #24324a; border-radius:14px; padding:12px; }
+.zoneGrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
+.thumb{ width:100%; padding-top:140%; border-radius:10px; background:#1a1f2a center/cover no-repeat; position:relative; overflow:hidden; cursor:pointer; }
+
+/* Mobile tweaks */
+@media (max-width: 768px){
+  :root{ --card-w:180px; --card-h:250px; --zone-w:180px; --zone-h:250px; --hand-scale:.86; }
+  .drawer-wrap.expanded{ max-height:360px; }
+}
+@media (max-width: 420px){
+  :root{ --card-w:160px; --card-h:220px; --zone-w:160px; --zone-h:220px; --hand-scale:.84; }
+}
+
+/* Game picker */
+.gamePicker{ display:flex; gap:8px; }
+.gameBtn{ background:#1b2a47; color:#d8e7ff; font-weight:800; padding:8px 12px; border-radius:999px; border:1px solid #24324a; opacity:.85; }
+.gameBtn.active{ background:#314a7d; border-color:#3d5ba0; opacity:1; box-shadow:0 6px 16px rgba(49,74,125,.35) inset; }
 
 /* Mana icon sizing inside tooltip */
 .cardTooltip i.ms{
@@ -203,132 +154,38 @@ textarea.deck-in{
   margin:0 2px;
 }
 .cardTooltip .cost i.ms{ font-size:20px; }
-.cardTooltip .ms.ms-cost{ margin:0 1px; }
+.cardTooltip .ms.ms-cost{ margin:0 1px; } /* tiny spacing tweak */
 
-
-/* =============== HAND (Carousel) =============== */
-.hand{
-  position:fixed; left:0; right:0; bottom:56px; /* keep off toolbar */
-  z-index:var(--z-hand);
-  display:grid; place-items:center; height:calc(var(--card-h) * .9);
-  pointer-events:none; /* children are interactive */
+/* Smooth motion + hide actions while viewing another player */
+.viewing-opponent .card {
+  transition: left .22s ease, top .22s ease, width .18s ease, height .18s ease;
+  cursor: default;
 }
-.handTrack{ position:relative; width:100%; height:100%; }
-.handCard{
-  --dx: 0px; --rot: 0deg;
-  position:absolute; left:50%; top:50%;
-  transform: translate(calc(-50% + var(--dx)), -50%) scale(var(--hand-scale)) rotate(var(--rot));
-  transition: transform .18s ease, opacity .18s ease;
-  pointer-events:auto;
-}
-.handCard.far { opacity:.35; transform: translate(calc(-50% + var(--dx)), -50%) scale(calc(var(--hand-scale) * .78)) rotate(var(--rot)); }
-.handCard.mid { opacity:.7;  transform: translate(calc(-50% + var(--dx)), -50%) scale(calc(var(--hand-scale) * .88)) rotate(var(--rot)); }
-.handCard.focus{ opacity:1; transform: translate(calc(-50% + var(--dx)), -50%) scale(1) rotate(0deg); z-index:2; }
-.handCard .card{ position:relative; } /* reuse .card look */
+.viewing-opponent .cardActions { display:none; }
 
-/* Disable tweening during a live swipe so transforms apply instantly */
-.hand.swiping .handCard{ transition:none !important; }
-
-/* =============== BOTTOM TOOLBAR (Battle/End/Eye/Info) =============== */
-.toolbar{
-  position:fixed; left:0; right:0; bottom:0; z-index:var(--z-toolbar);
-  display:grid; grid-auto-flow:column; justify-content:center; gap:12px;
-  padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px));
-  background:linear-gradient(180deg, rgba(12,18,28,0), rgba(12,18,28,.88));
-  border-top:1px solid rgba(255,255,255,.08);
-}
-.fab{
-  width:50px; height:50px; border-radius:50%;
-  background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63;
-  display:grid; place-items:center; font-size:20px; box-shadow:0 8px 20px rgba(106,169,255,.18);
+.fab svg{
+  width:22px;
+  height:22px;
+  display:block; /* centers nicely in the grid container */
 }
 
-/* =============== ZOOM (vertical) =============== */
-.zoomWrap{
-  position:fixed; left:8px; top:calc(var(--topbar-h) + 8px); z-index:var(--z-zoom);
-  width:32px; height:220px; background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.1); border-radius:12px;
-  display:flex; align-items:center; justify-content:center;
-  overflow:hidden; /* <-- keep the rotated slider inside */
-}
-#zoom{
-  position:relative;
-  transform: rotate(-90deg);
-  transform-origin:center;     /* <-- rotate around center so it stays centered */
-  width:180px;                 /* fits well inside 220px wrapper height when rotated */
-  height:32px;
-  -webkit-appearance:none; appearance:none;
-  background:transparent; outline:none;
-}
-#zoom::-webkit-slider-runnable-track{ height:6px; border-radius:4px; background:#23324d; }
-#zoom::-webkit-slider-thumb{
-  -webkit-appearance:none; width:16px; height:16px; border-radius:50%;
-  background:#6aa9ff; border:2px solid #0a1426;
-  transform:translateY(0);     /* remove extra vertical nudge that leaks outside */
-}
-#zoom::-webkit-slider-runnable-track{ height:6px; border-radius:4px; background:#23324d; }
-#zoom::-webkit-slider-thumb{
-  -webkit-appearance:none; width:16px; height:16px; border-radius:50%;
-  background:#6aa9ff; border:2px solid #0a1426; transform:translateY(-5px);
-}
-
-/* =============== OVERLAYS (GY/Exile + Deck choice) =============== */
-.scrim{ position:fixed; inset:0; background:rgba(6,10,16,.6); display:none; z-index:var(--z-overlays); }
-.panel{
-  position:absolute; left:50%; top:50%; transform:translate(-50%, -50%);
-  width:min(720px,94vw); max-height:80vh; overflow:auto;
-  background:rgba(12,18,28,.98); border:1px solid #24324a; border-radius:14px; padding:12px;
-}
-.zoneGrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
-.thumb{
-  width:100%; padding-top:140%; border-radius:10px; background:#1a1f2a center/cover no-repeat;
-  position:relative; overflow:hidden; cursor:pointer;
-}
-
-/* deck choice chip */
-.deckChoice{
-  position:absolute; transform:translate(-50%,-8px);
-  background:#0b1423; border:1px solid #2b3f63; color:#cfe1ff; border-radius:999px;
-  display:flex; gap:8px; padding:6px 10px; box-shadow:0 8px 20px rgba(0,0,0,.35); z-index:var(--z-overlays);
-}
-
-/* =============== MOBILE TWEAKS =============== */
-@media (max-width: 768px){
-  :root{ --card-w:180px; --card-h:250px; --zone-w:180px; --zone-h:250px; --hand-scale:.86; }
-  .drawer-wrap.expanded{ max-height:360px; }
-}
-@media (max-width: 420px){
-  :root{ --card-w:160px; --card-h:220px; --zone-w:160px; --zone-h:220px; --hand-scale:.84; }
-}
-
-/* =============== GAME PICKER =============== */
-.gamePicker{ display:flex; gap:8px; }
-.gameBtn{
-  background:#1b2a47; color:#d8e7ff; font-weight:800;
-  padding:8px 12px; border-radius:999px; border:1px solid #24324a;
-  opacity:.85;
-}
-.gameBtn.active{
-  background:#314a7d; border-color:#3d5ba0; opacity:1;
-  box-shadow:0 6px 16px rgba(49,74,125,.35) inset;
-}
 
 </style>
 </head>
 <body>
 
-<!-- ========== TOP BAR ========== -->
+<!-- Top bar -->
 <div class="topbar">
   <button class="cog" id="cogBtn">⚙️</button>
   <div class="life-strip">
-    <div class="life-tile" id="lifeP1"><span>P1</span><span><span class="life-main" id="lifeP1Main">40</span> <span class="life-cmd" id="lifeP1Cmd">20</span></span></div>
-    <div class="life-tile" id="lifeP2"><span>P2</span><span><span class="life-main" id="lifeP2Main">40</span> <span class="life-cmd" id="lifeP2Cmd">20</span></span></div>
-    <div class="life-tile" id="lifeP3"><span>P3</span><span><span class="life-main" id="lifeP3Main">40</span> <span class="life-cmd" id="lifeP3Cmd">20</span></span></div>
+    <div class="life-tile"><span>P1</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
+    <div class="life-tile"><span>P2</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
+    <div class="life-tile"><span>P3</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
   </div>
 </div>
 
-<!-- ========== DRAWER (cog) ========== -->
-<div id="drawerWrap" class="drawer-wrap collapsed">
+<!-- Drawer -->
+<div id="drawerWrap" class="drawer-wrap expanded">
   <div class="drawer">
     <div class="row">
       <label class="pill">Players
@@ -348,52 +205,54 @@ textarea.deck-in{
       <button class="pill" id="loadBtn">Load Deck</button>
       <button class="pill" id="resetBtn" title="Resets THIS player only">Reset (me)</button>
     </div>
-	<div class="row">
-  <div class="gamePicker" id="gamePicker">
-    <button class="gameBtn" data-game="game1">Game 1</button>
-    <button class="gameBtn" data-game="game2">Game 2</button>
-    <button class="gameBtn" data-game="game3">Game 3</button>
-  </div>
-</div>
-  </div>
-</div>
-
-<!-- ========== TABLE / WORLD ========== -->
-<div class="table" id="table">
-  <div class="worldWrap" id="worldWrap">
-    <div class="worldScale" id="worldScale" style="transform:translate(0px,0px) scale(1);">
-      <div class="world" id="world">
-        <!-- Zones -->
-        <div class="zone" id="deckZone"><div class="label">Deck</div></div>
-        <div class="zone" id="cmdZone"><div class="label">Commander</div></div>
-        <div class="zone" id="graveyard"><div class="label">Graveyard</div></div>
-        <div class="zone" id="exileZone"><div class="label">Exile</div></div>
-        <!-- Cards will spawn here as absolutely positioned .card -->
+    <div class="row">
+      <div class="gamePicker" id="gamePicker">
+        <button class="gameBtn" data-game="game1">Game 1</button>
+        <button class="gameBtn" data-game="game2">Game 2</button>
+        <button class="gameBtn" data-game="game3">Game 3</button>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ========== Hand (carousel) ========== -->
-<div class="hand" id="hand">
-  <div class="handTrack" id="handTrack"></div>
+<!-- Table -->
+<div class="table" id="table">
+  <div class="worldWrap" id="worldWrap">
+    <div class="worldScale" id="worldScale" style="transform:translate(0px,0px) scale(1);">
+      <div class="world" id="world">
+        <div class="zone" id="deckZone"><div class="label">Deck</div></div>
+        <div class="zone" id="cmdZone"><div class="label">Commander</div></div>
+        <div class="zone" id="graveyard"><div class="label">Graveyard</div></div>
+        <div class="zone" id="exileZone"><div class="label">Exile</div></div>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- ========== BOTTOM TOOLBAR (Battle / End / Eye / Info) ========== -->
+<!-- Hand -->
+<div class="hand" id="hand"><div class="handTrack" id="handTrack"></div></div>
+
+<!-- Toolbar -->
 <div class="toolbar">
   <button class="fab" id="battleBtn" title="Battle">⚔️</button>
   <button class="fab" id="endTurnBtn" title="End Turn">⏭</button>
   <button class="fab" id="viewEyeBtn" title="View Player">👁</button>
-  <button class="fab" id="turnInfoBtn" title="Turn Info">ℹ️</button>
+  <button class="fab" id="turnInfoBtn" title="Turn Info" aria-label="Turn Info">
+  <svg viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+       aria-hidden="true">
+    <circle cx="12" cy="12" r="10"></circle>
+    <path d="M12 16v-4"></path>
+    <path d="M12 8h.01"></path>
+  </svg>
+</button>
+
 </div>
 
-<!-- ========== VERTICAL ZOOM =========== -->
-<div class="zoomWrap">
-  <input type="range" id="zoom" min="40" max="160" value="100"/>
-</div>
+<!-- Zoom -->
+<div class="zoomWrap"><input type="range" id="zoom" min="40" max="160" value="100"/></div>
 
-
-<!-- ========== OVERLAYS ========== -->
+<!-- Overlays -->
 <div class="scrim" id="zoneOverlay">
   <div class="panel">
     <div class="row" style="justify-content:space-between; align-items:center;">
@@ -404,38 +263,40 @@ textarea.deck-in{
   </div>
 </div>
 
-<!-- deck Top/Bottom/Shuffle chooser -->
 <div class="deckChoice" id="deckChoice" style="display:none; left:0; top:0;">
   <button class="pill" data-choice="top">Top</button>
   <button class="pill" data-choice="bottom">Bottom</button>
   <button class="pill" data-choice="shuffle">Shuffle</button>
 </div>
 
-<script>
-/* =========================================================
-   V2 Scaffold — Mobile-first UI + core interactions
-========================================================= */
-
-/* ---------- CONSTANTS ---------- */
+<script type="module">
 const CARD_BACK_URL = 'https://i.imgur.com/LdOBU1I.jpeg';
 
-/* ---------- STATE ---------- */
 const state = {
   gameId: null,
   mySeat: 2,
   playerCount: 2,
   turn: null,
-  zoom: 1,
-  panX: 0,
-  panY: 0,
-  hand: [],        // [{id,name,frontImg,backImg,face:'front'|'back',tapped:false, pt, ...}]
-  table: [],
-  gy: [], exile: [], deck: [],
+  zoom: 1, panX: 0, panY: 0,
+  hand: [], table: [], gy: [], exile: [], deck: [],
   scryCache: new Map(),
   selectedCardId: null
 };
 
-/* ---------- DOM ---------- */
+// expose shared app state so other <script type="module"> blocks can access it
+window.AppState = state;
+
+
+/* ---------- VIEWER MODE STATE ---------- */
+state.viewSeat = state.mySeat;         // which seat we’re currently viewing
+state.viewReadOnly = false;            // true when viewing an opponent
+state.viewPoller = null;               // interval handle
+state._oppSnapshot = null;             // last remote doc for diffing (opponent)
+
+let currentTurnSeat = 0; // single source of truth
+
+const viewEyeBtn = document.getElementById('viewEyeBtn');
+const zoomWrapEl = document.querySelector('.zoomWrap');
 const cogBtn = document.getElementById('cogBtn');
 const drawerWrap = document.getElementById('drawerWrap');
 const worldScaleEl = document.getElementById('worldScale');
@@ -451,343 +312,357 @@ const deckChoice = document.getElementById('deckChoice');
 const zoneOverlay = document.getElementById('zoneOverlay');
 const overlayGrid = document.getElementById('overlayGrid');
 const overlayTitle = document.getElementById('overlayTitle');
-
 const gamePicker = document.getElementById('gamePicker');
-gamePicker.addEventListener('click', async (e)=>{
-  const btn = e.target.closest('.gameBtn');
-  if(!btn) return;
-  const picked = btn.dataset.game; // "game1" | "game2" | "game3"
 
-  // Visual selection
-  gamePicker.querySelectorAll('.gameBtn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
+const endTurnBtn = document.getElementById('endTurnBtn');
 
-  // Load that game's state for my seat
-  await loadGameIntoUI(picked);
+// keep an up-to-date turn seat via your existing meta poller
+
+
+endTurnBtn.addEventListener('click', async ()=>{
+  if (!state.gameId) return;
+  await waitForStorageReady();                      // <-- add this
+
+  if (currentTurnSeat && currentTurnSeat !== Number(state.mySeat)){
+    alert(`It's Player ${currentTurnSeat}'s turn.`);
+    return;
+  }
+
+  const next = ((currentTurnSeat || state.mySeat) % state.playerCount) + 1;
+  await window.StorageAPI.saveMeta(state.gameId, { TurnSeat: next });
+
+  if (window.StorageAPI.resetCombat) {
+    await window.StorageAPI.resetCombat(state.gameId);
+  }
 });
 
 
-let actionsEl = null; // floating quick-actions for selected card
-let tooltipEl = null; // floating tooltip for selected/active card
 
-function ensureDeckBack(){
+// keep an up-to-date turn seat via your existing meta poller
+
+
+
+endTurnBtn.addEventListener('click', async ()=>{
+  if (!state.gameId) return;
+
+  // (optional) only allow the current player to advance
+  if (currentTurnSeat && currentTurnSeat !== Number(state.mySeat)){
+    alert(`It's Player ${currentTurnSeat}'s turn.`);
+    return;
+  }
+
+  const next = ( (currentTurnSeat || state.mySeat) % state.playerCount ) + 1;
+
+  // write next turn seat to meta so everyone’s FAB flips to ⚔️/🛡️ correctly
+  await window.window.StorageAPI.saveMeta(state.gameId, { TurnSeat: next });
+
+  // (optional) clear any active combat state for the new turn
+  if (window.window.StorageAPI.resetCombat) {
+    await window.window.StorageAPI.resetCombat(state.gameId);
+  }
+});
+
+
+document.getElementById('resetBtn').addEventListener('click', async () => {
+  if (!state.gameId) { alert('Pick Game 1/2/3 first.'); return; }
+
+  // 1) Use the live value from the “I am” select
+  state.mySeat = Number(document.getElementById('mySeat').value);
+
+  // 2) If you’re currently viewing another seat, switch back so you can see the reset
+  if (state.viewSeat !== state.mySeat) {
+    await setViewSeat(state.mySeat);
+  }
+
+  // 3) Hard delete the doc (or blank it) and reload my fresh state
+  await resetPlayerOnly({ hard: true });
+  await loadGameIntoUI(state.gameId);
+});
+
+
+function nextSeat(cur, total){
+  return (cur % total) + 1; // 1→2→3→1
+}
+
+async function setViewSeat(seat){
+  if (!state.gameId) { alert('Pick Game 1/2/3 first.'); return; }
+
+  // stop any running poller
+  if (state.viewPoller){ clearInterval(state.viewPoller); state.viewPoller = null; }
+
+  state.viewSeat = seat;
+  state.viewReadOnly = (seat !== state.mySeat);
+  document.body.classList.toggle('viewing-opponent', state.viewReadOnly);
+
+  clearSelection();
+
+  if (!state.viewReadOnly){
+    // Back to self: load my data and render normally (hand visible, drag enabled)
+    await loadGameIntoUI(state.gameId);
+    renderHand();
+    return;
+  }
+
+  // Viewing an opponent: hydrate once and start the 100ms poller
+  const first = await window.window.StorageAPI.loadPlayerState(state.gameId, state.viewSeat);
+  await hydrateOpponentIntoView(first || { Deck:[], Hand:[], Table:[], Graveyard:[], Exile:[], Commander:null });
+  startViewPoller();
+}
+
+viewEyeBtn.addEventListener('click', async ()=>{
+  const target = nextSeat(state.viewSeat, state.playerCount);
+  await setViewSeat(target);
+});
+
+
+async function ensureTurnSeatMeta(){
+  if (!state.gameId) return;
+  const m = await window.window.StorageAPI.loadMeta(state.gameId);
+  if (!m || !m.TurnSeat){
+    // First person in sets it to themself (or pick 1 if you prefer)
+    await window.window.StorageAPI.saveMeta(state.gameId, { TurnSeat: state.mySeat });
+  }
+}
+
+
+
+
+
+const playerCountSel = document.getElementById('playerCount');
+const mySeatSel      = document.getElementById('mySeat');
+
+// Initialize from selects (or localStorage if you want the choice to persist)
+const savedSeat = Number(localStorage.getItem('mySeat') || mySeatSel.value);
+const savedCount = Number(localStorage.getItem('playerCount') || playerCountSel.value);
+mySeatSel.value = String(savedSeat);
+playerCountSel.value = String(savedCount);
+state.mySeat = savedSeat;
+state.playerCount = savedCount;
+
+// React to changes
+mySeatSel.addEventListener('change', async (e) => {
+  state.mySeat = Number(e.target.value);
+  localStorage.setItem('mySeat', String(state.mySeat));
+  if (state.gameId) {
+    // reload the current game for the newly selected seat
+    await loadGameIntoUI(state.gameId);
+  }
+});
+
+playerCountSel.addEventListener('change', (e) => {
+  state.playerCount = Number(e.target.value);
+  localStorage.setItem('playerCount', String(state.playerCount));
+});
+
+document.addEventListener('keydown', (e)=>{
+  // ignore while typing or in read-only view
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (/(INPUT|TEXTAREA|SELECT)/.test(tag) || state.viewReadOnly) return;
+
+  const id = state.selectedCardId;
+  if (!id) return;
+  const card = getCardById(id);
+  if (!card) return;
+
+  if (e.key === 't' || e.key === 'T'){ e.preventDefault(); toggleTap(card); }
+  else if (e.key === 'f' || e.key === 'F'){ e.preventDefault(); toggleFlip(card); }
+});
+
+
+/* Deck back preload */
+(function ensureDeckBack(){
   const img = new Image();
   img.onload = ()=>{ deckZone.style.backgroundImage = `url("${CARD_BACK_URL}")`; };
   img.onerror = ()=>{ setTimeout(ensureDeckBack, 800); };
-  img.referrerPolicy = 'no-referrer';          // extra safety for mobile
+  img.referrerPolicy = 'no-referrer';
   img.src = CARD_BACK_URL;
-  // set immediately as well (in case it already cached)
   deckZone.style.backgroundImage = `url("${CARD_BACK_URL}")`;
-}
-ensureDeckBack();
+})();
 
-
-/* ---------- DRAWER ---------- */
+/* Drawer toggle */
 cogBtn.addEventListener('click', ()=>{
-  drawerWrap.classList.toggle('collapsed');
-  drawerWrap.classList.toggle('expanded');
+  const open = !drawerWrap.classList.contains('expanded');
+  drawerWrap.classList.toggle('collapsed', !open);
+  drawerWrap.classList.toggle('expanded', open);
+  zoomWrapEl.style.display = open ? 'none' : 'flex';
 });
 
-/* ---------- PAN + ZOOM (table only) ---------- */
+/* Pan/Zoom */
 function applyWorldTransform(){
   worldScaleEl.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
+  worldScaleEl.style.setProperty('--world-zoom', state.zoom);
   repositionUIOverlays();
 }
-  
-  function repositionUIOverlays(){
+function repositionUIOverlays(){
   const selId = state.selectedCardId;
   if(!selId) return;
   const el = worldEl.querySelector(`.card[data-id="${selId}"]`);
   if(!el) return;
-  positionActions(el);           // anchors the button column
-  if (tooltipEl) positionTooltip(el); // anchor tooltip even if actionsEl is missing
+  positionActions(el);
+  if (tooltipEl) positionTooltip(el);
 }
-
-
-  
-zoomInput.addEventListener('input', (e)=>{
-  state.zoom = Number(e.target.value)/100;   // 0.60 – 1.60
-  applyWorldTransform();
-});
-
-let draggingCard = false;   // blocks table panning while true
-let panning=false, panStartX=0, panStartY=0, panBaseX=0, panBaseY=0;
-
+zoomInput.addEventListener('input', (e)=>{ state.zoom = Number(e.target.value)/100; applyWorldTransform(); });
+let draggingCard = false, panning=false, panStartX=0, panStartY=0, panBaseX=0, panBaseY=0;
 worldWrap.addEventListener('pointerdown', (e)=>{
   const t = e.target;
   if (draggingCard || t.closest('.card') || t.closest('.zone') || t.closest('.zoomWrap') || t.closest('.toolbar')) return;
-  panning = true;
-  worldWrap.classList.add('panning');
-  try { worldWrap.setPointerCapture(e.pointerId); } catch(_){}
-  panStartX = e.clientX; panStartY = e.clientY;
-  panBaseX = state.panX; panBaseY = state.panY;
+  panning = true; worldWrap.classList.add('panning');
+  try{ worldWrap.setPointerCapture(e.pointerId); }catch(_){}
+  panStartX = e.clientX; panStartY = e.clientY; panBaseX = state.panX; panBaseY = state.panY;
 });
 worldWrap.addEventListener('pointermove', (e)=>{
-  if (!panning) return;
-  e.preventDefault();
-  const dx = e.clientX - panStartX;
-  const dy = e.clientY - panStartY;
-  state.panX = panBaseX + dx;
-  state.panY = panBaseY + dy;
+  if (!panning) return; e.preventDefault();
+  state.panX = panBaseX + (e.clientX - panStartX);
+  state.panY = panBaseY + (e.clientY - panStartY);
   applyWorldTransform();
-}, {passive:false});
-function endPan(){
-  if (!panning) return;
-  panning = false;
-  worldWrap.classList.remove('panning');
-}
+},{passive:false});
+function endPan(){ if (!panning) return; panning=false; worldWrap.classList.remove('panning'); }
 worldWrap.addEventListener('pointerup', endPan);
 worldWrap.addEventListener('pointercancel', endPan);
 
-/* ----- Pinch-to-zoom (two fingers) ----- */
-const activePointers = new Map();
-let pinchStartDist = 0, pinchStartZoom = 1, pinchStartPanX=0, pinchStartPanY=0;
-function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+/* Wheel zoom */
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
-
-worldWrap.addEventListener('pointerdown', (e)=>{
-  if (e.pointerType !== 'touch') return;
-  activePointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-  if (activePointers.size === 2){
-    const [p1,p2] = [...activePointers.values()];
-    pinchStartDist = dist(p1,p2);
-    pinchStartZoom = state.zoom;
-    pinchStartPanX = state.panX;
-    pinchStartPanY = state.panY;
-  }
-});
-worldWrap.addEventListener('pointermove', (e)=>{
-  if (e.pointerType !== 'touch' || activePointers.size < 2) return;
-  e.preventDefault();
-  activePointers.set(e.pointerId, {x:e.clientX, y:e.clientY});
-  const [p1,p2] = [...activePointers.values()];
-    const d = dist(p1,p2);
-  if (pinchStartDist > 0){
-    const k = d / pinchStartDist;
-    const newZoom = clamp(pinchStartZoom * k, 0.4, 1.6);  // was 0.6 → now 0.4
-    const ratio = newZoom / pinchStartZoom;
-    // anchor zoom around screen center (approx)
-    const cx = window.innerWidth/2, cy = window.innerHeight/2;
-    state.panX = cx - (cx - pinchStartPanX) * ratio;
-    state.panY = cy - (cy - pinchStartPanY) * ratio;
-    state.zoom = newZoom;
-    zoomInput.value = Math.round(newZoom*100);
-    applyWorldTransform();
-  }
-}, {passive:false});
-['pointerup','pointercancel','pointerleave'].forEach(evt=>{
-  worldWrap.addEventListener(evt, (e)=>{ activePointers.delete(e.pointerId); });
-});
-
-/* ---------- UTIL ---------- */
-const $ = sel => document.querySelector(sel);
-function rectsOverlap(a,b){
-  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
-}
-function zoneHit(el){
-  const r = el.getBoundingClientRect();
-  const hits = [];
-  for(const z of [deckZone, cmdZone, gyZone, exileZone]){
-    const zr = z.getBoundingClientRect();
-    if(rectsOverlap(r, zr)) hits.push(z);
-  }
-  return hits;
-}
-function clientToWorld(x, y){
+worldWrap.addEventListener('wheel', (e)=>{
+  if (e.ctrlKey) return; e.preventDefault();
+  const k = Math.pow(1.0015, -e.deltaY * (e.deltaMode === 1 ? 12 : 1));
+  const newZoom = clamp(state.zoom * k, 0.4, 1.6);
   const r = worldScaleEl.getBoundingClientRect();
-  return { x: (x - r.left) / state.zoom, y: (y - r.top) / state.zoom };
-}
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const wx = (mx - state.panX) / state.zoom, wy = (my - state.panY) / state.zoom;
+  state.zoom = newZoom; state.panX = mx - wx * state.zoom; state.panY = my - wy * state.zoom;
+  zoomInput.value = Math.round(state.zoom * 100); applyWorldTransform();
+},{passive:false});
 
-function elementCenterWorld(el){
-  const rr = el.getBoundingClientRect();
-  const cx = rr.left + rr.width/2;
-  const cy = rr.top  + rr.height/2;
-  return clientToWorld(cx, cy);  // convert the element’s screen center into world coords
+/* Utils */
+function rectsOverlap(a,b){ return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom); }
+function zoneHit(el){
+  const r = el.getBoundingClientRect(); const hits=[];
+  for(const z of [deckZone, cmdZone, gyZone, exileZone]){
+    const zr = z.getBoundingClientRect(); if(rectsOverlap(r, zr)) hits.push(z);
+  } return hits;
 }
-
+function clientToWorld(x, y){ const r = worldScaleEl.getBoundingClientRect(); return { x: (x - r.left) / state.zoom, y: (y - r.top) / state.zoom }; }
+function elementCenterWorld(el){ const rr = el.getBoundingClientRect(); return clientToWorld(rr.left + rr.width/2, rr.top + rr.height/2); }
 function getHandSlotCenterWorld(index){
   const slot = handTrack.querySelector(`.handCard[data-index="${index}"]`);
-  if(!slot){
-    // fallback to center of hand bar if the slot somehow isn't rendered
-    const hr = document.getElementById('hand').getBoundingClientRect();
-    return clientToWorld(hr.left + hr.width/2, hr.top + hr.height*0.25);
+  if(!slot){ const hr = document.getElementById('hand').getBoundingClientRect(); return clientToWorld(hr.left + hr.width/2, hr.top + hr.height*0.25); }
+  const rr = slot.getBoundingClientRect(); return clientToWorld(rr.left + rr.width/2, rr.top + rr.height/2);
+}
+
+/* —— IMAGE PIPELINE: NEVER MIRROR FRONT —— */
+function pickFaceImages(card){
+  const faces = Array.isArray(card?._faces) ? card._faces : [];
+  const front = faces[0]?.image || card?.frontImg || '';
+  const back  = faces[1]?.image || ''; // STRICT: never fall back to front for DFC
+  return { front, back };
+}
+function normalizeCardImages(card){
+  const faces = Array.isArray(card?._faces) ? card._faces : [];
+  const { front, back } = pickFaceImages(card);
+  card.frontImg = front || '';
+  // If card is truly single-faced, leave back empty so renderer uses MTG back.
+  card.backImg  = (faces.length > 1) ? (back || '') : '';
+  // Guardrail: if multi-faced and we still don't have a distinct back, warn loudly (but do not mirror)
+  if (faces.length > 1 && (!card.backImg || card.backImg === card.frontImg)){
+    console.error('[DFC BACK MISSING] Refusing to mirror front art. Card:', card.name, {front:card.frontImg, back:card.backImg, faces});
   }
-  const rr = slot.getBoundingClientRect();
-  const cx = rr.left + rr.width/2;
-  const cy = rr.top  + rr.height/2;
-  return clientToWorld(cx, cy);
+}
+function applyFaceImages(cardEl, card){
+  const faces = Array.isArray(card?._faces) ? card._faces : [];
+  const frontEl = cardEl.querySelector('.face.front');
+  const backEl  = cardEl.querySelector('.face.back');
+  if (frontEl) frontEl.style.backgroundImage = card.frontImg ? `url("${card.frontImg}")` : '';
+  if (backEl){
+    if (faces.length > 1){
+      // DFC: use only the real back art; do NOT mirror front
+      backEl.style.backgroundImage = card.backImg ? `url("${card.backImg}")` : '';
+    }else{
+      // Single-faced: show MTG card back
+      backEl.style.backgroundImage = `url("${CARD_BACK_URL}")`;
+    }
+  }
 }
 
-function animateDrawIntoIndex(imgUrl, index){
-  const startW = elementCenterWorld(deckZone);
-  const endW   = getHandSlotCenterWorld(index);
-
-  const cardW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'));
-  const cardH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'));
-
-  const ghost = document.createElement('div');
-  ghost.className = 'card';
-  ghost.style.left = `${startW.x - cardW/2}px`;
-  ghost.style.top  = `${startW.y - cardH/2}px`;
-
-  // keep perceived size constant regardless of zoom
-  const inv = 1 / state.zoom;
-  ghost.style.transform = `scale(${0.6 * inv})`;
-  ghost.style.transition = 'transform .28s ease, left .28s ease, top .28s ease';
-  ghost.style.background = `#000 center/cover no-repeat`;
-  ghost.style.backgroundImage = `url("${imgUrl || CARD_BACK_URL}")`;
-
-  worldEl.appendChild(ghost);
-
-  requestAnimationFrame(()=>{
-    ghost.style.left = `${endW.x - cardW/2}px`;
-    ghost.style.top  = `${endW.y - cardH/2}px`;
-    ghost.style.transform = `scale(${0.9 * inv})`;
-  });
-
-  setTimeout(()=>ghost.remove(), 320);
-}
-
-
-function hitHand(el){
-  const handEl = document.getElementById('hand');
-  const r = el.getBoundingClientRect();
-  const hr = handEl.getBoundingClientRect();
-  // consider a generous overlap (at least 25% of card height intersecting the hand bar)
-  const minOverlapY = Math.min(r.bottom, hr.bottom) - Math.max(r.top, hr.top);
-  return minOverlapY > (r.height * 0.25);
-}
-
-async function returnToHand(card, el){
-  // remove from table if present
-  const ti = state.table.findIndex(c=>c.id===card.id);
-  if(ti > -1) state.table.splice(ti,1);
-  // push back to hand (top of hand for now)
-  if(!state.hand.find(c=>c.id===card.id)) state.hand.splice(handIndex+1, 0, card);
-  // remove DOM card
-  el.remove();
-  clearSelection();
-  renderHand();
-  // TODO: mirror this move in Firebase (remove from table entry, add back to hand)
-}
-
-
-/* ---------- CARD DOM ---------- */
+/* Card DOM */
 function makeCardEl(card){
-  const el = document.createElement('div');
-  el.className = 'card';
-  el.style.left = (card.x ?? 300) + 'px';
-  el.style.top  = (card.y ?? 120) + 'px';
-  el.dataset.id = card.id;
+  normalizeCardImages(card);
+  const el = document.createElement('div'); el.className='card'; if (card.tapped) el.classList.add('tapped'); el.__cardRef = card;
+  el.style.left = (card.x ?? 300) + 'px'; el.style.top  = (card.y ?? 120) + 'px'; el.dataset.id = card.id;
 
-  // inner 3D flipper
-  const inner = document.createElement('div');
-  inner.className = 'cardInner';
+  const inner = document.createElement('div'); inner.className='cardInner';
   inner.style.setProperty('--flip-rot', card.face === 'back' ? '180deg' : '0deg');
-  inner.style.setProperty('--tap-rot', card.tapped ? '90deg' : '0deg');
+  inner.style.setProperty('--tap-rot',  card.tapped ? '90deg' : '0deg');
 
-  const front = document.createElement('div');
-  front.className = 'face front';
-  front.style.backgroundImage = `url("${card.frontImg || ''}")`;
+  const front = document.createElement('div'); front.className='face front';
+  const back  = document.createElement('div'); back.className='face back';
+  inner.appendChild(front); inner.appendChild(back); el.appendChild(inner);
 
-  const back = document.createElement('div');
-  back.className = 'face back';
-  back.style.backgroundImage  = `url("${card.backImg || CARD_BACK_URL}")`;
+  applyFaceImages(el, card);
 
-  inner.appendChild(front);
-  inner.appendChild(back);
-  el.appendChild(inner);
+const pt = document.createElement('div');
+pt.className = 'pt';
+pt.textContent = computePT(card);
+el.appendChild(pt);
 
-  // P/T badge (optional)
-  const pt = document.createElement('div'); pt.className = 'pt'; pt.textContent = card.pt || '';
-  el.appendChild(pt);
-
-  // selection
   el.addEventListener('pointerdown', (ev)=>{ ev.stopPropagation(); selectCard(card.id, el); });
-
   return el;
 }
 
-/* ---------- SELECTION + ACTIONS ---------- */
+/* Selection + actions */
+let actionsEl = null, tooltipEl = null;
 function clearSelection(){
   if(!state.selectedCardId && !tooltipEl) return;
-  const prev = worldEl.querySelector('.card[data-id="'+state.selectedCardId+'"]');
-  if(prev){ prev.classList.remove('selected'); prev.style.zIndex=''; }
-  state.selectedCardId = null;
-  if(actionsEl){ actionsEl.remove(); actionsEl = null; }
-  hideTooltip();
+  const prev = worldEl.querySelector('.card[data-id="'+state.selectedCardId+'"]'); if(prev){ prev.classList.remove('selected'); prev.style.zIndex=''; }
+  state.selectedCardId = null; if(actionsEl){ actionsEl.remove(); actionsEl=null; } hideTooltip();
 }
-  
-  function getCardWorldBox(cardEl){
-  const x = parseFloat(cardEl.style.left) || 0;
-  const y = parseFloat(cardEl.style.top)  || 0;
-  const w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
-  const h = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
-  return {x, y, w, h};
+function getCardWorldBox(cardEl){
+  const x = parseFloat(cardEl.style.left)||0, y = parseFloat(cardEl.style.top)||0;
+  const cs = getComputedStyle(cardEl); const w = parseFloat(cs.width)||223; const h = parseFloat(cs.height)||310; return {x,y,w,h};
 }
-
-  
 function positionActions(el){
-  if(!actionsEl) return;
-  const {x, y, w} = getCardWorldBox(el);
-  // place the button column to the RIGHT of the card, slight gap
-  actionsEl.style.left = (x + w + 8) + 'px';
-  actionsEl.style.top  = (y + 6) + 'px';
-  positionTooltip(el); // keep tooltip anchored with the card
+  if(!actionsEl) return; const {x,y,w}=getCardWorldBox(el); actionsEl.style.left=(x+w+8)+'px'; actionsEl.style.top=(y+6)+'px'; positionTooltip(el);
 }
-  
-  /* ---------- Tooltip helpers ---------- */
-function hideTooltip(){
-  if(tooltipEl){ tooltipEl.remove(); tooltipEl = null; }
-}
+function hideTooltip(){ if(tooltipEl){ tooltipEl.remove(); tooltipEl=null; } }
 
-/* Scryfall -> Mana class mapping */
+/* --- mana-master helpers: turn {W}{U}{2/R}{T} into <i class="ms ..."> --- */
 function manaClassForToken(tok){
-  // Tap/Untap
   if (tok === 'T') return 'tap';
   if (tok === 'Q') return 'untap';
-
-  // Half mana (Un-sets)
   if (tok === '1/2') return '1-2';
 
-  // Numbers / X/Y/Z / Energy / Colorless / Snow / Legendary / Infinity
   const simple = {
-    '0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10','11':'11','12':'12','13':'13','14':'14','15':'15','16':'16','17':'17','18':'18','19':'19','20':'20',
+    '0':'0','1':'1','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10',
+    '11':'11','12':'12','13':'13','14':'14','15':'15','16':'16','17':'17','18':'18','19':'19','20':'20',
     'X':'x','Y':'y','Z':'z','E':'e','C':'c','S':'s','L':'l','∞':'infinity'
   };
   if (tok in simple) return simple[tok];
 
-  // Hybrids & specials
+  // Hybrids / Phyrexian / 2-color / 2-or-color / C-hybrids
   if (tok.includes('/')){
     const parts = tok.split('/');
-    // Colored Phyrexian: {W/P}, {U/P}, ...
-    if (parts.length === 2 && parts.includes('P')){
+    if (parts.length === 2 && parts.includes('P')) {
       const color = parts[0] === 'P' ? parts[1] : parts[0];
-      return 'p' + color.toLowerCase(); // pw, pu, pb, pr, pg
+      return 'p' + color.toLowerCase();       // pw, pu, pb, pr, pg
     }
-    // Two-color hybrid: {W/U}, {B/R}, ...
-    if (parts.length === 2 && /^[WUBRG]$/.test(parts[0]) && /^[WUBRG]$/.test(parts[1])){
-      return parts[0].toLowerCase() + parts[1].toLowerCase();
+    if (parts.length === 2 && /^[WUBRG]$/.test(parts[0]) && /^[WUBRG]$/.test(parts[1])) {
+      return parts[0].toLowerCase() + parts[1].toLowerCase(); // wu, br, etc.
     }
-    // Colorless hybrid: {C/W}, {C/U}, ...
-    if (parts.length === 2 && parts.includes('C')){
+    if (parts.length === 2 && parts.includes('C')) {
       const other = (parts[0] === 'C' ? parts[1] : parts[0]).toLowerCase();
-      return 'c' + other; // cw, cu, cb, cr, cg
+      return 'c' + other;                      // cw, cu, cb, cr, cg
     }
-    // Two-or-color: {2/W}, {2/U}, ...
-    if (parts.length === 2 && parts[0] === '2' && /^[WUBRG]$/.test(parts[1])){
-      return '2' + parts[1].toLowerCase();
+    if (parts.length === 2 && parts[0] === '2' && /^[WUBRG]$/.test(parts[1])) {
+      return '2' + parts[1].toLowerCase();     // 2w, 2u, etc.
     }
   }
 
-  // Plain colors
   const colors = {W:'w',U:'u',B:'b',R:'r',G:'g'};
   if (tok in colors) return colors[tok];
 
-  return tok.toLowerCase();
+  return tok.toLowerCase(); // best-effort fallback
 }
 
-function renderManaFromBraces(str, {asCost=false} = {}){
+function renderManaFromBraces(str, { asCost = false } = {}){
   if (!str) return '';
   return str.replace(/\{([^}]+)\}/g, (_, inside) => {
     const tok = inside.trim().toUpperCase();
@@ -796,116 +671,67 @@ function renderManaFromBraces(str, {asCost=false} = {}){
     return `<i class="ms ms-${cls}${extra}"></i>`;
   });
 }
-const renderManaCost   = (s) => renderManaFromBraces(s, {asCost:true});
-const renderOracleMana = (s) => renderManaFromBraces(s, {asCost:false});
+
+// We’ll use the *colored* style both for cost and body, per your preference
+const renderManaCost   = (s) => renderManaFromBraces(s, { asCost:true });
+const renderOracleMana = (s) => renderManaFromBraces(s, { asCost:true });
+
 
 function buildTooltipFor(card, anchorEl){
-  hideTooltip();
+  // clear previous
+  if (typeof hideTooltip === 'function') hideTooltip();
+
+  // If we’re showing a plain back (no alt face), don’t show tooltip
+  if (card.face === 'back' && !(card._faces && card._faces.length > 1)) return;
+
+  const face     = (card._faces && card._faces.length > 1)
+                    ? (card.face === 'back' ? card._faces[1] : card._faces[0])
+                    : (card._faces?.[0] || {});
+  const name     = face.name || card.name || 'Unknown';
+  const typeLine = face.type_line || '';
+// Find oracle text from multiple sources so tooltips work on opponent cards too
+const oracleRaw =
+  (face.oracle_text) ||
+  (card._faces?.map(f => f.oracle_text).filter(Boolean).join('\n')) ||
+  (card._scry?.oracle_text) ||
+  (card._scry?.faces?.map(f => f.oracle_text).filter(Boolean).join('\n')) ||
+  '';
+
+const oracle = oracleRaw.trim();
+  const manaCost = face.mana_cost || card._scry?.mana_cost || '';
+const pt = computePT(card);
   const div = document.createElement('div');
   div.className = 'cardTooltip';
-
-  // Anchor to the CARD so it follows drag/pan/zoom with zero math
   div.style.position = 'absolute';
   div.style.left = '50%';
-  div.style.bottom = 'calc(100% + 8px)'; // centered ABOVE the card
-  div.style.transform = 'translateX(-50%)';
-  div.style.pointerEvents = 'auto';
-
-  const s = card._scry || {};
-  const name = card.name || s.name || 'Unknown';
-  const typeLine = card.type_line || s.type_line || '';
-  const oracle = (s.oracle_text || '').trim();
-  const kws = (s.keywords || []).filter(Boolean);
-  const manaCost = s.mana_cost || '';
-  const pt = card.pt || (s.power && s.toughness ? `${s.power}/${s.toughness}` : '');
+  div.style.bottom = 'calc(100% + 8px)';
 
   div.innerHTML = `
     <h3>${name}</h3>
     ${manaCost ? `<div class="cost" style="margin-bottom:6px;">${renderManaCost(manaCost)}</div>` : ''}
     ${typeLine ? `<div class="typeLine">${typeLine}</div>` : ''}
     ${oracle ? `<div class="oracle">${renderOracleMana(oracle)}</div>` : ''}
-    ${kws.length ? `<div class="kwRow">${kws.map(k=>`<span class="kw">${k}</span>`).join('')}</div>` : ''}
-    ${pt ? `<div class="pt">${pt}</div>` : ''}
+    ${pt       ? `<div class="pt">${pt}</div>` : ''}
   `;
 
-  (anchorEl || worldEl).appendChild(div);
+  (anchorEl || document.getElementById('world')).appendChild(div);
   tooltipEl = div;
 }
 
-  
-  // Center the tooltip above a hand slot's <div class="card">, using world coords.
-function positionTooltipForHandIndex(i){
-  if(!tooltipEl) return;
-  const slotCard = handTrack.querySelector(`.handCard[data-index="${i}"] .card`);
-  if(!slotCard) return;
-
-  // Measure the slot in SCREEN space, convert to WORLD coords
-  const rr = slotCard.getBoundingClientRect();
-  const topCenterWorld = clientToWorld(rr.left + rr.width/2, rr.top);
-
-  // Measure tooltip size (screen), convert to WORLD units
-  const tr = tooltipEl.getBoundingClientRect();
-  const tw = tr.width  / state.zoom;
-  const th = tr.height / state.zoom;
-
-  let leftWorld = topCenterWorld.x - (tw/2);
-  let topWorld  = topCenterWorld.y - th - 8;
-
-  // world bounds clamp
-  const wr = worldEl.getBoundingClientRect();
-  const worldWidth  = wr.width  / state.zoom;
-  const worldHeight = wr.height / state.zoom;
-  leftWorld = Math.max(6, Math.min(leftWorld, worldWidth  - tw - 6));
-  topWorld  = Math.max(6, Math.min(topWorld,  worldHeight - th - 6));
-
-  tooltipEl.style.left = leftWorld + 'px';
-  tooltipEl.style.top  = topWorld  + 'px';
-}
-
-
-/* Anchor tooltip centered ABOVE the card, in WORLD coords (no drift) */
 function positionTooltip(anchorEl){
-  if(!tooltipEl) return;
-
-  // If tooltip is anchored as a child of a .card, CSS handles it.
-  const p = tooltipEl.parentElement;
-  if (p && p.classList.contains('card')) return;
-
-  // (Fallback for any non-anchored tooltips — keep it simple)
-  if (anchorEl){
-    const r = anchorEl.getBoundingClientRect();
-    const wr = worldEl.getBoundingClientRect();
-    // center above the anchor in screen space (rare path)
-    const x = (r.left + r.width/2) - wr.left;
-    const y = (r.top) - wr.top;
-    tooltipEl.style.left = (x - tooltipEl.offsetWidth/2) + 'px';
-    tooltipEl.style.top  = (y - tooltipEl.offsetHeight - 8) + 'px';
-  }
+  if(!tooltipEl) return; const p = tooltipEl.parentElement; if (p && p.classList.contains('card')) return;
+  if (anchorEl){ const r = anchorEl.getBoundingClientRect(); const wr = worldEl.getBoundingClientRect(); const x=(r.left+r.width/2)-wr.left; const y=r.top-wr.top; tooltipEl.style.left=(x - tooltipEl.offsetWidth/2)+'px'; tooltipEl.style.top=(y - tooltipEl.offsetHeight - 8)+'px'; }
 }
-
-
-
 function buildActionsFor(card, anchorEl){
   if(actionsEl) actionsEl.remove();
-  const wrap = document.createElement('div');
-  wrap.className = 'cardActions';
-  wrap.innerHTML = `
-    <button class="qa" data-act="settings" title="Settings">⚙️</button>
-    <button class="qa" data-act="tap" title="Tap">T</button>
-    <button class="qa" data-act="flip" title="Flip">F</button>
-  `;
-  wrap.addEventListener('click', (e)=>{
-    e.stopPropagation();
-    const btn = e.target.closest('.qa'); if(!btn) return;
-    const act = btn.dataset.act;
+  const wrap = document.createElement('div'); wrap.className='cardActions';
+  wrap.innerHTML = `<button class="qa" data-act="settings" title="Settings">⚙️</button><button class="qa" data-act="tap" title="Tap">T</button><button class="qa" data-act="flip" title="Flip">F</button>`;
+  wrap.addEventListener('click',(e)=>{ e.stopPropagation(); const btn=e.target.closest('.qa'); if(!btn) return; const act=btn.dataset.act;
     if(act==='tap') toggleTap(card);
     else if(act==='flip') toggleFlip(card);
     else if(act==='settings') openCardSettings(card);
   });
-  wrap.addEventListener('click', (e)=>{ /* ...omitted for brevity... */ });
-  worldEl.appendChild(wrap);        // <-- must be worldEl
-  actionsEl = wrap;
-  positionActions(anchorEl);
+  worldEl.appendChild(wrap); actionsEl=wrap; positionActions(anchorEl);
 }
 function selectCard(id, el){
   if(state.selectedCardId && state.selectedCardId !== id){
@@ -914,360 +740,368 @@ function selectCard(id, el){
   }
   state.selectedCardId = id;
   el.classList.add('selected');
-  el.style.zIndex = '9999'; // keep selected card (and its tooltip) on top
+  el.style.zIndex = '9999';
 
-  const card = getCardById(id);
-  buildActionsFor(card, el);
-  buildTooltipFor(card, el); // << anchored to THIS card
-}
-document.addEventListener('pointerdown', (e)=>{
-  // clicking/pressing outside cards/toolbars clears selection
-  if(!e.target.closest('.card') && !e.target.closest('.cardActions') && !e.target.closest('.toolbar') && !e.target.closest('.drawer') ){
-    clearSelection();
+  const card = getCardById(id) || el.__cardRef;
+  if(!card) return;
+
+  // When viewing an opponent: tooltip only, no quick actions
+  if (state.viewReadOnly){
+    buildTooltipFor(card, el);
+    return;
   }
-});
 
-/* Tap + Flip behavior */
-function getCardById(id){
-  // search on table first, then hand (staged card copies use same id until confirmed write)
-  return state.table.find(c=>c.id===id) || state.hand.find(c=>c.id===id);
+  buildActionsFor(card, el);
+  buildTooltipFor(card, el);
 }
+
+document.addEventListener('pointerdown',(e)=>{ if(!e.target.closest('.card') && !e.target.closest('.cardActions') && !e.target.closest('.toolbar') && !e.target.closest('.drawer')){ clearSelection(); } });
+
+/* Tap/Flip */
+function getCardById(id){ return state.table.find(c=>c.id===id) || state.hand.find(c=>c.id===id); }
 function updateCardDom(card){
-  const el = worldEl.querySelector(`.card[data-id="${card.id}"]`);
-  if(!el) return;
+  const el = worldEl.querySelector(`.card[data-id="${card.id}"]`); if(!el) return;
+  const ptEl = el.querySelector('.pt');
+if (ptEl) ptEl.textContent = computePT(card);
+
   const inner = el.querySelector('.cardInner');
   inner.style.setProperty('--flip-rot', card.face === 'back' ? '180deg' : '0deg');
-  inner.style.setProperty('--tap-rot', card.tapped ? '90deg' : '0deg');
-  positionActions(el);
+  inner.style.setProperty('--tap-rot',  card.tapped ? '90deg' : '0deg');
+  el.classList.toggle('tapped', !!card.tapped);
+
+  normalizeCardImages(card);           // refresh from _faces
+  applyFaceImages(el, card);           // re-apply DOM images (NO mirroring)
+
+  reanchorDuringTransition(el); positionActions(el); if (tooltipEl) positionTooltip(el);
 }
+let _reanchorRAF=null;
+function reanchorDuringTransition(cardEl, durationMs=420){
+  if(!cardEl) return; const start=performance.now(); if(_reanchorRAF) cancelAnimationFrame(_reanchorRAF);
+  const tick=(now)=>{ positionActions(cardEl); if(tooltipEl) positionTooltip(cardEl); if(now-start<durationMs && state.selectedCardId){ _reanchorRAF=requestAnimationFrame(tick); } };
+  _reanchorRAF=requestAnimationFrame(tick);
+}
+
+function persistCardState(card){
+  if (!state.gameId) return;
+
+  let changed = false;
+
+  // Table card
+  const ti = state.table.findIndex(c => c.id === card.id);
+  if (ti > -1){
+    state.table[ti].tapped = !!card.tapped;
+    state.table[ti].face   = card.face || 'front';
+    changed = true;
+  }
+
+  // Commander card
+  if (state.tableCommander && state.tableCommander.id === card.id){
+    state.tableCommander.tapped = !!card.tapped;
+    state.tableCommander.face   = card.face || 'front';
+    changed = true;
+  }
+
+  if (changed){
+    window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+  }
+}
+
+
 function toggleTap(card){
   card.tapped = !card.tapped;
   updateCardDom(card);
-  // TODO: persist tap state on your table entry
+  if (!state.viewReadOnly) persistCardState(card);
 }
+
 function toggleFlip(card){
-  // If the card has an alternate back image, use it; otherwise use static back image.
-  // We already store both frontImg/backImg on card. Just toggle face.
   card.face = (card.face === 'front') ? 'back' : 'front';
   updateCardDom(card);
-  // TODO: persist face state on your table entry
-}
-function openCardSettings(card){
-  // TODO: open overlay to edit counters, P/T overrides, annotations, etc.
-  alert(`Settings for: ${card.name}`);
+  if (!state.viewReadOnly) persistCardState(card);
 }
 
-/* ---------- HAND CAROUSEL ---------- */
-let handIndex = 0;
-let handSwipeEnabled = false;   // ensure we attach global listeners only once
+document.addEventListener('keydown',(e)=>{
+  const tag=(document.activeElement&&document.activeElement.tagName)||''; if(/(INPUT|TEXTAREA|SELECT)/.test(tag)) return;
+  const id=state.selectedCardId; if(!id) return; const card=getCardById(id); if(!card) return;
+  if(e.key==='t'||e.key==='T'){ e.preventDefault(); toggleTap(card); }
+  else if(e.key==='f'||e.key==='F'){ e.preventDefault(); toggleFlip(card); }
+});
+function openCardSettings(card){ alert(`Settings for: ${card.name}`); }
 
+/* Hand */
+let handIndex=0, handSwipeEnabled=false;
 function renderHand(){
-  handTrack.innerHTML = '';
-
-  // Render ALL cards once (no popping). We'll update layout via transforms only.
+  handTrack.innerHTML='';
   state.hand.forEach((card, i)=>{
+    const slot=document.createElement('div'); slot.className='handCard'; slot.dataset.index=String(i);
+    const cEl=document.createElement('div'); cEl.className='card'; cEl.style.position='relative'; cEl.style.width='var(--card-w)'; cEl.style.height='var(--card-h)'; cEl.dataset.id=card.id;
+
+    normalizeCardImages(card);
+    const inner=document.createElement('div'); inner.className='cardInner';
+    inner.style.setProperty('--flip-rot', card.face === 'back' ? '180deg' : '0deg');
+    inner.style.setProperty('--tap-rot',  card.tapped ? '90deg'   : '0deg');
+    const front=document.createElement('div'); front.className='face front';
+    const back=document.createElement('div'); back.className='face back';
+    inner.appendChild(front); inner.appendChild(back); cEl.appendChild(inner);
+
+    applyFaceImages(cEl, card);
+
+    if(card.__ghost){ cEl.style.visibility='hidden'; }
+    cEl.addEventListener('click',(ev)=>{ ev.stopPropagation(); handTrack.querySelectorAll('.card').forEach(n=>n.classList.remove('selected')); cEl.classList.add('selected'); buildTooltipFor(card, cEl); });
+    cEl.addEventListener('touchstart',(e)=>{ const t=e.changedTouches[0]; cEl.__startForStage={x:t.clientX,y:t.clientY}; },{passive:true});
+    cEl.addEventListener('touchend',(e)=>{ const t=e.changedTouches[0]; const st=cEl.__startForStage||null; if(!st) return; const dy=st.y - t.clientY; const isFocused=(i===handIndex); if(isFocused && dy>40){ stageFromHand(state.hand[handIndex]); } cEl.__startForStage=null; },{passive:true});
+
+    slot.appendChild(cEl); handTrack.appendChild(slot);
+  });
+  const focused=state.hand[handIndex]; if(focused){ const slotCard=handTrack.querySelector(`.handCard[data-index="${handIndex}"] .card`); if(slotCard) buildTooltipFor(focused, slotCard); }
+  layoutHandAt(handIndex);
+}
+function layoutHandAt(cx){
+  const spacing=70; const cards=handTrack.querySelectorAll('.handCard');
+  cards.forEach((slot)=>{ const i=Number(slot.dataset.index); const d=i-cx; const abs=Math.abs(d);
+    let cls='handCard'; if(abs===0) cls+=' focus'; else if(abs===1||abs===2) cls+=' mid'; else cls+=' far';
+    if(slot.className!==cls) slot.className=cls; slot.style.setProperty('--dx', `${d*spacing}px`); slot.style.setProperty('--rot', `${Math.max(-6, Math.min(6, d*1.5))}deg`); slot.style.zIndex=String(1000-abs);
+  });
+}
+function enableHandSwipe(){
+  if(handSwipeEnabled) return; handSwipeEnabled=true;
+  let startX=null, startY=null, startIndex=0, lastAppliedIndex=0; const STEP_PX=35;
+  handTrack.addEventListener('touchstart',(e)=>{ const t=e.changedTouches[0]; startX=t.clientX; startY=t.clientY; startIndex=handIndex; lastAppliedIndex=handIndex; document.getElementById('hand').classList.add('swiping'); layoutHandAt(handIndex); },{passive:true});
+  handTrack.addEventListener('touchmove',(e)=>{ if(startX===null) return; const t=e.changedTouches[0]; const dx=t.clientX-startX; const dy=t.clientY-startY; if(Math.abs(dy)>Math.abs(dx)+10) return; e.preventDefault();
+    const steps=Math.trunc((-dx)/STEP_PX); let target=startIndex+steps; target=Math.max(0, Math.min(state.hand.length-1, target));
+    if(target!==lastAppliedIndex){ handIndex=target; lastAppliedIndex=target; layoutHandAt(target); const focused=state.hand[handIndex]; const slotCard=handTrack.querySelector(`.handCard[data-index="${handIndex}"] .card`); if(focused && slotCard){ buildTooltipFor(focused, slotCard); } }
+  },{passive:false});
+  handTrack.addEventListener('touchend',()=>{ startX=null; startY=null; },{passive:true});
+  handTrack.addEventListener('touchcancel',()=>{ startX=null; startY=null; },{passive:true});
+}
+function stageFromHand(card){
+  const hi=state.hand.findIndex(c=>c.id===card.id);
+  if(hi>-1){ state.hand.splice(hi,1); handIndex=Math.max(0, Math.min(handIndex, state.hand.length-1)); renderHand(); }
+  const cx=window.innerWidth/2, cy=window.innerHeight/2; const centerW=clientToWorld(cx,cy);
+  const cardW=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'))||223;
+  const cardH=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'))||310;
+  const staged={ ...card, x:centerW.x - cardW/2, y:centerW.y - cardH/2 };
+  const el=makeCardEl(staged); worldEl.appendChild(el); enableDrag(el, staged, {staged:true});
+  handTrack.querySelectorAll('.card').forEach(n=>n.classList.remove('selected')); selectCard(staged.id, el);
+}
+
+function renderOpponentHand(count){
+  handTrack.innerHTML = '';
+  for (let i = 0; i < count; i++){
     const slot = document.createElement('div');
     slot.className = 'handCard';
     slot.dataset.index = String(i);
 
     const cEl = document.createElement('div');
     cEl.className = 'card';
-
-    const inner = document.createElement('div'); inner.className='cardInner';
-    const front = document.createElement('div'); front.className='face front';
-    front.style.backgroundImage = `url("${card.frontImg || ''}")`;
-    const back  = document.createElement('div'); back.className='face back';
-    back.style.backgroundImage = `url("${card.backImg || CARD_BACK_URL}")`;
-    inner.appendChild(front); inner.appendChild(back);
-    cEl.appendChild(inner);
-
     cEl.style.position='relative';
     cEl.style.width='var(--card-w)';
     cEl.style.height='var(--card-h)';
-    cEl.dataset.id = card.id;
 
-    if(card.__ghost){ cEl.style.visibility='hidden'; }
+    const inner = document.createElement('div');
+    inner.className = 'cardInner';
+    inner.style.setProperty('--flip-rot', '180deg'); // show the back face
 
- // tap highlight within hand + show tooltip (anchored to the hand card)
-cEl.addEventListener('click', (ev)=>{
-  ev.stopPropagation();
-  handTrack.querySelectorAll('.card').forEach(n=>n.classList.remove('selected'));
-  cEl.classList.add('selected');
+    const front = document.createElement('div'); front.className='face front';
+    const back  = document.createElement('div');  back.className='face back';
+    back.style.backgroundImage = `url("${CARD_BACK_URL}")`; // ⟵ add this line
 
-  buildTooltipFor(card, cEl);
-});
-
-
-    // swipe UP on the focused card to stage
-    cEl.addEventListener('touchend', (e)=>{
-      const t = e.changedTouches[0];
-      const start = cEl.__startForStage || null;
-      if(!start) return;
-      const dy = start.y - t.clientY;
-      const isFocused = (i === handIndex);
-      if(isFocused && dy > 40){ stageFromHand(state.hand[handIndex]); }
-      cEl.__startForStage = null;
-    }, {passive:true});
-
-    cEl.addEventListener('touchstart', (e)=>{
-      const t = e.changedTouches[0];
-      cEl.__startForStage = { x: t.clientX, y: t.clientY };
-    }, {passive:true});
-
+    inner.appendChild(front);
+    inner.appendChild(back);
+    cEl.appendChild(inner);
     slot.appendChild(cEl);
     handTrack.appendChild(slot);
-  });
-  
-  // After laying out, show tooltip above the focused hand card (anchored)
-const focused = state.hand[handIndex];
-if (focused){
-  const slotCard = handTrack.querySelector(`.handCard[data-index="${handIndex}"] .card`);
-  if (slotCard) buildTooltipFor(focused, slotCard);
-}
-
-
-
-  // Initial layout at current index
-  layoutHandAt(handIndex);
-}
-
-function layoutHandAt(cx){
-  // Smooth, pop-free layout by only changing transforms/classes
-  const spacing = 70;
-  const cards = handTrack.querySelectorAll('.handCard');
-  cards.forEach((slot)=>{
-    const i = Number(slot.dataset.index);
-    const d = i - cx;
-    const abs = Math.abs(d);
-
-    // classes
-    let cls = 'handCard';
-    if (abs === 0) cls += ' focus';
-    else if (abs === 1 || abs === 2) cls += ' mid';
-    else cls += ' far';
-    if (slot.className !== cls) slot.className = cls;
-
-    // transforms and stacking
-    slot.style.setProperty('--dx', `${d * spacing}px`);
-    slot.style.setProperty('--rot', `${Math.max(-6, Math.min(6, d*1.5))}deg`);
-    slot.style.zIndex = String(1000 - abs);
-  });
-}
-
-
-/* Global hand swipe (live, reversible, multi-card) */
-function enableHandSwipe(){
-  if(handSwipeEnabled) return;
-  handSwipeEnabled = true;
-
-  let startX = null;
-  let startY = null;
-  let startIndex = 0;
-  let lastAppliedIndex = 0;
-
-  const STEP_PX = 35;   // smaller step => easier to traverse multiple cards
-
-  handTrack.addEventListener('touchstart', (e)=>{
-    const t = e.changedTouches[0];
-    startX = t.clientX;
-    startY = t.clientY;
-    startIndex = handIndex;
-    lastAppliedIndex = handIndex;
-	
-  document.getElementById('hand').classList.add('swiping');
-  layoutHandAt(handIndex);
-  }, {passive:true});
-
-  handTrack.addEventListener('touchmove', (e)=>{
-    if(startX === null) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - startX;
-    const dy = t.clientY - startY;
-
-    // if clearly vertical, let the "stage" gesture win and don't fight scrolling
-    if(Math.abs(dy) > Math.abs(dx) + 10) return;
-
-    // prevent page scroll so we keep receiving move events continuously
-    e.preventDefault();
-
-    // INVERTED: dragging LEFT (dx negative) => move to NEXT (index+)
-    const steps = Math.trunc((-dx) / STEP_PX);
-    let target = startIndex + steps;
-
-    target = Math.max(0, Math.min(state.hand.length - 1, target));
-
-    if(target !== lastAppliedIndex){
-  handIndex = target;
-  lastAppliedIndex = target;
-  layoutHandAt(target);
-
-  // Live-update tooltip (anchored to the focused hand card)
-  const focused = state.hand[handIndex];
-  const slotCard = handTrack.querySelector(`.handCard[data-index="${handIndex}"] .card`);
-  if (focused && slotCard){
-    buildTooltipFor(focused, slotCard);
   }
-}
-
-  }, {passive:false}); // NOTE: passive:false so preventDefault() works
-
-  handTrack.addEventListener('touchend', ()=>{
-    startX = null; startY = null;
-  }, {passive:true});
-
-  handTrack.addEventListener('touchcancel', ()=>{
-    startX = null; startY = null;
-  }, {passive:true});
+  layoutHandAt(Math.min(handIndex, Math.max(0, count - 1)));
 }
 
 
+async function hydrateOpponentIntoView(doc){
+  // Clear table DOM
+  worldEl.querySelectorAll('.card').forEach(n=>n.remove());
+  // Replace local state with opponent snapshot ONLY for rendering (no writes will occur in read-only)
+  state.deck   = doc.Deck || [];
+  state.hand   = [];                 // don’t expose their actual cards
+  state.table  = doc.Table || [];
+  state.gy     = doc.Graveyard || [];
+  state.exile  = doc.Exile || [];
+  state.tableCommander = doc.Commander || null;
 
-function stageFromHand(card){
-  // 1) Remove from hand immediately so you can’t spawn duplicates
-  const hi = state.hand.findIndex(c => c.id === card.id);
-  if (hi > -1){
-    state.hand.splice(hi, 1);
-    // Adjust focus index to keep carousel sane
-    handIndex = Math.max(0, Math.min(handIndex, state.hand.length - 1));
-    renderHand();
+  // Spawn commander + table (read-only: no drag handlers)
+  if (state.tableCommander){
+    const el = makeCardEl(state.tableCommander);
+    worldEl.appendChild(el);
   }
+  state.table.forEach(c=>{
+    const el = makeCardEl(c);
+    worldEl.appendChild(el);
+  });
 
-  // 2) Compute the current SCREEN CENTER in WORLD coords (respects pan/zoom)
-  const cx = window.innerWidth  / 2;
-  const cy = window.innerHeight / 2;
-  const centerW = clientToWorld(cx, cy);
+  // Hand backs only
+  renderOpponentHand((doc.Hand || []).length);
 
-  // 3) Stage the card at the center (top-left position for the card element)
-  const cardW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
-  const cardH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
-  const staged = {
-    ...card,
-    x: centerW.x - cardW/2,
-    y: centerW.y - cardH/2
+  state._oppSnapshot = {
+    Table: (doc.Table || []).map(c => ({...c})),
+    Commander: doc.Commander ? {...doc.Commander} : null,
+    Graveyard: (doc.Graveyard || []).slice(),
+    Exile: (doc.Exile || []).slice(),
+    HandCount: (doc.Hand || []).length
   };
-
-  // 4) Spawn and allow drag; still "staged" (not committed) until you drop/confirm
-  const el = makeCardEl(staged);
-  worldEl.appendChild(el);
-  enableDrag(el, staged, {staged:true});
-
-  // 5) If this card was selected in hand, clear any hand selection highlight
-  handTrack.querySelectorAll('.card').forEach(n=>n.classList.remove('selected'));
-
-  // 6) Optional: immediately select it so actions/tooltip show & track
-  selectCard(staged.id, el);
 }
 
-/* ---------- DRAG / DROP ---------- */
-function enableDrag(el, card, opts={}){
-  let dragging=false, offX=0, offY=0;
+function idMap(arr){ const m=new Map(); (arr||[]).forEach(c=>m.set(c.id, c)); return m; }
 
-  el.style.touchAction='none';
-  el.addEventListener('pointerdown', (e)=>{
-    dragging=true; draggingCard = true;
-    el.setPointerCapture(e.pointerId);
-    // compute world-space offset so the card stays under the finger
-    const wp = clientToWorld(e.clientX, e.clientY);
-    const left = parseFloat(el.style.left) || 0;
-    const top  = parseFloat(el.style.top)  || 0;
-    offX = wp.x - left;
-    offY = wp.y - top;
-    // when starting to drag, keep actions attached to this card
-    if(state.selectedCardId === card.id) positionActions(el);
-  });
-
-  el.addEventListener('pointermove', (e)=>{
-  if(!dragging) return;
-  const wp = clientToWorld(e.clientX, e.clientY);
-  el.style.left = (wp.x - offX) + 'px';
-  el.style.top  = (wp.y - offY) + 'px';
-  // keep overlays glued even if actionsEl is absent
-  if(state.selectedCardId === card.id){
-    positionActions(el);          // also re-anchors buttons
-    if (tooltipEl) positionTooltip(el); // explicitly re-anchor tooltip
+function patchOpponentView(nextDoc){
+  // Zones + hand count
+  state.gy = nextDoc.Graveyard || [];
+  state.exile = nextDoc.Exile || [];
+  const nextHandCount = (nextDoc.Hand || []).length;
+  if (state._oppSnapshot.HandCount !== nextHandCount){
+    renderOpponentHand(nextHandCount);
   }
-}, {passive:false});
 
-
-  async function finishDrag(){
-    if(!dragging) return;
-    dragging=false; draggingCard = false;
-
-    // If dropped over the hand bar, return to hand (no table write)
-    if (hitHand(el)){
-      await returnToHand(card, el);
-      return;
+  // Commander
+  const prevCom = state._oppSnapshot.Commander;
+  const nextCom = nextDoc.Commander;
+  if (!!prevCom !== !!nextCom || (prevCom && nextCom && prevCom.id !== nextCom.id)){
+    // replace commander node
+    if (prevCom){
+      const oldEl = worldEl.querySelector(`.card[data-id="${prevCom.id}"]`);
+      if (oldEl) oldEl.remove();
     }
-
-    const hits = zoneHit(el);
-    if(hits.length){
-      const z = hits[0].id;
-      if(z==='graveyard'){ await moveToZone(card, 'graveyard', el); return; }
-      if(z==='exileZone'){ await moveToZone(card, 'exile', el); return; }
-      if(z==='cmdZone'){   await snapToCommander(card, el); return; }
-      if(z==='deckZone'){  showDeckChoice(card, el); return; }
+    if (nextCom){
+      const el = makeCardEl(nextCom);
+      worldEl.appendChild(el);
     }
-    if(opts.staged){
-      await writeTableAdd(card); // confirm to table (and remove from hand)
-      opts.staged=false;
-      // After confirm, ensure selection/actions attach to the on-table card
-      selectCard(card.id, el);
+  }else if (prevCom && nextCom){
+    // same id — animate changes
+    const el = worldEl.querySelector(`.card[data-id="${nextCom.id}"]`);
+    if (el){
+      // movement
+      const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
+      if (px !== (nextCom.x||0) || py !== (nextCom.y||0)){
+        el.style.left = (nextCom.x || 0) + 'px';
+        el.style.top  = (nextCom.y || 0) + 'px';
+      }
+      // tap/flip
+      const same = el.__cardRef || {};
+      same.tapped = !!nextCom.tapped;
+      same.face   = nextCom.face || 'front';
+      updateCardDom(same);
+      el.__cardRef = nextCom;
+    }
+  }
+
+  // Table diff
+  const prevMap = idMap(state._oppSnapshot.Table || []);
+  const nextMap = idMap(nextDoc.Table || []);
+
+  // removed
+  for (const [id] of prevMap){
+    if (!nextMap.has(id)){
+      const el = worldEl.querySelector(`.card[data-id="${id}"]`);
+      if (el){
+        el.style.opacity = '0';
+        setTimeout(()=>el.remove(), 180);
+      }
+    }
+  }
+
+  // added/updated
+  for (const [id, nxt] of nextMap){
+    const el = worldEl.querySelector(`.card[data-id="${id}"]`);
+    if (!el){
+      const ne = makeCardEl(nxt);
+      worldEl.appendChild(ne);
+      // slight fade-in
+      ne.style.opacity = '0';
+      requestAnimationFrame(()=>{ ne.style.opacity = '1'; });
     }else{
-      await writeTableMove(card, el); // optional XY persist
+      // movement
+      const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
+      if (px !== (nxt.x||0) || py !== (nxt.y||0)){
+        el.style.left = (nxt.x || 0) + 'px';
+        el.style.top  = (nxt.y || 0) + 'px';
+      }
+      // tap / flip updates
+      const same = el.__cardRef || {};
+      same.tapped = !!nxt.tapped;
+      same.face   = nxt.face || 'front';
+      updateCardDom(same);
+      el.__cardRef = nxt;
     }
   }
 
-  el.addEventListener('pointerup',   finishDrag);
-  el.addEventListener('pointercancel', finishDrag);
+  // refresh snapshots used for next diff
+  state._oppSnapshot = {
+    Table: (nextDoc.Table || []).map(c => ({...c})),
+    Commander: nextDoc.Commander ? {...nextDoc.Commander} : null,
+    Graveyard: (nextDoc.Graveyard || []).slice(),
+    Exile: (nextDoc.Exile || []).slice(),
+    HandCount: (nextDoc.Hand || []).length
+  };
+
+  // keep state.table aligned so tooltips/select work
+  state.table = (nextDoc.Table || []).map(c => ({...c}));
+  state.tableCommander = nextDoc.Commander ? {...nextDoc.Commander} : null;
 }
 
-/* ---------- ZONE ACTIONS ---------- */
-async function moveToZone(card, zone, el){
-  el.remove();
-  clearSelection();
-  await removeFromTable(card);
-  await appendToZone(card, zone);
+function startViewPoller(){
+  if (state.viewPoller) clearInterval(state.viewPoller);
+  state.viewPoller = setInterval(async ()=>{
+    if (!state.viewReadOnly || !state.gameId) return;
+    const doc = await window.window.StorageAPI.loadPlayerState(state.gameId, state.viewSeat);
+    if (!doc) return;
+    patchOpponentView(doc);
+  }, 100);
 }
+
+
+/* Drag/Drop */
+function enableDrag(el, card, opts={}){
+  if (state.viewReadOnly) return;
+  let dragging=false, offX=0, offY=0;
+  el.style.touchAction='none';
+  el.addEventListener('pointerdown',(e)=>{ dragging=true; draggingCard=true; el.setPointerCapture?.(e.pointerId); const wp=clientToWorld(e.clientX,e.clientY); const left=parseFloat(el.style.left)||0; const top=parseFloat(el.style.top)||0; offX=wp.x-left; offY=wp.y-top; if(state.selectedCardId===card.id) positionActions(el); });
+  el.addEventListener('pointermove',(e)=>{ if(!dragging) return; const wp=clientToWorld(e.clientX,e.clientY); el.style.left=(wp.x-offX)+'px'; el.style.top=(wp.y-offY)+'px'; if(state.selectedCardId===card.id){ positionActions(el); if(tooltipEl) positionTooltip(el); } },{passive:false});
+  async function finishDrag(){
+    if(!dragging) return; dragging=false; draggingCard=false;
+    if (hitHand(el)){ await returnToHand(card, el); return; }
+    const hits=zoneHit(el);
+    if(hits.length){
+      const z=hits[0].id;
+      if(z==='graveyard'){ await moveToZone(card,'graveyard',el); return; }
+      if(z==='exileZone'){ await moveToZone(card,'exile',el); return; }
+      if(z==='cmdZone'){ await snapToCommander(card,el); return; }
+      if(z==='deckZone'){ showDeckChoice(card,el); return; }
+    }
+    if(opts.staged){ await writeTableAdd(card); opts.staged=false; selectCard(card.id, el); }
+    else{ await writeTableMove(card, el); }
+  }
+  el.addEventListener('pointerup',finishDrag); el.addEventListener('pointercancel',finishDrag);
+}
+function hitHand(el){
+  const handEl=document.getElementById('hand'); const r=el.getBoundingClientRect(); const hr=handEl.getBoundingClientRect();
+  const minOverlapY=Math.min(r.bottom,hr.bottom)-Math.max(r.top,hr.top); return minOverlapY > (r.height * 0.25);
+}
+
+/* Zones */
+async function moveToZone(card, zone, el){ el.remove(); clearSelection(); await removeFromTable(card); await appendToZone(card, zone); }
 async function snapToCommander(card, el){
-  const zr = cmdZone.getBoundingClientRect();
-  // convert top-left to WORLD coords
-  const tlWorld = clientToWorld(zr.left, zr.top);
-  const inset = 6;
-
-  el.style.left = (tlWorld.x + inset) + 'px';
-  el.style.top  = (tlWorld.y + inset) + 'px';
-
-  // keep model in sync
-  card.x = tlWorld.x + inset;
-  card.y = tlWorld.y + inset;
-
-  await writeCommander(card);
-  positionActions(el);
+  const zr=cmdZone.getBoundingClientRect(); const tl=clientToWorld(zr.left,zr.top); const inset=6;
+  el.style.left=(tl.x+inset)+'px'; el.style.top=(tl.y+inset)+'px'; card.x=tl.x+inset; card.y=tl.y+inset; await writeCommander(card); positionActions(el);
 }
-
 function showDeckChoice(card, el){
-  const zr = deckZone.getBoundingClientRect();
-  deckChoice.style.left = (zr.left + zr.width/2) + 'px';
-  deckChoice.style.top  = (zr.top) + 'px';
-  deckChoice.style.display='flex';
-  deckChoice.onclick = async (ev)=>{
-    const btn = ev.target.closest('.pill'); if(!btn) return;
-    const choice = btn.dataset.choice;
-    deckChoice.style.display='none';
-    el.remove();
-    clearSelection();
-    await removeFromTable(card);
-    if(choice==='top')        await deckPutTop(card);
-    else if(choice==='bottom')await deckPutBottom(card);
-    else if(choice==='shuffle'){ await deckPutTop(card); await deckShuffle(); }
+  const zr=deckZone.getBoundingClientRect();
+  deckChoice.style.left=(zr.left+zr.width/2)+'px'; deckChoice.style.top=(zr.top)+'px'; deckChoice.style.display='flex';
+  deckChoice.onclick=async(ev)=>{ const btn=ev.target.closest('.pill'); if(!btn) return; const choice=btn.dataset.choice; deckChoice.style.display='none'; el.remove(); clearSelection(); await removeFromTable(card);
+    if(choice==='top') await deckPutTop(card); else if(choice==='bottom') await deckPutBottom(card); else if(choice==='shuffle'){ await deckPutTop(card); await deckShuffle(); }
   };
 }
 
-/* ---------- OVERLAYS (GY / EXILE) ---------- */
+/* Overlays */
 gyZone.addEventListener('click', ()=> openZoneOverlay('graveyard', state.gy));
 exileZone.addEventListener('click', ()=> openZoneOverlay('exile', state.exile));
 document.getElementById('overlayClose').addEventListener('click', ()=>{ zoneOverlay.style.display='none'; clearSelection(); });
-
 function openZoneOverlay(kind, arr){
   overlayTitle.textContent = (kind==='graveyard'?'Graveyard':'Exile');
   overlayGrid.innerHTML='';
@@ -1275,22 +1109,33 @@ function openZoneOverlay(kind, arr){
     const t=document.createElement('div'); t.className='thumb';
     if(card.frontImg) t.style.backgroundImage=`url("${card.frontImg}")`;
     t.title = card.name || '';
-    t.addEventListener('click', async ()=>{
-      await removeFromZone(card, kind);
-      const el = makeCardEl(card); worldEl.appendChild(el); enableDrag(el, card, {staged:false});
-      await writeTableAdd(card);
-      zoneOverlay.style.display='none';
-    });
+
+    if (!state.viewReadOnly){
+      // original interactive behavior
+      t.addEventListener('click', async ()=>{
+        await removeFromZone(card, kind);
+        const el = makeCardEl(card); worldEl.appendChild(el); enableDrag(el, card, {staged:false});
+        await writeTableAdd(card);
+        zoneOverlay.style.display='none';
+      });
+    } else {
+      // read-only: clicking just highlights for tooltip
+      t.addEventListener('click', ()=>{
+        hideTooltip();
+        const ghost = makeCardEl(card);
+        ghost.style.left = '0px'; ghost.style.top = '0px'; // anchor not used
+        buildTooltipFor(card, ghost);
+      });
+    }
     overlayGrid.appendChild(t);
   });
   zoneOverlay.style.display='block';
 }
 
-async function hydrateFromDoc(data){
-  // Clear current UI DOM
-  worldEl.querySelectorAll('.card').forEach(n=>n.remove());
 
-  // Replace local state from Firestore
+/* Hydrate */
+async function hydrateFromDoc(data){
+  worldEl.querySelectorAll('.card').forEach(n=>n.remove());
   state.deck  = data?.Deck      || [];
   state.hand  = data?.Hand      || [];
   state.table = data?.Table     || [];
@@ -1298,484 +1143,413 @@ async function hydrateFromDoc(data){
   state.exile = data?.Exile     || [];
   state.tableCommander = data?.Commander || null;
 
-  // Spawn table cards
-  state.table.forEach(c=>{
-    const el = makeCardEl(c);
-    worldEl.appendChild(el);
-    enableDrag(el, c, {staged:false});
-  });
+  [...state.deck, ...state.hand, ...state.table, ...state.gy, ...state.exile].forEach(normalizeCardImages);
+  if (state.tableCommander) normalizeCardImages(state.tableCommander);
 
-  // Commander
-  if (state.tableCommander){
-    const el = makeCardEl(state.tableCommander);
-    worldEl.appendChild(el);
-    enableDrag(el, state.tableCommander, {staged:false});
-  }
-
+  state.table.forEach(c=>{ const el=makeCardEl(c); worldEl.appendChild(el); enableDrag(el, c, {staged:false}); });
+  if (state.tableCommander){ const el=makeCardEl(state.tableCommander); worldEl.appendChild(el); enableDrag(el, state.tableCommander, {staged:false}); }
   renderHand();
 }
 
-async function loadGameIntoUI(gameId){
-  state.gameId = gameId;
-  const data = await StorageAPI.loadPlayerState(state.gameId, state.mySeat);
-  if (data) await hydrateFromDoc(data);
-  else {
-    // start clean if no doc yet
-    worldEl.querySelectorAll('.card').forEach(n=>n.remove());
-    state.deck=[]; state.hand=[]; state.table=[]; state.gy=[]; state.exile=[];
-    state.tableCommander = null;
+function isEmptyDoc(d){
+  if (!d) return true;
+  return !(
+    (d.Deck?.length) || (d.Hand?.length) || (d.Table?.length) ||
+    (d.Graveyard?.length) || (d.Exile?.length) || d.Commander
+  );
+}
+function closeDrawerNow(){
+  drawerWrap.classList.add('collapsed');
+  drawerWrap.classList.remove('expanded');
+  zoomWrapEl.style.display = 'flex';
+}
+
+
+async function loadGameIntoUI(gameId) {
+ state.gameId = gameId;
+  const data = await window.window.StorageAPI.loadPlayerState(state.gameId, state.mySeat);
+  if (data) {
+    await hydrateFromDoc(data);
+    if (!isEmptyDoc(data)) closeDrawerNow();   // ← add this line
+  } else {
+    // nothing in Firestore → keep everything empty locally
+    worldEl.querySelectorAll('.card').forEach(n => n.remove());
+    state.deck = []; state.hand = []; state.table = [];
+    state.gy = []; state.exile = []; state.tableCommander = null;
     renderHand();
   }
 }
 
 
-/* ---------- LOAD / RESET (drawer) ---------- */
+/* Drawer actions */
 document.getElementById('loadBtn').addEventListener('click', async ()=>{
   try{
     const txt = document.getElementById('deckIn').value;
     const { deckCards, commanderCard } = await buildDeckFromText(txt);
-
-    await writeDeckForPlayer(deckCards);  // STUB
-    await ensureTurn0();
-
-    state.deck = [...deckCards];
-    state.hand = [];
-    state.table = []; state.gy=[]; state.exile=[];
-    renderHand();
-
+    await writeDeckForPlayer(deckCards); await ensureTurn0();
+    state.deck=[...deckCards]; state.hand=[]; state.table=[]; state.gy=[]; state.exile=[]; renderHand();
     if (commanderCard){
-      await writeCommander(commanderCard); // STUB
+      await writeCommander(commanderCard);
       const el = makeCardEl({...commanderCard, x: cmdZone.offsetLeft+8, y: cmdZone.offsetTop+8});
-      worldEl.appendChild(el);
-      enableDrag(el, commanderCard, {staged:false});
+      worldEl.appendChild(el); enableDrag(el, commanderCard, {staged:false});
     }
+    closeDrawerNow();  // ← add this line
   }catch(err){
-    console.error(err);
-    alert('Failed to load deck (see console).');
+    console.error(err); alert('Failed to load deck (see console).');
   }
 });
 
-document.getElementById('resetBtn').addEventListener('click', async ()=>{
-  await resetPlayerOnly(); // STUB
-  state.deck=[]; state.hand=[]; state.table=[]; state.gy=[]; state.exile=[];
-  worldEl.querySelectorAll('.card').forEach(n=>n.remove());
-  clearSelection();
-  renderHand();
-});
 
-/* ---------- DRAW (example) ---------- */
-function animateDrawToHand(imgUrl){
-  // World-space start (deck center) and end (hand center)
-  const startW = elementCenterWorld(deckZone);
 
-  const handRect = document.getElementById('hand').getBoundingClientRect();
-  const handCenterX = handRect.left + handRect.width / 2;
-  const handCenterY = handRect.top  + handRect.height * 0.25; // a bit above the hand bar center
-  const endW = clientToWorld(handCenterX, handCenterY);
-
-  // Create a ghost in WORLD coordinates
-  const ghost = document.createElement('div');
-  ghost.className = 'card';
-  ghost.style.left = `${startW.x - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'))/2)}px`;
-  ghost.style.top  = `${startW.y - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'))/2)}px`;
-
-  // keep perceived size constant on screen regardless of zoom: counter-scale by 1/zoom
-  const inv = 1 / state.zoom;
-  ghost.style.transform = `scale(${0.6 * inv})`;
-  ghost.style.transition = 'transform .28s ease, left .28s ease, top .28s ease';
-  ghost.style.background = `#000 center/cover no-repeat`;
-  ghost.style.backgroundImage = `url("${imgUrl || CARD_BACK_URL}")`;
-
+/* Draw animation */
+function animateDrawIntoIndex(imgUrl, index){
+  const startW=elementCenterWorld(deckZone), endW=getHandSlotCenterWorld(index);
+  const cardW=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'));
+  const cardH=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'));
+  const ghost=document.createElement('div'); ghost.className='card';
+  ghost.style.left=`${startW.x - cardW/2}px`; ghost.style.top=`${startW.y - cardH/2}px`;
+  const inv=1/state.zoom; ghost.style.transform=`scale(${0.6*inv})`; ghost.style.transition='transform .28s ease, left .28s ease, top .28s ease';
+  ghost.style.background='#000 center/cover no-repeat'; ghost.style.backgroundImage=`url("${imgUrl || CARD_BACK_URL}")`;
   worldEl.appendChild(ghost);
-
-  // next frame -> animate to hand
-  requestAnimationFrame(()=>{
-    ghost.style.left = `${endW.x - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'))/2)}px`;
-    ghost.style.top  = `${endW.y - (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'))/2)}px`;
-    ghost.style.transform = `scale(${0.9 * inv})`;
-  });
-
-  setTimeout(()=>ghost.remove(), 320);
+  requestAnimationFrame(()=>{ ghost.style.left = `${endW.x - cardW/2}px`; ghost.style.top  = `${endW.y - cardH/2}px`; ghost.style.transform = `scale(${0.9*inv})`; });
+  setTimeout(()=>ghost.remove(),320);
 }
-
-
 async function draw(){
-  const count = (state.turn===0)?7:1;
-
-  if(count === 1){
-    // 1) Take top of deck
-    const drawn = state.deck.splice(0, 1);
-    const card  = drawn[0];
-    if(!card) return;
-
-    // 2) Insert a temporary ghost right AFTER the focused card
-    const insertAt = Math.min(handIndex + 1, state.hand.length);
-    state.hand.splice(insertAt, 0, { __ghost: true, id: 'ghost_'+Math.random().toString(36).slice(2) });
-
-    // 3) Render to create the gap (the ghost slot)
-    renderHand();
-
-    // 4) Animate into that ghost slot
+  if (state.viewReadOnly) return; 
+  const count=(state.turn===0)?7:1;
+  if(count===1){
+    const drawn=state.deck.splice(0,1); const card=drawn[0]; if(!card) return;
+    const insertAt=Math.min(handIndex+1, state.hand.length);
+    state.hand.splice(insertAt,0,{__ghost:true,id:'ghost_'+Math.random().toString(36).slice(2)}); renderHand();
     animateDrawIntoIndex(card.frontImg || CARD_BACK_URL, insertAt);
-
-    // 5) After the animation time, replace the ghost with the real card and keep focus near it
-    setTimeout(()=>{
-      const gi = state.hand.findIndex(c => c && c.__ghost);
-      if(gi !== -1){
-        state.hand.splice(gi, 1, card); // replace ghost with actual card
-        handIndex = gi;                  // center on the newly drawn card (feels great)
-        renderHand();
-      }
-    }, 330);
-
-    await writeDrawToServer(drawn); // STUB
-    if(state.turn===0) state.turn = 1;
-    return;
+    setTimeout(()=>{ const gi=state.hand.findIndex(c=>c&&c.__ghost); if(gi!==-1){ state.hand.splice(gi,1,card); handIndex=gi; renderHand(); }},330);
+    await writeDrawToServer(drawn); if(state.turn===0) state.turn=1; return;
   }
-
-  // Opening hand (7): simple push and a single animation into center slot each time
-  const drawn = state.deck.splice(0, count);
-  for (let k = 0; k < drawn.length; k++){
-    const card = drawn[k];
-    const insertAt = Math.min(handIndex + 1, state.hand.length);
-    state.hand.splice(insertAt, 0, { __ghost: true, id: 'ghost_'+Math.random().toString(36).slice(2) });
-    renderHand();
-    animateDrawIntoIndex(card.frontImg || CARD_BACK_URL, insertAt);
-    await new Promise(r => setTimeout(r, 120)); // slight staggering so you see a stream
-    const gi = state.hand.findIndex(c => c && c.__ghost);
-    if(gi !== -1){
-      state.hand.splice(gi, 1, card);
-      handIndex = gi;
-      renderHand();
-    }
+  const drawn=state.deck.splice(0,count);
+  for(let k=0;k<drawn.length;k++){
+    const card=drawn[k]; const insertAt=Math.min(handIndex+1, state.hand.length);
+    state.hand.splice(insertAt,0,{__ghost:true,id:'ghost_'+Math.random().toString(36).slice(2)}); renderHand();
+    animateDrawIntoIndex(card.frontImg || CARD_BACK_URL, insertAt); await new Promise(r=>setTimeout(r,120));
+    const gi=state.hand.findIndex(c=>c&&c.__ghost); if(gi!==-1){ state.hand.splice(gi,1,card); handIndex=gi; renderHand(); }
   }
-  await writeDrawToServer(drawn); // STUB
-  if(state.turn===0) state.turn = 1;
+  await writeDrawToServer(drawn); if(state.turn===0) state.turn=1;
 }
 
+/* Parse + Scryfall */
+function cleanCardName(raw){
+  return (raw || '')
+    .replace(/^\s*\d+x?\s+/i, '')   // strip leading qty: "1 " or "2x "
+    .replace(/\s*\(.*?\)\s*$/, '')  // drop trailing "(set/notes)" if any
+    .replace(/\s*\[.*?\]\s*$/, '')  // drop trailing "[set/notes]" if any
+    .trim();
+}
 
-/* =========================================================
-   PARSING + SCRYFALL (quantities, sideboard ignored, commander=last)
-========================================================= */
 function parseDeckTextWithCommander(txt){
   const lines = txt.split(/\r?\n/).map(s=>s.trim());
-  // last non-empty line = commander
+
+  // find last non-empty line
   let lastNonEmptyIdx = -1;
-  for (let i=lines.length-1;i>=0;i--){ if(lines[i]){ lastNonEmptyIdx=i; break; } }
-  const commanderName = lastNonEmptyIdx >= 0 ? lines[lastNonEmptyIdx] : null;
+  for (let i = lines.length - 1; i >= 0; i--){
+    if (lines[i]) { lastNonEmptyIdx = i; break; }
+  }
+
+  // commander (cleaned!)
+  let commanderName = lastNonEmptyIdx >= 0 ? cleanCardName(lines[lastNonEmptyIdx]) : null;
 
   // sideboard header
   const sbIdx = lines.findIndex(l => /^sideboard\s*:?\s*$/i.test(l));
-
-  // deck names until sideboard (exclusive). If no sideboard, stop before commander line.
   const stop = sbIdx === -1 ? (lastNonEmptyIdx >= 0 ? lastNonEmptyIdx : lines.length) : sbIdx;
+
   const deckNames = [];
-  for (let i=0; i<stop; i++){
+  for (let i = 0; i < stop; i++){
     const line = lines[i].trim();
-    if(!line) continue;
+    if (!line) continue;
     const m = line.match(/^(\d+)\s+(.+)$/);
-    if(m){
+    if (m){
       const qty = Math.max(1, parseInt(m[1],10));
-      const name = m[2].trim();
+      const name = cleanCardName(m[2]);
       for (let k=0;k<qty;k++) deckNames.push(name);
-    }else{
-      deckNames.push(line);
+    } else {
+      deckNames.push(cleanCardName(line));
     }
   }
   return { deckNames, commanderName };
 }
 
 async function scryfallFetchUnique(namesUnique){
-  // --- helpers (scoped so this is 100% hotswappable) ---
-  const norm = s => (s || '').trim().toLowerCase();
+  const chunks=[]; for(let i=0;i<namesUnique.length;i+=75) chunks.push(namesUnique.slice(i,i+75));
+  const wantByNorm=new Map(); const have=new Map(); const norm=s=>(s||'').trim().toLowerCase(); namesUnique.forEach(n=>wantByNorm.set(norm(n), n));
 
-  async function scryfallFuzzyByName(name){
+  function mapFacesFromCard(c){
+    // Use per-face image_uris ONLY for DFCs; parent-level image_uris is for single-faced.
+    const faces = (Array.isArray(c.card_faces) && c.card_faces.length)
+      ? c.card_faces.map(f=>({
+          name: f.name || c.name || '',
+          type_line: f.type_line || c.type_line || '',
+          oracle_text: f.oracle_text || '',
+          power: f.power || '',
+          toughness: f.toughness || '',
+          mana_cost: f.mana_cost || '',
+          image: (f.image_uris?.normal || f.image_uris?.large || f.image_uris?.png || '')
+        }))
+      : [{
+          name: c.name || '',
+          type_line: c.type_line || '',
+          oracle_text: c.oracle_text || '',
+          power: c.power || '',
+          toughness: c.toughness || '',
+          mana_cost: c.mana_cost || '',
+          image: (c.image_uris?.normal || c.image_uris?.large || c.image_uris?.png || '')
+        }];
+    return faces;
+  }
+
+  function cleanCardName(raw){
+    return (raw || '')
+      .replace(/^\s*\d+x?\s+/i, '')
+      .replace(/\s*\(.*?\)\s*$/, '')
+      .replace(/\s*\[.*?\]\s*$/, '')
+      .trim();
+  }
+
+  async function fuzzy(name){
     try{
-      const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`);
-      if(!res.ok) return null;
+      const cleaned = cleanCardName(name);
+      // Try the cleaned name first
+      let res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(cleaned)}`);
+      if (!res.ok && cleaned.includes('//')) {
+        // If it’s a DFC-style string, try just the front face too
+        const frontOnly = cleaned.split('//')[0].trim();
+        res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(frontOnly)}`);
+      }
+      if (!res.ok) return null;
       const c = await res.json();
-      const front =
-        (c.image_uris && (c.image_uris.normal || c.image_uris.large || c.image_uris.png)) ||
-        (c.card_faces && c.card_faces[0]?.image_uris?.normal) || '';
-      const back =
-        (c.card_faces && c.card_faces[1]?.image_uris?.normal) || '';
+      const faces = mapFacesFromCard(c);
       return {
-  scry_id: c.id,
-  name: c.name,
-  type_line: c.type_line || '',
-  oracle_text: c.oracle_text || (c.card_faces?.map(f=>f.oracle_text).filter(Boolean).join('\n')) || '',
-  power: c.power || c.card_faces?.[0]?.power || '',
-  toughness: c.toughness || c.card_faces?.[0]?.toughness || '',
-  keywords: c.keywords || [],
-  mana_cost: c.mana_cost || (c.card_faces?.[0]?.mana_cost) || '',
-  frontImg: front,
-  backImg: back
-};
-
-    }catch(_){
-      return null;
-    }
+        scry_id: c.id,
+        name: c.name,
+        type_line: c.type_line || '',
+        oracle_text: c.oracle_text || (c.card_faces?.map(f=>f.oracle_text).filter(Boolean).join('\n')) || '',
+        power: c.power || c.card_faces?.[0]?.power || '',
+        toughness: c.toughness || c.card_faces?.[0]?.toughness || '',
+        keywords: c.keywords || [],
+        mana_cost: c.mana_cost || c.card_faces?.[0]?.mana_cost || '',
+        faces,
+        layout: c.layout || ''
+      };
+    }catch{ return null; }
   }
 
-  // --- main ---
-  const chunks = [];
-  for(let i=0;i<namesUnique.length;i+=75) chunks.push(namesUnique.slice(i,i+75));
-
-  const wantByNorm = new Map();     // normalized name -> original requested name
-  const have = new Map();           // original requested name -> card record
-  namesUnique.forEach(n => wantByNorm.set(norm(n), n));
-
-  // 1) Batch lookup with /cards/collection
-  for (const chunk of chunks){
+  for(const chunk of chunks){
     try{
-      const body = { identifiers: chunk.map(name => ({ name })) };
-      const res = await fetch('https://api.scryfall.com/cards/collection', {
-        method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
-      });
-      if(!res.ok){
-        console.error('Scryfall error (collection):', res.status);
-        continue;
+      const body={ identifiers: chunk.map(name=>({name})) };
+      const res=await fetch('https://api.scryfall.com/cards/collection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      if(!res.ok){ console.error('Scryfall error', res.status); continue; }
+      const data=await res.json();
+      for(const c of (data.data||[])){
+        const faces=mapFacesFromCard(c);
+        const requested=wantByNorm.get(norm(c.name)) || c.name;
+        have.set(requested,{ scry_id:c.id, name:c.name, type_line:c.type_line||'', oracle_text:c.oracle_text || (c.card_faces?.map(f=>f.oracle_text).filter(Boolean).join('\n')) || '', power:c.power || c.card_faces?.[0]?.power || '', toughness:c.toughness || c.card_faces?.[0]?.toughness || '', keywords:c.keywords||[], mana_cost:c.mana_cost || c.card_faces?.[0]?.mana_cost || '', faces, layout:c.layout||'' });
       }
-      const data = await res.json();
-
-      for(const c of (data.data || [])){
-        const front =
-          (c.image_uris && (c.image_uris.normal || c.image_uris.large || c.image_uris.png)) ||
-          (c.card_faces && c.card_faces[0]?.image_uris?.normal) || '';
-        const back =
-          (c.card_faces && c.card_faces[1]?.image_uris?.normal) || '';
-
-        // map result back to the *original requested* name (by normalized match)
-        const requested = wantByNorm.get(norm(c.name)) || c.name;
-
-        have.set(requested, {
-  scry_id: c.id,
-  name: c.name, // keep Scryfall casing
-  type_line: c.type_line || '',
-  oracle_text: c.oracle_text || (c.card_faces?.map(f=>f.oracle_text).filter(Boolean).join('\n')) || '',
-  power: c.power || c.card_faces?.[0]?.power || '',
-  toughness: c.toughness || c.card_faces?.[0]?.toughness || '',
-  keywords: c.keywords || [],
-  mana_cost: c.mana_cost || (c.card_faces?.[0]?.mana_cost) || '',
-  frontImg: front,
-  backImg: back
-});
-
-      }
-    }catch(err){
-      console.error('Scryfall batch error:', err);
-    }
+    }catch(err){ console.error('Scryfall batch error:', err); }
   }
 
-  // 2) Fuzzy fallback for any misses (commander names & quirky titles)
-  const misses = namesUnique.filter(n => !have.has(n));
-  for (const name of misses){
-    const fuzzy = await scryfallFuzzyByName(name);
-    if(fuzzy){
-      have.set(name, fuzzy);
-    }else{
-      console.warn('Missing on Scryfall (even fuzzy):', name);
-      have.set(name, {
-        scry_id: 'missing_'+name,
-        name,
-        type_line: '',
-        oracle_text: '',
-        power: '',
-        toughness: '',
-        keywords: [],
-        frontImg: '',
-        backImg: ''
-      });
-    }
+  const misses=namesUnique.filter(n=>!have.has(n));
+  for(const name of misses){
+    const f=await fuzzy(name);
+    if(f) have.set(name, f);
+    else have.set(name, { scry_id:'missing_'+name, name, type_line:'', oracle_text:'', power:'', toughness:'', keywords:[], faces:[{name, image:''}], layout:'' });
   }
-
-  return have; // Map<originalRequestedName, record>
+  return have;
 }
-
-
 function makeCopyFromScry(rec){
-  const uid = `${rec.scry_id}_${crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}_${Math.random().toString(36).slice(2,7)}`;
-  const text = (rec.oracle_text || '').toLowerCase();
-  const kw = new Set([...(rec.keywords||[])].map(k=>k.toLowerCase()));
-  const effects = new Set();
-  const add = s=>effects.add(s);
-  if (kw.has('deathtouch') || /deathtouch/.test(text)) add('deathtouch');
-  if (kw.has('lifelink')   || /lifelink/.test(text))   add('lifelink');
-  if (kw.has('trample')    || /trample/.test(text))    add('trample');
-  if (kw.has('first strike') || /first strike/.test(text)) add('first_strike');
-  if (kw.has('double strike')|| /double strike/.test(text)) add('double_strike');
-  if (kw.has('flying')     || /flying/.test(text))     add('flying');
+  const uid=`${rec.scry_id}_${crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}_${Math.random().toString(36).slice(2,7)}`;
+  const faces=rec.faces||[]; const frontFace=faces[0]||{}; const backFace=faces[1]||null;
 
   return {
     id: uid,
     name: rec.name,
-    frontImg: rec.frontImg || '',
-    backImg: rec.backImg || CARD_BACK_URL,   // fallback to static back
+    frontImg: frontFace.image || '',
+    backImg:  (faces.length>1 ? (backFace?.image || '') : ''), // STRICT: never reuse front for DFC
     face: 'front',
     tapped: false,
-    pt: (rec.power && rec.toughness) ? `${rec.power}/${rec.toughness}` : '',
-    additionalEffects: [...effects],
-    _scry: rec
+    pt: (frontFace.power && frontFace.toughness) ? `${frontFace.power}/${frontFace.toughness}` : '',
+    _scry: rec,
+    _faces: faces
   };
 }
 
-async function buildDeckFromText(txt, {includeCommander=true} = {}){
-  const { deckNames, commanderName } = parseDeckTextWithCommander(txt);
-  const needLookup = [...new Set([ ...deckNames, ...(includeCommander && commanderName ? [commanderName] : []) ])];
-  const scryMap = await scryfallFetchUnique(needLookup);
+function computePT(card){
+  // Prefer the active face, then fall back to any stored scry data
+  const face = getActiveFace(card) || {};
+  const p =
+    face.power ??
+    card.power ??
+    card._scry?.power ??
+    card._scry?.faces?.[0]?.power ?? '';
+  const t =
+    face.toughness ??
+    card.toughness ??
+    card._scry?.toughness ??
+    card._scry?.faces?.[0]?.toughness ?? '';
+  return (p !== '' && t !== '') ? `${p}/${t}` : '';
+}
 
-  const deckCards = deckNames.map(name=>{
-    let rec = scryMap.get(name);
-    if(!rec){
-      const key = name.toLowerCase();
-      for (const [k,v] of scryMap) if(k.toLowerCase()===key){ rec=v; break; }
-    }
-    if(!rec){
-      console.warn('Missing on Scryfall:', name);
-      rec = { scry_id:'missing_'+name, name, frontImg:'', backImg:'', type_line:'', oracle_text:'', power:'', toughness:'', keywords:[] };
-    }
+
+function getActiveFace(card){
+  if (card?._faces?.length > 1) return (card.face==='back') ? card._faces[1] : card._faces[0];
+  return card?._faces?.[0] || null;
+}
+async function buildDeckFromText(txt,{includeCommander=true}={}){
+  const { deckNames, commanderName } = parseDeckTextWithCommander(txt);
+  const needLookup=[...new Set([ ...deckNames, ...(includeCommander && commanderName ? [commanderName] : []) ])];
+  const scryMap=await scryfallFetchUnique(needLookup);
+
+  const deckCards=deckNames.map(name=>{
+    let rec=scryMap.get(name); if(!rec){ const key=name.toLowerCase(); for(const [k,v] of scryMap) if(k.toLowerCase()===key){ rec=v; break; } }
+    if(!rec){ rec={ scry_id:'missing_'+name, name, faces:[{name,image:''}] }; }
     return makeCopyFromScry(rec);
   });
 
-  let commanderCard = null;
+  let commanderCard=null;
   if(includeCommander && commanderName){
-    let rec = scryMap.get(commanderName);
-    if(!rec){
-      const key = commanderName.toLowerCase();
-      for (const [k,v] of scryMap) if(k.toLowerCase()===key){ rec=v; break; }
-    }
-    if(!rec){
-      console.warn('Commander missing on Scryfall:', commanderName);
-      rec = { scry_id:'missing_'+commanderName, name: commanderName, frontImg:'', backImg:'', type_line:'', oracle_text:'', power:'', toughness:'', keywords:[] };
-    }
-    commanderCard = makeCopyFromScry(rec);
+    let rec=scryMap.get(commanderName); if(!rec){ const key=commanderName.toLowerCase(); for(const [k,v] of scryMap) if(k.toLowerCase()===key){ rec=v; break; } }
+    if(!rec){ rec={ scry_id:'missing_'+commanderName, name:commanderName, faces:[{name:commanderName,image:''}] }; }
+    commanderCard=makeCopyFromScry(rec);
   }
 
-  // precache images (front + back if present)
-  deckCards.concat(commanderCard||[]).forEach(c => {
-    if(c.frontImg){ const im=new Image(); im.src=c.frontImg; }
-    if(c.backImg){ const im2=new Image(); im2.src=c.backImg; }
-  });
-
+  deckCards.concat(commanderCard||[]).forEach(c=>{ if(c.frontImg){ new Image().src=c.frontImg; } if(c.backImg){ new Image().src=c.backImg; } });
   return { deckCards, commanderCard };
 }
 
-/* =========================================================
-   STUBS — WIRE THESE TO YOUR EXISTING FIREBASE HELPERS - NEED TO BE MOVED TO PROPER REGIONS ON COMPLETION
-========================================================= */
-// Stops actions before game id selection
-function requireGameSelected(){
-  if(!state.gameId){
-    alert('Select a Game (Game 1/2/3) in the drawer before saving.');
-    return false;
-  }
-  return true;
-}
+/* Stubs to wire to storage */
+function requireGameSelected(){ if(!state.gameId){ alert('Select a Game (Game 1/2/3).'); return false; } return true; }
+async function writeDeckForPlayer(cards){ if(!state.gameId) return alert('Pick Game 1/2/3 first.'); state.deck=cards.slice(); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function ensureTurn0(){ state.turn=0; }
+async function writeTableAdd(card){ if(!state.gameId) return alert('Pick Game 1/2/3 first.'); const hi=state.hand.findIndex(c=>c.id===card.id); if(hi>-1){ state.hand.splice(hi,1); renderHand(); } if(!state.table.find(c=>c.id===card.id)) state.table.push(card); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function writeTableMove(card, el){ if(!state.gameId) return; card.x=parseFloat(el.style.left)||card.x; card.y=parseFloat(el.style.top)||card.y; window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function removeFromTable(card){ if(!state.gameId) return; const idx=state.table.findIndex(c=>c.id===card.id); if(idx>-1) state.table.splice(idx,1); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function appendToZone(card, zoneKind){ if(!state.gameId) return; if(zoneKind==='graveyard') state.gy.unshift(card); if(zoneKind==='exile') state.exile.unshift(card); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function removeFromZone(card, zoneKind){ if(!state.gameId) return; const arr=(zoneKind==='graveyard')?state.gy:state.exile; const idx=arr.findIndex(c=>c.id===card.id); if(idx>-1) arr.splice(idx,1); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function writeCommander(card){ if(!state.gameId) return; state.tableCommander=card; window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function writeDrawToServer(){ if(!state.gameId) return; window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function deckPutTop(card){ state.deck.unshift(card); }
+async function deckPutBottom(card){ state.deck.push(card); }
+async function deckShuffle(){ for(let i=state.deck.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [state.deck[i],state.deck[j]]=[state.deck[j],state.deck[i]]; } }
+async function resetPlayerOnly({ hard = true } = {}) {
+  if (!state.gameId) return;
 
-
-
-// Writes deck list for this player to Firestore
-async function writeDeckForPlayer(cards){
-  if(!state.gameId) return alert('Pick Game 1/2/3 in the drawer first.');
-  // reflect locally
-  state.deck = cards.slice();
-  // persist (debounced)
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-// Ensure turn=0 on first load
-async function ensureTurn0(){
-  // TODO: read turn/current and set turn=0 if not present
+  // 1) Clear local runtime state
+  state.deck = [];
+  state.hand = [];
+  state.table = [];
+  state.gy = [];
+  state.exile = [];
+  state.tableCommander = null;
   state.turn = 0;
-}
 
-// Confirm adding to table (after staged drop)
-async function writeTableAdd(card){
-  if(!state.gameId) return alert('Pick Game 1/2/3 in the drawer first.');
-  const hi = state.hand.findIndex(c=>c.id===card.id);
-  if(hi>-1){ state.hand.splice(hi,1); renderHand(); }
-  if(!state.table.find(c=>c.id===card.id)) state.table.push(card);
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
+  // 2) Clear DOM
+  worldEl.querySelectorAll('.card').forEach(n => n.remove());
+  clearSelection();
+  renderHand();
 
-// Move on-table card persist XY (optional)
-async function writeTableMove(card, el){
-  if(!state.gameId) return;
-  card.x = parseFloat(el.style.left)||card.x;
-  card.y = parseFloat(el.style.top)||card.y;
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-// Remove from table (for GY/Exile/Deck actions)
-async function removeFromTable(card){
-  if(!state.gameId) return;
-  const idx = state.table.findIndex(c=>c.id===card.id);
-  if(idx>-1) state.table.splice(idx,1);
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-// Append to zone (gy/exile)
-async function appendToZone(card, zoneKind){
-  if(!state.gameId) return;
-  if(zoneKind==='graveyard') state.gy.unshift(card);
-  if(zoneKind==='exile')     state.exile.unshift(card);
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-// Remove from zone (GY/Exile) when returning to field
-async function removeFromZone(card, zoneKind){
-  if(!state.gameId) return;
-  const arr = (zoneKind==='graveyard')?state.gy:state.exile;
-  const idx = arr.findIndex(c=>c.id===card.id);
-  if(idx>-1) arr.splice(idx,1);
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-// Commander assign
-async function writeCommander(card){
-  if(!state.gameId) return;
-  state.tableCommander = card; // track commander separately if you like
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-async function writeDrawToServer(drawn){
-  if(!state.gameId) return;
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-}
-
-// Deck put top/bottom/shuffle
-async function deckPutTop(card){ state.deck.unshift(card); /* TODO: write */ }
-async function deckPutBottom(card){ state.deck.push(card);  /* TODO: write */ }
-async function deckShuffle(){
-  for(let i=state.deck.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [state.deck[i], state.deck[j]] = [state.deck[j], state.deck[i]];
+  // 3) Persist RESET remotely
+  try {
+    if (hard && window.window.StorageAPI.deletePlayerState) {
+      // Hard delete the player doc — safest way to guarantee reload starts clean
+      await window.window.StorageAPI.deletePlayerState(state.gameId, state.mySeat);
+    } else if (window.window.StorageAPI.wipePlayerState) {
+      // Or overwrite with a blank payload
+      await window.window.StorageAPI.wipePlayerState(state.gameId, state.mySeat, {
+        Deck: [], Hand: [], Table: [], Graveyard: [], Exile: [],
+        Commander: null, Turn: 0
+      });
+    } else {
+      // Last-resort: save the blank local state immediately
+      window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+    }
+  } catch (err) {
+    console.error('Reset (remote) failed:', err);
+    alert('Reset failed to persist. See console.');
   }
-  // TODO: write shuffled order
 }
 
+// ---- Combat FAB (⚔️ / 🛡️) wiring — uses modules/combat.ui.js ----
+import { startCombatPoller, wireBattleFab } from './modules/combat.ui.js';
 
+const battleBtn = document.getElementById('battleBtn');
 
-// Reset only this player
-async function resetPlayerOnly(){
-  if(!state.gameId) return;
-  state.deck=[]; state.hand=[]; state.table=[]; state.gy=[]; state.exile=[];
-  StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+let _combatWired = false;
+
+// Wait until the storage module has initialized and exposed window.StorageAPI
+async function waitForStorageReady(){
+  while (!(window.StorageAPI && window.window.window.StorageAPI.startMetaPoller)) {
+    await new Promise(r=>setTimeout(r, 50));
+  }
 }
 
-/* =========================================================
-   STARTUP
-========================================================= */
-renderHand();
-enableHandSwipe();
-  
-/* Deck click to draw: first time 7, then 1 */
-deckZone.addEventListener('click', draw);
+// Ensure we only wire once, after a Game is selected and storage is ready
+async function ensureCombatWiring(){
+  if (_combatWired) return;
+  if (!state.gameId) return; // user hasn't picked Game 1/2/3 yet
 
-deckZone.addEventListener('dblclick', draw);
-</script>
+  await waitForStorageReady();
 
-deckZone.addEventListener('dblclick', draw);
+
+
+  const getIsMyTurn = () => Number(state.mySeat) === Number(currentTurnSeat);
+
+  // Show defenders-only toast when combat is initiated
+  startCombatPoller(state.gameId, state.mySeat);
+
+  // Swap ⚔️ (attacker) vs 🛡️ (defender) and open the correct overlay on click
+  wireBattleFab({
+    gameId: state.gameId,
+    mySeat: state.mySeat,
+    getIsMyTurn,
+    btn: battleBtn
+  });
+
+  _combatWired = true;
+}
+
+// When a game is picked, run wiring shortly after loadGameIntoUI sets state.gameId
+gamePicker.addEventListener('click', ()=>{
+  // loadGameIntoUI runs in this same handler; schedule wiring next tick
+  setTimeout(ensureCombatWiring, 0);
+});
+
+// Also keep trying until wired (covers refresh when a game might already be active)
+const _cw = setInterval(()=>{
+  if (_combatWired) { clearInterval(_cw); return; }
+  ensureCombatWiring();
+}, 300);
+
+
+gamePicker.addEventListener('click', async (e)=>{
+  const btn = e.target.closest('.gameBtn'); if(!btn) return;
+  state.mySeat = Number(document.getElementById('mySeat').value);
+  gamePicker.querySelectorAll('.gameBtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+
+  await waitForStorageReady();                      // <-- add this
+  await loadGameIntoUI(btn.dataset.game);
+  await ensureTurnSeatMeta();
+
+  window.StorageAPI.startMetaPoller(state.gameId, (meta)=>{
+    currentTurnSeat = Number(meta?.TurnSeat || 0);
+  });
+});
+
+
+/* Startup */
+renderHand(); enableHandSwipe(); zoomInput.value=zoomInput.min; state.zoom=Number(zoomInput.min)/100; applyWorldTransform();
+deckZone.addEventListener('click', draw); deckZone.addEventListener('dblclick', draw);
+// Start with drawer open
+drawerWrap.classList.add('expanded');
+drawerWrap.classList.remove('collapsed');
+zoomWrapEl.style.display = 'none';
+
 </script>
 
 <!-- Storage module import & init -->
@@ -1787,10 +1561,16 @@ deckZone.addEventListener('dblclick', draw);
     loadMeta,
     saveMeta,
     startPlayerPollers,
-    startMetaPoller
+    startMetaPoller,
+    deletePlayerState,
+    wipePlayerState
   } from './modules/storage.js';
 
-  // Make the API available to your non-module script:
+  // pull the shared state created in the first module script
+  // (small guard in case execution order ever shifts)
+  while (!window.AppState) { await new Promise(r => setTimeout(r, 0)); }
+  const state = window.AppState;
+
   window.StorageAPI = {
     initStorage,
     savePlayerStateDebounced,
@@ -1798,12 +1578,14 @@ deckZone.addEventListener('dblclick', draw);
     loadMeta,
     saveMeta,
     startPlayerPollers,
-    startMetaPoller
+    startMetaPoller,
+    deletePlayerState,
+    wipePlayerState
   };
 
-  // Initialize Firebase (anon) now
   await initStorage();
+  state.viewSeat = state.mySeat;  // start by viewing "me"
 </script>
+
 </body>
 </html>
-
