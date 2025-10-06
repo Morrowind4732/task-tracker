@@ -8,6 +8,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
 
 
+
 /* Firebase init */
 const firebaseConfig = {
   apiKey: "AIzaSyAqPT52Us-vWv4GNRYPgGCQ2I1SdsLsXyI",
@@ -140,4 +141,67 @@ export function startMetaPoller(gameId, onMeta, intervalMs=100){
     if(m) onMeta?.(m);
   }, intervalMs);
   return ()=> clearInterval(t);
+}
+
+
+const combatRef = (gameId) => doc(getFirestore(), "games", gameId, "combat", "current");
+
+export async function readCombat(gameId){
+  if (!gameId) return null;
+  const snap = await getDoc(combatRef(gameId));
+  return snap.exists() ? snap.data() : null;
+}
+
+export async function writeCombat(gameId, patch){
+  if (!gameId) return;
+  await setDoc(combatRef(gameId), { ...patch, updatedAt: serverTimestamp() }, { merge: true });
+}
+
+export async function resetCombat(gameId){
+  if (!gameId) return;
+  await deleteDoc(combatRef(gameId)).catch(()=>{});
+}
+
+export async function writeCombatInitiated(gameId, attackingSeat){
+  await writeCombat(gameId, { combatInitiated: 1, attackingSeat: Number(attackingSeat)||0 });
+}
+
+
+export async function saveAttacks(gameId, attacks){
+  // attacks: { [attackerCid]: { defenderSeat, power, cardMeta } }
+  await writeCombat(gameId, { attacks });
+}
+
+export async function saveBlocks(gameId, defenderSeat, blocksForSeat){
+  // blocksForSeat: { [attackerCid]: [blockerCid, ...] } (ordered)
+  await writeCombat(gameId, { 
+    blocksByDefender: { [defenderSeat]: blocksForSeat }
+  });
+}
+
+export async function saveOutcome(gameId, outcome){
+  // outcome: { deadCids:[], playerDamage:{seat:delta}, lifelinkGains:{seat:+}, notes:[] }
+  await writeCombat(gameId, { outcome });
+}
+
+// modules/storage.js
+export async function clearCombatInitiated(gameId){
+  return saveMeta(gameId, {
+    combatInitiated: 0,
+    attackerSeat: 0,
+    attacks: null,
+    blocksByDefender: null,
+    outcome: null,
+    combatUpdatedAt: Date.now()
+  });
+}
+
+// (handy too)
+export async function setCombatInitiated(gameId, attackerSeat, payload = {}){
+  return saveMeta(gameId, {
+    combatInitiated: 1,
+    attackerSeat,
+    ...payload,
+    combatUpdatedAt: Date.now()
+  });
 }
