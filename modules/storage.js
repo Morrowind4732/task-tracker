@@ -2,9 +2,11 @@
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-app.js";
 import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-auth.js";
+// modules/storage.js
 import {
-  getFirestore, doc, getDoc, setDoc, serverTimestamp
+  getFirestore, doc, getDoc, setDoc, deleteDoc, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.4/firebase-firestore.js";
+
 
 /* Firebase init */
 const firebaseConfig = {
@@ -18,6 +20,30 @@ const firebaseConfig = {
 };
 
 let app, db, auth;
+
+export async function deletePlayerState(gameId, seat) {
+  const db = getFirestore();
+  const ref = doc(db, "games", gameId, "players", String(seat));
+  await deleteDoc(ref);
+}
+
+
+export async function wipePlayerState(gameId, seat, payload = {}) {
+  const db = getFirestore();
+  const ref = doc(db, `games/${gameId}/players`, String(seat));
+  const blank = {
+    Deck: [],
+    Hand: [],
+    Table: [],
+    Graveyard: [],
+    Exile: [],
+    Commander: null,
+    Turn: 0,
+    updatedAt: serverTimestamp(),
+    ...payload
+  };
+  await setDoc(ref, blank, { merge: false }); // full overwrite
+}
 
 export async function initStorage(){
   app  = initializeApp(firebaseConfig);
