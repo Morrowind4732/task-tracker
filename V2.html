@@ -321,8 +321,8 @@ const endTurnBtn = document.getElementById('endTurnBtn');
 
 endTurnBtn.addEventListener('click', async ()=>{
   if (!state.gameId) return;
-  await waitForStorageReady();                      // <-- add this
 
+  // only the active player can end their turn (optional)
   if (currentTurnSeat && currentTurnSeat !== Number(state.mySeat)){
     alert(`It's Player ${currentTurnSeat}'s turn.`);
     return;
@@ -331,36 +331,16 @@ endTurnBtn.addEventListener('click', async ()=>{
   const next = ((currentTurnSeat || state.mySeat) % state.playerCount) + 1;
   await window.StorageAPI.saveMeta(state.gameId, { TurnSeat: next });
 
-  if (window.StorageAPI.resetCombat) {
-    await window.StorageAPI.resetCombat(state.gameId);
-  }
+  // hard clear combat so no stale recommendedOutcome remains
+  await window.StorageAPI.resetCombat?.(state.gameId);
 });
 
 
 
-// keep an up-to-date turn seat via your existing meta poller
 
 
 
-endTurnBtn.addEventListener('click', async ()=>{
-  if (!state.gameId) return;
 
-  // (optional) only allow the current player to advance
-  if (currentTurnSeat && currentTurnSeat !== Number(state.mySeat)){
-    alert(`It's Player ${currentTurnSeat}'s turn.`);
-    return;
-  }
-
-  const next = ( (currentTurnSeat || state.mySeat) % state.playerCount ) + 1;
-
-  // write next turn seat to meta so everyone’s FAB flips to ⚔️/🛡️ correctly
-  await window.window.StorageAPI.saveMeta(state.gameId, { TurnSeat: next });
-
-  // (optional) clear any active combat state for the new turn
-  if (window.window.StorageAPI.resetCombat) {
-    await window.window.StorageAPI.resetCombat(state.gameId);
-  }
-});
 
 
 document.getElementById('resetBtn').addEventListener('click', async () => {

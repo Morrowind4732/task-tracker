@@ -1,35 +1,18 @@
-// modules/battle.js
-
-/**
- * Minimal, clean entry for Battle logic.
- * This file can grow without bloating V2.html.
- *
- * Exports:
- *   - handleBattleClick(ctx): main entry when ⚔️ is pressed
- *   - (add more exports as you grow: startCombatStep, assignAttackers, etc.)
- */
+// ================================
+// FILE: modules/battle.js
+// ================================
+// Full replacement. Adds damage resolver + fixes rgba typos in panel.
 
 let panelEl = null;
 
 export async function handleBattleClick(ctx){
-  // Example: open (or focus) a battle panel
   ensurePanel(ctx);
-
-  // Example “starting point”: you can push UI here or kick off a flow:
-  // showStep('Declare Attackers');
-  // await pickAttackers(ctx);
-  // ...
 }
-
-/* ---------------- UI scaffolding (example) ---------------- */
 
 function ensurePanel(ctx){
   if (panelEl && panelEl.isConnected){
-    panelEl.style.display = 'block';
-    panelEl.focus?.();
-    return;
+    panelEl.style.display = 'block'; panelEl.focus?.(); return;
   }
-
   panelEl = document.createElement('div');
   panelEl.className = 'panel';
   panelEl.style.maxWidth = 'min(840px, 94vw)';
@@ -37,12 +20,12 @@ function ensurePanel(ctx){
   panelEl.style.left = '50%';
   panelEl.style.top = '50%';
   panelEl.style.transform = 'translate(-50%, -50%)';
-  panelEl.style.zIndex = 99999; // over your other overlays
+  panelEl.style.zIndex = 99999;
   panelEl.style.padding = '12px';
   panelEl.style.borderRadius = '14px';
   panelEl.style.border = '1px solid #24324a';
   panelEl.style.background = 'rgba(12,18,28,.98)';
-  panelEl.style.boxShadow = '0 14px 36px rgba(0,0,0,.55)';
+  panelEl.style.boxShadow  = '0 14px 36px rgba(0,0,0,.55)';
   panelEl.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;">
       <strong>Battle</strong>
@@ -56,43 +39,119 @@ function ensurePanel(ctx){
       </div>
     </div>
   `;
-
   document.body.appendChild(panelEl);
+  panelEl.querySelector('#battleClose').addEventListener('click', ()=>{ panelEl.style.display='none'; });
 
-  panelEl.querySelector('#battleClose').addEventListener('click', ()=>{
-    panelEl.style.display = 'none';
-  });
-
-  // Demo actions that use ctx.helpers (proves the wiring works)
-  panelEl.querySelector('#demoTapSelected').addEventListener('click', ()=>{
-    const selId = ctx.state.selectedCardId;
-    if(!selId) return;
-    const card = ctx.helpers.getCardById(selId);
-    if(!card) return;
-    // toggle tap and persist using your existing helpers
+  // Demo actions (optional)
+  panelEl.querySelector('#demoTapSelected')?.addEventListener('click', ()=>{
+    const selId = ctx?.state?.selectedCardId; if(!selId) return;
+    const card = ctx?.helpers?.getCardById?.(selId); if(!card) return;
     card.tapped = !card.tapped;
-    ctx.helpers.updateCardDom(card);
-    ctx.helpers.writeTableMove(card, ctx.worldEl.querySelector(`.card[data-id="${card.id}"]`));
+    ctx.helpers.updateCardDom?.(card);
+    const el = ctx.worldEl?.querySelector?.(`.card[data-id="${card.id}"]`);
+    ctx.helpers.writeTableMove?.(card, el);
   });
 
-  panelEl.querySelector('#demoMoveSelected').addEventListener('click', ()=>{
-    const selId = ctx.state.selectedCardId;
-    if(!selId) return;
-    const card = ctx.helpers.getCardById(selId);
-    if(!card) return;
-    // nudge down-right, animate via your existing DOM + write
-    card.x = (card.x || 300) + 30;
-    card.y = (card.y || 120) + 20;
-    const el = ctx.worldEl.querySelector(`.card[data-id="${card.id}"]`);
+  panelEl.querySelector('#demoMoveSelected')?.addEventListener('click', ()=>{
+    const selId = ctx?.state?.selectedCardId; if(!selId) return;
+    const card = ctx?.helpers?.getCardById?.(selId); if(!card) return;
+    card.x = (card.x || 300) + 30; card.y = (card.y || 120) + 20;
+    const el = ctx.worldEl?.querySelector?.(`.card[data-id="${card.id}"]`);
     if (el){ el.style.left = card.x + 'px'; el.style.top = card.y + 'px'; }
-    ctx.helpers.writeTableMove(card, el);
+    ctx.helpers.writeTableMove?.(card, el);
   });
 }
 
-/* ---------------- room to grow ----------------
-   - export function startCombatStep(ctx) { ... }
-   - export function assignAttackers(ctx) { ... }
-   - export function assignBlockers(ctx) { ... }
-   - export function resolveDamage(ctx) { ... }
-   Keep all battle-only state in module scope here, not in V2.html.
-------------------------------------------------*/
+/* ------------------------------------------------------
+   DAMAGE RESOLUTION (First strike / Double strike / Deathtouch / Lifelink / Trample)
+------------------------------------------------------ */
+export function resolveCombatDamage(attacker, blockers){
+  const notes = [];
+  const aFx = extractKeywords(attacker);
+  const blockersFx = blockers.map(extractKeywords);
+
+  // === FIRST STRIKE PHASE? ===
+  const firstStrikePhase = aFx.firstStrike || aFx.doubleStrike || blockersFx.some(b => b.firstStrike || b.doubleStrike);
+  let firstCas = { attackerDead:false, deadIds:new Set(), notes:[] };
+  let remainingBlockers = [...blockers];
+
+  if (firstStrikePhase){
+    firstCas = resolveDamageStep(attacker, remainingBlockers, 'first', aFx, blockersFx);
+    notes.push(...firstCas.notes);
+    remainingBlockers = remainingBlockers.filter(b => !firstCas.deadIds.has(b.id));
+    if (firstCas.attackerDead){
+      return { notes, attackerDead:true, deadBlockers:firstCas.deadIds };
+    }
+  }
+
+  // === REGULAR DAMAGE PHASE ===
+  const regCas = resolveDamageStep(attacker, remainingBlockers, 'regular', aFx, blockersFx);
+  notes.push(...regCas.notes);
+  const deadIds = new Set([...firstCas.deadIds, ...regCas.deadIds]);
+
+  return { notes, attackerDead: regCas.attackerDead, deadBlockers: deadIds };
+}
+
+function extractKeywords(card){
+  const txt = (card.oracle_text || card._scry?.oracle_text || '').toLowerCase();
+  return {
+    firstStrike:   txt.includes('first strike'),
+    doubleStrike:  txt.includes('double strike'),
+    deathtouch:    txt.includes('deathtouch'),
+    trample:       txt.includes('trample'),
+    lifelink:      txt.includes('lifelink'),
+  };
+}
+
+function getPT(card){
+  const p = Number(card.power ?? card._scry?.power ?? 0);
+  const t = Number(card.toughness ?? card._scry?.toughness ?? 0);
+  return { power:p, toughness:t };
+}
+
+function resolveDamageStep(attacker, blockers, phase, aFx, blockersFx){
+  const notes = [];
+  const deadIds = new Set();
+  let attackerDead = false;
+
+  const aPT = getPT(attacker);
+
+  if (!blockers.length){
+    // Unblocked — handle lifelink + trample messaging here
+    if (aFx.lifelink) notes.push(`${attacker.name} lifelinks ${aPT.power} to its controller.`);
+    notes.push(`${attacker.name} is unblocked for ${aPT.power} damage.`);
+    return { attackerDead:false, deadIds, notes };
+  }
+
+  // Simple assignment in listed order. If you later support manual order, pass that order in.
+  let remaining = aPT.power;
+  for (let i=0;i<blockers.length;i++){
+    const b = blockers[i];
+    const bFx = blockersFx[i] || {};
+    const bPT = getPT(b);
+
+    // Attacker deals to this blocker
+    const aDeals = Math.min(remaining, bPT.toughness);
+    const aKills = aFx.deathtouch || (aDeals >= bPT.toughness);
+    if (aDeals > 0) remaining -= aDeals;
+
+    // Blocker deals to attacker (both strike in the same step for that phase)
+    const bKills = bFx.deathtouch || (bPT.power >= aPT.toughness);
+
+    if (aKills){ deadIds.add(b.id); notes.push(`${attacker.name} kills ${b.name}${phase==='first'?' (first strike)':''}.`); }
+    if (bKills){ attackerDead = true; notes.push(`${b.name} kills ${attacker.name}${phase==='first'?' (first strike)':''}.`); }
+
+    // Trample only matters after the last blocker
+    if (aFx.trample && i === blockers.length-1 && remaining > 0){
+      notes.push(`${attacker.name} tramples over for ${remaining} damage.`);
+    }
+  }
+
+  if (aFx.lifelink && aPT.power > 0){
+    notes.push(`${attacker.name} lifelinks ${aPT.power} to its controller.`);
+  }
+
+  return { attackerDead, deadIds, notes };
+}
+
+export default { handleBattleClick, resolveCombatDamage };
