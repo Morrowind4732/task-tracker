@@ -169,6 +169,137 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   display:block; /* centers nicely in the grid container */
 }
 
+/* Buttons to the immediate left of the deck (vertically centered) */
+.deck-actions{
+  position: absolute;
+  left: calc(var(--DECK_X) - 64px);
+  top:  calc(var(--DECK_TOP) + (var(--ZONE_H) / 2) - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  z-index: var(--z-controls);
+}
+/* Only the three buttons next to the deck */
+.deck-actions .sbtn{
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background:#1a2a45;
+  color:#cfe1ff;
+  border:1px solid #2b3f63;
+  font-weight:900;
+  font-size:20px;
+  display:inline-flex;align-items:center;justify-content:center;line-height:1;
+  box-shadow:0 8px 20px rgba(106,169,255,.18);
+}
+.deck-actions .sbtn:active{ transform:scale(.98); }
+
+
+.chatOverlay{
+  position:fixed; inset:0; display:none; z-index:60;
+  background:rgba(6,10,16,.65);
+}
+.chatPanel{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%);
+  width:min(980px,94vw); max-height:82vh; overflow:auto;
+  background:#0b1220; color:#e7efff; border:1px solid #2b3f63;
+  border-radius:14px; padding:12px;
+}
+.chatHeader{
+  display:flex; justify-content:space-between; align-items:center;
+  gap:8px; margin-bottom:10px; font-weight:800;
+}
+.chatClose{ background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63;
+  border-radius:10px; padding:6px 10px; }
+.btn.sm{
+  background:#142136; color:#e9f2ff; border:1px solid #35527d;
+  border-radius:10px; padding:6px 10px; font-weight:800;
+}
+
+.deck-actions,
+.deck-actions .sbtn{
+  touch-action: auto;
+}
+
+/* ==== Stack preview arrow ============================================== */
+.stackArrow{
+  position:absolute; z-index:var(--z-tooltip);
+  display:none; pointer-events:none;
+  padding:6px 10px; border-radius:999px;
+  background:rgba(20,33,54,.92); border:1px solid #35527d;
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+  transform: translate(-50%,-50%) scale(calc(1 / var(--world-zoom)));
+  gap:8px; align-items:center; font-weight:800; color:#e9f2ff;
+}
+.stackArrow svg{ width:22px; height:22px; display:block; }
+.stackArrow.dir-right svg{ transform:rotate(0deg); }
+.stackArrow.dir-left  svg{ transform:rotate(180deg); }
+.stackArrow.dir-up    svg{ transform:rotate(-90deg); }
+
+/* === Mulligan overlay (top-center prompt) =============================== */
+.mulliganOverlay{
+  position:fixed; left:50%; top:10px; transform:translateX(-50%);
+  z-index: var(--z-overlays);
+  display:none; pointer-events:none;
+}
+.mullPanel{
+  pointer-events:auto;
+  background:rgba(12,18,28,.98);
+  border:1px solid #24324a;
+  border-radius:12px;
+  padding:10px 12px;
+  display:flex; align-items:center; gap:10px;
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+  font-weight:800; color:#e9f2ff;
+}
+.mullPanel .btn{
+  background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63;
+  border-radius:10px; padding:6px 12px; font-weight:900;
+}
+.mullPanel .btn:active{ transform:scale(.98); }
+
+/* === Card Settings overlay ============================================= */
+#cardSettings.scrim{ display:none; }
+.cardSettingsPanel{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%); width:min(820px,94vw); max-height:80vh; overflow:auto;
+  background:rgba(12,18,28,.98); border:1px solid #24324a; border-radius:14px; padding:12px;
+}
+.cs-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.cs-row{ display:grid; grid-template-columns:140px 1fr; gap:10px; align-items:start; margin-bottom:10px; }
+.cs-row .lbl{ color:#9fb4d9; font-weight:800; padding-top:6px; }
+.cs-input, .cs-textarea, .cs-chipinput{ width:100%; background:#0a0f16; color:#e7efff; border:1px solid #24324a; border-radius:10px; padding:8px 10px; }
+.cs-textarea{ min-height:90px; resize:vertical; }
+.cs-chips{ display:flex; gap:6px; flex-wrap:wrap; }
+.cs-chip{ background:#1b2a47; border:1px solid #2b3f63; color:#d8e7ff; border-radius:999px; padding:6px 10px; font-weight:800; }
+.cs-minirow{ display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+.cs-minirow input{ background:#0a0f16; color:#e7efff; border:1px solid #24324a; border-radius:8px; padding:6px 8px; }
+.cs-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.cs-btn{ background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63; border-radius:10px; padding:8px 12px; font-weight:900; }
+.cs-btn.warn{ background:#2a1730; border-color:#5e2a6a; }
+
+/* Counters list */
+.countersWrap{ display:flex; flex-direction:column; gap:6px; }
+.counterRow{ display:grid; grid-template-columns:1fr 90px 34px; gap:8px; }
+.counterRow input{ background:#0a0f16; color:#e7efff; border:1px solid #24324a; border-radius:8px; padding:6px 8px; }
+.counterRow .addBtn, .counterRow .delBtn{
+  background:#142136; color:#e9f2ff; border:1px solid #35527d; border-radius:10px; width:34px; height:34px; font-weight:900;
+}
+
+/* === Under-card anchor badge =========================================== */
+.cardBadge{
+  position:absolute; z-index:var(--z-tooltip);
+  background:rgba(20,33,54,.92); border:1px solid #35527d; color:#e7f2ff;
+  border-radius:10px; padding:6px 8px; display:flex; gap:8px; align-items:center;
+  transform: translate(-50%, 0) scale(calc(1 / var(--world-zoom)));
+  pointer-events:none;
+}
+.cardBadge .bchip{
+  background:#1b2a47; border:1px solid #2b3f63; border-radius:8px; padding:2px 6px; font-weight:800;
+}
+.cardBadge .notes{ max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; opacity:.9; }
+
 
 </style>
 </head>
@@ -221,6 +352,13 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
     <div class="worldScale" id="worldScale" style="transform:translate(0px,0px) scale(1);">
       <div class="world" id="world">
         <div class="zone" id="deckZone"><div class="label">Deck</div></div>
+		<!-- Left-of-deck actions (🔍 ＋ …) -->
+<div class="deck-actions" id="deckActions">
+  <button class="sbtn" id="deckSearchBtn" title="Search Deck">🔍</button>
+  <button class="sbtn" id="deckAddBtn"    title="Add card / token">＋</button>
+  <button class="sbtn" id="deckMoreBtn"   title="Deck Tools">…</button>
+</div>
+
         <div class="zone" id="cmdZone"><div class="label">Commander</div></div>
         <div class="zone" id="graveyard"><div class="label">Graveyard</div></div>
         <div class="zone" id="exileZone"><div class="label">Exile</div></div>
@@ -269,6 +407,78 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   <button class="pill" data-choice="shuffle">Shuffle</button>
 </div>
 
+<!-- Card Settings (⚙️) -->
+<div class="scrim" id="cardSettings">
+  <div class="cardSettingsPanel">
+    <div class="cs-header">
+      <strong id="csTitle">Card Settings</strong>
+      <button class="cs-btn" id="csClose">Close</button>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Additional Types</div>
+      <div>
+        <div class="cs-chips" id="csTypesChips"></div>
+        <input class="cs-input" id="csTypesInput" placeholder="Type a type and press Enter (e.g., Wizard)" />
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Additional Effects</div>
+      <div>
+        <div class="cs-chips" id="csEffectsChips"></div>
+        <input class="cs-input" id="csEffectsInput" placeholder="Type an effect and press Enter (e.g., Vigilance)" />
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Chosen Type</div>
+      <input class="cs-input" id="csChosenType" placeholder="e.g., Angel, Wizard, Beast..." />
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">P/T Mod</div>
+      <div class="cs-minirow">
+        <label>Power ± <input type="number" id="csPowMod" style="width:80px" value="0"></label>
+        <label>Toughness ± <input type="number" id="csTghMod" style="width:80px" value="0"></label>
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Counters</div>
+      <div>
+        <div class="countersWrap" id="csCounters"></div>
+        <div class="counterRow">
+          <input id="csNewCounterName" placeholder="counter name (e.g., +1/+1)" />
+          <input id="csNewCounterQty" type="number" placeholder="qty" value="1" />
+          <button class="addBtn" id="csAddCounter">＋</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Notes</div>
+      <textarea class="cs-textarea" id="csNotes" placeholder="Anything else..."></textarea>
+    </div>
+
+    <div class="cs-actions">
+      <button class="cs-btn warn" id="csClear">Clear</button>
+      <button class="cs-btn" id="csSave">Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Mulligan overlay (friendly: always draw 7 again) -->
+<div class="mulliganOverlay" id="mulliganOverlay">
+  <div class="mullPanel">
+    <span>Mulligan?</span>
+    <button class="btn" id="mullYesBtn">Yes</button>
+    <button class="btn" id="mullNoBtn">No</button>
+  </div>
+</div>
+
+
 <script type="module">
 const CARD_BACK_URL = 'https://i.imgur.com/LdOBU1I.jpeg';
 
@@ -279,6 +489,10 @@ const state = {
   turn: null,
   zoom: 1, panX: 0, panY: 0,
   hand: [], table: [], gy: [], exile: [], deck: [],
+    _mulliganPending: false,
+  _mulliganAutoDrawing: false,
+  _hasShownOpeningMull: false,
+
   scryCache: new Map(),
   selectedCardId: null
 };
@@ -317,6 +531,14 @@ const gamePicker = document.getElementById('gamePicker');
 const endTurnBtn = document.getElementById('endTurnBtn');
 
 // keep an up-to-date turn seat via your existing meta poller
+
+
+// --- CLICK LOGGING: deck button cluster ---
+['deckSearchBtn','deckAddBtn','deckMoreBtn','battleBtn','endTurnBtn','viewEyeBtn'].forEach(id=>{
+  const el = document.getElementById(id);
+  if (!el) { console.warn('[wire] missing button:', id); return; }
+  el.addEventListener('click', ()=> console.log(`[click] #${id}`));
+});
 
 
 endTurnBtn.addEventListener('click', async ()=>{
@@ -472,7 +694,9 @@ function applyWorldTransform(){
   worldScaleEl.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
   worldScaleEl.style.setProperty('--world-zoom', state.zoom);
   repositionUIOverlays();
+  positionAllBadges(); // ← add this
 }
+
 function repositionUIOverlays(){
   const selId = state.selectedCardId;
   if(!selId) return;
@@ -485,7 +709,15 @@ zoomInput.addEventListener('input', (e)=>{ state.zoom = Number(e.target.value)/1
 let draggingCard = false, panning=false, panStartX=0, panStartY=0, panBaseX=0, panBaseY=0;
 worldWrap.addEventListener('pointerdown', (e)=>{
   const t = e.target;
-  if (draggingCard || t.closest('.card') || t.closest('.zone') || t.closest('.zoomWrap') || t.closest('.toolbar')) return;
+    if (
+    draggingCard ||
+    t.closest('.card') ||
+    t.closest('.zone') ||
+    t.closest('.zoomWrap') ||
+    t.closest('.toolbar') ||
+    t.closest('.deck-actions')     // ← allow clicks on the 3 deck buttons
+  ) return;
+
   panning = true; worldWrap.classList.add('panning');
   try{ worldWrap.setPointerCapture(e.pointerId); }catch(_){}
   panStartX = e.clientX; panStartY = e.clientY; panBaseX = state.panX; panBaseY = state.panY;
@@ -514,6 +746,142 @@ worldWrap.addEventListener('wheel', (e)=>{
 },{passive:false});
 
 /* Utils */
+/* ==== Stacking detection + preview ==================================== */
+let _stackPreviewEl = null;  // single reusable arrow
+let _stackPreview = null;    // { targetId, dir } during drag
+
+function getCardElById(id){ return document.querySelector(`.card[data-id="${id}"]`); }
+function cardRect(el){ return el.getBoundingClientRect(); }
+
+// pick the card we overlap the MOST, return {el, dir|null}
+function findBestOverlapDir(dragEl){
+  const a = cardRect(dragEl);
+  let best = null, bestArea = 0;
+
+  document.querySelectorAll('#world .card').forEach(el=>{
+    if (el === dragEl) return;
+    const b = cardRect(el);
+    const ox = Math.max(0, Math.min(a.right,b.right) - Math.max(a.left,b.left));
+    const oy = Math.max(0, Math.min(a.bottom,b.bottom) - Math.max(a.top,b.top));
+    const area = ox * oy;
+    if (area > bestArea){ bestArea = area; best = el; }
+  });
+
+  if (!best) return null;
+  // require a meaningful overlap (~10% of card area)
+  const minArea = (a.width * a.height) * 0.10;
+  if (bestArea < minArea) return null;
+
+  const br = cardRect(best);
+  const cx = (a.left + a.right)/2;
+  const cy = (a.top  + a.bottom)/2;
+  const rx = (cx - br.left) / br.width;   // 0..1
+  const ry = (cy - br.top)  / br.height;  // 0..1
+
+  // your rule: top half => "up", left/right vertical edges => left/right
+  let dir = null;
+  if (ry < 0.35) dir = 'up';
+  else if (rx < 0.32) dir = 'left';
+  else if (rx > 0.68) dir = 'right';
+
+  return dir ? { el: best, dir } : null;
+}
+
+function ensureStackArrow(){
+  if (_stackPreviewEl) return _stackPreviewEl;
+  const d = document.createElement('div');
+  d.className = 'stackArrow';
+  d.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 12h14M13 5l7 7-7 7"></path>
+    </svg>
+    <span class="lbl"></span>`;
+  document.getElementById('world').appendChild(d);
+  _stackPreviewEl = d;
+  return d;
+}
+
+function showStackArrow(targetEl, dir){
+  const arrow = ensureStackArrow();
+  arrow.classList.remove('dir-left','dir-right','dir-up');
+  arrow.classList.add('dir-' + dir);
+  arrow.querySelector('.lbl').textContent =
+    dir === 'up' ? 'Stack Up' : ('Stack ' + (dir === 'left' ? 'Left' : 'Right'));
+
+  // ← Always position ABOVE the target card’s center
+  const wr = document.getElementById('world').getBoundingClientRect();
+  const tr = targetEl.getBoundingClientRect();
+  const ax = tr.left + tr.width / 2 - wr.left;
+  const ay = tr.top - wr.top - 22;  // a little above the top edge
+
+  arrow.style.left = ax + 'px';
+  arrow.style.top  = ay + 'px';
+  arrow.style.display = 'flex';
+}
+
+function hideStackArrow(){
+  if (_stackPreviewEl) _stackPreviewEl.style.display = 'none';
+  _stackPreview = null;
+}
+
+// apply stack on drop
+async function applyStackDrop(dragCard, dragEl, baseCard, dir){
+  const cs = getComputedStyle(document.documentElement);
+  const cardW = parseFloat(cs.getPropertyValue('--card-w')) || 223;
+  const cardH = parseFloat(cs.getPropertyValue('--card-h')) || 310;
+
+  const baseEl = getCardElById(baseCard.id);
+  const bx = baseCard.x ?? (baseEl ? parseFloat(baseEl.style.left)||0 : 0);
+  const by = baseCard.y ?? (baseEl ? parseFloat(baseEl.style.top)||0 : 0);
+
+  // helper: guarantee z ordering (drag under base)
+  const baseZ = parseInt(baseEl?.style.zIndex || '1000', 10);
+  if (baseEl) baseEl.style.zIndex = String(baseZ);
+  dragEl.style.zIndex = String(baseZ - 1);
+
+  if (dir === 'left' || dir === 'right'){
+    // Keep columns far enough apart for tapped (sideways) cards:
+    // gap >= card height (plus a hair).
+    const gap = Math.round(cardH * 1.02);
+    const nx = bx + (dir === 'right' ? gap : -gap);
+    const ny = by + 6; // tiny vertical tidy
+
+    dragEl.style.left = (dragCard.x = nx) + 'px';
+    dragEl.style.top  = (dragCard.y = ny) + 'px';
+
+    // row stacks are not coupled
+    delete dragCard.stackId;
+
+    if (state.table.find(c=>c.id===dragCard.id)) await writeTableMove(dragCard, dragEl);
+    else                                         await writeTableAdd(dragCard);
+
+    // keep the base on top visually
+    if (baseEl) selectCard(baseCard.id, baseEl);
+    return;
+  }
+
+  // dir === 'up' → coupled stack (pile)
+  const stackId = baseCard.stackId || ('stack_' + (baseCard.id || Math.random().toString(36).slice(2)));
+  baseCard.stackId = stackId;
+  dragCard.stackId = stackId;
+
+  // offset so the new card tucks UNDER the base one
+  const offsetY = Math.round(cardH * 0.55);
+  const nx = bx;
+  const ny = by - offsetY;
+
+  dragEl.style.left = (dragCard.x = nx) + 'px';
+  dragEl.style.top  = (dragCard.y = ny) + 'px';
+
+  if (state.table.find(c=>c.id===dragCard.id)) await writeTableMove(dragCard, dragEl);
+  else                                         await writeTableAdd(dragCard);
+
+  // keep the base selected so it stays visually on top
+  if (baseEl) selectCard(baseCard.id, baseEl);
+}
+
+
 function rectsOverlap(a,b){ return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom); }
 function zoneHit(el){
   const r = el.getBoundingClientRect(); const hits=[];
@@ -603,6 +971,62 @@ function positionActions(el){
   if(!actionsEl) return; const {x,y,w}=getCardWorldBox(el); actionsEl.style.left=(x+w+8)+'px'; actionsEl.style.top=(y+6)+'px'; positionTooltip(el);
 }
 function hideTooltip(){ if(tooltipEl){ tooltipEl.remove(); tooltipEl=null; } }
+
+function ensureOrUpdateCardBadge(card){
+  // Only show when there is something to show
+  const hasCounters = Array.isArray(card._counters) && card._counters.length > 0;
+  const hasNotes    = !!(card._notes && card._notes.trim().length);
+  if (!hasCounters && !hasNotes){ removeCardBadge(card.id); return; }
+
+  let el = document.querySelector(`.cardBadge[data-id="${card.id}"]`);
+  if (!el){
+    el = document.createElement('div');
+    el.className = 'cardBadge';
+    el.dataset.id = card.id;
+    document.getElementById('world').appendChild(el);
+  }
+
+  // Build chips + note snippet
+  const chips = (card._counters || [])
+    .filter(c=>c && c.name && c.qty)
+    .map(c=>`<span class="bchip">${c.name}: ${c.qty}</span>`)
+    .join('');
+  const note  = card._notes ? `<span class="notes">${escapeHtml(card._notes)}</span>` : '';
+
+  el.innerHTML = chips + note;
+  positionCardBadgeFor(card);
+}
+
+function removeCardBadge(cardId){
+  const el = document.querySelector(`.cardBadge[data-id="${cardId}"]`);
+  if (el) el.remove();
+}
+
+function positionCardBadgeFor(card){
+  const cardEl = getCardElById(card.id);
+  const badge  = document.querySelector(`.cardBadge[data-id="${card.id}"]`);
+  if (!cardEl || !badge) return;
+
+  // Use the same world-space anchor math as positionActions()
+  const { x, y, w, h } = getCardWorldBox(cardEl);
+  // bottom-center, with a tiny gap
+  badge.style.left = (x + (w / 2)) + 'px';
+  badge.style.top  = (y + h + 6) + 'px';
+}
+
+
+function positionAllBadges(){
+  document.querySelectorAll('.cardBadge').forEach(b=>{
+    const id = b.dataset.id;
+    const card = getCardById(id);
+    if (card) positionCardBadgeFor(card);
+  });
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g,m=>({ '&':'&nbsp;&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]||m));
+}
+
 
 /* --- mana-master helpers: turn {W}{U}{2/R}{T} into <i class="ms ..."> --- */
 function manaClassForToken(tok){
@@ -751,6 +1175,8 @@ if (ptEl) ptEl.textContent = computePT(card);
 
   normalizeCardImages(card);           // refresh from _faces
   applyFaceImages(el, card);           // re-apply DOM images (NO mirroring)
+ensureOrUpdateCardBadge(card);       // (re)build if needed
+positionCardBadgeFor(card);          // keep badge glued to the card
 
   reanchorDuringTransition(el); positionActions(el); if (tooltipEl) positionTooltip(el);
 }
@@ -805,7 +1231,224 @@ document.addEventListener('keydown',(e)=>{
   if(e.key==='t'||e.key==='T'){ e.preventDefault(); toggleTap(card); }
   else if(e.key==='f'||e.key==='F'){ e.preventDefault(); toggleFlip(card); }
 });
-function openCardSettings(card){ alert(`Settings for: ${card.name}`); }
+let _csEditingId = null;
+
+function openCardSettings(card){
+  if (!card) return;
+  _csEditingId = card.id;
+
+  // ensure storage buckets on the card object
+  card._extraTypes   = Array.isArray(card._extraTypes) ? card._extraTypes : [];
+  card._extraEffects = Array.isArray(card._extraEffects) ? card._extraEffects : [];
+  card._chosenType   = card._chosenType || '';
+  card._ptMod        = card._ptMod || { p:0, t:0 };
+  card._counters     = Array.isArray(card._counters) ? card._counters : []; // [{name, qty}]
+  card._notes        = card._notes || '';
+
+  // fill UI
+  document.getElementById('csTitle').textContent = `Card Settings — ${card.name || 'Unknown'}`;
+  fillChips('csTypesChips', card._extraTypes);
+  fillChips('csEffectsChips', card._extraEffects);
+  document.getElementById('csTypesInput').value   = '';
+  document.getElementById('csEffectsInput').value = '';
+  document.getElementById('csChosenType').value   = card._chosenType;
+  document.getElementById('csPowMod').value       = Number(card._ptMod.p||0);
+  document.getElementById('csTghMod').value       = Number(card._ptMod.t||0);
+  renderCountersList(card._counters);
+  document.getElementById('csNewCounterName').value = '';
+  document.getElementById('csNewCounterQty').value  = 1;
+  document.getElementById('csNotes').value        = card._notes || '';
+
+  // show overlay
+  document.getElementById('cardSettings').style.display = 'block';
+}
+
+function closeCardSettings(){
+  document.getElementById('cardSettings').style.display = 'none';
+  _csEditingId = null;
+}
+
+// helpers for chips
+function fillChips(chipsId, arr){
+  const host = document.getElementById(chipsId);
+  host.innerHTML = '';
+  (arr||[]).forEach((txt, i)=>{
+    const span = document.createElement('span');
+    span.className = 'cs-chip';
+    span.textContent = txt;
+    span.title = 'Click to remove';
+    span.addEventListener('click', ()=>{
+      arr.splice(i,1);
+      fillChips(chipsId, arr);
+    });
+    host.appendChild(span);
+  });
+}
+
+function pushChip(inputId, chipsId, targetArr){
+  const v = (document.getElementById(inputId).value || '').trim();
+  if (!v) return;
+  targetArr.push(v);
+  document.getElementById(inputId).value = '';
+  fillChips(chipsId, targetArr);
+  try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); } catch(_){}
+
+}
+
+// counters UI
+function renderCountersList(list){
+  const host = document.getElementById('csCounters');
+  host.innerHTML = '';
+  (list||[]).forEach((c, idx)=>{
+    const row = document.createElement('div');
+    row.className = 'counterRow';
+    row.innerHTML = `
+      <input value="${c.name || ''}" placeholder="name"/>
+      <input type="number" value="${Number(c.qty||0)}" placeholder="qty"/>
+      <button class="delBtn">−</button>
+    `;
+    const [nameEl, qtyEl, delBtn] = row.children;
+    nameEl.addEventListener('input', ()=>{ c.name = nameEl.value.trim(); });
+    qtyEl.addEventListener('input', ()=>{ c.qty  = Number(qtyEl.value||0); });
+    delBtn.addEventListener('click', ()=>{
+      list.splice(idx,1);
+      renderCountersList(list);
+    });
+    host.appendChild(row);
+  });
+  try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); } catch(_){}
+
+}
+
+// wire inputs
+(function wireCardSettingsOnce(){
+  const cs = document.getElementById('cardSettings');
+  if (!cs) return;
+
+  // close
+  document.getElementById('csClose').addEventListener('click', closeCardSettings);
+
+  // chip inputs
+  document.getElementById('csTypesInput').addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter'){
+      const card = getCardById(_csEditingId); if (!card) return;
+      pushChip('csTypesInput', 'csTypesChips', card._extraTypes);
+    }
+  });
+  document.getElementById('csEffectsInput').addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter'){
+      const card = getCardById(_csEditingId); if (!card) return;
+      pushChip('csEffectsInput', 'csEffectsChips', card._extraEffects);
+    }
+  });
+
+  // add counter
+  document.getElementById('csAddCounter').addEventListener('click', ()=>{
+    const card = getCardById(_csEditingId); if (!card) return;
+    const name = (document.getElementById('csNewCounterName').value || '').trim();
+    const qty  = Number(document.getElementById('csNewCounterQty').value || 1);
+    if (!name) return;
+    card._counters.push({ name, qty: isFinite(qty) ? qty : 1 });
+    document.getElementById('csNewCounterName').value = '';
+    document.getElementById('csNewCounterQty').value  = 1;
+    renderCountersList(card._counters);
+  });
+
+  // clear
+  document.getElementById('csClear').addEventListener('click', ()=>{
+    const card = getCardById(_csEditingId); if (!card) return;
+    card._extraTypes = [];
+    card._extraEffects = [];
+    card._chosenType = '';
+    card._ptMod = { p:0, t:0 };
+    card._counters = [];
+    card._notes = '';
+    fillChips('csTypesChips', card._extraTypes);
+    fillChips('csEffectsChips', card._extraEffects);
+    renderCountersList(card._counters);
+    document.getElementById('csChosenType').value = '';
+    document.getElementById('csPowMod').value = 0;
+    document.getElementById('csTghMod').value = 0;
+    document.getElementById('csNotes').value = '';
+  });
+
+  // save
+document.getElementById('csSave').addEventListener('click', async ()=>{
+  const card = getCardById(_csEditingId); if (!card) return;
+
+  // Read scalar inputs
+  card._chosenType = (document.getElementById('csChosenType').value || '').trim();
+  card._ptMod = {
+    p: Number(document.getElementById('csPowMod').value || 0),
+    t: Number(document.getElementById('csTghMod').value || 0),
+  };
+  card._notes = (document.getElementById('csNotes').value || '').trim();
+
+  // Ensure arrays we edited live are persisted as plain JSON
+  card._extraTypes   = Array.isArray(card._extraTypes)   ? [...card._extraTypes]   : [];
+  card._extraEffects = Array.isArray(card._extraEffects) ? [...card._extraEffects] : [];
+  card._counters     = Array.isArray(card._counters)
+    ? card._counters.map(c => ({ name: String(c.name||'').trim(), qty: Number(c.qty||0) }))
+    : [];
+
+  // UI refresh (PT may change), badge (counters/notes), then persist
+  updateCardDom(card);
+  ensureOrUpdateCardBadge(card);
+
+ try {
+    // Write now
+    if (window.StorageAPI?.savePlayerState) {
+      // If your storage.js exposes a non-debounced variant, prefer that
+      await window.StorageAPI.savePlayerState(state.gameId, state.mySeat, state);
+    } else if (window.StorageAPI?.savePlayerStateDebounced) {
+      // Fallback: fire debounced and try to flush if available
+      window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+      if (window.StorageAPI.flush) { await window.StorageAPI.flush(); }
+      // Last ditch: tiny delay to let the debounce timer fire
+      else { await new Promise(r=>setTimeout(r, 250)); }
+    }
+  } catch(_){}
+  closeCardSettings();
+});
+
+})();
+
+
+// ---- DeckBridge: called by modules/deck.tools.js so actions affect live UI ----
+window.DeckBridge = {
+  moveOneFromDeckByName(name, dest){
+    if (!state || !Array.isArray(state.deck)) return false;
+    const idx = state.deck.findIndex(c => (c?.name || '').toLowerCase() === String(name).toLowerCase());
+    if (idx < 0) { console.warn('[DeckBridge] not in deck:', name); return false; }
+
+    const [card] = state.deck.splice(idx, 1);
+
+    if (dest === 'hand'){
+      state.hand.push(card);
+      renderHand();
+    } else if (dest === 'table'){
+      const el = makeCardEl(card);
+      worldEl.appendChild(el);
+      enableDrag(el, card, {staged:false});
+      if (!state.table.find(c => c.id === card.id)) state.table.push(card);
+    } else if (dest === 'graveyard'){
+      state.gy.unshift(card);
+    } else if (dest === 'exile'){
+      state.exile.unshift(card);
+    } else {
+      console.warn('[DeckBridge] unknown dest:', dest);
+      return false;
+    }
+
+    // persist
+    try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); }
+    catch(e){ console.warn('[DeckBridge] save failed', e); }
+
+    console.log(`[DeckBridge] ${name} -> ${dest}`);
+    return true;
+  }
+};
+
 
 /* Hand */
 let handIndex=0, handSwipeEnabled=false;
@@ -854,8 +1497,15 @@ function enableHandSwipe(){
   handTrack.addEventListener('touchcancel',()=>{ startX=null; startY=null; },{passive:true});
 }
 function stageFromHand(card){
+  // If mulligan prompt is up and user starts playing, cancel it
+  if (state._mulliganPending && !state._mulliganAutoDrawing){
+    hideMulliganOverlay();
+  }
+
   const hi=state.hand.findIndex(c=>c.id===card.id);
   if(hi>-1){ state.hand.splice(hi,1); handIndex=Math.max(0, Math.min(handIndex, state.hand.length-1)); renderHand(); }
+
+
   const cx=window.innerWidth/2, cy=window.innerHeight/2; const centerW=clientToWorld(cx,cy);
   const cardW=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w'))||223;
   const cardH=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h'))||310;
@@ -863,6 +1513,30 @@ function stageFromHand(card){
   const el=makeCardEl(staged); worldEl.appendChild(el); enableDrag(el, staged, {staged:true});
   handTrack.querySelectorAll('.card').forEach(n=>n.classList.remove('selected')); selectCard(staged.id, el);
 }
+
+window.stageFromHand = stageFromHand;  // expose swipe-up behavior
+
+async function returnToHand(card, el){
+  try { if (el && el.remove) el.remove(); } catch(_) {}
+
+  // Remove any existing copy of this id from table state
+  const tbl = Array.isArray(state.table) ? state.table : (state.table = []);
+  const idx = tbl.findIndex(c => String(c.id) === String(card.id));
+  if (idx > -1) tbl.splice(idx, 1);
+
+  // Append to end of hand
+  const hand = Array.isArray(state.hand) ? state.hand : (state.hand = []);
+  // If this card id already exists in hand, remove old one first
+  const hIdx = hand.findIndex(c => String(c.id) === String(card.id));
+  if (hIdx > -1) hand.splice(hIdx, 1);
+  hand.push(card);
+
+  // Re-render hand immediately and persist
+  renderHand();
+  try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); } catch(_){}
+}
+// (optional but useful) make your hand renderer callable from modules
+window.__rerenderHand = renderHand;
 
 function renderOpponentHand(count){
   handTrack.innerHTML = '';
@@ -1019,6 +1693,21 @@ function patchOpponentView(nextDoc){
     Exile: (nextDoc.Exile || []).slice(),
     HandCount: (nextDoc.Hand || []).length
   };
+// refresh snapshots used for next diff
+state._oppSnapshot = {
+  Table: (nextDoc.Table || []).map(c => ({...c})),
+  Commander: nextDoc.Commander ? {...nextDoc.Commander} : null,
+  Graveyard: (nextDoc.Graveyard || []).slice(),
+  Exile: (nextDoc.Exile || []).slice(),
+  HandCount: (nextDoc.Hand || []).length
+};
+
+// ensure badges (counters/notes) show on opponent view, too
+[ ...(nextDoc.Table || []), nextDoc.Commander ].filter(Boolean).forEach(ensureOrUpdateCardBadge);
+
+// keep state.table aligned so tooltips/select work
+state.table = (nextDoc.Table || []).map(c => ({...c}));
+state.tableCommander = nextDoc.Commander ? {...nextDoc.Commander} : null;
 
   // keep state.table aligned so tooltips/select work
   state.table = (nextDoc.Table || []).map(c => ({...c}));
@@ -1042,8 +1731,57 @@ function enableDrag(el, card, opts={}){
   let dragging=false, offX=0, offY=0;
   el.style.touchAction='none';
   el.addEventListener('pointerdown',(e)=>{ dragging=true; draggingCard=true; el.setPointerCapture?.(e.pointerId); const wp=clientToWorld(e.clientX,e.clientY); const left=parseFloat(el.style.left)||0; const top=parseFloat(el.style.top)||0; offX=wp.x-left; offY=wp.y-top; if(state.selectedCardId===card.id) positionActions(el); });
-  el.addEventListener('pointermove',(e)=>{ if(!dragging) return; const wp=clientToWorld(e.clientX,e.clientY); el.style.left=(wp.x-offX)+'px'; el.style.top=(wp.y-offY)+'px'; if(state.selectedCardId===card.id){ positionActions(el); if(tooltipEl) positionTooltip(el); } },{passive:false});
+  // ==== live stack preview while dragging
+const hint = findBestOverlapDir(el);
+if (hint) {
+  _stackPreview = { targetId: hint.el.dataset.id, dir: hint.dir };
+  showStackArrow(hint.el, hint.dir);
+} else {
+  hideStackArrow();
+}
+
+  el.addEventListener('pointermove',(e)=>{
+  if(!dragging) return;
+  const wp=clientToWorld(e.clientX,e.clientY);
+  el.style.left=(wp.x-offX)+'px';
+  el.style.top =(wp.y-offY)+'px';
+
+  if(state.selectedCardId===card.id){
+    positionActions(el);
+    if(tooltipEl) positionTooltip(el);
+  }
+
+positionCardBadgeFor(card); 
+
+  // ---- STACK PREVIEW WHILE DRAGGING ----
+  const hint = findBestOverlapDir(el);
+  if (hint){
+    _stackPreview = { targetId: hint.el.dataset.id, dir: hint.dir };
+    showStackArrow(hint.el, hint.dir);
+  } else {
+    hideStackArrow();
+  }
+},{passive:false});
+
   async function finishDrag(){
+  // ==== drop into a stack if a preview is active
+if (_stackPreview && _stackPreview.targetId) {
+  const targetEl = getCardElById(_stackPreview.targetId);
+  const targetCard = getCardById(_stackPreview.targetId) || (targetEl && targetEl.__cardRef);
+  const dir = _stackPreview.dir;
+  hideStackArrow();
+
+  if (targetCard && dir) {
+    await applyStackDrop(card, el, targetCard, dir);
+    // if this was a staged-from-hand drop, make sure we don’t re-add twice
+    opts.staged = false;
+        // keep base on top after stacking
+    if (targetEl) selectCard(targetCard.id, targetEl);
+
+    return; // stacked → stop normal zone handling
+  }
+}
+
     if(!dragging) return; dragging=false; draggingCard=false;
     if (hitHand(el)){ await returnToHand(card, el); return; }
     const hits=zoneHit(el);
@@ -1128,6 +1866,8 @@ async function hydrateFromDoc(data){
 
   state.table.forEach(c=>{ const el=makeCardEl(c); worldEl.appendChild(el); enableDrag(el, c, {staged:false}); });
   if (state.tableCommander){ const el=makeCardEl(state.tableCommander); worldEl.appendChild(el); enableDrag(el, state.tableCommander, {staged:false}); }
+  [state.tableCommander, ...state.table].filter(Boolean).forEach(ensureOrUpdateCardBadge);
+
   renderHand();
 }
 
@@ -1195,25 +1935,117 @@ function animateDrawIntoIndex(imgUrl, index){
   setTimeout(()=>ghost.remove(),320);
 }
 async function draw(){
-  if (state.viewReadOnly) return; 
-  const count=(state.turn===0)?7:1;
-  if(count===1){
-    const drawn=state.deck.splice(0,1); const card=drawn[0]; if(!card) return;
-    const insertAt=Math.min(handIndex+1, state.hand.length);
-    state.hand.splice(insertAt,0,{__ghost:true,id:'ghost_'+Math.random().toString(36).slice(2)}); renderHand();
+  if (state.viewReadOnly) return;
+
+  const opening = (state.turn === 0);
+  const count   = opening ? 7 : 1;
+
+  if (count === 1){
+    const drawn = state.deck.splice(0,1);
+    const card  = drawn[0];
+    if (!card) return;
+
+    const insertAt = Math.min(handIndex+1, state.hand.length);
+    state.hand.splice(insertAt,0,{__ghost:true,id:'ghost_'+Math.random().toString(36).slice(2)});
+    renderHand();
     animateDrawIntoIndex(card.frontImg || CARD_BACK_URL, insertAt);
-    setTimeout(()=>{ const gi=state.hand.findIndex(c=>c&&c.__ghost); if(gi!==-1){ state.hand.splice(gi,1,card); handIndex=gi; renderHand(); }},330);
-    await writeDrawToServer(drawn); if(state.turn===0) state.turn=1; return;
+    setTimeout(()=>{
+      const gi = state.hand.findIndex(c=>c&&c.__ghost);
+      if (gi !== -1){
+        state.hand.splice(gi,1,card);
+        handIndex = gi;
+        renderHand();
+      }
+    },330);
+
+    await writeDrawToServer(drawn);
+
+    // If the mulligan prompt was pending and this draw was user-initiated,
+    // drawing a card *cancels* the mulligan.
+    if (state._mulliganPending && !state._mulliganAutoDrawing){
+      hideMulliganOverlay();
+    }
+
+    if (state.turn === 0) state.turn = 1;
+    return;
   }
-  const drawn=state.deck.splice(0,count);
-  for(let k=0;k<drawn.length;k++){
-    const card=drawn[k]; const insertAt=Math.min(handIndex+1, state.hand.length);
-    state.hand.splice(insertAt,0,{__ghost:true,id:'ghost_'+Math.random().toString(36).slice(2)}); renderHand();
-    animateDrawIntoIndex(card.frontImg || CARD_BACK_URL, insertAt); await new Promise(r=>setTimeout(r,120));
-    const gi=state.hand.findIndex(c=>c&&c.__ghost); if(gi!==-1){ state.hand.splice(gi,1,card); handIndex=gi; renderHand(); }
+
+  // Multi-draw (opening 7)
+  const drawn = state.deck.splice(0, count);
+  for (let k = 0; k < drawn.length; k++){
+    const card = drawn[k];
+    const insertAt = Math.min(handIndex+1, state.hand.length);
+    state.hand.splice(insertAt,0,{__ghost:true,id:'ghost_'+Math.random().toString(36).slice(2)});
+    renderHand();
+    animateDrawIntoIndex(card.frontImg || CARD_BACK_URL, insertAt);
+    await new Promise(r=>setTimeout(r,120));
+    const gi = state.hand.findIndex(c=>c&&c.__ghost);
+    if (gi !== -1){
+      state.hand.splice(gi,1,card);
+      handIndex = gi;
+      renderHand();
+    }
   }
-  await writeDrawToServer(drawn); if(state.turn===0) state.turn=1;
+  await writeDrawToServer(drawn);
+
+  if (state.turn === 0) state.turn = 1;
+
+  // Show Mulligan only the first time an opening 7 is completed via draw()
+  if (opening && !state._hasShownOpeningMull && !state._mulliganAutoDrawing){
+    state._hasShownOpeningMull = true;
+    showMulliganOverlay();
+  }
 }
+
+const mullEl   = document.getElementById('mulliganOverlay');
+const mullYes  = document.getElementById('mullYesBtn');
+const mullNo   = document.getElementById('mullNoBtn');
+
+function showMulliganOverlay(){
+  if (state.viewReadOnly) return; // never show while spectating
+  mullEl.style.display = 'block';
+  state._mulliganPending = true;
+}
+function hideMulliganOverlay(){
+  mullEl.style.display = 'none';
+  state._mulliganPending = false;
+}
+
+async function doFriendlyMulligan(){
+  // Return all hand cards to top of deck, shuffle, draw 7 again, and show overlay again
+  const returning = state.hand.splice(0);
+  // Put returned cards back on top to keep it deterministic before shuffle
+  state.deck = returning.concat(state.deck);
+  renderHand();
+  try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); } catch(_){}
+
+  // Shuffle + draw 7 *programmatically*
+  await deckShuffle();
+
+  // Suppress the “drawing hides overlay” rule during auto-draw
+  state._mulliganAutoDrawing = true;
+
+  // Force opening draw path to fire
+  const prevTurn = state.turn;
+  state.turn = 0;
+  await draw();               // will draw 7 because turn===0
+  state.turn = 1;             // opening complete again
+
+  state._mulliganAutoDrawing = false;
+
+  // Re-prompt after mulligan draw
+  showMulliganOverlay();
+}
+
+mullYes?.addEventListener('click', async ()=>{
+  if (!state.gameId) { hideMulliganOverlay(); return; }
+  await doFriendlyMulligan();
+});
+
+mullNo?.addEventListener('click', ()=>{
+  hideMulliganOverlay();
+});
+
 
 /* Parse + Scryfall */
 function cleanCardName(raw){
@@ -1360,20 +2192,22 @@ function makeCopyFromScry(rec){
 }
 
 function computePT(card){
-  // Prefer the active face, then fall back to any stored scry data
   const face = getActiveFace(card) || {};
-  const p =
-    face.power ??
-    card.power ??
-    card._scry?.power ??
-    card._scry?.faces?.[0]?.power ?? '';
-  const t =
-    face.toughness ??
-    card.toughness ??
-    card._scry?.toughness ??
-    card._scry?.faces?.[0]?.toughness ?? '';
-  return (p !== '' && t !== '') ? `${p}/${t}` : '';
+  const baseP =
+    face.power ?? card.power ?? card._scry?.power ?? card._scry?.faces?.[0]?.power ?? '';
+  const baseT =
+    face.toughness ?? card.toughness ?? card._scry?.toughness ?? card._scry?.faces?.[0]?.toughness ?? '';
+
+  if (baseP === '' || baseT === '') return '';
+
+  const pm = card._ptMod || {p:0, t:0};
+  const p = Number(baseP) + Number(pm.p || 0);
+  const t = Number(baseT) + Number(pm.t || 0);
+  // If base values are non-numeric (e.g., "*"), just show raw
+  if (!isFinite(p) || !isFinite(t)) return `${baseP}/${baseT}${(pm.p||pm.t) ? ` (${pm.p>=0?'+':''}${pm.p || 0}/${pm.t>=0?'+':''}${pm.t || 0})` : ''}`;
+  return `${p}/${t}`;
 }
+
 
 
 function getActiveFace(card){
@@ -1529,27 +2363,78 @@ deckZone.addEventListener('click', draw); deckZone.addEventListener('dblclick', 
 drawerWrap.classList.add('expanded');
 drawerWrap.classList.remove('collapsed');
 zoomWrapEl.style.display = 'none';
+// DEBUG: log clicks for the deck button cluster + overlay closes
+document.addEventListener('click', (e) => {
+  const el = e.target.closest(
+    '#deckSearchBtn,#deckAddBtn,#deckMoreBtn,' + 
+    '#deckSearchClose,#deckAddAnyClose,#deckToolsClose'
+  );
+  if (!el) return;
+  console.log(
+    `[BTN] ${el.id} clicked`,
+    { time: new Date().toISOString(), gameId: window.AppState?.gameId, seat: window.AppState?.mySeat }
+  );
+}, { capture: true });
 
 </script>
 
 <!-- Storage module import & init -->
 <script type="module">
   import {
-    initStorage,
-    savePlayerStateDebounced,
-    loadPlayerState,
-    loadMeta,
-    saveMeta,
-    startPlayerPollers,
-    startMetaPoller,
-    deletePlayerState,
-    wipePlayerState
-  } from './modules/storage.js';
+  initStorage,
+  savePlayerStateDebounced,
+  loadPlayerState,
+  loadMeta,
+  saveMeta,
+  startPlayerPollers,
+  startMetaPoller,
+  deletePlayerState,
+  wipePlayerState
+} from './modules/storage.js';
+
+
 
   // pull the shared state created in the first module script
   // (small guard in case execution order ever shifts)
   while (!window.AppState) { await new Promise(r => setTimeout(r, 0)); }
   const state = window.AppState;
+
+// --- Life strip helpers (reflect meta -> UI) ---
+function renderLifeFromMeta(m){
+  const life = m?.lifeMain || {};
+  const tiles = document.querySelectorAll('.life-strip .life-tile');
+  tiles.forEach((tile, idx) => {
+    const seatNum = idx + 1;
+    const val = (seatNum in life) ? life[seatNum] : 40;
+    const span = tile.querySelector('.life-main');
+    if (span) span.textContent = String(val);
+  });
+}
+
+// Start a meta poller so life totals propagate across clients
+(function ensureMetaLifeWatcher(){
+  if (!window.StorageAPI?.startMetaPoller) return;
+  // Start once we have a game id
+  const start = ()=>{
+    if (!state.gameId) return;
+    try {
+      if (state._lifePollerStop) state._lifePollerStop(); // if already running
+      state._lifePollerStop = window.StorageAPI.startMetaPoller(state.gameId, (m)=>{
+        renderLifeFromMeta(m);
+      }, 200); // 5x/sec is fine; adjust if you like
+    } catch(_) {}
+  };
+  // Kick when game is chosen
+  const gp = document.getElementById('gamePicker');
+  gp?.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.gameBtn');
+    if (!btn) return;
+    setTimeout(start, 50);
+  });
+  // also try once at boot (in case game already chosen)
+  setTimeout(start, 300);
+})();
+
 
   window.StorageAPI = {
     initStorage,
@@ -1564,7 +2449,15 @@ zoomWrapEl.style.display = 'none';
   };
 
   await initStorage();
+  import { bootDeckTools } from './modules/deck.tools.js';
+
+// Alias for older callers inside deck.tools.js
+window.StorageAPI.savePlayerState = window.StorageAPI.savePlayerStateDebounced;
+
+bootDeckTools(); // wire the 3 deck buttons now that StorageAPI exists
+
   state.viewSeat = state.mySeat;  // start by viewing "me"
+
 </script>
 
 </body>
