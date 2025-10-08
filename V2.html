@@ -7,6 +7,8 @@
 
 <link rel="stylesheet" href="mana-master/css/mana.min.css">
 
+
+
 <style>
 :root{
   --bg:#0e1015; --fg:#e7e9ee; --muted:#9aa3b2; --accent:#6aa9ff;
@@ -15,12 +17,21 @@
   --life-h:40px;
   --card-w:223px; --card-h:310px;
   --zone-w:223px; --zone-h:310px;
-  --z-tooltip:20; --z-overlays:30; --z-toolbar:40; --z-hand:35; --z-zoom:45; --z-actions:36;
+
+  /* raise overlays so the settings panel beats the hand & toolbar */
+  --z-tooltip:20; 
+  --z-hand:35; 
+  --z-toolbar:40; 
+  --z-zoom:45; 
+  --z-actions:36; 
+  --z-overlays:10000;
+
   --hand-scale: .88;
   --flip-rot: 0deg;
   --tap-rot: 0deg;
   --world-zoom: 1;
 }
+
 *{ box-sizing:border-box; }
 html,body{ height:100%; }
 body{ margin:0; background:var(--bg); color:var(--fg); font:14px/1.35 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; -webkit-tap-highlight-color:transparent; overflow:hidden; }
@@ -31,7 +42,14 @@ button{ font:inherit; color:inherit; cursor:pointer; background:none; border:0; 
 .topbar{ position:sticky; top:0; z-index:10; display:grid; grid-template-columns:auto 1fr; align-items:center; gap:10px; height:var(--topbar-h); padding:10px 12px; border-bottom:1px solid #1f2738; background:linear-gradient(180deg,#10141b,#0c1117); }
 .cog{ width:42px; height:42px; border-radius:12px; border:1px solid #24324a; background:#111826; display:grid; place-items:center; font-weight:900; }
 .life-strip{ display:flex; gap:8px; align-items:center; }
-.life-tile{ background:#0f141c; border:1px solid #2b3344; border-radius:12px; min-width:90px; padding:6px 10px; display:flex; align-items:center; justify-content:space-between; }
+.life-tile{
+  background:#0f141c; border:1px solid #2b3344; border-radius:12px;
+  min-width:90px; padding:6px 10px;
+  display:flex; align-items:center;
+  justify-content:flex-start;   /* was space-between */
+  gap:10px;                     /* adds clear space between “P1” and the life */
+}
+
 .life-main{ color:#ff6b6b; font-weight:800; }
 .life-cmd{ color:#e7e9ee; background:#000; border-radius:8px; padding:0 6px; margin-left:8px; font-weight:700; }
 
@@ -300,6 +318,16 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 }
 .cardBadge .notes{ max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; opacity:.9; }
 
+.deck-actions{ pointer-events: none; }         /* wrapper ignores hits */
+.deck-actions .sbtn{ pointer-events: auto; }   /* buttons still clickable */
+
+/* Deck Top/Bottom/Shuffle/Cancel popup */
+#deckChoice{
+  position: fixed;               /* align with viewport coords we compute */
+  z-index: var(--z-overlays);    /* above cards/tooltips/scrims */
+  transform: translate(-50%, -8px);  /* center above the deck, with a tiny gap */
+}
+
 
 </style>
 </head>
@@ -405,7 +433,9 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   <button class="pill" data-choice="top">Top</button>
   <button class="pill" data-choice="bottom">Bottom</button>
   <button class="pill" data-choice="shuffle">Shuffle</button>
+  <button class="pill" data-choice="cancel">Cancel</button>
 </div>
+
 
 <!-- Card Settings (⚙️) -->
 <div class="scrim" id="cardSettings">
@@ -478,8 +508,17 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   </div>
 </div>
 
+<!-- put this early in the page -->
+<!-- put this BEFORE any scripts that use StorageAPI -->
+<script type="module" src="./modules/env.supabase.js"></script>
+
 
 <script type="module">
+import { startCombatPoller, wireBattleFab } from './modules/combat.ui.js';
+
+// before anything that used to import firebase
+window.firebase = { initializeApp(){}, getApp(){ return {}; } };
+
 const CARD_BACK_URL = 'https://i.imgur.com/LdOBU1I.jpeg';
 
 const state = {
@@ -500,6 +539,24 @@ const state = {
 // expose shared app state so other <script type="module"> blocks can access it
 window.AppState = state;
 
+(async function bootLastGameIfAny(){
+    try{
+      const last = localStorage.getItem('lastGameId');
+      if (!last) {
+        console.log('[boot] no lastGameId');
+        return;
+      }
+
+      console.log('[boot] restoring lastGameId:', last);
+      await waitForStorageReady();
+      await loadGameIntoUI(last);
+      await ensureTurnSeatMeta();
+      await hydrateTurnSeatNow();
+      await ensureCombatWiring();  // <-- attaches the detailed battle click logger
+    } catch (e){
+      console.warn('[boot] restore failed', e);
+    }
+  })();
 
 /* ---------- VIEWER MODE STATE ---------- */
 state.viewSeat = state.mySeat;         // which seat we’re currently viewing
@@ -534,7 +591,7 @@ const endTurnBtn = document.getElementById('endTurnBtn');
 
 
 // --- CLICK LOGGING: deck button cluster ---
-['deckSearchBtn','deckAddBtn','deckMoreBtn','battleBtn','endTurnBtn','viewEyeBtn'].forEach(id=>{
+['deckSearchBtn','deckAddBtn','deckMoreBtn','endTurnBtn','viewEyeBtn'].forEach(id=>{
   const el = document.getElementById(id);
   if (!el) { console.warn('[wire] missing button:', id); return; }
   el.addEventListener('click', ()=> console.log(`[click] #${id}`));
@@ -565,21 +622,94 @@ endTurnBtn.addEventListener('click', async ()=>{
 
 
 
-document.getElementById('resetBtn').addEventListener('click', async () => {
-  if (!state.gameId) { alert('Pick Game 1/2/3 first.'); return; }
+// ---------- HOT SWAP: Reset (me) with full logging ----------
+function resetLog(title, data){
+  try{
+    console.log(
+      `%c[reset] ${title}`,
+      'background:#1b2538;color:#d4e0ff;border-radius:6px;padding:2px 8px;margin:2px 0',
+      data ?? ''
+    );
+  }catch{ console.log(`[reset] ${title}`); }
+}
 
-  // 1) Use the live value from the “I am” select
-  state.mySeat = Number(document.getElementById('mySeat').value);
+document.getElementById('resetBtn').addEventListener('click', async ()=>{
+  const gameId =
+    state.gameId ||
+    document.querySelector('#gamePicker .selected')?.dataset?.gameId ||
+    document.querySelector('[data-game-id].selected')?.dataset?.gameId ||
+    null;
 
-  // 2) If you’re currently viewing another seat, switch back so you can see the reset
-  if (state.viewSeat !== state.mySeat) {
-    await setViewSeat(state.mySeat);
+  const mySeat = Number(document.getElementById('mySeat')?.value || state.mySeat || 1);
+
+  if (!gameId){ alert('Pick Game 1/2/3 first.'); return; }
+
+  console.groupCollapsed('[reset] BEGIN');
+  resetLog('inputs', { gameId, mySeat });
+
+  try{
+    // 1) Wipe THIS player’s state
+    if (typeof resetPlayerOnly === 'function'){
+      await resetPlayerOnly({ hard:true, seat: mySeat });
+      resetLog('resetPlayerOnly ✓');
+    } else if (window.StorageAPI?.wipePlayerState){
+      await window.StorageAPI.wipePlayerState(gameId, mySeat);
+      resetLog('wipePlayerState ✓');
+    } else if (window.StorageAPI?.deletePlayerState){
+      await window.StorageAPI.deletePlayerState(gameId, mySeat);
+      resetLog('deletePlayerState ✓');
+    } else {
+      resetLog('NO wipe function found (skipped)');
+    }
+
+    // 2) Force P1 attacker (merge-safe) + verify
+    const metaAfter = await window.StorageAPI.saveMeta(gameId, m => ({
+      ...m,
+      TurnSeat: 1,
+      TurnIndex: (m?.TurnIndex ?? 0) + 1, // nudge for painter/pollers
+    }));
+    resetLog('meta after save', metaAfter);
+
+    const metaVerify = await window.StorageAPI.loadMeta(gameId);
+    resetLog('meta verify', metaVerify);
+
+    const turnSeat = Number(metaVerify?.TurnSeat ?? metaVerify?.turnSeat ?? metaVerify?.turn?.seat ?? 0);
+    const isAttacker = Number(mySeat) === turnSeat;
+    resetLog('computed isAttacker', { mySeat, turnSeat, isAttacker });
+
+currentTurnSeat = Number(turnSeat);   // keep the single source of truth in sync
+paintBattleFab(); 
+
+    // 3) Ensure combat row exists + clear any stale combat data
+    if (window.StorageAPI?.ensureCombatRow){
+      await window.StorageAPI.ensureCombatRow(gameId);
+      resetLog('ensureCombatRow ✓');
+    }
+    if (window.StorageAPI?.resetCombat){
+      await window.StorageAPI.resetCombat(gameId);
+      resetLog('resetCombat ✓');
+    }
+    if (window.StorageAPI?.readCombat){
+      const combatAfter = await window.StorageAPI.readCombat(gameId);
+      resetLog('combat after reset', combatAfter);
+    }
+
+    // 4) Local view + UI refresh
+    state.mySeat = mySeat;
+    if (state.viewSeat !== mySeat) await setViewSeat(mySeat);
+    await loadGameIntoUI(gameId);
+
+    resetLog('DONE');
+    console.groupEnd();
+
+  }catch(err){
+    console.error('[reset] ERROR', err);
+    console.groupEnd();
+    alert('Reset failed — see console.');
   }
-
-  // 3) Hard delete the doc (or blank it) and reload my fresh state
-  await resetPlayerOnly({ hard: true });
-  await loadGameIntoUI(state.gameId);
 });
+// ---------- /HOT SWAP ----------
+
 
 
 function nextSeat(cur, total){
@@ -690,12 +820,30 @@ cogBtn.addEventListener('click', ()=>{
 });
 
 /* Pan/Zoom */
+function positionDeckActions(){
+  const deck = document.getElementById('deckZone');
+  const da   = document.getElementById('deckActions');
+  if (!deck || !da) return;
+
+  const wr = document.getElementById('world').getBoundingClientRect();
+  const zr = deck.getBoundingClientRect();
+
+  const x = (zr.left - wr.left) - 64;               // 64px to the left
+  const y = (zr.top  - wr.top)  + (zr.height/2) - 28; // vertically centered
+
+  da.style.position = 'absolute';
+  da.style.left = x + 'px';
+  da.style.top  = y + 'px';
+}
+
 function applyWorldTransform(){
   worldScaleEl.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
   worldScaleEl.style.setProperty('--world-zoom', state.zoom);
   repositionUIOverlays();
-  positionAllBadges(); // ← add this
+  positionAllBadges();
+  positionDeckActions();            // ← add this line
 }
+
 
 function repositionUIOverlays(){
   const selId = state.selectedCardId;
@@ -706,31 +854,113 @@ function repositionUIOverlays(){
   if (tooltipEl) positionTooltip(el);
 }
 zoomInput.addEventListener('input', (e)=>{ state.zoom = Number(e.target.value)/100; applyWorldTransform(); });
-let draggingCard = false, panning=false, panStartX=0, panStartY=0, panBaseX=0, panBaseY=0;
-worldWrap.addEventListener('pointerdown', (e)=>{
+let draggingCard = false;
+
+// --- pan state ---
+let panning = false, panStartX = 0, panStartY = 0, panBaseX = 0, panBaseY = 0;
+
+// --- pinch state ---
+const activeTouches = new Map(); // pointerId -> {x,y}
+let pinchActive = false, pinchStartDist = 0, pinchStartZoom = 1;
+
+function getMidAndDist() {
+  const pts = [...activeTouches.values()];
+  if (pts.length < 2) return null;
+  const ax = pts[0].x, ay = pts[0].y, bx = pts[1].x, by = pts[1].y;
+  const mx = (ax + bx) / 2, my = (ay + by) / 2;
+  const dx = bx - ax, dy = by - ay;
+  const dist = Math.hypot(dx, dy);
+  return { mx, my, dist };
+}
+
+worldWrap.addEventListener('pointerdown', (e) => {
   const t = e.target;
-    if (
+  if (
     draggingCard ||
     t.closest('.card') ||
     t.closest('.zone') ||
     t.closest('.zoomWrap') ||
     t.closest('.toolbar') ||
-    t.closest('.deck-actions')     // ← allow clicks on the 3 deck buttons
+    t.closest('.deck-actions')
   ) return;
 
-  panning = true; worldWrap.classList.add('panning');
-  try{ worldWrap.setPointerCapture(e.pointerId); }catch(_){}
-  panStartX = e.clientX; panStartY = e.clientY; panBaseX = state.panX; panBaseY = state.panY;
+  // track this pointer
+  activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  try { worldWrap.setPointerCapture(e.pointerId); } catch(_) {}
+
+  const two = getMidAndDist();
+  if (two && activeTouches.size === 2) {
+    // start pinch
+    pinchActive   = true;
+    pinchStartDist = two.dist;
+    pinchStartZoom = state.zoom;
+    panning = false; // disable one-finger pan while pinching
+    worldWrap.classList.add('panning'); // reuse the cursor style
+  } else if (activeTouches.size === 1) {
+    // start one-finger pan
+    panning   = true;
+    panStartX = e.clientX; panStartY = e.clientY;
+    panBaseX  = state.panX; panBaseY  = state.panY;
+    worldWrap.classList.add('panning');
+  }
 });
-worldWrap.addEventListener('pointermove', (e)=>{
-  if (!panning) return; e.preventDefault();
-  state.panX = panBaseX + (e.clientX - panStartX);
-  state.panY = panBaseY + (e.clientY - panStartY);
-  applyWorldTransform();
-},{passive:false});
-function endPan(){ if (!panning) return; panning=false; worldWrap.classList.remove('panning'); }
-worldWrap.addEventListener('pointerup', endPan);
-worldWrap.addEventListener('pointercancel', endPan);
+
+worldWrap.addEventListener('pointermove', (e) => {
+  // keep the latest point for this pointer
+  if (activeTouches.has(e.pointerId)) {
+    activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  }
+
+  // pinch zoom?
+  if (pinchActive && activeTouches.size >= 2) {
+    e.preventDefault();
+    const two = getMidAndDist();
+    if (!two) return;
+
+    // scale around pinch midpoint
+    const r = worldScaleEl.getBoundingClientRect();
+    const mx = two.mx - r.left, my = two.my - r.top;
+
+    // world coords of the anchor BEFORE zoom change
+    const wx = (mx - state.panX) / state.zoom;
+    const wy = (my - state.panY) / state.zoom;
+
+    const k = two.dist / pinchStartDist;
+    const newZoom = clamp(pinchStartZoom * k, 0.4, 1.6);
+
+    state.zoom = newZoom;
+    state.panX = mx - wx * state.zoom;
+    state.panY = my - wy * state.zoom;
+
+    zoomInput.value = Math.round(state.zoom * 100);
+    applyWorldTransform();
+    return;
+  }
+
+  // one-finger pan
+  if (panning && activeTouches.size === 1) {
+    e.preventDefault();
+    state.panX = panBaseX + (e.clientX - panStartX);
+    state.panY = panBaseY + (e.clientY - panStartY);
+    applyWorldTransform();
+  }
+}, { passive:false });
+
+function endPointer(e) {
+  if (activeTouches.has(e.pointerId)) activeTouches.delete(e.pointerId);
+
+  if (pinchActive && activeTouches.size < 2) {
+    // end pinch
+    pinchActive = false;
+  }
+  if (panning && activeTouches.size === 0) {
+    panning = false;
+    worldWrap.classList.remove('panning');
+  }
+}
+worldWrap.addEventListener('pointerup', endPointer);
+worldWrap.addEventListener('pointercancel', endPointer);
+
 
 /* Wheel zoom */
 function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
@@ -884,11 +1114,19 @@ async function applyStackDrop(dragCard, dragEl, baseCard, dir){
 
 function rectsOverlap(a,b){ return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom); }
 function zoneHit(el){
-  const r = el.getBoundingClientRect(); const hits=[];
-  for(const z of [deckZone, cmdZone, gyZone, exileZone]){
-    const zr = z.getBoundingClientRect(); if(rectsOverlap(r, zr)) hits.push(z);
-  } return hits;
+  const r = el.getBoundingClientRect();
+  const cx = (r.left + r.right) / 2;
+  const cy = (r.top  + r.bottom) / 2;
+  const hits = [];
+  for (const z of [deckZone, cmdZone, gyZone, exileZone]){
+    const zr = z.getBoundingClientRect();
+    if (cx >= zr.left && cx <= zr.right && cy >= zr.top && cy <= zr.bottom){
+      hits.push(z);
+    }
+  }
+  return hits;
 }
+
 function clientToWorld(x, y){ const r = worldScaleEl.getBoundingClientRect(); return { x: (x - r.left) / state.zoom, y: (y - r.top) / state.zoom }; }
 function elementCenterWorld(el){ const rr = el.getBoundingClientRect(); return clientToWorld(rr.left + rr.width/2, rr.top + rr.height/2); }
 function getHandSlotCenterWorld(index){
@@ -1233,8 +1471,66 @@ document.addEventListener('keydown',(e)=>{
 });
 let _csEditingId = null;
 
+/* ========= DEBUG HELPERS: exact “where” + per-field lines ========== */
+function __docPath(gameId, seat){
+  // If your storage.js uses a different shape, tweak this string.
+  return `games/${gameId} / players/${seat}`;
+}
+
+// make it visible to other <script type="module"> blocks
+window.__docPath = window.__docPath || __docPath;
+
+
+function __locateCardInState(card){
+  const id = String(card?.id||'');
+  const zones = [
+    ['Table',       state.table],
+    ['Hand',        state.hand],
+    ['Deck',        state.deck],
+    ['Graveyard',   state.gy],
+    ['Exile',       state.exile],
+  ];
+  for (const [zoneName, arr] of zones){
+    const idx = Array.isArray(arr) ? arr.findIndex(c => String(c?.id) === id) : -1;
+    if (idx > -1) return { zone: zoneName, index: idx, basePath: `${zoneName}[${idx}]` };
+  }
+  if (state.tableCommander && String(state.tableCommander.id) === id){
+    return { zone: 'Commander', index: null, basePath: 'Commander' };
+  }
+  return { zone: 'Unknown', index: null, basePath: '(not found in state)' };
+}
+
+function __logField(where, label, basePath, persisted, runtime){
+  // One line per field with the *exact* field path under the player doc
+  const fieldPath = `${basePath}.ext.${label}`;
+  console.log(
+    `[${where}] ${__docPath(state.gameId, state.mySeat)}  →  ${fieldPath}`,
+    '\n  persisted:', persisted,
+    '\n  runtime  :', runtime
+  );
+}
+
+function __logCardSettingsProbe(card, when='CS OPEN'){
+  const loc = __locateCardInState(card);
+  const base = loc.basePath;
+
+  // persisted (what’s in the object that will be written) vs runtime (what UI uses)
+  const ext = card.ext || {};
+  __logField(when, 'effects',     base, ext.effects ?? [],   card._extraEffects ?? []);
+  __logField(when, 'types',       base, ext.types ?? [],     card._extraTypes ?? []);
+  __logField(when, 'chosenType',  base, ext.chosenType ?? '',card._chosenType ?? '');
+  __logField(when, 'ptMod',       base, ext.ptMod ?? {p:0,t:0}, card._ptMod ?? {p:0,t:0});
+  __logField(when, 'counters',    base, ext.counters ?? [],  card._counters ?? []);
+  __logField(when, 'notes',       base, ext.notes ?? '',     card._notes ?? '');
+
+  // A short “summary” line to anchor the block
+  console.info(`[${when}] card: ${card.name || '(unknown)'}  id=${card.id}  zone=${loc.zone} index=${loc.index}`);
+}
+
+
 function openCardSettings(card){
   if (!card) return;
+  __logCardSettingsProbe(card, 'CS OPEN');
   _csEditingId = card.id;
 
   // ensure storage buckets on the card object
@@ -1291,9 +1587,11 @@ function pushChip(inputId, chipsId, targetArr){
   targetArr.push(v);
   document.getElementById(inputId).value = '';
   fillChips(chipsId, targetArr);
-  try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); } catch(_){}
 
+  const card = getCardById(_csEditingId);
+  if (card) { persistCardExt(card); } // bake + write now
 }
+
 
 // counters UI
 function renderCountersList(list){
@@ -1308,17 +1606,30 @@ function renderCountersList(list){
       <button class="delBtn">−</button>
     `;
     const [nameEl, qtyEl, delBtn] = row.children;
-    nameEl.addEventListener('input', ()=>{ c.name = nameEl.value.trim(); });
-    qtyEl.addEventListener('input', ()=>{ c.qty  = Number(qtyEl.value||0); });
+
+    nameEl.addEventListener('input', ()=>{
+      c.name = nameEl.value.trim();
+      const card = getCardById(_csEditingId);
+      if (card) { persistCardExt(card); }
+    });
+
+    qtyEl.addEventListener('input', ()=>{
+      c.qty  = Number(qtyEl.value||0);
+      const card = getCardById(_csEditingId);
+      if (card) { persistCardExt(card); }
+    });
+
     delBtn.addEventListener('click', ()=>{
       list.splice(idx,1);
       renderCountersList(list);
+      const card = getCardById(_csEditingId);
+      if (card) { persistCardExt(card); }
     });
+
     host.appendChild(row);
   });
-  try { window.StorageAPI?.savePlayerStateDebounced?.(state.gameId, state.mySeat, state); } catch(_){}
-
 }
+
 
 // wire inputs
 (function wireCardSettingsOnce(){
@@ -1355,28 +1666,31 @@ function renderCountersList(list){
   });
 
   // clear
-  document.getElementById('csClear').addEventListener('click', ()=>{
-    const card = getCardById(_csEditingId); if (!card) return;
-    card._extraTypes = [];
-    card._extraEffects = [];
-    card._chosenType = '';
-    card._ptMod = { p:0, t:0 };
-    card._counters = [];
-    card._notes = '';
-    fillChips('csTypesChips', card._extraTypes);
-    fillChips('csEffectsChips', card._extraEffects);
-    renderCountersList(card._counters);
-    document.getElementById('csChosenType').value = '';
-    document.getElementById('csPowMod').value = 0;
-    document.getElementById('csTghMod').value = 0;
-    document.getElementById('csNotes').value = '';
-  });
+document.getElementById('csClear').addEventListener('click', ()=>{
+  const card = getCardById(_csEditingId); if (!card) return;
+  card._extraTypes = [];
+  card._extraEffects = [];
+  card._chosenType = '';
+  card._ptMod = { p:0, t:0 };
+  card._counters = [];
+  card._notes = '';
+  fillChips('csTypesChips', card._extraTypes);
+  fillChips('csEffectsChips', card._extraEffects);
+  renderCountersList(card._counters);
+  document.getElementById('csChosenType').value = '';
+  document.getElementById('csPowMod').value = 0;
+  document.getElementById('csTghMod').value = 0;
+  document.getElementById('csNotes').value = '';
 
-  // save
+  persistCardExt(card);  // bake + write now
+});
+
+
+// save
 document.getElementById('csSave').addEventListener('click', async ()=>{
   const card = getCardById(_csEditingId); if (!card) return;
 
-  // Read scalar inputs
+  // 1) Scalars
   card._chosenType = (document.getElementById('csChosenType').value || '').trim();
   card._ptMod = {
     p: Number(document.getElementById('csPowMod').value || 0),
@@ -1384,32 +1698,53 @@ document.getElementById('csSave').addEventListener('click', async ()=>{
   };
   card._notes = (document.getElementById('csNotes').value || '').trim();
 
-  // Ensure arrays we edited live are persisted as plain JSON
-  card._extraTypes   = Array.isArray(card._extraTypes)   ? [...card._extraTypes]   : [];
-  card._extraEffects = Array.isArray(card._extraEffects) ? [...card._extraEffects] : [];
+  // 2) Types/Effects — also commit any pending chip text the user typed
+  const tPend = (document.getElementById('csTypesInput').value || '').trim();
+  if (tPend) { card._extraTypes = Array.isArray(card._extraTypes) ? card._extraTypes : []; card._extraTypes.push(tPend); }
+  document.getElementById('csTypesInput').value = '';
+
+  const ePend = (document.getElementById('csEffectsInput').value || '').trim();
+  if (ePend) { card._extraEffects = Array.isArray(card._extraEffects) ? card._extraEffects : []; card._extraEffects.push(ePend); }
+  document.getElementById('csEffectsInput').value = '';
+
+  // 3) Counters — read existing rows AND include the “new counter” inputs if filled
+  const rows = [...document.querySelectorAll('#csCounters .counterRow')];
+  const freshCounters = [];
+
+  for (const row of rows){
+    const nameEl = row.querySelector('input[placeholder="name"]') || row.querySelector('input:not([type="number"])');
+    const qtyEl  = row.querySelector('input[type="number"]');
+    const name = (nameEl?.value || '').trim();
+    const qty  = Number(qtyEl?.value || 0);
+    if (name) freshCounters.push({ name, qty: Number.isFinite(qty) ? qty : 0 });
+  }
+
+  // also capture the single “new” row if user didn’t press ＋
+  const newName = (document.getElementById('csNewCounterName')?.value || '').trim();
+  const newQty  = Number(document.getElementById('csNewCounterQty')?.value || 0);
+  if (newName) freshCounters.push({ name: newName, qty: Number.isFinite(newQty) ? newQty : 0 });
+
+  card._counters = freshCounters;
+
+  // 4) Normalize/dedupe arrays
+  card._extraTypes   = Array.isArray(card._extraTypes)   ? Array.from(new Set(card._extraTypes.map(s => String(s).trim()).filter(Boolean))) : [];
+  card._extraEffects = Array.isArray(card._extraEffects) ? Array.from(new Set(card._extraEffects.map(s => String(s).trim()).filter(Boolean))) : [];
   card._counters     = Array.isArray(card._counters)
-    ? card._counters.map(c => ({ name: String(c.name||'').trim(), qty: Number(c.qty||0) }))
+    ? card._counters
+        .map(c => ({ name: String(c.name||'').trim(), qty: Number(c.qty||0) }))
+        .filter(c => c.name)
     : [];
 
-  // UI refresh (PT may change), badge (counters/notes), then persist
+  // 5) Persist + refresh UI
+  await persistCardExt(card);
   updateCardDom(card);
   ensureOrUpdateCardBadge(card);
-
- try {
-    // Write now
-    if (window.StorageAPI?.savePlayerState) {
-      // If your storage.js exposes a non-debounced variant, prefer that
-      await window.StorageAPI.savePlayerState(state.gameId, state.mySeat, state);
-    } else if (window.StorageAPI?.savePlayerStateDebounced) {
-      // Fallback: fire debounced and try to flush if available
-      window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
-      if (window.StorageAPI.flush) { await window.StorageAPI.flush(); }
-      // Last ditch: tiny delay to let the debounce timer fire
-      else { await new Promise(r=>setTimeout(r, 250)); }
-    }
-  } catch(_){}
   closeCardSettings();
 });
+
+
+
+
 
 })();
 
@@ -1570,17 +1905,17 @@ function renderOpponentHand(count){
 
 
 async function hydrateOpponentIntoView(doc){
-  // Clear table DOM
   worldEl.querySelectorAll('.card').forEach(n=>n.remove());
-  // Replace local state with opponent snapshot ONLY for rendering (no writes will occur in read-only)
-  state.deck   = doc.Deck || [];
-  state.hand   = [];                 // don’t expose their actual cards
-  state.table  = doc.Table || [];
-  state.gy     = doc.Graveyard || [];
-  state.exile  = doc.Exile || [];
-  state.tableCommander = doc.Commander || null;
 
-  // Spawn commander + table (read-only: no drag handlers)
+  state.deck   = doc.Deck  ?? doc.deck  ?? [];
+  state.hand   = []; // hidden
+  state.table  = doc.Table ?? doc.table ?? [];
+  state.gy     = doc.Graveyard ?? doc.gy ?? doc.graveyard ?? [];
+  state.exile  = doc.Exile ?? doc.exile ?? [];
+  state.tableCommander = doc.Commander ?? doc.tableCommander ?? doc.commander ?? null;
+
+  [ ...state.table, state.tableCommander ].filter(Boolean).forEach(applyExtToRuntimeFields);
+
   if (state.tableCommander){
     const el = makeCardEl(state.tableCommander);
     worldEl.appendChild(el);
@@ -1591,31 +1926,41 @@ async function hydrateOpponentIntoView(doc){
   });
 
   // Hand backs only
-  renderOpponentHand((doc.Hand || []).length);
+  renderOpponentHand((doc.Hand ?? doc.hand ?? []).length);
 
   state._oppSnapshot = {
-    Table: (doc.Table || []).map(c => ({...c})),
-    Commander: doc.Commander ? {...doc.Commander} : null,
-    Graveyard: (doc.Graveyard || []).slice(),
-    Exile: (doc.Exile || []).slice(),
-    HandCount: (doc.Hand || []).length
+    Table: (state.table || []).map(c => ({...c})),
+    Commander: state.tableCommander ? {...state.tableCommander} : null,
+    Graveyard: (state.gy || []).slice(),
+    Exile: (state.exile || []).slice(),
+    HandCount: (doc.Hand ?? doc.hand ?? []).length
   };
 }
+
 
 function idMap(arr){ const m=new Map(); (arr||[]).forEach(c=>m.set(c.id, c)); return m; }
 
 function patchOpponentView(nextDoc){
+  // --- normalize once (supports both naming styles) ---
+  const nd = {
+    Table:     nextDoc.Table     ?? nextDoc.table     ?? [],
+    Commander: nextDoc.Commander ?? nextDoc.tableCommander ?? null,
+    Graveyard: nextDoc.Graveyard ?? nextDoc.gy        ?? nextDoc.graveyard ?? [],
+    Exile:     nextDoc.Exile     ?? nextDoc.exile     ?? [],
+    Hand:      nextDoc.Hand      ?? nextDoc.hand      ?? []
+  };
+
   // Zones + hand count
-  state.gy = nextDoc.Graveyard || [];
-  state.exile = nextDoc.Exile || [];
-  const nextHandCount = (nextDoc.Hand || []).length;
+  state.gy    = nd.Graveyard;
+  state.exile = nd.Exile;
+  const nextHandCount = nd.Hand.length;
   if (state._oppSnapshot.HandCount !== nextHandCount){
     renderOpponentHand(nextHandCount);
   }
 
   // Commander
   const prevCom = state._oppSnapshot.Commander;
-  const nextCom = nextDoc.Commander;
+  const nextCom = nd.Commander;
   if (!!prevCom !== !!nextCom || (prevCom && nextCom && prevCom.id !== nextCom.id)){
     // replace commander node
     if (prevCom){
@@ -1626,17 +1971,15 @@ function patchOpponentView(nextDoc){
       const el = makeCardEl(nextCom);
       worldEl.appendChild(el);
     }
-  }else if (prevCom && nextCom){
+  } else if (prevCom && nextCom){
     // same id — animate changes
     const el = worldEl.querySelector(`.card[data-id="${nextCom.id}"]`);
     if (el){
-      // movement
       const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
       if (px !== (nextCom.x||0) || py !== (nextCom.y||0)){
         el.style.left = (nextCom.x || 0) + 'px';
         el.style.top  = (nextCom.y || 0) + 'px';
       }
-      // tap/flip
       const same = el.__cardRef || {};
       same.tapped = !!nextCom.tapped;
       same.face   = nextCom.face || 'front';
@@ -1647,72 +1990,55 @@ function patchOpponentView(nextDoc){
 
   // Table diff
   const prevMap = idMap(state._oppSnapshot.Table || []);
-  const nextMap = idMap(nextDoc.Table || []);
+  const nextMap = idMap(nd.Table || []);
 
-  // removed
-  for (const [id] of prevMap){
+  // remove
+  for (const [id, prev] of prevMap){
     if (!nextMap.has(id)){
       const el = worldEl.querySelector(`.card[data-id="${id}"]`);
-      if (el){
-        el.style.opacity = '0';
-        setTimeout(()=>el.remove(), 180);
-      }
+      if (el) el.remove();
     }
   }
-
-  // added/updated
-  for (const [id, nxt] of nextMap){
-    const el = worldEl.querySelector(`.card[data-id="${id}"]`);
+  // add/update
+  for (const [id, next] of nextMap){
+    let el = worldEl.querySelector(`.card[data-id="${id}"]`);
     if (!el){
-      const ne = makeCardEl(nxt);
-      worldEl.appendChild(ne);
-      // slight fade-in
-      ne.style.opacity = '0';
-      requestAnimationFrame(()=>{ ne.style.opacity = '1'; });
-    }else{
-      // movement
-      const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
-      if (px !== (nxt.x||0) || py !== (nxt.y||0)){
-        el.style.left = (nxt.x || 0) + 'px';
-        el.style.top  = (nxt.y || 0) + 'px';
-      }
-      // tap / flip updates
-      const same = el.__cardRef || {};
-      same.tapped = !!nxt.tapped;
-      same.face   = nxt.face || 'front';
-      updateCardDom(same);
-      el.__cardRef = nxt;
+      el = makeCardEl(next);
+      worldEl.appendChild(el);
     }
+    // movement
+    const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
+    if (px !== (next.x||0) || py !== (next.y||0)){
+      el.style.left = (next.x || 0) + 'px';
+      el.style.top  = (next.y || 0) + 'px';
+    }
+    // tap/flip
+    const same = el.__cardRef || {};
+    same.tapped = !!next.tapped;
+    same.face   = next.face || 'front';
+    updateCardDom(same);
+    el.__cardRef = next;
   }
 
-  // refresh snapshots used for next diff
+  // refresh snapshot for next tick
   state._oppSnapshot = {
-    Table: (nextDoc.Table || []).map(c => ({...c})),
-    Commander: nextDoc.Commander ? {...nextDoc.Commander} : null,
-    Graveyard: (nextDoc.Graveyard || []).slice(),
-    Exile: (nextDoc.Exile || []).slice(),
-    HandCount: (nextDoc.Hand || []).length
+    Table: nd.Table.map(c=>({...c})),
+    Commander: nextCom ? {...nextCom} : null,
+    Graveyard: nd.Graveyard.slice(),
+    Exile: nd.Exile.slice(),
+    HandCount: nd.Hand.length
   };
-// refresh snapshots used for next diff
-state._oppSnapshot = {
-  Table: (nextDoc.Table || []).map(c => ({...c})),
-  Commander: nextDoc.Commander ? {...nextDoc.Commander} : null,
-  Graveyard: (nextDoc.Graveyard || []).slice(),
-  Exile: (nextDoc.Exile || []).slice(),
-  HandCount: (nextDoc.Hand || []).length
-};
 
-// ensure badges (counters/notes) show on opponent view, too
-[ ...(nextDoc.Table || []), nextDoc.Commander ].filter(Boolean).forEach(ensureOrUpdateCardBadge);
+  // keep local state aligned so tooltips/select/badges work in RO mode too
+  state.table = nd.Table.map(c => ({...c}));
+  state.table.forEach(applyExtToRuntimeFields);
+  state.tableCommander = nextCom ? {...nextCom} : null;
+  if (state.tableCommander) applyExtToRuntimeFields(state.tableCommander);
 
-// keep state.table aligned so tooltips/select work
-state.table = (nextDoc.Table || []).map(c => ({...c}));
-state.tableCommander = nextDoc.Commander ? {...nextDoc.Commander} : null;
-
-  // keep state.table aligned so tooltips/select work
-  state.table = (nextDoc.Table || []).map(c => ({...c}));
-  state.tableCommander = nextDoc.Commander ? {...nextDoc.Commander} : null;
+  // ensure badges (counters/notes) show on opponent view
+  [ ...nd.Table, nextCom ].filter(Boolean).forEach(ensureOrUpdateCardBadge);
 }
+
 
 function startViewPoller(){
   if (state.viewPoller) clearInterval(state.viewPoller);
@@ -1790,7 +2116,8 @@ if (_stackPreview && _stackPreview.targetId) {
       if(z==='graveyard'){ await moveToZone(card,'graveyard',el); return; }
       if(z==='exileZone'){ await moveToZone(card,'exile',el); return; }
       if(z==='cmdZone'){ await snapToCommander(card,el); return; }
-      if(z==='deckZone'){ showDeckChoice(card,el); return; }
+      if(z==='deckZone'){ showDeckChoice(card, el, opts.staged === true); return; }
+
     }
     if(opts.staged){ await writeTableAdd(card); opts.staged=false; selectCard(card.id, el); }
     else{ await writeTableMove(card, el); }
@@ -1808,13 +2135,54 @@ async function snapToCommander(card, el){
   const zr=cmdZone.getBoundingClientRect(); const tl=clientToWorld(zr.left,zr.top); const inset=6;
   el.style.left=(tl.x+inset)+'px'; el.style.top=(tl.y+inset)+'px'; card.x=tl.x+inset; card.y=tl.y+inset; await writeCommander(card); positionActions(el);
 }
-function showDeckChoice(card, el){
-  const zr=deckZone.getBoundingClientRect();
-  deckChoice.style.left=(zr.left+zr.width/2)+'px'; deckChoice.style.top=(zr.top)+'px'; deckChoice.style.display='flex';
-  deckChoice.onclick=async(ev)=>{ const btn=ev.target.closest('.pill'); if(!btn) return; const choice=btn.dataset.choice; deckChoice.style.display='none'; el.remove(); clearSelection(); await removeFromTable(card);
-    if(choice==='top') await deckPutTop(card); else if(choice==='bottom') await deckPutBottom(card); else if(choice==='shuffle'){ await deckPutTop(card); await deckShuffle(); }
+function showDeckChoice(card, el, wasStaged){
+  if (tooltipEl) hideTooltip();                         // ← add this line
+  const zr = deckZone.getBoundingClientRect();
+  deckChoice.style.left = (zr.left + zr.width/2) + 'px';
+  deckChoice.style.top  = (zr.top) + 'px';
+  deckChoice.style.display = 'flex';
+
+  deckChoice.onclick = async (ev)=>{
+    const btn = ev.target.closest('.pill'); 
+    if (!btn) return;
+
+    const choice = btn.dataset.choice;
+    deckChoice.style.display = 'none';
+
+    // === CANCEL: leave the card on the table where it is ===
+    if (choice === 'cancel'){
+      // If this drag came from the hand and was not yet persisted,
+      // add it to the table now; otherwise persist its new x/y.
+      try{
+        if (wasStaged) {
+          await writeTableAdd(card); // creates the table entry
+        } else {
+          await writeTableMove(card, el); // updates x/y
+        }
+      }catch(e){}
+      // restore selection/handles and bail – NO removal, NO deck ops
+      selectCard(card.id, el);
+      positionActions(el);
+      return;
+    }
+
+    // For non-cancel choices, proceed with the original behavior:
+    // remove from table, then perform the chosen deck operation
+    el.remove();
+    clearSelection();
+    await removeFromTable(card);
+
+    if (choice === 'top'){
+      await deckPutTop(card);
+    } else if (choice === 'bottom'){
+      await deckPutBottom(card);
+    } else if (choice === 'shuffle'){
+      await deckPutTop(card);
+      await deckShuffle();
+    }
   };
 }
+
 
 /* Overlays */
 gyZone.addEventListener('click', ()=> openZoneOverlay('graveyard', state.gy));
@@ -1853,31 +2221,60 @@ function openZoneOverlay(kind, arr){
 
 /* Hydrate */
 async function hydrateFromDoc(data){
+  // Clear DOM
   worldEl.querySelectorAll('.card').forEach(n=>n.remove());
-  state.deck  = data?.Deck      || [];
-  state.hand  = data?.Hand      || [];
-  state.table = data?.Table     || [];
-  state.gy    = data?.Graveyard || [];
-  state.exile = data?.Exile     || [];
-  state.tableCommander = data?.Commander || null;
 
-  [...state.deck, ...state.hand, ...state.table, ...state.gy, ...state.exile].forEach(normalizeCardImages);
-  if (state.tableCommander) normalizeCardImages(state.tableCommander);
+  // Accept BOTH shapes: Deck/Hand/Table... and deck/hand/table...
+  const pick = (obj, ...keys) => {
+    for (const k of keys) if (obj && obj[k] != null) return obj[k];
+    return undefined;
+  };
 
-  state.table.forEach(c=>{ const el=makeCardEl(c); worldEl.appendChild(el); enableDrag(el, c, {staged:false}); });
-  if (state.tableCommander){ const el=makeCardEl(state.tableCommander); worldEl.appendChild(el); enableDrag(el, state.tableCommander, {staged:false}); }
+  state.deck  = pick(data, 'Deck','deck') || [];
+  state.hand  = pick(data, 'Hand','hand') || [];
+  state.table = pick(data, 'Table','table') || [];
+  state.gy    = pick(data, 'Graveyard','gy','graveyard') || [];
+  state.exile = pick(data, 'Exile','exile') || [];
+  state.tableCommander = pick(data, 'Commander','tableCommander','commander') || null;
+
+  /* inflate persisted ext into runtime _… fields */
+  [...state.deck, ...state.hand, ...state.table, ...state.gy, ...state.exile].forEach(c=>{
+    applyExtToRuntimeFields(c);
+    normalizeCardImages(c);
+  });
+  if (state.tableCommander){
+    applyExtToRuntimeFields(state.tableCommander);
+    normalizeCardImages(state.tableCommander);
+  }
+
+  // Spawn on table
+  state.table.forEach(c=>{
+    const el = makeCardEl(c);
+    worldEl.appendChild(el);
+    enableDrag(el, c, { staged:false });
+  });
+  if (state.tableCommander){
+    const el = makeCardEl(state.tableCommander);
+    worldEl.appendChild(el);
+    enableDrag(el, state.tableCommander, { staged:false });
+  }
   [state.tableCommander, ...state.table].filter(Boolean).forEach(ensureOrUpdateCardBadge);
 
   renderHand();
 }
 
+
 function isEmptyDoc(d){
   if (!d) return true;
-  return !(
-    (d.Deck?.length) || (d.Hand?.length) || (d.Table?.length) ||
-    (d.Graveyard?.length) || (d.Exile?.length) || d.Commander
-  );
+  const deck  = d.Deck  ?? d.deck  ?? [];
+  const hand  = d.Hand  ?? d.hand  ?? [];
+  const table = d.Table ?? d.table ?? [];
+  const gy    = d.Graveyard ?? d.gy ?? d.graveyard ?? [];
+  const exile = d.Exile ?? d.exile ?? [];
+  const commander = d.Commander ?? d.tableCommander ?? d.commander ?? null;
+  return !(deck.length || hand.length || table.length || gy.length || exile.length || commander);
 }
+
 function closeDrawerNow(){
   drawerWrap.classList.add('collapsed');
   drawerWrap.classList.remove('expanded');
@@ -1903,6 +2300,9 @@ async function loadGameIntoUI(gameId) {
 
 /* Drawer actions */
 document.getElementById('loadBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('loadBtn');
+  btn.disabled = true;
+  showBusy('Loading deck…');
   try{
     const txt = document.getElementById('deckIn').value;
     const { deckCards, commanderCard } = await buildDeckFromText(txt);
@@ -1913,11 +2313,35 @@ document.getElementById('loadBtn').addEventListener('click', async ()=>{
       const el = makeCardEl({...commanderCard, x: cmdZone.offsetLeft+8, y: cmdZone.offsetTop+8});
       worldEl.appendChild(el); enableDrag(el, commanderCard, {staged:false});
     }
-    closeDrawerNow();  // ← add this line
+    closeDrawerNow();
   }catch(err){
     console.error(err); alert('Failed to load deck (see console).');
+  }finally{
+    hideBusy();
+    btn.disabled = false;
   }
 });
+
+// --- tiny loading overlay ---
+let __busy;
+function showBusy(msg='Loading…'){
+  if (!__busy){
+    __busy = document.createElement('div');
+    __busy.id = 'busyOverlay';
+    __busy.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(8,12,20,.72);z-index:99999';
+    __busy.innerHTML = `
+      <div style="display:flex;gap:10px;align-items:center;background:#0b1220;border:1px solid #24324a;border-radius:12px;padding:14px 18px;font-weight:800">
+        <span style="width:18px;height:18px;border:3px solid #2c3e5a;border-top-color:#8fb3ff;border-radius:50%;animation:spin .9s linear infinite"></span>
+        <span id="busyTxt"></span>
+      </div>`;
+    const kf = document.createElement('style');
+    kf.textContent = '@keyframes spin{to{transform:rotate(360deg)}}';
+    document.head.appendChild(kf);
+  }
+  __busy.querySelector('#busyTxt').textContent = msg;
+  document.body.appendChild(__busy);
+}
+function hideBusy(){ __busy?.remove(); }
 
 
 
@@ -2174,21 +2598,67 @@ async function scryfallFetchUnique(namesUnique){
   }
   return have;
 }
+
+function applyExtToRuntimeFields(card){
+  if (!card || !card.ext) return;
+  card._extraTypes   = Array.isArray(card.ext.types)   ? [...card.ext.types]   : [];
+  card._extraEffects = Array.isArray(card.ext.effects) ? [...card.ext.effects] : [];
+  card._chosenType   = card.ext.chosenType || '';
+  const pm = card.ext.ptMod || { p:0, t:0 };
+  card._ptMod        = { p: Number(pm.p||0), t: Number(pm.t||0) };
+  card._counters     = Array.isArray(card.ext.counters)
+    ? card.ext.counters.map(c => ({ name: String(c.name||'').trim(), qty: Number(c.qty||0) }))
+    : [];
+  card._notes        = card.ext.notes || '';
+}
+function bakeRuntimeFieldsToExt(card){
+  if (!card) return;
+  card.ext = {
+    types:   Array.isArray(card._extraTypes)   ? [...card._extraTypes]   : [],
+    effects: Array.isArray(card._extraEffects) ? [...card._extraEffects] : [],
+    chosenType: card._chosenType || '',
+    ptMod: { p: Number(card._ptMod?.p || 0), t: Number(card._ptMod?.t || 0) },
+    counters: Array.isArray(card._counters)
+      ? card._counters.map(c => ({ name: String(c.name||'').trim(), qty: Number(c.qty||0) }))
+      : [],
+    notes: card._notes || ''
+  };
+}
+
+/* NEW: force-save helper for the cog panel */
+async function persistCardExt(card){
+  if (!state.gameId) return;
+  bakeRuntimeFieldsToExt(card);
+  try{
+    if (window.StorageAPI?.savePlayerState) {
+      await window.StorageAPI.savePlayerState(state.gameId, state.mySeat, state);
+    } else if (window.StorageAPI?.savePlayerStateDebounced) {
+      window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+      if (window.StorageAPI.flush) { await window.StorageAPI.flush(); }
+      else { await new Promise(r=>setTimeout(r, 200)); }
+    }
+  }catch(_){}
+}
+
+
+
 function makeCopyFromScry(rec){
   const uid=`${rec.scry_id}_${crypto.getRandomValues(new Uint32Array(1))[0].toString(16)}_${Math.random().toString(36).slice(2,7)}`;
   const faces=rec.faces||[]; const frontFace=faces[0]||{}; const backFace=faces[1]||null;
 
   return {
-    id: uid,
-    name: rec.name,
-    frontImg: frontFace.image || '',
-    backImg:  (faces.length>1 ? (backFace?.image || '') : ''), // STRICT: never reuse front for DFC
-    face: 'front',
-    tapped: false,
-    pt: (frontFace.power && frontFace.toughness) ? `${frontFace.power}/${frontFace.toughness}` : '',
-    _scry: rec,
-    _faces: faces
-  };
+  id: uid,
+  name: rec.name,
+  frontImg: frontFace.image || '',
+  backImg:  (faces.length>1 ? (backFace?.image || '') : ''),
+  face: 'front',
+  tapped: false,
+  pt: (frontFace.power && frontFace.toughness) ? `${frontFace.power}/${frontFace.toughness}` : '',
+  _scry: rec,
+  _faces: faces,
+  ext: { types:[], effects:[], chosenType:'', ptMod:{p:0,t:0}, counters:[], notes:'' }
+};
+
 }
 
 function computePT(card){
@@ -2240,8 +2710,23 @@ async function buildDeckFromText(txt,{includeCommander=true}={}){
 function requireGameSelected(){ if(!state.gameId){ alert('Select a Game (Game 1/2/3).'); return false; } return true; }
 async function writeDeckForPlayer(cards){ if(!state.gameId) return alert('Pick Game 1/2/3 first.'); state.deck=cards.slice(); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
 async function ensureTurn0(){ state.turn=0; }
-async function writeTableAdd(card){ if(!state.gameId) return alert('Pick Game 1/2/3 first.'); const hi=state.hand.findIndex(c=>c.id===card.id); if(hi>-1){ state.hand.splice(hi,1); renderHand(); } if(!state.table.find(c=>c.id===card.id)) state.table.push(card); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
-async function writeTableMove(card, el){ if(!state.gameId) return; card.x=parseFloat(el.style.left)||card.x; card.y=parseFloat(el.style.top)||card.y; window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
+async function writeTableAdd(card){
+  if(!state.gameId) return alert('Pick Game 1/2/3 first.');
+  const hi=state.hand.findIndex(c=>c.id===card.id);
+  if(hi>-1){ state.hand.splice(hi,1); renderHand(); }
+  if(!state.table.find(c=>c.id===card.id)) state.table.push(card);
+  bakeRuntimeFieldsToExt(card);
+  window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+}
+
+async function writeTableMove(card, el){
+  if(!state.gameId) return;
+  card.x=parseFloat(el.style.left)||card.x;
+  card.y=parseFloat(el.style.top)||card.y;
+  bakeRuntimeFieldsToExt(card);
+  window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state);
+}
+
 async function removeFromTable(card){ if(!state.gameId) return; const idx=state.table.findIndex(c=>c.id===card.id); if(idx>-1) state.table.splice(idx,1); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
 async function appendToZone(card, zoneKind){ if(!state.gameId) return; if(zoneKind==='graveyard') state.gy.unshift(card); if(zoneKind==='exile') state.exile.unshift(card); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
 async function removeFromZone(card, zoneKind){ if(!state.gameId) return; const arr=(zoneKind==='graveyard')?state.gy:state.exile; const idx=arr.findIndex(c=>c.id===card.id); if(idx>-1) arr.splice(idx,1); window.window.StorageAPI.savePlayerStateDebounced(state.gameId, state.mySeat, state); }
@@ -2288,8 +2773,6 @@ async function resetPlayerOnly({ hard = true } = {}) {
   }
 }
 
-// ---- Combat FAB (⚔️ / 🛡️) wiring — uses modules/combat.ui.js ----
-import { startCombatPoller, wireBattleFab } from './modules/combat.ui.js';
 
 const battleBtn = document.getElementById('battleBtn');
 
@@ -2302,30 +2785,194 @@ async function waitForStorageReady(){
   }
 }
 
+function paintBattleFab(){
+  if (!battleBtn) return;
+  const mine = Number(state.mySeat);
+  const icon = (mine === Number(currentTurnSeat)) ? '⚔️' : '🛡️';
+  battleBtn.textContent = icon;
+  console.log('[paintBattleFab]', {
+    mySeat: mine,
+    currentTurnSeat,
+    icon
+  });
+}
+
+async function hydrateTurnSeatNow(){
+  if (!state.gameId) return;
+  try{
+    const m = await window.StorageAPI.loadMeta(state.gameId);
+    currentTurnSeat = Number(m?.TurnSeat ?? m?.turnSeat ?? m?.turn?.seat ?? 0);
+    console.log('[meta.once] TurnSeat =', currentTurnSeat, '(boot/hydrate)');
+    paintBattleFab();
+  }catch(err){
+    console.warn('[meta.once] Failed to hydrate TurnSeat', err);
+  }
+}
+
+
+
 // Ensure we only wire once, after a Game is selected and storage is ready
 async function ensureCombatWiring(){
-  if (_combatWired) return;
-  if (!state.gameId) return; // user hasn't picked Game 1/2/3 yet
+  console.log('[ensureCombatWiring] ENTER', {
+    wired: typeof _combatWired !== 'undefined' ? _combatWired : '(unset)',
+    gameId: state?.gameId,
+    mySeat: state?.mySeat,
+    hasBtn: !!document.getElementById('battleBtn')
+  });
 
-  await waitForStorageReady();
+  // guards
+  if (_combatWired) {
+    console.log('[ensureCombatWiring] already wired — SKIP');
+    return;
+  }
+  if (!state?.gameId) {
+    console.warn('[ensureCombatWiring] ABORT: missing state.gameId');
+    return;
+  }
 
+  // storage ready + ensure combat row
+  try {
+    console.log('[ensureCombatWiring] waitForStorageReady()…');
+    await waitForStorageReady();
+    console.log('[ensureCombatWiring] storage ready ✓');
+  } catch(e){
+    console.error('[ensureCombatWiring] storage wait FAILED', e);
+  }
 
+  try{
+    console.log('[ensureCombatWiring] ensureCombatRow…', state.gameId);
+    await window.StorageAPI?.ensureCombatRow?.(state.gameId);
+    console.log('[ensureCombatWiring] ensureCombatRow ✓');
+  }catch(e){
+    console.warn('[ensureCombatWiring] ensureCombatRow failed (will continue)', e);
+  }
+
+  // keep TurnSeat live + repaint
+  try{
+    if (state.stopMeta) {
+      console.log('[ensureCombatWiring] stopMeta() previous poller');
+      state.stopMeta();
+    }
+    console.log('[ensureCombatWiring] startMetaPoller…');
+    state.stopMeta = window.StorageAPI.startMetaPoller(state.gameId, (meta)=>{
+      const prev = Number(currentTurnSeat || 0);
+      currentTurnSeat = Number(meta?.TurnSeat ?? meta?.turnSeat ?? meta?.turn?.seat ?? 0);
+      const changed = (prev !== currentTurnSeat);
+      console.log('[meta] TurnSeat →', { prev, next: currentTurnSeat, changed, meta });
+      paintBattleFab();
+    });
+    console.log('[ensureCombatWiring] startMetaPoller ✓');
+  }catch(e){
+    console.error('[ensureCombatWiring] startMetaPoller FAILED', e);
+  }
+
+  // combat doc poller → cache to window for debugs
+  try{
+    console.log('[ensureCombatWiring] startCombatPoller…');
+    startCombatPoller(state.gameId, state.mySeat, (data)=>{
+      window.__combatState = data || null;
+      // Keep this quiet unless you need to see every tick:
+      // console.log('[combat.poll]', data);
+    });
+    console.log('[ensureCombatWiring] startCombatPoller ✓');
+  }catch(e){
+    console.error('[ensureCombatWiring] startCombatPoller FAILED', e);
+  }
 
   const getIsMyTurn = () => Number(state.mySeat) === Number(currentTurnSeat);
 
-  // Show defenders-only toast when combat is initiated
-  startCombatPoller(state.gameId, state.mySeat);
+  // === Resilient battle button wiring (handles DOM replacement) ===
+  const battleBtnSelector = '#battleBtn';
+  const hostToWatch =
+    document.querySelector('.fabbar') ||
+    document.getElementById('fabbar') ||
+    document.body;
 
-  // Swap ⚔️ (attacker) vs 🛡️ (defender) and open the correct overlay on click
-  wireBattleFab({
-    gameId: state.gameId,
-    mySeat: state.mySeat,
-    getIsMyTurn,
-    btn: battleBtn
-  });
+  function attachBattleHandlers() {
+    const btn = document.querySelector(battleBtnSelector);
+    if (!btn) { console.warn('[battleBtn] NOT FOUND (will keep watching)'); return false; }
+
+    // avoid duplicate binds on the same node
+    if (btn.dataset.wired === '1') {
+      // still log what we have
+      const listeners = (window.getEventListeners?.(btn)?.click || []).length;
+      console.log('[battleBtn] already wired on node', { node: btn, listeners });
+      return true;
+    }
+
+    // wireBattleFab (attacker/defender chooser)
+    try{
+      wireBattleFab({
+        gameId: state.gameId,
+        mySeat: state.mySeat,
+        getIsMyTurn,
+        btn
+      });
+    }catch(e){
+      console.error('[battleBtn] wireBattleFab FAILED', e);
+    }
+
+    // rich click logger (your requested payload)
+    btn.addEventListener('click', () => {
+      const mine  = Number(state.mySeat);
+      const turn  = Number(currentTurnSeat);
+      const atk   = (mine === turn);
+      const icon  = btn.textContent;
+      const cs    = window.__combatState || null;
+      console.log('[battle.click]', {
+        time: new Date().toISOString(),
+        mySeat: mine,
+        currentTurnSeat: turn,
+        isAttacker: atk,
+        btnIcon: icon,
+        meta: { gameId: state.gameId, playerCount: state.playerCount },
+        combatState: cs
+      });
+    });
+
+    btn.dataset.wired = '1';
+    console.log('[battleBtn] WIRED on node', btn);
+    return true;
+  }
+
+  // initial attach; if button not there yet, observer will catch it
+  attachBattleHandlers();
+
+  // observe host for any DOM swaps that would replace the button
+  if (!window.__battleFabObserver) {
+    window.__battleFabObserver = new MutationObserver(() => {
+      const btn = document.querySelector(battleBtnSelector);
+      if (!btn) return;
+      if (btn.dataset.wired !== '1') {
+        console.warn('[battleBtn] listener LOST — re-attaching');
+        attachBattleHandlers();
+      }
+    });
+    window.__battleFabObserver.observe(hostToWatch, { childList: true, subtree: true });
+    console.log('[ensureCombatWiring] MutationObserver started on', hostToWatch);
+  } else {
+    console.log('[ensureCombatWiring] MutationObserver already running');
+  }
+
+  // paint once immediately based on currentTurnSeat
+  paintBattleFab();
 
   _combatWired = true;
+  console.log('[ensureCombatWiring] DONE ✓', { wired: _combatWired });
 }
+
+// expose globally so cross-module calls work
+window.ensureCombatWiring = ensureCombatWiring;
+
+
+
+
+
+
+
+
+
+
 
 // When a game is picked, run wiring shortly after loadGameIntoUI sets state.gameId
 gamePicker.addEventListener('click', ()=>{
@@ -2333,11 +2980,7 @@ gamePicker.addEventListener('click', ()=>{
   setTimeout(ensureCombatWiring, 0);
 });
 
-// Also keep trying until wired (covers refresh when a game might already be active)
-const _cw = setInterval(()=>{
-  if (_combatWired) { clearInterval(_cw); return; }
-  ensureCombatWiring();
-}, 300);
+
 
 
 gamePicker.addEventListener('click', async (e)=>{
@@ -2346,14 +2989,25 @@ gamePicker.addEventListener('click', async (e)=>{
   gamePicker.querySelectorAll('.gameBtn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
 
-  await waitForStorageReady();                      // <-- add this
+  localStorage.setItem('lastGameId', btn.dataset.game);
+
+  await waitForStorageReady();
   await loadGameIntoUI(btn.dataset.game);
   await ensureTurnSeatMeta();
+  await hydrateTurnSeatNow();          // ← set currentTurnSeat immediately
 
-  window.StorageAPI.startMetaPoller(state.gameId, (meta)=>{
-    currentTurnSeat = Number(meta?.TurnSeat || 0);
+  // keep TurnSeat live after the one-shot
+  if (state.stopMeta) state.stopMeta();
+  state.stopMeta = window.StorageAPI.startMetaPoller(state.gameId, (meta)=>{
+    currentTurnSeat = Number(meta?.TurnSeat ?? meta?.turnSeat ?? meta?.turn?.seat ?? 0);
+    console.log('[meta] TurnSeat →', currentTurnSeat);
+    paintBattleFab();
   });
+
+  // wire rest of combat UI next tick
+  setTimeout(ensureCombatWiring, 0);
 });
+
 
 
 /* Startup */
@@ -2377,6 +3031,7 @@ document.addEventListener('click', (e) => {
 }, { capture: true });
 
 </script>
+<script type="module" src="./modules/turn.timewarp.js"></script>
 
 <!-- Storage module import & init -->
 <script type="module">
@@ -2389,8 +3044,14 @@ document.addEventListener('click', (e) => {
   startPlayerPollers,
   startMetaPoller,
   deletePlayerState,
-  wipePlayerState
-} from './modules/storage.js';
+  wipePlayerState,
+  // add these:
+  ensureCombatRow,
+  readCombat, writeCombat, resetCombat,
+  saveAttacks, saveBlocks, writeCombatInitiated
+} from './modules/env.supabase.js';
+
+
 
 
 
@@ -2445,8 +3106,78 @@ function renderLifeFromMeta(m){
     startPlayerPollers,
     startMetaPoller,
     deletePlayerState,
-    wipePlayerState
+    wipePlayerState,
+    // add these so callers can use them via window.StorageAPI
+    ensureCombatRow,
+    readCombat,
+    writeCombat,
+    resetCombat,
+    saveAttacks,
+    saveBlocks,
+    // nice alias so UI code can call setCombatInitiated(...)
+    setCombatInitiated: writeCombatInitiated
   };
+  
+  // === DEBUG WRAPPERS for StorageAPI — log exact doc + op =================
+(() => {
+  const api = window.StorageAPI || {};
+  const _save = api.savePlayerStateDebounced;
+  const _load = api.loadPlayerState;
+  const _wipe = api.wipePlayerState;
+  const _del  = api.deletePlayerState;
+  const _saveMeta = api.saveMeta;
+  const _loadMeta = api.loadMeta;
+
+  if (_save) {
+    api.savePlayerStateDebounced = function(gameId, seat, payload){
+
+      // Optional: show where ext fields live for the selected card, if any
+      try {
+        const sel = window.AppState?.selectedCardId;
+        if (sel){
+          const all = (payload?.Table||[]).concat(payload?.Hand||[], payload?.Deck||[], payload?.Graveyard||[], payload?.Exile||[], payload?.Commander?[payload.Commander]:[]);
+          const card = all.find(c=>String(c.id)===String(sel));
+          if (card){
+            const loc = __locateCardInState(card);
+     
+          }
+        }
+      } catch(_) {}
+      return _save.apply(this, arguments);
+    };
+  }
+  if (_load) {
+  api.loadPlayerState = async function(gameId, seat){
+    const res = await _load.apply(this, arguments);
+    return res;
+  };
+}
+
+  if (_wipe) {
+    api.wipePlayerState = function(gameId, seat){
+      return _wipe.apply(this, arguments);
+    };
+  }
+  if (_del) {
+    api.deletePlayerState = function(gameId, seat){
+      return _del.apply(this, arguments);
+    };
+  }
+  if (_saveMeta){
+    api.saveMeta = function(gameId, meta){
+
+      return _saveMeta.apply(this, arguments);
+    };
+  }
+  if (_loadMeta){
+    api.loadMeta = function(gameId){
+
+      return _loadMeta.apply(this, arguments);
+    };
+  }
+  window.StorageAPI = api;
+})();
+
 
   await initStorage();
   import { bootDeckTools } from './modules/deck.tools.js';
