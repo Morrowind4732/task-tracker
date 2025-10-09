@@ -277,8 +277,18 @@ export async function writeCombat(gameId, patch){
 }
 export async function resetCombat(gameId){
   if (!gameId) return;
-  await supa.from("combats").delete().eq("game_id", gameId);
+  // keep the row; just clear fields so the next write doesn't 406
+  await writeCombat(gameId, {
+    attackingSeat: 0,
+    attacks: {},
+    blocksByDefender: {},
+    recommendedOutcome: null,
+    applied: {},
+    phase: null,
+    epoch: Date.now(),
+  });
 }
+
 export async function writeCombatInitiated(gameId, attackingSeat){
   await writeCombat(gameId, { combatInitiated: 1, attackingSeat: Number(attackingSeat)||0 });
 }

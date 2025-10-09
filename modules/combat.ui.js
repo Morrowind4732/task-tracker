@@ -929,6 +929,9 @@ const baseToReal = new Map(tableNow.map(c => [normalizeId(c.id), String(c.id)]))
       if (span) span.textContent = String(next);
     }
     try { await window.StorageAPI?.saveMeta?.(gid, { lifeMain, lifeUpdatedAt: Date.now() }); } catch(_) {}
+	// force a life strip redraw for everyone viewing
+	await window.refreshLifeTotals?.();
+
   }
 
   // mark applied for my seat

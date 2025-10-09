@@ -3259,6 +3259,22 @@ function renderLifeFromMeta(m){
   });
 }
 
+// make it callable from other modules
+window.renderLifeFromMeta = renderLifeFromMeta;
+
+// tiny helper: reload meta → redraw life strip
+window.refreshLifeTotals = async function refreshLifeTotals(){
+  try{
+    const gid = String(window.AppState?.gameId || '');
+    if (!gid || !window.StorageAPI?.loadMeta) return;
+    const meta = await window.StorageAPI.loadMeta(gid);
+    renderLifeFromMeta(meta || {});
+  }catch(e){
+    console.warn('[life] refreshLifeTotals failed', e);
+  }
+};
+
+
 // Start a meta poller so life totals propagate across clients
 (function ensureMetaLifeWatcher(){
   if (!window.StorageAPI?.startMetaPoller) return;
