@@ -45,6 +45,9 @@ function normalize(row) {
     attackingSeat: row.attacking_seat ?? row.attackingSeat ?? 0,
     attacks: row.attacks || {},
     blocksByDefender: row.blocks_by_defender || row.blocksByDefender || {},
+    recommendedOutcome: row.recommended_outcome || row.recommendedOutcome || null,
+    applied: row.applied || {},
+    phase: row.phase || null,
     epoch: row.epoch || 0,
     updatedAt: row.updated_at || null,
     game_id: row.game_id ?? null,
@@ -56,10 +59,14 @@ function toRowPatch(patch = {}) {
     attacking_seat: patch.attackingSeat ?? undefined,
     attacks: patch.attacks ?? undefined,
     blocks_by_defender: patch.blocksByDefender ?? undefined,
+    recommended_outcome: patch.recommendedOutcome ?? undefined,
+    applied: patch.applied ?? undefined,
     epoch: patch.epoch ?? Date.now(),
     updated_at: new Date().toISOString(),
   };
 }
+
+
 
 // ---------- core ops ----------
 async function readRow(gameId) {
@@ -170,14 +177,15 @@ export const CombatStore = {
     }
   },
 
-  async setInitiated(gameId, payloadOrSeat) {
-    const base = { epoch: Date.now() };
-    const patch = (typeof payloadOrSeat === "number")
-      ? { ...base, attackingSeat: Number(payloadOrSeat) }
-      : { ...base, ...(payloadOrSeat || {}) };
-    console.log("[CombatStore.setInitiated]", { gameId, patch });
-    return upsertRow(gameId, patch);
-  },
+async setInitiated(gameId, payloadOrSeat) {
+  const base = { epoch: Date.now() };
+  const patch = (typeof payloadOrSeat === "number")
+    ? { ...base, attackingSeat: Number(payloadOrSeat) }
+    : { ...base, ...(payloadOrSeat || {}) };
+  console.log("[CombatStore.setInitiated]", { gameId, patch });
+  return upsertRow(gameId, patch);
+},
+
 
   async saveAttacks(gameId, attacksMap) {
  console.log("[CombatStore.saveAttacks]", { gameId, keys: Object.keys(attacksMap || {}) });
@@ -188,23 +196,28 @@ export const CombatStore = {
     });
   },
 
-  async saveBlocks(gameId, defenderSeat, blocksMap) {
-    const seat = String(defenderSeat);
-    console.log("[CombatStore.saveBlocks]", { gameId, seat, count: Object.keys(blocksMap || {}).length });
-    const cur = (await readRow(gameId)) || {};
-    const merged = { ...(cur.blocksByDefender || {}), [seat]: (blocksMap || {}) };
-    return upsertRow(gameId, { blocksByDefender: merged, epoch: Date.now() });
-  },
+async saveBlocks(gameId, defenderSeat, blocksMap) {
+  const seat = String(defenderSeat);
+  console.log("[CombatStore.saveBlocks]", { gameId, seat, count: Object.keys(blocksMap || {}).length });
+  const cur = (await readRow(gameId)) || {};
+  const merged = { ...(cur.blocksByDefender || {}), [seat]: (blocksMap || {}) };
+  return upsertRow(gameId, { blocksByDefender: merged, epoch: Date.now() });
+},
+
 
   async write(gameId, patch) {
-    console.log("[CombatStore.write]", { gameId, patch });
-    return updateRow(gameId, {
-      attackingSeat: patch.attackingSeat,
-      attacks: patch.attacks,
-      blocksByDefender: patch.blocksByDefender,
-      epoch: patch.epoch
-    });
-  },
+  console.log("[CombatStore.write]", { gameId, patch });
+  // forward recommendedOutcome and applied as well as other fields
+  return updateRow(gameId, {
+    attackingSeat: patch.attackingSeat,
+    attacks: patch.attacks,
+    blocksByDefender: patch.blocksByDefender,
+    recommendedOutcome: patch.recommendedOutcome,  // <--- add
+    applied: patch.applied,                        // <--- add
+    epoch: patch.epoch
+  });
+},
+
 
   async reset(gameId) {
     console.log("[CombatStore.reset]", gameId);

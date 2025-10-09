@@ -103,11 +103,32 @@ function extractKeywords(card){
   };
 }
 
+// prefer a live snapshot if present (e.g. "5/5" saved by UI)
 function getPT(card){
-  const p = Number(card.power ?? card._scry?.power ?? 0);
-  const t = Number(card.toughness ?? card._scry?.toughness ?? 0);
-  return { power:p, toughness:t };
+  // 1) live "5/5" style strings get top priority
+  const fromPair = (s) => {
+    if (!s || typeof s !== 'string') return null;
+    const m = s.match(/^\s*(-?\d+)\s*\/\s*(-?\d+)\s*$/);
+    return m ? { power: Number(m[1]), toughness: Number(m[2]) } : null;
+  };
+  const live = fromPair(card?.pt) || fromPair(card?.ext?.pt) || fromPair(card?._scry?.pt);
+  if (live) return live;
+
+  // 2) base face stats
+  const faces = Array.isArray(card?._faces) ? card._faces : null;
+  const face = faces && faces.length > 1
+    ? (card.face === 'back' ? faces[1] : faces[0])
+    : (faces?.[0] || {});
+  const baseP = face.power ?? card.power ?? card._scry?.power ?? card._scry?.faces?.[0]?.power ?? 0;
+  const baseT = face.toughness ?? card.toughness ?? card._scry?.toughness ?? card._scry?.faces?.[0]?.toughness ?? 0;
+
+  // 3) add runtime/cog-wheel modifiers
+  const mod = card._ptMod || card.ext?.ptMod || { p:0, t:0 };
+  const p = Number(baseP) + Number(mod.p || 0);
+  const t = Number(baseT) + Number(mod.t || 0);
+  return { power: p, toughness: t };
 }
+
 
 function resolveDamageStep(attacker, blockers, phase, aFx, blockersFx){
   const notes = [];

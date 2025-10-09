@@ -1,12 +1,6 @@
 // ================================
 // FILE: modules/combat.ui.js
 // ================================
-// - Defender overlay now DUMPS the entire attacker player_state
-//   as soon as it opens (StorageAPI → supabase-js → REST).
-// - Uses the same flattened state shape your other modules use:
-//   state.Table || state.table
-// - Still renders the same overlays.
-// ================================
 
 import { CombatStore } from './combat.store.js';
 import { resolveCombatDamage } from './battle.js';
@@ -40,17 +34,32 @@ function activeFace(card){
   return (card?._faces && card._faces[0]) || {};
 }
 function computePT(card){
+  const fromPair = (s) => {
+    if (!s || typeof s !== 'string') return null;
+    const m = s.match(/^\s*(-?\d+)\s*\/\s*(-?\d+)\s*$/);
+    return m ? { power: Number(m[1]), toughness: Number(m[2]) } : null;
+  };
+
+  // 1) live value first (several places we’ve seen in your logs)
+  const live =
+    fromPair(card?.pt) ||
+    fromPair(card?.ext?.pt) ||
+    fromPair(card?._scry?.pt);
+
+  if (live) return live;
+
+  // 2) face / legacy paths
   const f = activeFace(card);
   const p = f.power ?? card.power ?? card._scry?.power ?? card._scry?.faces?.[0]?.power ?? '';
   const t = f.toughness ?? card.toughness ?? card._scry?.toughness ?? card._scry?.faces?.[0]?.toughness ?? '';
+
   return { power: Number(p || 0), toughness: Number(t || 0) };
 }
+
 function isCreature(card){
   const tl = (activeFace(card).type_line || card._scry?.type_line || '').toLowerCase();
   return tl.includes('creature');
 }
-
-// commander zone filter (kept minimal)
 function rectsOverlap(a,b){ return !(a.right<b.left || a.left>b.right || a.bottom<b.top || a.top>b.bottom); }
 function cardElById(cid){ return document.querySelector(`.card[data-id="${cid}"]`); }
 function isInCommanderZone(cid){
@@ -62,104 +71,20 @@ function isInCommanderZone(cid){
   return rectsOverlap(cr, zr);
 }
 
-
-
-/* ----------------------------------
-   RAW DUMP of a seat’s player_state
-   (StorageAPI → supabase-js → REST)
----------------------------------- */
-async function dumpPlayerState(gid, seat){
-  // 1) StorageAPI (fast path)
-  try{
-    const ps = await window.StorageAPI?.loadPlayerState?.(String(gid), Number(seat));
-    if (ps){
-      const state = (ps && typeof ps === 'object' && 'state' in ps && ps.state) ? ps.state : ps;
-      const tableLen = Array.isArray(state?.Table) ? state.Table.length :
-                       Array.isArray(state?.table) ? state.table.length : 0;
-      console.group(`[defender.psdump] SOURCE=StorageAPI (gid=${gid}, seat=${seat})`);
-      console.log('state:', state);
-      console.log('table length:', tableLen);
-      console.groupEnd();
-      return state;
-    }
-  }catch(e){
-    console.warn('[defender.psdump] StorageAPI failed', { gid, seat, err:e });
-  }
-
-  // 2) supabase-js
-  if (window.supabase){
-    try{
-      const { data, error } = await window.supabase
-        .from('player_states')
-        .select('state, updated_at')
-        .eq('game_id', String(gid))
-        .eq('seat', Number(seat))
-        .maybeSingle();
-      if (error) throw error;
-      const state = data?.state || null;
-      const tableLen = Array.isArray(state?.Table) ? state.Table.length :
-                       Array.isArray(state?.table) ? state.table.length : 0;
-      console.group(`[defender.psdump] SOURCE=supabase-js (gid=${gid}, seat=${seat})`);
-      console.log('updated_at:', data?.updated_at);
-      console.log('state:', state);
-      console.log('table length:', tableLen);
-      console.groupEnd();
-      if (state) return state;
-    }catch(e){
-      console.warn('[defender.psdump] supabase-js failed', { gid, seat, err:e });
-    }
-  }
-
-  // 3) REST
-  if (window.SUPABASE_URL && window.SUPABASE_KEY){
-    try{
-      const url = `${window.SUPABASE_URL.replace(/\/$/, '')}/rest/v1/player_states`
-        + `?select=state,updated_at&game_id=eq.${encodeURIComponent(String(gid))}&seat=eq.${Number(seat)}`;
-      const res = await fetch(url, {
-        headers: {
-          apikey: window.SUPABASE_KEY,
-          Authorization: `Bearer ${window.SUPABASE_KEY}`,
-          Accept: 'application/json',
-        }
-      });
-      if (!res.ok){
-        const txt = await res.text().catch(()=> '');
-        throw new Error(`[REST ${res.status}] ${txt}`);
-      }
-      const rows = await res.json();
-      const state = rows?.[0]?.state || null;
-      const tableLen = Array.isArray(state?.Table) ? state.Table.length :
-                       Array.isArray(state?.table) ? state.table.length : 0;
-      console.group(`[defender.psdump] SOURCE=REST (gid=${gid}, seat=${seat})`);
-      console.log('updated_at:', rows?.[0]?.updated_at);
-      console.log('state:', state);
-      console.log('table length:', tableLen);
-      console.groupEnd();
-      return state;
-    }catch(e){
-      console.warn('[defender.psdump] REST failed', { gid, seat, err:e });
-    }
-  }
-
-  console.warn('[defender.psdump] NO STATE FOUND', { gid, seat });
-  return null;
-}
-
-/* ----------------------------------
-   Read a seat table with same shape
----------------------------------- */
-// --- pasteable helper (safe to inline near your overlay code) ---
 function normalizeId(raw) {
   if (raw == null) return '';
   let s = String(raw);
   const ix = s.indexOf('_');
-  if (ix > -1) s = s.slice(0, ix);   // drop "_suffix"
+  if (ix > -1) s = s.slice(0, ix);
   if (s.startsWith('card-')) s = s.slice(5);
   return s;
 }
 
+/* ----------------------------------
+   Seat table readers (StorageAPI → SB-js → REST)
+---------------------------------- */
+
 async function readSeatTableStrict(gid, seat) {
-  // 1) try your in-memory/StorageAPI cache
   try {
     const ps = await window.StorageAPI?.loadPlayerState?.(String(gid), Number(seat));
     const arr = Array.isArray(ps?.Table) ? ps.Table : (Array.isArray(ps?.table) ? ps.table : []);
@@ -169,7 +94,6 @@ async function readSeatTableStrict(gid, seat) {
     console.warn('[fetchAttackerCard] StorageAPI.loadPlayerState failed', { gid, seat, err: e });
   }
 
-  // 2) fall back to Supabase (js client first, then REST)
   try {
     if (window.supabase) {
       const { data, error } = await window.supabase
@@ -214,14 +138,15 @@ async function readSeatTableStrict(gid, seat) {
   return [];
 }
 
-// --- THE FUNCTION YOU ASKED FOR ---
+/* ----------------------------------
+   Attacker card fetch (id / persistentId; normalized)
+---------------------------------- */
 export async function fetchAttackerCard({ gid, attackerSeat, cid }) {
   const want = String(cid);
   const base = normalizeId(want);
 
   const tableArr = await readSeatTableStrict(gid, attackerSeat);
 
-  // debug preview
   console.log('[fetchAttackerCard] comparing against attacker table', {
     gid, attackerSeat, want, base,
     preview: tableArr.slice(0, 8).map(c => c.id)
@@ -234,7 +159,6 @@ export async function fetchAttackerCard({ gid, attackerSeat, cid }) {
     const idBase  = normalizeId(idRaw);
     const pidBase = normalizeId(pidRaw);
 
-    // exacts OR normalized matches
     return (
       idRaw  === want || idRaw  === base ||
       idBase === want || idBase === base ||
@@ -260,21 +184,34 @@ export async function fetchAttackerCard({ gid, attackerSeat, cid }) {
 }
 
 
-/* ----------------------------------
-   Find attacker card on ATTACKER seat
----------------------------------- */
+
+export async function clearCombatAttacks(gid = String(window.AppState?.gameId || '')) {
+  // keep dynamic import if you want to isolate load order, or
+  // use the already-imported CombatStore (both are fine):
+  await CombatStore.write(gid, {
+    attacks: {},
+    recommendedOutcome: null,
+    applied: {},
+    epoch: Date.now(),
+  });
+  console.log('[combat] attacks cleared for', gid);
+}
+window.clearCombatAttacks = clearCombatAttacks; // console convenience
+// ---------------------------------------------------------
+
 
 
 /* ------------------------------------------------------
-   Attacker overlay (kept simple; unchanged look)
+   Attacker overlay (declare attackers)
 ------------------------------------------------------ */
 export async function openAttackerOverlay({ gameId, mySeat }) {
   const gid  = String(gameId || getGameId());
   const seat = Number(mySeat ?? getSeatNow());
 
-  // singleton
   const old = document.getElementById('combatAtkOverlay');
   if (old) old.remove();
+ // ⬇️ NEW: clear any stale attacks immediately when opening
+  try { await clearCombatAttacks(gid); } catch (e) { console.warn('[openAttackerOverlay] clearCombatAttacks failed', e); }
 
   const ov = document.createElement('div');
   ov.id = 'combatAtkOverlay';
@@ -292,14 +229,10 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
   `;
   document.body.appendChild(ov);
 
-  // candidates from MY table
   const table = getTable().filter(c => isCreature(c) && !isInCommanderZone(c.id));
-
-  // find all opponent seats
   const playerCount = Number(getAppState().playerCount || 2);
   const oppSeats = Array.from({length: playerCount}, (_,i)=>i+1).filter(s => s !== seat);
 
-  // load any previous choices
   const prev = await CombatStore.read(gid).catch(()=>null);
   const previousMap = {};
   if (prev?.attacks){
@@ -352,6 +285,11 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
   });
 
   ov.querySelector('#closeAtk').onclick = () => ov.remove();
+
+
+
+
+
   ov.querySelector('#resetAtk').onclick = () => {
     if (!confirm('Clear all your attack choices?')) return;
     choices = {};
@@ -363,22 +301,83 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
     });
   };
 
+  // --- helper: snapshot cog-wheel edits + effective P/T for a given card
+  function bakeAttackSnapshot(card){
+    if (!card) return null;
+    // runtime/ext extras
+    const effects = Array.isArray(card._extraEffects) ? [...card._extraEffects]
+                   : Array.isArray(card.ext?.effects) ? [...card.ext.effects] : [];
+    const types   = Array.isArray(card._extraTypes) ? [...card._extraTypes]
+                   : Array.isArray(card.ext?.types) ? [...card.ext.types] : [];
+    const chosenType = card._chosenType || card.ext?.chosenType || '';
+    const ptMod = {
+      p: Number(card._ptMod?.p ?? card.ext?.ptMod?.p ?? 0),
+      t: Number(card._ptMod?.t ?? card.ext?.ptMod?.t ?? 0),
+    };
+    // effective P/T = base face (or scry) + ptMod
+    const f = activeFace(card) || {};
+    const baseP = Number(f.power ?? card.power ?? card._scry?.power ?? card._scry?.faces?.[0]?.power ?? 0);
+    const baseT = Number(f.toughness ?? card.toughness ?? card._scry?.toughness ?? card._scry?.faces?.[0]?.toughness ?? 0);
+    const effP  = (isFinite(baseP) ? baseP : 0) + Number(ptMod.p || 0);
+    const effT  = (isFinite(baseT) ? baseT : 0) + Number(ptMod.t || 0);
+    const oracle = (card?._scry?.oracle_text || card?.oracle_text || card?._faces?.[0]?.oracle_text || '').toLowerCase();
+    const hasLifelink = effects.some(e => String(e).toLowerCase().includes('lifelink')) || oracle.includes('lifelink');
+    return {
+      pt: { power: effP, toughness: effT },
+      ptMod,
+      effects,
+      types,
+      chosenType,
+      hasLifelink
+    };
+  }
+
+  // Hard clear of the combat doc’s attack set (and any stale outcome/applied)
+  async function clearAttacksDoc(gid){
+    await CombatStore.write(gid, {
+      attacks: {},                 // wipe previous attackers
+      recommendedOutcome: null,    // wipe stale outcome
+      applied: {},                 // wipe per-seat “applied” flags
+      epoch: Date.now(),
+    });
+  }
+
   ov.querySelector('#confirmAtk').onclick = async () => {
     try{
+      // build fresh selection (normalize ids) + attach snapshots
       const trimmed = {};
+      const tableByBase = new Map((getTable() || []).map(c => [normalizeId(c.id), c]));
       for (const [cid, defSeat] of Object.entries(choices)){
         if (defSeat != null && !isNaN(defSeat)) {
           const base = normalizeId(cid);
-          trimmed[base] = { attackerSeat: seat, defenderSeat: Number(defSeat) };
+          const card = tableByBase.get(base);
+          const snapshot = bakeAttackSnapshot(card);
+          trimmed[base] = {
+            attackerSeat: seat,
+            defenderSeat: Number(defSeat),
+            snapshot
+          };
+          console.log('[attacker.confirm] snapshot', { base, name: card?.name, snapshot });
         }
       }
+
+      // 1) clear first to drop any stale keys (exactly like your console helper)
+      await clearAttacksDoc(gid);
+
+      // 2) give the backend a breath so debouncers/replication settle
+      await new Promise(r => setTimeout(r, 150));
+
+      // 3) write the new set (full replace at the top-level `attacks` key)
+      console.log('[CombatStore.write] attacks payload', { gid, seat, attacks: trimmed });
       await CombatStore.write(gid, {
         attacks: trimmed,
         applied: {},
         recommendedOutcome: null,
         epoch: Date.now()
       });
-      await CombatStore.setInitiated(gid, { attackingSeat: seat, phase: 'declare-blockers' });
+
+      await CombatStore.setInitiated(gid, { attackingSeat: seat }); // no phase write
+
       showToast('Attacks declared!');
       ov.remove();
     }catch(e){
@@ -386,21 +385,25 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
       showToast('Could not confirm attacks (see console).');
     }
   };
+
+
+
+
+
+
+
 }
 
 /* ------------------------------------------------------
-   Defender overlay — loads attacking cards and
-   dumps attacker player_state(s) up front
+   Defender overlay — choose blockers, compute outcome
 ------------------------------------------------------ */
 export async function openDefenderOverlay({ gameId, mySeat }){
   const gid  = String(gameId || getGameId());
   const seat = Number(mySeat ?? getSeatNow());
 
-  // singleton
   const old = document.getElementById('combatDefOverlay');
   if (old) old.remove();
 
-  // read combat doc
   let combat = null;
   try { combat = await CombatStore.read(gid); } catch(_){}
   if (!combat?.attacks || !Object.keys(combat.attacks).length){
@@ -409,26 +412,9 @@ export async function openDefenderOverlay({ gameId, mySeat }){
   }
 
   const attacks = combat?.attacks || {};
-
-  // ---- DUMP attacker seat player_state(s) immediately ----
-  const attackerSeats = new Set();
-  for (const [, meta] of Object.entries(attacks)){
-    if (Number(meta?.defenderSeat) === seat && Number(meta?.attackerSeat || 0) > 0){
-      attackerSeats.add(Number(meta.attackerSeat));
-    }
-  }
-  if (!attackerSeats.size){
-    console.warn('[defender.psdump] No attacker seats targeting you (nothing to dump).', { gid, seat, attacks });
-  } else {
-    for (const s of attackerSeats){
-      await dumpPlayerState(gid, s); // full dump to console
-    }
-  }
-  // --------------------------------------------------------
-
   const incoming = [];
 
-  // Load attackers targeting ME → fetch each card from the attacker’s seat table
+  // Load attackers targeting ME
   const tasks = [];
   for (const [cid, meta] of Object.entries(attacks)){
     const defSeat = Number(meta?.defenderSeat || 0);
@@ -444,7 +430,6 @@ export async function openDefenderOverlay({ gameId, mySeat }){
 
   console.log('[combat.ui] defender incoming:', incoming.map(c => ({ id:String(c.id), name:c.name })));
 
-  // my blockers (local table)
   const myBlockers = getTable().filter(c =>
     isCreature(c) &&
     Number(c.controllerSeat || getAppState().mySeat || seat) === seat &&
@@ -467,13 +452,12 @@ export async function openDefenderOverlay({ gameId, mySeat }){
   `;
   document.body.appendChild(ov);
 
-  // { attackerCid -> [blockerCid,…] }
-  const blocks = {};
+  const blocks = {}; // { attackerCid -> [blockerCid,…] }
 
   function attackerRowHtml(a){
     const { power, toughness } = computePT(a);
     const img = a.frontImg || a._faces?.[0]?.image || '';
-    const cid = String(a.id);
+    const cid = normalizeId(a.id);
     const blockerBtns = myBlockers.map(b => {
       const selected = (blocks[cid] || []).includes(String(b.id));
       const sel = selected ? 'outline:2px solid #6aa9ff; box-shadow:0 0 0 6px rgba(106,169,255,.18) inset;' : '';
@@ -499,10 +483,9 @@ export async function openDefenderOverlay({ gameId, mySeat }){
     ? incoming.map(attackerRowHtml).join('')
     : `<em>No attackers are assigned to you.</em>`;
 
-  // choose blockers
   scroller.addEventListener('click', (e) => {
     const btn = e.target.closest('.choose-blocker'); if (!btn) return;
-    const aCid = String(btn.dataset.att);
+    const aCid = normalizeId(btn.dataset.att);
     const bCid = String(btn.dataset.bid);
     const list = blocks[aCid] || (blocks[aCid] = []);
     const ix = list.indexOf(bCid);
@@ -523,58 +506,461 @@ export async function openDefenderOverlay({ gameId, mySeat }){
   };
 
   ov.querySelector('#confirmDef').onclick = async () => {
-    try{
-      // trim empties
-      const trimmed = {};
-      for (const [aCid, arr] of Object.entries(blocks)){
-        if (Array.isArray(arr) && arr.length) trimmed[aCid] = arr;
-      }
-      await CombatStore.saveBlocks(gid, seat, trimmed);
+  try {
+    // 1) Trim empties and normalize keys
+    const trimmed = {};
+    for (const [aCid, arr] of Object.entries(blocks)) {
+      const key = normalizeId(aCid);
+      if (Array.isArray(arr) && arr.length) trimmed[key] = arr.map(String);
+    }
 
-      // minimal recommended outcome (placeholder)
-      const epoch = Number(combat?.epoch || Date.now());
-      await CombatStore.write(gid, {
-        epoch,
-        recommendedOutcome: {
-          notesHtml: [],
-          deadByAttack: {},
-          attackerDeadFlags: {},
-          playerDamage: {},
-          lifelinkGains: {},
-          epoch
-        },
-        applied: {}
+    // 2) Hard clear *my seat’s* previous blocks, then write the new set
+    await CombatStore.saveBlocks(gid, seat, {});        // wipe my old blocks
+    await CombatStore.saveBlocks(gid, seat, trimmed);   // save fresh
+
+    // 3) Recompute recommended outcome (now honoring snapshots)
+    const attacksMap = (await CombatStore.read(gid))?.attacks || {};
+    const notesHtml = [];
+    const deadByAttack = {};
+    const attackerDeadFlags = {};
+    const playerDamage = {};
+    const lifelinkGains = {};
+
+    const addDmg  = (s,n)=>{ if(!n) return; playerDamage[s]=(playerDamage[s]||0)+n; };
+    const addHeal = (s,n)=>{ if(!n) return; lifelinkGains[s]=(lifelinkGains[s]||0)+n; };
+    const oracleText = (card)=>
+      (card?._scry?.oracle_text || card?.oracle_text || card?._faces?.[0]?.oracle_text || '').toLowerCase();
+    const hasLL = (card, snapshot)=> {
+      if (snapshot && typeof snapshot.hasLifelink === 'boolean') return snapshot.hasLifelink;
+      // fallback: effects array or oracle text
+      if (snapshot?.effects?.some?.(e => String(e).toLowerCase().includes('lifelink'))) return true;
+      return oracleText(card).includes('lifelink');
+    };
+
+    // helper: apply snapshot PT override to a card (without mutating original)
+    const withSnapshotPT = (card, snap) => {
+      if (!snap?.pt) return card;
+      const clone = { ...card };
+      // Publish a live "P/T" so battle.getPT picks it up regardless of source
+      clone.pt = `${Number(snap.pt.power)||0}/${Number(snap.pt.toughness)||0}`;
+      // Also reflect ptMod for any code that uses it
+      clone._ptMod = snap.ptMod || clone._ptMod;
+      if (clone.ext) clone.ext.ptMod = snap.ptMod || clone.ext.ptMod;
+      return clone;
+    };
+
+    for (const [aCid, meta] of Object.entries(attacksMap)) {
+      const patt = Number(meta?.attackerSeat || 0);
+      const pdef = Number(meta?.defenderSeat || 0);
+      if (pdef !== seat) continue;
+
+      const attackerRaw = await fetchAttackerCard({ gid, attackerSeat: patt, cid: aCid });
+      if (!attackerRaw) continue;
+
+      const key = normalizeId(aCid);
+      const bList = (trimmed[key] || []).map(getById).filter(Boolean);
+
+      // pull snapshot written at attack time
+      const snap = meta?.snapshot || null;
+      const attacker = withSnapshotPT(attackerRaw, snap);
+
+      // DEBUG: show what we’re using for calc
+      try {
+        const { power: atkP_dbg, toughness: atkT_dbg } = computePT(attacker);
+        console.log('[combat calc] attacker', {
+          aCid: key, name: attacker?.name, fromSnapshot: !!snap,
+          ptUsed: { power: atkP_dbg, toughness: atkT_dbg },
+          rawSnapshot: snap
+        });
+        console.log('[combat calc] blockers',
+          bList.map(b => ({ id: String(b.id), name: b.name, pt: computePT(b) })));
+      } catch(_){}
+
+      const result = resolveCombatDamage(attacker, bList);
+      const deadBlockers = Array.from(result.deadBlockers || []);
+      const attackerDead = !!result.attackerDead;
+
+      // Keep store-friendly maps
+      deadByAttack[key] = deadBlockers.map(String);
+      attackerDeadFlags[key] = attackerDead;
+
+      // Bubble up any resolver-provided effect notes (first strike / trample, etc.)
+      if (Array.isArray(result?.notes) && result.notes.length) {
+        notesHtml.push(...result.notes);
+      }
+
+      // Compute summary + lifelink rules
+      const { power: atkP } = computePT(attacker);
+const unblocked = !bList.length && !attackerDead;
+      if (!bList.length) {
+        // Unblocked: attacker deals atkP to the player; lifelink heals for atkP
+        if (atkP > 0) {
+          addDmg(pdef, atkP);
+          if (hasLL(attacker, snap)) addHeal(patt, atkP);
+        }
+      } else {
+        // Blocked: lifelink still triggers if the attacker actually assigns damage.
+        // The only time it doesn't is when FIRST STRIKE killed the attacker before it could deal.
+        const firstStrikeKill =
+          !!attackerDead &&
+          Array.isArray(result?.notes) &&
+          result.notes.some(n => n.includes('kills') && n.includes('(first strike)') && n.includes(attacker.name));
+
+        if (!firstStrikeKill && hasLL(attacker, snap) && atkP > 0) {
+          // In normal combat the attacker assigns total damage equal to its power among blockers.
+          // That total still counts for lifelink.
+          addHeal(patt, atkP);
+        }
+      }
+
+
+      // Names for UI
+      const diedNames = bList
+        .filter(b => deadBlockers.includes(String(b.id)))
+        .map(b => b.name)
+        .join(', ');
+
+      // Deathtouch tag helper
+      const hasDT = (card, snapshot) => {
+        const effs = (snapshot?.effects || []).map(e => String(e).toLowerCase());
+        const otxt = (card?._scry?.oracle_text || card?.oracle_text || card?._faces?.[0]?.oracle_text || '').toLowerCase();
+        return effs.includes('deathtouch') || otxt.includes('deathtouch');
+      };
+      const dtTag = (card, snap) => hasDT(card, snap) ? ' (deathtouch)' : '';
+
+      if (attackerDead && diedNames) {
+        notesHtml.push(`(P${pdef}) ${diedNames} trade with (P${patt}) ${attacker.name}${dtTag(attacker, snap)}`);
+      } else if (attackerDead) {
+        notesHtml.push(`(P${pdef}) blockers kill (P${patt}) ${attacker.name}${dtTag(attacker, snap)}`);
+      } else if (diedNames) {
+        // Check if any blocker had DT and died interactions
+        const anyBlockerDT = bList.some(b => hasDT(b));
+        const extra = anyBlockerDT ? ' (deathtouch)' : '';
+        notesHtml.push(`(P${patt}) ${attacker.name} kills (P${pdef}) ${diedNames}${extra}`);
+      } else if (unblocked) {
+        notesHtml.push(`(P${patt}) ${attacker.name} is unblocked → P${pdef} takes ${atkP}${hasLL(attacker, snap) ? ' (lifelink)' : ''}`);
+      } else {
+        notesHtml.push(`(P${patt}) ${attacker.name} is blocked — no deaths`);
+      }
+
+      // Debug for effect visibility
+      console.log('[combat calc:summary]', {
+        attacker: { id: key, name: attacker?.name, atkP, unblocked, attackerDead },
+        deadBlockers: deadBlockers.map(String),
+        lifelink: hasLL(attacker, snap)
       });
 
-      showToast('Blocks submitted!');
+    }
+
+    const epoch = Date.now();
+const recommendedOutcome = {
+  notesHtml,
+  deadByAttack,
+  attackerDeadFlags,
+  playerDamage,
+  lifelinkGains,
+  epoch
+};
+
+// Persist so other seats see it via poller
+await CombatStore.write(gid, {
+  epoch,
+  recommendedOutcome,
+  applied: {}                  // nobody has applied yet
+});
+
+
+// Open review overlay for me (defender)
+showOutcomeOverlay({ data: { attacks: attacksMap, recommendedOutcome }, gameId: gid, mySeat: seat });
+showToast('Blocks submitted!');
+ov.remove();
+
+  } catch (e) {
+    console.error('[defender.confirm] failed', e);
+    showToast('Could not confirm blocks (see console).');
+  }
+};
+
+
+}
+
+/* ------------------------------------------------------
+   Outcome review + Apply
+------------------------------------------------------ */
+export function showOutcomeOverlay({ data, gameId, mySeat }) {
+  const gid  = String(gameId || getGameId());
+  const seat = Number(mySeat ?? getSeatNow());
+
+  const attacks = data?.attacks || {};
+  const ro = data?.recommendedOutcome || {};
+  const deadByAttack = ro.deadByAttack || {};
+  const attackerDeadFlags = ro.attackerDeadFlags || {};
+  const playerDamage = ro.playerDamage || {};
+  const lifelinkGains = ro.lifelinkGains || {};
+  const notesHtml = Array.isArray(ro.notesHtml) ? ro.notesHtml : [];
+
+  // Build rows per attacker involving me
+  const rows = [];
+  for (const [aCid, meta] of Object.entries(attacks)) {
+    const patt = Number(meta?.attackerSeat || 0);
+    const pdef = Number(meta?.defenderSeat || 0);
+    if (patt !== seat && pdef !== seat) continue;
+
+    const aDead = !!attackerDeadFlags[aCid];
+    const diedBlockers = new Set((deadByAttack[aCid] || []).map(String));
+
+    const textBits = [];
+    if (diedBlockers.size) {
+      const names = Array.from(diedBlockers)
+        .map(id => getById(id)?.name || null)
+        .filter(Boolean);
+
+      const label = names.length
+        ? names.join(', ')
+        : `${diedBlockers.size} blocker${diedBlockers.size > 1 ? 's' : ''}`;
+
+      textBits.push(`Dead blockers: ${label}`);
+    }
+
+    if (aDead) textBits.push('Attacker dies');
+ // RIGHT
+if (!aDead && !diedBlockers.size) textBits.push('No deaths');
+
+
+    rows.push({
+      id: String(aCid),
+      enabled: true,
+      attackerSeat: patt,
+      defenderSeat: pdef,
+       deadBlockers: diedBlockers,
+      attackerDead: aDead,
+      text: textBits.join(' • ')
+    });
+  }
+
+  // overlay
+  const existing = document.getElementById('combatOutcomeOverlay');
+  if (existing) existing.remove();
+
+  const ov = document.createElement('div');
+  ov.id = 'combatOutcomeOverlay';
+  ov.style.cssText = `position:fixed; inset:0; background:rgba(8,12,20,.8); z-index:12000; display:flex; align-items:center; justify-content:center;`;
+  ov.innerHTML = `
+    <div style="background:#0b1220;border:1px solid #2b3f63;border-radius:14px;padding:20px;color:#e7efff;max-width:860px;max-height:80vh;overflow:auto;">
+      <h2 style="margin:0 0 8px;">Combat Outcome (Recommended)</h2>
+
+      <div style="margin-bottom:8px;opacity:.9">${notesHtml.map(n => `<div>• ${n}</div>`).join('')}</div>
+
+      <div id="rows" style="display:grid; gap:8px; margin-bottom:12px;">
+        ${
+          rows.length
+            ? rows.map((r,idx)=>`
+                <label class="pill" style="display:flex;gap:10px;align-items:flex-start">
+                  <input type="checkbox" data-idx="${idx}" checked />
+                  <div>${r.text}</div>
+                </label>
+              `).join('')
+            : '<em>No applicable rows for your seat.</em>'
+        }
+      </div>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button class="pill" id="applyMine">Apply to My Board</button>
+        <button class="pill" id="closeOutcome">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+
+  ov.querySelector('#rows')?.addEventListener('change', (e)=>{
+    const cb = e.target.closest('input[type="checkbox"]');
+    if (!cb) return;
+    rows[Number(cb.dataset.idx)].enabled = cb.checked;
+  });
+
+  ov.querySelector('#closeOutcome').onclick = ()=> ov.remove();
+  ov.querySelector('#applyMine').onclick = async ()=> {
+    try {
+      await applyRecommendedToMyBoard({ gameId: gid, mySeat: seat, rows, data: { attacks, recommendedOutcome: ro } });
       ov.remove();
-    }catch(e){
-      console.error('[defender.confirm] failed', e);
-      showToast('Could not confirm blocks (see console).');
+    } catch (e) {
+      console.error('[OutcomeOverlay] apply failed', e);
+      showToast('Could not apply outcome (see console).');
     }
   };
 }
 
 /* ------------------------------------------------------
-   Poller (lightweight)
+   Apply to my board (deaths, taps, life totals)
 ------------------------------------------------------ */
-export function startCombatPoller(gameId){
+export async function applyRecommendedToMyBoard({ gameId, mySeat, rows, data }) {
+  const gid  = String(gameId || getGameId());
+  const seat = Number(mySeat ?? getSeatNow());
+    // current table snapshot
+  const S = window.AppState || {};
+  const tableNow = Array.isArray(S.table) ? S.table.slice() : [];
+const baseToReal = new Map(tableNow.map(c => [normalizeId(c.id), String(c.id)]));
+  const attacks   = data?.attacks || {};
+  const ro        = data?.recommendedOutcome || {};
+  const deadByAtk = ro.deadByAttack || {};
+  const aDead     = ro.attackerDeadFlags || {};
+  const playerDamage   = ro.playerDamage   || {};
+  const lifelinkGains  = ro.lifelinkGains  || {};
+
+  // collect cids to move to my GY from enabled rows
+  const enabled = (rows || []).filter(r => r.enabled);
+  const enabledSet = new Set(enabled.map(r => String(r.id)));
+
+  const cidsToMove = new Set();
+
+  // my dead blockers from enabled attacks
+  for (const [aCid, list] of Object.entries(deadByAtk)) {
+    if (!enabledSet.has(String(aCid))) continue;
+    const defSeat = Number(attacks?.[aCid]?.defenderSeat || 0);
+    if (defSeat !== seat) continue;
+    for (const cid of (list || [])) cidsToMove.add(String(cid));
+  }
+
+  // my dead attackers (if any enabled)
+  for (const [aCid, died] of Object.entries(aDead)) {
+    if (!enabledSet.has(String(aCid))) continue;
+    if (!died) continue;
+    const attSeat = Number(attacks?.[aCid]?.attackerSeat || 0);
+    if (attSeat !== seat) continue;
+    const realId = baseToReal.get(String(aCid)) || String(aCid);
+    cidsToMove.add(realId);
+  }
+
+
+  // helper for DOM selector escape
+  const esc = (s)=> (window.CSS && CSS.escape ? CSS.escape(String(s)) : String(s).replace(/"/g, '\\"'));
+
+  // preferred v2 helpers if available
+  const useV2 = typeof window.moveToZone === 'function'
+             && typeof window.removeFromTable === 'function'
+             && typeof window.appendToZone === 'function';
+
+
+
+  // move to GY
+  for (const cid of cidsToMove) {
+    const cardObj = tableNow.find(c => String(c.id) === String(cid)) || { id: cid };
+    const el =
+      document.querySelector(`#world .card[data-id="${esc(cid)}"]`) ||
+      document.querySelector(`.card[data-id="${esc(cid)}"]`) || null;
+
+    if (useV2) {
+      try {
+        await window.moveToZone(cardObj, 'graveyard', el || undefined);
+      } catch (e) {
+        console.warn('[apply→moveToZone] failed, fallback', e);
+        try {
+          if (el && el.remove) el.remove();
+          await window.removeFromTable(cardObj);
+          await window.appendToZone(cardObj, 'graveyard');
+        } catch (e2) {
+          console.warn('[apply→manual] failed', e2);
+        }
+      }
+    } else {
+      const nextTable = [];
+      S.gy = Array.isArray(S.gy) ? S.gy : [];
+      for (const c of (S.table || [])) {
+        if (String(c.id) === String(cid)) S.gy.unshift(c);
+        else nextTable.push(c);
+      }
+      S.table = nextTable;
+      try { window.StorageAPI?.savePlayerStateDebounced?.(gid, seat, S); } catch(_) {}
+      if (el && el.remove) el.remove();
+    }
+  }
+
+    // tap my surviving attackers that were enabled & not moved (use real DOM ids)
+  const myAttackingCids = Object.entries(attacks)
+    .filter(([aCid, meta]) => Number(meta?.attackerSeat) === seat)
+    .map(([aCid]) => String(aCid));
+
+  const stillAliveBase = new Set(
+    myAttackingCids.filter(aCid => enabledSet.has(aCid) && !cidsToMove.has(String(aCid)))
+  );
+
+  for (const aCidBase of stillAliveBase) {
+    const realId = baseToReal.get(String(aCidBase)) || String(aCidBase);
+    const el  = document.querySelector(`#world .card[data-id="${esc(realId)}"]`);
+    const obj = (window.AppState?.table || []).find(c => String(c.id) === String(realId));
+    if (obj) obj.tapped = true;
+    if (el) {
+      el.classList.add('tapped');
+      if (typeof window.updateCardDom === 'function') {
+        try { window.updateCardDom(obj || { tapped:true }); } catch(_) {}
+      }
+    }
+  }
+
+  try { window.StorageAPI?.savePlayerStateDebounced?.(gid, seat, window.AppState); } catch(_) {}
+
+  // life totals (seat-local to avoid double application)
+  let meta = null;
+  try { meta = await window.StorageAPI?.loadMeta?.(gid); } catch(_) {}
+  const lifeMain = { ...(meta?.lifeMain || {}) };
+
+  const cur   = Number(lifeMain[seat] ?? 40);
+  const minus = Number(playerDamage[seat] || 0);   // damage taken by me (when I'm the defender)
+  const plus  = Number(lifelinkGains[seat] || 0);  // lifelink I gain (when I'm the attacker)
+  const next  = cur - minus + plus;
+
+  if (minus || plus) {
+    lifeMain[seat] = next;
+
+    const myTile = document.querySelectorAll('.life-strip .life-tile')[seat - 1];
+    if (myTile) {
+      const span = myTile.querySelector('.life-main');
+      if (span) span.textContent = String(next);
+    }
+    try { await window.StorageAPI?.saveMeta?.(gid, { lifeMain, lifeUpdatedAt: Date.now() }); } catch(_) {}
+  }
+
+  // mark applied for my seat
+  try { await CombatStore.write(gid, { applied: { [seat]: true } }); } catch(_){}
+
+  showToast('Applied: deaths, taps, and life totals.');
+}
+
+/* ------------------------------------------------------
+   Poller (auto-open outcome overlay for non-applied seats)
+------------------------------------------------------ */
+// optional onData callback lets you see the raw store payload in your console
+export function startCombatPoller(gameId, _mySeat, onData){
   const gid = String(gameId || getGameId());
   window.__combatPollers = window.__combatPollers || {};
   if (window.__combatPollers[gid]){
     try { window.__combatPollers[gid](); } catch(_) {}
   }
+
   let lastEpoch = 0;
   const unsub = CombatStore.onChange(gid, (data)=>{
+    if (typeof onData === 'function') {
+      try { onData(data); } catch(_) {}
+    }
+
+    // We open whenever the outcome exists and *this seat* hasn’t applied yet.
     if (!data?.recommendedOutcome) return;
+
+    const mySeat = Number(window.AppState?.mySeat || _mySeat || 0);
+    if (data.applied && data.applied[mySeat]) return;
+
     const roEpoch = Number(data.recommendedOutcome?.epoch || data.epoch || 0);
     if (!roEpoch || roEpoch === lastEpoch) return;
     lastEpoch = roEpoch;
-    console.log('[poller] new recommendedOutcome epoch', roEpoch);
+
+    console.log('[combat.poller] outcome ready → opening overlay for seat', mySeat, data);
+    showOutcomeOverlay({ data, gameId: gid, mySeat });
   });
+
   window.__combatPollers[gid] = unsub;
   return unsub;
 }
+
 
 /* ------------------------------------------------------
    Wire the FAB
@@ -593,10 +979,12 @@ export function wireBattleFab({ gameId, mySeat, getIsMyTurn, btn }){
   });
 }
 
-/* default export (optional) */
+/* default export */
 export default {
   openAttackerOverlay,
   openDefenderOverlay,
+  showOutcomeOverlay,
+  applyRecommendedToMyBoard,
   startCombatPoller,
   wireBattleFab,
 };
