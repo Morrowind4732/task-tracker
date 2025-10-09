@@ -6,7 +6,7 @@ const SUPABASE_URL = "https://uvrnxrmwoyhswzldhcul.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2cm54cm13b3loc3d6bGRoY3VsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4NDgyMDgsImV4cCI6MjA3NTQyNDIwOH0.vOefq7j90s4IF951U1P2-69xhLb5Z5rvdAZ875A1cXo";
 
 // 2) Create a client
-const supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+let supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // 3) Expose globally so other modules (combat.store.js) can use it or fall back to REST
 window.supabase     = supa;
@@ -88,23 +88,31 @@ export async function writeTurnSnapshot(gameId, turnIndex, seat, snapshot){
 }
 
 // Convenience: persist snapshots for ALL seats for a given turn
+// env.supabase.js
 export async function snapshotAllSeatsToTable(gameId, turnIndex){
   const players = Number(window.AppState?.playerCount || 2);
   const rows = [];
   for (let s = 1; s <= players; s++){
-    const doc = await loadPlayerState(gameId, s);   // <- your existing export
+    const doc = await loadPlayerState(gameId, s) || {};
+    const snap = {
+      Deck:      doc.Deck      ?? doc.deck      ?? [],
+      Hand:      doc.Hand      ?? doc.hand      ?? [],
+      Table:     doc.Table     ?? doc.table     ?? [],
+      Graveyard: doc.Graveyard ?? doc.gy        ?? doc.graveyard ?? [],
+      Exile:     doc.Exile     ?? doc.exile     ?? [],
+      Commander: doc.Commander ?? doc.tableCommander ?? null,
+      Turn:      Number(doc.Turn || 0)
+    };
     rows.push({
-      game_id: gameId,
-      turn_index: Number(turnIndex || 0),
-      seat: s,
-      snapshot: doc || {},
-      created_at: new Date().toISOString()
+      game_id: gameId, turn_index: Number(turnIndex||0), seat: s,
+      snapshot: snap, created_at: new Date().toISOString()
     });
   }
   const { error } = await supa.from('turn_snapshots').upsert(rows);
   if (error) console.warn('[snapshotAllSeatsToTable]', error);
   return rows.length;
 }
+
 
 
 /* ------------ Player state (per seat) ------------ */

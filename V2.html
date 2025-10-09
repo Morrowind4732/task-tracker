@@ -543,13 +543,15 @@ const state = {
   turn: null,
   zoom: 1, panX: 0, panY: 0,
   hand: [], table: [], gy: [], exile: [], deck: [],
-    _mulliganPending: false,
+  tableCommander: null,               // ⟵ add this so it’s always present
+  _mulliganPending: false,
   _mulliganAutoDrawing: false,
   _hasShownOpeningMull: false,
 
   scryCache: new Map(),
   selectedCardId: null
 };
+
 
 // expose shared app state so other <script type="module"> blocks can access it
 window.AppState = state;
@@ -866,35 +868,84 @@ function nextSeat(cur, total){
   return (cur % total) + 1; // 1→2→3→1
 }
 
+// Put this where your current setViewSeat lives (same name/signature).
 async function setViewSeat(seat){
-  if (!state.gameId) { alert('Pick Game 1/2/3 first.'); return; }
+  const mySeat = Number(state.mySeat || 1);
+  const gid    = String(state.gameId || '');
 
-  // stop any running poller
-  if (state.viewPoller){ clearInterval(state.viewPoller); state.viewPoller = null; }
+  // Stop any opponent poller first
+  if (state.viewPoller && typeof state.viewPoller === 'function'){
+    try { state.viewPoller(); } catch(_) {}
+    state.viewPoller = null;
+  }
+  if (state.__pollTimer){
+    clearInterval(state.__pollTimer);
+    state.__pollTimer = null;
+  }
 
-  state.viewSeat = seat;
-  state.viewReadOnly = (seat !== state.mySeat);
-  document.body.classList.toggle('viewing-opponent', state.viewReadOnly);
+  // Going to opponent (read-only)
+  if (Number(seat) !== mySeat){
+    state.viewSeat = Number(seat);
+    state.viewReadOnly = true;
+    document.body.classList.add('viewing-opponent');
 
-  clearSelection();
+    // Hard wipe DOM/table & hand track before hydrating opponent
+    try { document.getElementById('world').querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+    try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
 
-  if (!state.viewReadOnly){
-    // Back to self: load my data and render normally (hand visible, drag enabled)
-    await loadGameIntoUI(state.gameId);
-    renderHand();
+    const doc = await window.StorageAPI.loadPlayerState(gid, Number(seat));
+    await hydrateOpponentIntoView(doc);            // builds table + backs
+    startViewPoller();                              // your existing poller that patches opp view
     return;
   }
 
-  // Viewing an opponent: hydrate once and start the 100ms poller
-  const first = await window.window.StorageAPI.loadPlayerState(state.gameId, state.viewSeat);
-  await hydrateOpponentIntoView(first || { Deck:[], Hand:[], Table:[], Graveyard:[], Exile:[], Commander:null });
-  startViewPoller();
+  // Returning to self (interactive)
+  state.viewSeat = mySeat;
+  state.viewReadOnly = false;
+  document.body.classList.remove('viewing-opponent');
+
+  // Defensive: kill any stale opponent snapshot
+  state._oppSnapshot = null;
+
+  // Defensive: wipe ALL opponent DOM before reloading self
+  try { document.getElementById('world').querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
+
+  // Re-hydrate MY state + redraw hand
+  await loadGameIntoUI(gid);   // this already calls hydrateFromDoc(...) → renderHand()
+  await Promise.resolve();      // next tick for safety
+  try { renderHand(); } catch(_){}
+
+  // Make sure no read-only visuals linger
+  // (You already gate interactive behavior off state.viewReadOnly in multiple places)
 }
 
-viewEyeBtn.addEventListener('click', async ()=>{
-  const target = nextSeat(state.viewSeat, state.playerCount);
-  await setViewSeat(target);
-});
+
+// Near your existing listener for the Eye button
+(function wireEyeToggle(){
+  const btn = document.getElementById('viewEyeBtn');
+  if (!btn || btn.__wired) return;
+
+  btn.addEventListener('click', ()=>{
+    const mySeat = Number(state.mySeat || 1);
+    const cur    = Number(state.viewSeat || mySeat);
+
+    if (state.viewReadOnly && cur !== mySeat){
+      // Currently viewing an opponent → go back to me
+      setViewSeat(mySeat);
+    } else {
+      // Currently me → jump to the next other seat (simple 2p: 1↔2)
+      const total = Math.max(2, Number(state.playerCount || 2));
+      const next  = (cur === mySeat)
+        ? ((mySeat % total) + 1)               // first opponent
+        : ((cur % total) + 1);                  // rotate opponents if >2 players
+      setViewSeat(next === mySeat ? ((next % total) + 1) : next);
+    }
+  });
+
+  btn.__wired = true;
+})();
+
 
 
 async function ensureTurnSeatMeta(){
@@ -2100,9 +2151,23 @@ function patchOpponentView(nextDoc){
     Hand:      nextDoc.Hand      ?? nextDoc.hand      ?? []
   };
 
+  // Ensure snapshot exists on first tick to avoid null deref
+  if (!state._oppSnapshot) {
+    state._oppSnapshot = {
+      Table: [],
+      Commander: null,
+      Graveyard: [],
+      Exile: [],
+      HandCount: nd.Hand.length
+    };
+    // draw initial back-of-hand if we hadn't yet
+    renderOpponentHand(nd.Hand.length);
+  }
+
   // Zones + hand count
   state.gy    = nd.Graveyard;
   state.exile = nd.Exile;
+
   const nextHandCount = nd.Hand.length;
   if (state._oppSnapshot.HandCount !== nextHandCount){
     renderOpponentHand(nextHandCount);
@@ -2112,7 +2177,6 @@ function patchOpponentView(nextDoc){
   const prevCom = state._oppSnapshot.Commander;
   const nextCom = nd.Commander;
   if (!!prevCom !== !!nextCom || (prevCom && nextCom && prevCom.id !== nextCom.id)){
-    // replace commander node
     if (prevCom){
       const oldEl = worldEl.querySelector(`.card[data-id="${prevCom.id}"]`);
       if (oldEl) oldEl.remove();
@@ -2122,7 +2186,6 @@ function patchOpponentView(nextDoc){
       worldEl.appendChild(el);
     }
   } else if (prevCom && nextCom){
-    // same id — animate changes
     const el = worldEl.querySelector(`.card[data-id="${nextCom.id}"]`);
     if (el){
       const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
@@ -2156,13 +2219,11 @@ function patchOpponentView(nextDoc){
       el = makeCardEl(next);
       worldEl.appendChild(el);
     }
-    // movement
     const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
     if (px !== (next.x||0) || py !== (next.y||0)){
       el.style.left = (next.x || 0) + 'px';
       el.style.top  = (next.y || 0) + 'px';
     }
-    // tap/flip
     const same = el.__cardRef || {};
     same.tapped = !!next.tapped;
     same.face   = next.face || 'front';
@@ -2185,16 +2246,17 @@ function patchOpponentView(nextDoc){
   state.tableCommander = nextCom ? {...nextCom} : null;
   if (state.tableCommander) applyExtToRuntimeFields(state.tableCommander);
 
-  // ensure badges (counters/notes) show on opponent view
   [ ...nd.Table, nextCom ].filter(Boolean).forEach(ensureOrUpdateCardBadge);
 }
+
 
 
 function startViewPoller(){
   if (state.viewPoller) clearInterval(state.viewPoller);
   state.viewPoller = setInterval(async ()=>{
     if (!state.viewReadOnly || !state.gameId) return;
-    const doc = await window.window.StorageAPI.loadPlayerState(state.gameId, state.viewSeat);
+    const doc = await window.StorageAPI.loadPlayerState(state.gameId, state.viewSeat);
+
     if (!doc) return;
     patchOpponentView(doc);
   }, 100);

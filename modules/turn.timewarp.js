@@ -102,58 +102,47 @@
   }
 
   // Restore helpers
-  async function restoreTurn(targetTurn){
-    const gid = window.AppState?.gameId;
-    if (!gid) { alert('Pick a Game first.'); return false; }
+  // NEW: use Supabase turn_snapshots
+async function restoreTurn(targetTurn){
+  const gid = window.AppState?.gameId;
+  if (!gid) { alert('Pick a Game first.'); return false; }
 
-    const meta = await window.StorageAPI.loadMeta(gid);
-    const snap = meta?.Backups?.[String(targetTurn)];
-    if (!snap){
-      alert(`No backup for turn ${targetTurn}.`);
-      return false;
-    }
+  // fetch all seats for that turn
+  const { data, error } = await window.supabase
+    .from('turn_snapshots')
+    .select('seat,snapshot')
+    .eq('game_id', gid)
+    .eq('turn_index', targetTurn)
+    .order('seat', { ascending: true });
 
-    const seats = snap.seats || {};
-    const playerCount = Number(window.AppState?.playerCount || 2);
-    const ops = [];
-    for (let s = 1; s <= playerCount; s++){
-      const seatKey = String(s);
-      const data = seats[seatKey];
-      if (!data) continue;
-      // Wipe to snapshot (uses your storage.js API)
-      if (window.StorageAPI.wipePlayerState){
-        ops.push(window.StorageAPI.wipePlayerState(gid, s, {
-          Deck: data.Deck || [],
-          Hand: data.Hand || [],
-          Table: [],                  // not part of this snapshot set
-          Graveyard: data.Graveyard || [],
-          Exile: data.Exile || [],
-          Commander: null,            // not part of this snapshot set
-          Turn: 0
-        }));
-      }
-    }
-    await Promise.all(ops);
+  if (error) { console.warn('[timewarp restore]', error); return false; }
+  if (!data || !data.length){ alert(`No snapshot for turn ${targetTurn}.`); return false; }
 
-    // Move meta TurnIndex pointer (does not change TurnSeat)
-    await window.StorageAPI.saveMeta(gid, { TurnIndex: targetTurn });
+  const ops = data.map(r => {
+    const s = Number(r.seat);
+    const snap = r.snapshot || {};
+    return window.StorageAPI.wipePlayerState(gid, s, {
+      Deck:      snap.Deck      || snap.deck      || [],
+      Hand:      snap.Hand      || snap.hand      || [],
+      Table:     snap.Table     || snap.table     || [],
+      Graveyard: snap.Graveyard || snap.gy        || snap.graveyard || [],
+      Exile:     snap.Exile     || snap.exile     || [],
+      Commander: snap.Commander || snap.commander || null,
+      Turn: 0
+    });
+  });
+  await Promise.all(ops);
 
-    // If we’re viewing self, reload UI to reflect restored state
-    try {
-      if (window.AppState?.gameId && typeof window.loadGameIntoUI === 'function') {
-        await window.loadGameIntoUI(window.AppState.gameId);
-      } else {
-        // Fallback: minimal refresh path
-        const st = window.AppState;
-        const doc = await window.StorageAPI.loadPlayerState(gid, st?.mySeat || 1);
-        if (doc && typeof window.hydrateFromDoc === 'function') {
-          await window.hydrateFromDoc(doc);
-        }
-      }
-    } catch (e){ console.warn('UI refresh after restore failed', e); }
+  // (optional) also set meta TurnIndex so the UI shows the number
+  await window.StorageAPI.saveMeta(gid, { TurnIndex: targetTurn });
 
-    return true;
+  // refresh UI
+  if (typeof window.loadGameIntoUI === 'function') {
+    await window.loadGameIntoUI(gid);
   }
+  return true;
+}
+
 
   // Patch saveMeta so ANY time code advances the turn seat, we also:
   //  1) bump TurnIndex
