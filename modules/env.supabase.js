@@ -33,6 +33,79 @@ window.env = Object.assign({}, window.env, { supabase: {
   url: SUPABASE_URL, key: SUPABASE_ANON_KEY
 }});
 
+// ---- Turn state (live) -----------------------------------
+export async function saveTurnState(gameId, { turnSeat, turnIndex }){
+  if (!gameId) return null;
+  const payload = {
+    game_id: gameId,
+    turn_seat: Number(turnSeat || 0),
+    turn_index: Number(turnIndex || 0),
+    updated_at: new Date().toISOString()
+  };
+  const { error } = await supa.from('turn_state').upsert(payload);
+  if (error) console.warn('[saveTurnState]', error);
+  return payload;
+}
+
+export async function readTurnState(gameId){
+  const { data, error } = await supa
+    .from('turn_state')
+    .select('*')
+    .eq('game_id', gameId)
+    .maybeSingle();
+  if (error && error.code !== 'PGRST116' && error.code !== 'PGRST123') {
+    console.warn('[readTurnState]', error);
+  }
+  return data || null;
+}
+
+// Realtime watcher for live turn seat changes
+export function startTurnWatcher(gameId, cb){
+  const key = `turn:${gameId}`;
+  stop(key);
+  const ch = supa.channel(key).on(
+    'postgres_changes',
+    { event: '*', schema: 'public', table: 'turn_state', filter: `game_id=eq.${gameId}` },
+    (payload) => cb(payload.new || payload.old || null)
+  ).subscribe();
+  subs.set(key, ch);
+  return () => stop(key);
+}
+
+// ---- Turn snapshots (history) ----------------------------
+// snapshot shape = whatever you store in player_states.state
+export async function writeTurnSnapshot(gameId, turnIndex, seat, snapshot){
+  const row = {
+    game_id: gameId,
+    turn_index: Number(turnIndex || 0),
+    seat: Number(seat || 0),
+    snapshot: snapshot || {},
+    created_at: new Date().toISOString()
+  };
+  const { error } = await supa.from('turn_snapshots').upsert(row);
+  if (error) console.warn('[writeTurnSnapshot]', error);
+  return row;
+}
+
+// Convenience: persist snapshots for ALL seats for a given turn
+export async function snapshotAllSeatsToTable(gameId, turnIndex){
+  const players = Number(window.AppState?.playerCount || 2);
+  const rows = [];
+  for (let s = 1; s <= players; s++){
+    const doc = await loadPlayerState(gameId, s);   // <- your existing export
+    rows.push({
+      game_id: gameId,
+      turn_index: Number(turnIndex || 0),
+      seat: s,
+      snapshot: doc || {},
+      created_at: new Date().toISOString()
+    });
+  }
+  const { error } = await supa.from('turn_snapshots').upsert(rows);
+  if (error) console.warn('[snapshotAllSeatsToTable]', error);
+  return rows.length;
+}
+
 
 /* ------------ Player state (per seat) ------------ */
 export async function savePlayerStateDebounced(gameId, seat, payload){

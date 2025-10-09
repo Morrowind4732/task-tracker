@@ -598,7 +598,7 @@ const unblocked = !bList.length && !attackerDead;
           addDmg(pdef, atkP);
           if (hasLL(attacker, snap)) addHeal(patt, atkP);
         }
-      } else {
+            } else {
         // Blocked: lifelink still triggers if the attacker actually assigns damage.
         // The only time it doesn't is when FIRST STRIKE killed the attacker before it could deal.
         const firstStrikeKill =
@@ -607,11 +607,13 @@ const unblocked = !bList.length && !attackerDead;
           result.notes.some(n => n.includes('kills') && n.includes('(first strike)') && n.includes(attacker.name));
 
         if (!firstStrikeKill && hasLL(attacker, snap) && atkP > 0) {
-          // In normal combat the attacker assigns total damage equal to its power among blockers.
-          // That total still counts for lifelink.
+          // Attacker still assigns total damage equal to its power among blockers → lifelink heals for atkP.
           addHeal(patt, atkP);
+          // 🔔 Make it visible in the Recommended list:
+          notesHtml.push(`(P${patt}) ${attacker.name} gains ${atkP} life (lifelink)`);
         }
       }
+
 
 
       // Names for UI
@@ -889,13 +891,22 @@ const baseToReal = new Map(tableNow.map(c => [normalizeId(c.id), String(c.id)]))
     const el  = document.querySelector(`#world .card[data-id="${esc(realId)}"]`);
     const obj = (window.AppState?.table || []).find(c => String(c.id) === String(realId));
     if (obj) obj.tapped = true;
+
     if (el) {
+      // 1) keep the legacy “size swap”
       el.classList.add('tapped');
+
+      // 2) 🔄 also rotate the art by updating the CSS var used by .cardInner
+      const inner = el.querySelector('.cardInner');
+      inner?.style?.setProperty('--tap-rot', '90deg');
+
+      // 3) call your updater if present (some builds re-render PT/overlays)
       if (typeof window.updateCardDom === 'function') {
-        try { window.updateCardDom(obj || { tapped:true }); } catch(_) {}
+        try { window.updateCardDom(obj || { tapped: true }); } catch(_) {}
       }
     }
   }
+
 
   try { window.StorageAPI?.savePlayerStateDebounced?.(gid, seat, window.AppState); } catch(_) {}
 

@@ -515,7 +515,22 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 
 <script type="module">
 import { startCombatPoller, wireBattleFab } from './modules/combat.ui.js';
-
+import {
+  initStorage,
+  savePlayerStateDebounced,
+  loadPlayerState,
+  loadMeta,
+  saveMeta,
+  startPlayerPollers,
+  startMetaPoller,
+  deletePlayerState,
+  wipePlayerState,
+  // add these:
+  ensureCombatRow,
+  readCombat, writeCombat, resetCombat,
+  saveAttacks, saveBlocks, writeCombatInitiated,
+  saveTurnState, readTurnState, startTurnWatcher, snapshotAllSeatsToTable
+} from './modules/env.supabase.js';
 // before anything that used to import firebase
 window.firebase = { initializeApp(){}, getApp(){ return {}; } };
 
@@ -598,23 +613,155 @@ const endTurnBtn = document.getElementById('endTurnBtn');
 });
 
 
-endTurnBtn.addEventListener('click', async ()=>{
-  if (!state.gameId) return;
+endTurnBtn?.addEventListener('click', async ()=>{
+  const gid = String(window.AppState?.gameId || '');
+  if (!gid) { alert('Pick a Game first.'); return; }
 
-  // only the active player can end their turn (optional)
-  if (currentTurnSeat && currentTurnSeat !== Number(state.mySeat)){
-    alert(`It's Player ${currentTurnSeat}'s turn.`);
-    return;
-  }
+  const mySeat = Number(window.AppState?.mySeat || 1);
+  const playerCount = Number(window.AppState?.playerCount || 2);
 
-  const next = ((currentTurnSeat || state.mySeat) % state.playerCount) + 1;
-  await window.StorageAPI.saveMeta(state.gameId, { TurnSeat: next });
+  // Determine next seat in rotation
+  const metaNow = await window.StorageAPI.loadMeta(gid);
+  const cur = Number(metaNow?.TurnSeat || mySeat);
+  const next = (cur % playerCount) + 1;
 
-  // hard clear combat so no stale recommendedOutcome remains
-  await window.StorageAPI.resetCombat?.(state.gameId);
+  // 1) Untap all permanents for the NEXT player (persist to that player's state)
+  await untapAllCardsForSeat(gid, next);
+
+  // 2) Reset combat (fresh doc; pollers will re-hydrate)
+  try { await window.StorageAPI.resetCombat(gid); } catch(e){ console.warn('[end turn] resetCombat failed', e); }
+
+// 3) Advance the turn seat in meta (timewarp bumps TurnIndex & meta.Backups)
+await window.StorageAPI.saveMeta(gid, { TurnSeat: next });
+
+// 4) Read the freshly-bumped index from meta
+const metaAfter = await window.StorageAPI.loadMeta(gid);
+const turnIndex = Number(metaAfter?.TurnIndex || 0);
+
+// 5) Save LIVE turn to table + append snapshots for this turn
+await saveTurnState(gid, { turnSeat: next, turnIndex });
+await snapshotAllSeatsToTable(gid, turnIndex);
+
+// 6) Local optimism (optional; watcher will repaint everyone anyway)
+currentTurnSeat = next;
+paintBattleFab();
+showToast?.(`Turn passed to Player ${next}.`);
+
+  await refreshWorldFromStorage();
+
 });
 
+// --- Helpers: untap next player's board + battle FAB + small toast ---
+async function untapAllCardsForSeat(gameId, seat){
+  try {
+    const doc = await window.StorageAPI.loadPlayerState(gameId, seat);
+    if (!doc) return;
 
+    const next = { ...(doc||{}) };
+    const table = Array.isArray(next.Table) ? next.Table : (Array.isArray(next.table)? next.table : []);
+    if (Array.isArray(table) && table.length){
+      for (const c of table) {
+        c.tapped = false;
+      }
+    }
+
+    // Persist back to that seat (keeps keys as-is; we favor your existing shape)
+    await window.StorageAPI.savePlayerStateDebounced(gameId, seat, next);
+
+    // If the viewer is looking at that seat, also force local DOM to reflect untap now
+    if (Number(window.AppState?.viewSeat || 0) === Number(seat)) {
+      document.querySelectorAll('#world .card.tapped').forEach(cardEl=>{
+        cardEl.classList.remove('tapped');
+        const inner = cardEl.querySelector('.cardInner');
+        inner?.style?.setProperty('--tap-rot', '0deg');
+      });
+    }
+  } catch(e){
+    console.warn('[untapAllCardsForSeat]', e);
+  }
+}
+
+// --- Hard refresh of visible cards from storage (table + commander) ---
+async function refreshWorldFromStorage(){
+  try{
+    const gid  = String(window.AppState?.gameId || '');
+    if (!gid) return;
+
+    // whichever seat you’re currently *viewing* (own or opponent)
+    const seat = Number(window.AppState?.viewSeat || window.AppState?.mySeat || 1);
+    const doc  = await window.StorageAPI.loadPlayerState(gid, seat);
+    if (!doc) return;
+
+    const nextTable = Array.isArray(doc.Table) ? doc.Table
+                    : (Array.isArray(doc.table) ? doc.table : []);
+    const nextCom   = doc.Commander ?? doc.tableCommander ?? null;
+
+    // build lookup by id
+    const byId = new Map();
+    (nextTable||[]).forEach(c => byId.set(String(c.id), c));
+    if (nextCom) byId.set(String(nextCom.id), nextCom);
+
+    // walk visible cards and re-apply tapped/face + badge/PT
+    document.querySelectorAll('#world .card').forEach(el=>{
+      const id = el.dataset.id;
+      const nxt = byId.get(String(id));
+      if (!nxt) return;
+
+      const ref = el.__cardRef || {};
+      ref.tapped = !!nxt.tapped;
+      ref.face   = nxt.face || 'front';
+      el.__cardRef = nxt;             // keep pointer aligned for later updates
+      updateCardDom(ref);             // <- does PT, flip, tap class, images, badges
+    });
+  }catch(e){
+    console.warn('[refreshWorldFromStorage]', e);
+  }
+}
+
+
+
+// Tiny toast helper (reuses your window.showToast if present)
+function showToast(msg){
+  if (typeof window.showToast === 'function') return window.showToast(msg);
+  console.log('[toast]', msg);
+  
+}
+
+
+
+
+const lifeBtn = document.getElementById('lifeEditBtn');
+lifeBtn?.addEventListener('click', async ()=>{
+  const gid = String(window.AppState?.gameId || '');
+  if (!gid) { alert('Pick a Game first.'); return; }
+
+  // Simple prompt flow: choose seat, then enter +/- delta or absolute
+  const seatStr = prompt('Which player? (seat number)', String(window.AppState?.mySeat || 1));
+  const seat = parseInt(seatStr||'0',10);
+  if (!Number.isFinite(seat) || seat <= 0) return;
+
+  const meta = await window.StorageAPI.loadMeta(gid) || {};
+  const life = Object.assign({},
+    (meta.lifeMain || {})
+  );
+
+  const current = Number(life[seat] ?? 40);
+  const valStr = prompt(`Life for Player ${seat} (enter +N / -N or an absolute number)`, `+0`);
+  if (valStr == null) return;
+
+  let nextVal = current;
+  if (/^[+\-]\d+$/.test(valStr.trim())){
+    nextVal = current + parseInt(valStr,10);
+  } else {
+    const abs = parseInt(valStr,10);
+    if (Number.isFinite(abs)) nextVal = abs;
+  }
+  if (!Number.isFinite(nextVal)) return;
+
+  life[seat] = nextVal;
+  await window.StorageAPI.saveMeta(gid, { lifeMain: life });
+  showToast?.(`Player ${seat} life → ${nextVal}`);
+});
 
 
 
@@ -2861,6 +3008,30 @@ async function ensureCombatWiring(){
   }catch(e){
     console.warn('[ensureCombatWiring] ensureCombatRow failed (will continue)', e);
   }
+  
+  // inside ensureCombatWiring() after meta poller is set up
+try{
+  if (state.stopTurnWatch) { state.stopTurnWatch(); state.stopTurnWatch = null; }
+  console.log('[ensureCombatWiring] startTurnWatcher…');
+  state.stopTurnWatch = startTurnWatcher(state.gameId, async (row)=>{
+  const prev = Number(currentTurnSeat || 0);
+  const next = Number(row?.turn_seat || 0);
+  if (!next) return;
+  const changed = (prev !== next);
+  currentTurnSeat = next;
+  paintBattleFab();
+  if (changed) {
+    const idx = Number(row?.turn_index ?? 0);
+    showToast?.(`Player ${next}'s turn. (Turn ${idx})`);
+    await refreshWorldFromStorage();     // ← force world re-render here
+  }
+});
+
+  console.log('[ensureCombatWiring] startTurnWatcher ✓');
+}catch(e){
+  console.error('[ensureCombatWiring] startTurnWatcher FAILED', e);
+}
+
 
   // keep TurnSeat live + repaint
   try{
@@ -3063,7 +3234,8 @@ document.addEventListener('click', (e) => {
   // add these:
   ensureCombatRow,
   readCombat, writeCombat, resetCombat,
-  saveAttacks, saveBlocks, writeCombatInitiated
+  saveAttacks, saveBlocks, writeCombatInitiated,
+  saveTurnState, readTurnState, startTurnWatcher, snapshotAllSeatsToTable
 } from './modules/env.supabase.js';
 
 
