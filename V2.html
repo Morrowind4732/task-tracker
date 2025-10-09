@@ -2629,6 +2629,21 @@ function bakeRuntimeFieldsToExt(card){
 async function persistCardExt(card){
   if (!state.gameId) return;
   bakeRuntimeFieldsToExt(card);
+  const face = (card._faces && card._faces.length > 1)
+    ? (card.face === 'back' ? card._faces[1] : card._faces[0])
+    : (card._faces?.[0] || {});
+  const baseP = face.power ?? card.power ?? card._scry?.power ?? card._scry?.faces?.[0]?.power ?? '';
+  const baseT = face.toughness ?? card.toughness ?? card._scry?.toughness ?? card._scry?.faces?.[0]?.toughness ?? '';
+  if (baseP !== '' && baseT !== '') {
+    const pm = card._ptMod || { p:0, t:0 };
+    const p = Number(baseP) + Number(pm.p || 0);
+    const t = Number(baseT) + Number(pm.t || 0);
+    if (isFinite(p) && isFinite(t)) {
+      card.pt = `${p}/${t}`;             // live snapshot for combat.ui.js
+      card.ext = card.ext || {};
+      card.ext.pt = card.pt;             // optional: mirror under ext.pt
+    }
+  }
   try{
     if (window.StorageAPI?.savePlayerState) {
       await window.StorageAPI.savePlayerState(state.gameId, state.mySeat, state);
@@ -3189,6 +3204,25 @@ bootDeckTools(); // wire the 3 deck buttons now that StorageAPI exists
 
   state.viewSeat = state.mySeat;  // start by viewing "me"
 
+</script>
+<script type="module">
+  import { startCombatPoller } from './modules/combat.ui.js';
+
+  function bootPoller(){
+    const gid = String(window.AppState?.gameId || '');
+    if (gid) {
+      try { startCombatPoller(gid); } catch(e){ console.warn('[poller] start failed', e); }
+    }
+  }
+
+  // start when page is ready and AppState has a game
+  window.addEventListener('load', bootPoller);
+
+  // also re-start whenever user clicks a game button
+  document.getElementById('gamePicker')?.addEventListener('click', () => {
+    // your existing game-pick code sets AppState.gameId; then:
+    setTimeout(bootPoller, 50);
+  });
 </script>
 
 </body>
