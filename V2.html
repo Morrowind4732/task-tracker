@@ -848,6 +848,9 @@ paintBattleFab();
 
     resetLog('DONE');
     console.groupEnd();
+await window.StorageAPI.saveMeta(gameId, { TurnSeat: 1 }); // bumps internally
+await window.StorageAPI.saveMeta(gameId, { TurnIndex: 1 }); // set back to 1
+await saveTurnState(gameId, { turnSeat: 1, turnIndex: 1 });
 
   }catch(err){
     console.error('[reset] ERROR', err);
