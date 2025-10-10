@@ -4,7 +4,7 @@
 
 import { CombatStore } from './combat.store.js';
 import { resolveCombatDamage } from './battle.js';
- import { Notifications } from './modules/notifications.js';
+ import { Notifications } from './notifications.js';
 
 // Init once and expose globally so other modules can emit
 Notifications.init();
@@ -366,14 +366,23 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
       }
     }
 
-    // ⚡ Emit first so everyone sees the banner immediately
-    try {
-      window.Notifications?.emit('combat_initiated', {
-        gameId: gid,
-        seat,                                      // attacker seat
-        payload: { count: Object.keys(trimmed).length } // optional metadata
-      });
-    } catch(e){ console.warn('[combat] emit(combat_initiated) failed', e); }
+   // ⚡ Emit first so everyone sees the banner immediately (AWAIT + LOG)
+try {
+  if (!window.Notifications || typeof window.Notifications.emit !== 'function') {
+    throw new Error('window.Notifications.emit missing (init/import?)');
+  }
+  const count = Object.keys(trimmed).length;
+  console.log('[notif] push → combat_initiated', { gameId: gid, seat, count });
+  const res = await window.Notifications.emit('combat_initiated', {
+    gameId: gid,
+    seat,
+    payload: { count }
+  });
+  console.log('[notif] insert ok', res);
+} catch (e) {
+  console.error('[notif] insert FAILED (combat_initiated)', e);
+}
+
 
     // 1) clear first to drop any stale keys (exactly like your console helper)
     await clearAttacksDoc(gid);

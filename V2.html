@@ -942,66 +942,70 @@ function nextSeat(cur, total){
 }
 
 // Put this where your current setViewSeat lives (same name/signature).
+// Put this where your current setViewSeat lives (same name/signature).
 async function setViewSeat(seat){
   const mySeat = Number(state.mySeat || 1);
   const gid    = String(state.gameId || '');
 
-  // Stop any opponent poller first
+  // 0) Stop ANY opponent pollers/timers immediately
   if (state.viewPoller && typeof state.viewPoller === 'function'){
     try { state.viewPoller(); } catch(_) {}
     state.viewPoller = null;
   }
-  if (state.__pollTimer){
-    clearInterval(state.__pollTimer);
-    state.__pollTimer = null;
-  }
+  if (state.__pollTimer){ clearInterval(state.__pollTimer); state.__pollTimer = null; }
 
-  // Going to opponent (read-only)
+  // 1) Jumping to an opponent (read-only)
   if (Number(seat) !== mySeat){
     state.viewSeat = Number(seat);
     state.viewReadOnly = true;
     document.body.classList.add('viewing-opponent');
 
-    // Hard wipe DOM/table & hand track before hydrating opponent
-    try { document.getElementById('world').querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+    // Clean slate before hydrating opponent
+    try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+    try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
     try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
+    try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+    try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
 
     const doc = await window.StorageAPI.loadPlayerState(gid, Number(seat));
-    await hydrateOpponentIntoView(doc);            // builds table + backs
-    startViewPoller();                              // your existing poller that patches opp view
+    await hydrateOpponentIntoView(doc);   // ⟵ tags everything with data-owner="opp"
+    startViewPoller();
     return;
   }
 
-  // Returning to self (interactive)
-state.viewSeat = mySeat;
-state.viewReadOnly = false;
-document.body.classList.remove('viewing-opponent');
+  // 2) Returning to ME (interactive) — do a “soft hard-refresh”
+  state.viewSeat = mySeat;
+  state.viewReadOnly = false;
+  document.body.classList.remove('viewing-opponent');
 
-// Defensive: kill any stale opponent snapshot
-state._oppSnapshot = null;
+  // Defensive: kill any stale opponent snapshot
+  state._oppSnapshot = null;
 
-// Aggressive multi-zone cleanup (anything tagged as opponent + common zones)
-try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
-try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
-try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
-try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
-
-// Re-hydrate MY state + redraw hand
-await loadGameIntoUI(gid);
-await Promise.resolve(); // next tick
-try { renderHand(); } catch(_){}
-
-// Final sweep in case any async poller repainted late
-queueMicrotask(() => {
+  // Aggressive multi-zone cleanup
   try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
-});
+  try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
+  try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
 
+  // Also nuke any transient overlays/tooltips/arrows that could linger
+  try { document.querySelectorAll('.cardActions,.cardTooltip,.stackArrow,.cardBadge').forEach(n=>n.remove()); } catch(_){}
 
-  // Make sure no read-only visuals linger
-  // (You already gate interactive behavior off state.viewReadOnly in multiple places)
+  // Re-hydrate MY state fresh + redraw hand
+  await loadGameIntoUI(gid);
+  await Promise.resolve(); // next tick
+  try { renderHand(); } catch(_){}
+
+  // Final micro-sweep in case a late async repainted something
+  queueMicrotask(()=>{
+    try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
+  });
+
+  // One more guard: ask storage to re-assert current seat’s tap/face/badges
+  try { await refreshWorldFromStorage(); } catch(_){}
 }
+
 
 
 // Near your existing listener for the Eye button
