@@ -91,27 +91,32 @@ export async function writeTurnSnapshot(gameId, turnIndex, seat, snapshot){
 // env.supabase.js
 export async function snapshotAllSeatsToTable(gameId, turnIndex){
   const players = Number(window.AppState?.playerCount || 2);
-  const rows = [];
-  for (let s = 1; s <= players; s++){
-    const doc = await loadPlayerState(gameId, s) || {};
-    const snap = {
-      Deck:      doc.Deck      ?? doc.deck      ?? [],
-      Hand:      doc.Hand      ?? doc.hand      ?? [],
-      Table:     doc.Table     ?? doc.table     ?? [],
-      Graveyard: doc.Graveyard ?? doc.gy        ?? doc.graveyard ?? [],
-      Exile:     doc.Exile     ?? doc.exile     ?? [],
-      Commander: doc.Commander ?? doc.tableCommander ?? null,
-      Turn:      Number(doc.Turn || 0)
-    };
-    rows.push({
-      game_id: gameId, turn_index: Number(turnIndex||0), seat: s,
-      snapshot: snap, created_at: new Date().toISOString()
-    });
-  }
-  const { error } = await supa.from('turn_snapshots').upsert(rows);
-  if (error) console.warn('[snapshotAllSeatsToTable]', error);
+
+  // ONE select for all seats (>=1)
+  const { data, error } = await supa
+    .from('player_states')
+    .select('seat,state')
+    .eq('game_id', gameId)
+    .gte('seat', 1)
+    .lte('seat', players);
+
+  if (error) { console.warn('[snapshotAllSeatsToTable]', error); return 0; }
+
+  const rows = (data || []).map(r => ({
+    game_id: gameId,
+    turn_index: Number(turnIndex || 0),
+    seat: Number(r.seat),
+    snapshot: r.state || {},
+    created_at: new Date().toISOString()
+  }));
+
+  if (!rows.length) return 0;
+
+  const { error: upErr } = await supa.from('turn_snapshots').upsert(rows);
+  if (upErr) console.warn('[snapshotAllSeatsToTable upsert]', upErr);
   return rows.length;
 }
+
 
 
 

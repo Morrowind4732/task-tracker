@@ -26,16 +26,33 @@
     wrap.style.marginTop = '6px';
 
     wrap.innerHTML = `
-      <button id="twPrev" class="gameBtn" title="Previous turn" aria-label="Previous turn">◀</button>
-      <input id="twTurn" class="pill" inputmode="numeric" pattern="\\d*" style="width:86px;text-align:center;font-weight:900" placeholder="Turn #" />
-      <button id="twNext" class="gameBtn" title="Next turn" aria-label="Next turn">▶</button>
-    `;
+  <button id="twPrev" class="gameBtn" title="Previous turn" aria-label="Previous turn">◀</button>
+  <input id="twTurn" class="pill" inputmode="numeric" pattern="\\d*" style="width:86px;text-align:center;font-weight:900" placeholder="Turn #" />
+  <button id="twNext" class="gameBtn" title="Next turn" aria-label="Next turn">▶</button>
+  <span id="twLabel" style="font-size:12px;opacity:.8;user-select:none;">Turn: <b id="twNum">0</b></span>
+`;
+
     host.parentElement?.appendChild(wrap);
 
     // Wire events
-    const prev = wrap.querySelector('#twPrev');
-    const next = wrap.querySelector('#twNext');
-    const box  = wrap.querySelector('#twTurn');
+   const prev = wrap.querySelector('#twPrev');
+const next = wrap.querySelector('#twNext');
+const box  = wrap.querySelector('#twTurn');
+const labelNum = wrap.querySelector('#twNum');
+
+async function syncLabel(){
+  try {
+    const t = await getCurrentTurnIndex();
+    if (labelNum) labelNum.textContent = String(t);
+  } catch {}
+}
+
+// External setter for the ACTUAL game turn label (advanced by End Turn only)
+window.setActualTurnLabel = function(turnIndex){
+  const el = document.querySelector('#twNum');
+  if (el) el.textContent = String(Math.max(0, Number(turnIndex || 0)));
+};
+
 
     prev.addEventListener('click', async ()=>{
       const t = Math.max(0, (await getCurrentTurnIndex()) - 1);
@@ -140,6 +157,9 @@ async function restoreTurn(targetTurn){
   if (typeof window.loadGameIntoUI === 'function') {
     await window.loadGameIntoUI(gid);
   }
+  if (typeof window.refreshWorldFromStorage === 'function') {
+    await window.refreshWorldFromStorage();
+  }
   return true;
 }
 
@@ -147,35 +167,35 @@ async function restoreTurn(targetTurn){
   // Patch saveMeta so ANY time code advances the turn seat, we also:
   //  1) bump TurnIndex
   //  2) save a snapshot for that new index
-  async function installSaveMetaPatch(){
-    const SA = window.StorageAPI;
-    if (!SA || SA.__twSaveMetaWrapped) return;
-    const orig = SA.saveMeta.bind(SA);
-
-    SA.saveMeta = async function(gameId, patch){
-      // If patch includes TurnSeat, we treat this as an end-turn edge
-      const isTurnAdvance = patch && Object.prototype.hasOwnProperty.call(patch, 'TurnSeat');
-      if (!isTurnAdvance) {
-        return orig(gameId, patch);
-      }
-
-      // Compute the next TurnIndex
-      const meta = await SA.loadMeta(gameId);
-      const nextIndex = Number(meta?.TurnIndex || 0) + 1;
-
-      // First: write TurnSeat & TurnIndex together
-      await orig(gameId, Object.assign({}, patch, { TurnIndex: nextIndex }));
-
-      // Then: save the backup for this index (all seats)
-      try {
-        await snapshotAllSeats(nextIndex);
-      } catch (e) {
-        console.error('[timewarp] snapshot failed', e);
-      }
-    };
-
-    SA.__twSaveMetaWrapped = true;
-  }
+  //async function installSaveMetaPatch(){
+  //  const SA = window.StorageAPI;
+  //  if (!SA || SA.__twSaveMetaWrapped) return;
+  //  const orig = SA.saveMeta.bind(SA);
+  //
+  //  SA.saveMeta = async function(gameId, patch){
+  //    // If patch includes TurnSeat, we treat this as an end-turn edge
+  //    const isTurnAdvance = patch && Object.prototype.hasOwnProperty.call(patch, 'TurnSeat');
+  //    if (!isTurnAdvance) {
+  //      return orig(gameId, patch);
+  //    }
+  //
+  //    // Compute the next TurnIndex
+  //    const meta = await SA.loadMeta(gameId);
+  //    const nextIndex = Number(meta?.TurnIndex || 0) + 1;
+  //
+  //    // First: write TurnSeat & TurnIndex together
+  //    await orig(gameId, Object.assign({}, patch, { TurnIndex: nextIndex }));
+  //
+  //    // Then: save the backup for this index (all seats)
+  //    try {
+  //      await snapshotAllSeats(nextIndex);
+  //    } catch (e) {
+  //      console.error('[timewarp] snapshot failed', e);
+  //    }
+  //  };
+  //
+  //  SA.__twSaveMetaWrapped = true;
+  //}
 
   // Make UI visible only after a game is chosen
   function showTurnIndexInBox(){

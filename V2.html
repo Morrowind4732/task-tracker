@@ -626,23 +626,22 @@ endTurnBtn?.addEventListener('click', async ()=>{
   const metaNow = await window.StorageAPI.loadMeta(gid);
   const cur = Number(metaNow?.TurnSeat || mySeat);
   const next = (cur % playerCount) + 1;
-
+  const turnIndex = Number((metaNow?.TurnIndex || 0) + 1);
   // 1) Untap all permanents for the NEXT player (persist to that player's state)
   await untapAllCardsForSeat(gid, next);
 
-  // 2) Reset combat (fresh doc; pollers will re-hydrate)
-  try { await window.StorageAPI.resetCombat(gid); } catch(e){ console.warn('[end turn] resetCombat failed', e); }
+// 2) Reset combat in the background
+  const pCombat = window.StorageAPI.resetCombat(gid).catch(e=>console.warn('[end turn] resetCombat', e));
 
-// 3) Advance the turn seat in meta (timewarp bumps TurnIndex & meta.Backups)
-await window.StorageAPI.saveMeta(gid, { TurnSeat: next });
-
-// 4) Read the freshly-bumped index from meta
-const metaAfter = await window.StorageAPI.loadMeta(gid);
-const turnIndex = Number(metaAfter?.TurnIndex || 0);
-
-// 5) Save LIVE turn to table + append snapshots for this turn
-await saveTurnState(gid, { turnSeat: next, turnIndex });
-await snapshotAllSeatsToTable(gid, turnIndex);
+// 3–5) Do the writes in parallel (no need to refetch meta)
+  const pMeta   = window.StorageAPI.saveMeta(gid, { TurnSeat: next });
+  const pLive   = saveTurnState(gid, { turnSeat: next, turnIndex });
+  const pSnaps  = snapshotAllSeatsToTable(gid, turnIndex);
+  await Promise.all([pMeta, pLive, pSnaps, pCombat]);
+  // update the on-screen "Turn: #"
+if (typeof window.setActualTurnLabel === 'function') {
+  window.setActualTurnLabel(turnIndex);
+}
 
 // 6) Local optimism (optional; watcher will repaint everyone anyway)
 currentTurnSeat = next;
@@ -652,6 +651,30 @@ showToast?.(`Turn passed to Player ${next}.`);
   await refreshWorldFromStorage();
 
 });
+
+(async ()=>{
+  try {
+    const gid = String(window.AppState?.gameId || '');
+    let idx = 0;
+
+    if (window.supabase && gid) {
+      const { data, error } = await window.supabase
+        .from('turn_state').select('turn_index')
+        .eq('game_id', gid).limit(1).maybeSingle();
+      if (!error && data && Number.isFinite(Number(data.turn_index))) {
+        idx = Number(data.turn_index);
+      } else {
+        const meta = await window.StorageAPI.loadMeta(gid);
+        idx = Number(meta?.TurnIndex || 0);
+      }
+    }
+
+    if (typeof window.setActualTurnLabel === 'function') {
+      window.setActualTurnLabel(idx);
+    }
+  } catch {}
+})();
+
 
 // --- Helpers: untap next player's board + battle FAB + small toast ---
 async function untapAllCardsForSeat(gameId, seat){
@@ -900,21 +923,31 @@ async function setViewSeat(seat){
   }
 
   // Returning to self (interactive)
-  state.viewSeat = mySeat;
-  state.viewReadOnly = false;
-  document.body.classList.remove('viewing-opponent');
+state.viewSeat = mySeat;
+state.viewReadOnly = false;
+document.body.classList.remove('viewing-opponent');
 
-  // Defensive: kill any stale opponent snapshot
-  state._oppSnapshot = null;
+// Defensive: kill any stale opponent snapshot
+state._oppSnapshot = null;
 
-  // Defensive: wipe ALL opponent DOM before reloading self
-  try { document.getElementById('world').querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-  try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
+// Aggressive multi-zone cleanup (anything tagged as opponent + common zones)
+try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
+try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
+try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
 
-  // Re-hydrate MY state + redraw hand
-  await loadGameIntoUI(gid);   // this already calls hydrateFromDoc(...) → renderHand()
-  await Promise.resolve();      // next tick for safety
-  try { renderHand(); } catch(_){}
+// Re-hydrate MY state + redraw hand
+await loadGameIntoUI(gid);
+await Promise.resolve(); // next tick
+try { renderHand(); } catch(_){}
+
+// Final sweep in case any async poller repainted late
+queueMicrotask(() => {
+  try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
+});
+
 
   // Make sure no read-only visuals linger
   // (You already gate interactive behavior off state.viewReadOnly in multiple places)
@@ -2082,7 +2115,8 @@ function renderOpponentHand(count){
     slot.dataset.index = String(i);
 
     const cEl = document.createElement('div');
-    cEl.className = 'card';
+	cEl.className = 'card';
+	cEl.dataset.owner = 'opp';
     cEl.style.position='relative';
     cEl.style.width='var(--card-w)';
     cEl.style.height='var(--card-h)';
@@ -2099,6 +2133,7 @@ function renderOpponentHand(count){
     inner.appendChild(back);
     cEl.appendChild(inner);
     slot.appendChild(cEl);
+	slot.dataset.owner = 'opp';
     handTrack.appendChild(slot);
   }
   layoutHandAt(Math.min(handIndex, Math.max(0, count - 1)));
@@ -2106,7 +2141,12 @@ function renderOpponentHand(count){
 
 
 async function hydrateOpponentIntoView(doc){
-  worldEl.querySelectorAll('.card').forEach(n=>n.remove());
+  // hard wipe ALL zones first (world, commander box, hand backs, gy/exile visuals)
+  try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_) {}
+  try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_) {}
+  try { document.getElementById('handTrack').innerHTML = ''; } catch(_) {}
+  try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_) {}
+  try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_) {}
 
   state.deck   = doc.Deck  ?? doc.deck  ?? [];
   state.hand   = []; // hidden
@@ -2117,14 +2157,18 @@ async function hydrateOpponentIntoView(doc){
 
   [ ...state.table, state.tableCommander ].filter(Boolean).forEach(applyExtToRuntimeFields);
 
+
   if (state.tableCommander){
-    const el = makeCardEl(state.tableCommander);
-    worldEl.appendChild(el);
-  }
-  state.table.forEach(c=>{
-    const el = makeCardEl(c);
-    worldEl.appendChild(el);
-  });
+  const el = makeCardEl(state.tableCommander);
+  el.dataset.owner = 'opp';
+  worldEl.appendChild(el);
+}
+state.table.forEach(c=>{
+  const el = makeCardEl(c);
+  el.dataset.owner = 'opp';
+  worldEl.appendChild(el);
+});
+
 
   // Hand backs only
   renderOpponentHand((doc.Hand ?? doc.hand ?? []).length);
@@ -2140,6 +2184,13 @@ async function hydrateOpponentIntoView(doc){
 
 
 function idMap(arr){ const m=new Map(); (arr||[]).forEach(c=>m.set(c.id, c)); return m; }
+
+function makeOppEl(c){
+  const el = makeCardEl(c);
+  el.dataset.owner = 'opp';
+  return el;
+}
+
 
 function patchOpponentView(nextDoc){
   // --- normalize once (supports both naming styles) ---
@@ -2182,24 +2233,27 @@ function patchOpponentView(nextDoc){
       if (oldEl) oldEl.remove();
     }
     if (nextCom){
-      const el = makeCardEl(nextCom);
-      worldEl.appendChild(el);
-    }
+  const el = makeOppEl(nextCom);
+  worldEl.appendChild(el);
+}
+
   } else if (prevCom && nextCom){
-    const el = worldEl.querySelector(`.card[data-id="${nextCom.id}"]`);
-    if (el){
-      const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
-      if (px !== (nextCom.x||0) || py !== (nextCom.y||0)){
-        el.style.left = (nextCom.x || 0) + 'px';
-        el.style.top  = (nextCom.y || 0) + 'px';
-      }
-      const same = el.__cardRef || {};
-      same.tapped = !!nextCom.tapped;
-      same.face   = nextCom.face || 'front';
-      updateCardDom(same);
-      el.__cardRef = nextCom;
+  const el = worldEl.querySelector(`.card[data-id="${nextCom.id}"]`);
+  if (el){
+    if (!el.dataset.owner) el.dataset.owner = 'opp'; // <-- ensure tag
+    const px = parseFloat(el.style.left)||0, py = parseFloat(el.style.top)||0;
+    if (px !== (nextCom.x||0) || py !== (nextCom.y||0)){
+      el.style.left = (nextCom.x || 0) + 'px';
+      el.style.top  = (nextCom.y || 0) + 'px';
     }
+    const same = el.__cardRef || {};
+    same.tapped = !!nextCom.tapped;
+    same.face   = nextCom.face || 'front';
+    updateCardDom(same);
+    el.__cardRef = nextCom;
   }
+}
+
 
   // Table diff
   const prevMap = idMap(state._oppSnapshot.Table || []);
@@ -3397,23 +3451,39 @@ window.refreshLifeTotals = async function refreshLifeTotals(){
   const _loadMeta = api.loadMeta;
 
   if (_save) {
-    api.savePlayerStateDebounced = function(gameId, seat, payload){
+  api.savePlayerStateDebounced = function(gameId, seat, payload){
+    // Build a canonical seat doc using caller payload OR fallback to AppState
+    const S = window.AppState || {};
+    const p = payload || {};
 
-      // Optional: show where ext fields live for the selected card, if any
-      try {
-        const sel = window.AppState?.selectedCardId;
-        if (sel){
-          const all = (payload?.Table||[]).concat(payload?.Hand||[], payload?.Deck||[], payload?.Graveyard||[], payload?.Exile||[], payload?.Commander?[payload.Commander]:[]);
-          const card = all.find(c=>String(c.id)===String(sel));
-          if (card){
-            const loc = __locateCardInState(card);
-     
-          }
-        }
-      } catch(_) {}
-      return _save.apply(this, arguments);
+    // Accept both PascalCase and camelCase keys from callers
+    const canon = {
+      Deck:      p.Deck      ?? p.deck      ?? S.deck      ?? [],
+      Hand:      p.Hand      ?? p.hand      ?? S.hand      ?? [],
+      Table:     p.Table     ?? p.table     ?? S.table     ?? [],
+      Graveyard: p.Graveyard ?? p.gy        ?? p.graveyard ?? S.gy    ?? [],
+      Exile:     p.Exile     ?? p.exile     ?? S.exile     ?? [],
+      Commander: p.Commander ?? p.tableCommander ?? p.commander ?? S.tableCommander ?? null,
+      Turn:      p.Turn      ?? S.turn ?? 0
     };
-  }
+
+    // Merge back into payload so any extra fields the caller included are preserved
+    const nextPayload = { ...p, ...canon };
+
+    // (Optional) quick sanity log:
+     console.log('[SAVE seat %s]', seat, { sizes:{
+       Deck: nextPayload.Deck.length,
+       Hand: nextPayload.Hand.length,
+       Table: nextPayload.Table.length,
+       Graveyard: nextPayload.Graveyard.length,
+       Exile: nextPayload.Exile.length,
+       Commander: !!nextPayload.Commander
+     }});
+
+    return _save.call(this, gameId, seat, nextPayload);
+  };
+}
+
   if (_load) {
   api.loadPlayerState = async function(gameId, seat){
     const res = await _load.apply(this, arguments);
