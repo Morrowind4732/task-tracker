@@ -615,7 +615,9 @@ state._oppSnapshot = null;             // last remote doc for diffing (opponent)
 
 let currentTurnSeat = 0; // single source of truth
 
-const viewEyeBtn = document.getElementById('viewEyeBtn');
+
+
+
 const zoomWrapEl = document.querySelector('.zoomWrap');
 const cogBtn = document.getElementById('cogBtn');
 const drawerWrap = document.getElementById('drawerWrap');
@@ -941,97 +943,193 @@ function nextSeat(cur, total){
   return (cur % total) + 1; // 1→2→3→1
 }
 
+// ---- HARD CLEAR of everything visible (world, zones, hand, overlays) ----
+function hardClearAllDom(){
+  try { document.querySelectorAll('#world .card').forEach(n=>n.remove()); } catch(_){}
+  try { document.querySelectorAll('.cardActions,.cardTooltip,.stackArrow,.cardBadge').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+  try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+  try { const ht = document.getElementById('handTrack'); if (ht) ht.innerHTML = ''; } catch(_){}
+}
+
+
+async function hydrateSelfFromDocStrict(doc){
+  // Minimal, defensive self-hydrator in case your higher-level hydrators aren’t present.
+  // 1) Put doc into state so your usual painters (if any) can read from it.
+  try {
+    state.table = Array.isArray(doc?.table) ? doc.table : [];
+    state.hand  = Array.isArray(doc?.hand)  ? doc.hand  : [];
+  } catch(_) {}
+
+  // 2) Try your project’s usual painters if they exist:
+  try { if (typeof paintWorldFromState === 'function') paintWorldFromState(); } catch(_){}
+  try { if (typeof renderHand === 'function') renderHand(); } catch(_){}
+
+  // 3) As an ultra last resort, mount simple DOM nodes so you at least SEE cards.
+  if (!document.querySelector('#world .card') && Array.isArray(state.table)){
+    const world = document.getElementById('world');
+    state.table.forEach(card => {
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.dataset.id = card?.id ?? '';
+      el.style.position = 'absolute';
+      el.style.left = (card?.x ?? 100) + 'px';
+      el.style.top  = (card?.y ?? 100) + 'px';
+      el.textContent = card?.name ?? 'Card';
+      world?.appendChild(el);
+    });
+  }
+  if (document.getElementById('handTrack') && Array.isArray(state.hand) && !document.getElementById('handTrack').children.length){
+    // If your renderHand didn’t run, show basic slots so you can interact.
+    const ht = document.getElementById('handTrack');
+    state.hand.forEach(c=>{
+      const s = document.createElement('div');
+      s.className = 'handSlot';
+      s.textContent = c?.name ?? 'Card';
+      ht.appendChild(s);
+    });
+  }
+}
+
+async function rebuildMyView(){
+  const gid    = String(state.gameId || '');
+  const mySeat = Number(state.mySeat || 1);
+
+  // Try your primary full re-hydrator first
+  if (typeof loadGameIntoUI === 'function'){
+    await loadGameIntoUI(gid);
+  }
+  // Try alternates you might have in this codebase
+  else if (typeof hydrateAll === 'function'){
+    await hydrateAll(gid);
+  }
+  else if (typeof initGameUI === 'function'){
+    await initGameUI(gid);
+  }
+  // If none of the above exist, pull my seat’s doc and mount directly
+  else {
+    const doc = await window.StorageAPI.loadPlayerState(gid, mySeat);
+    await hydrateSelfFromDocStrict(doc);
+  }
+
+  // Post-pass: many apps render the hand separately or need a reassert
+  await Promise.resolve(); // next tick
+  try { if (typeof renderHand === 'function') renderHand(); } catch(_){}
+  try { if (typeof refreshWorldFromStorage === 'function') await refreshWorldFromStorage(); } catch(_){}
+}
+
+
+
+
 // Put this where your current setViewSeat lives (same name/signature).
-// Put this where your current setViewSeat lives (same name/signature).
+// === ULTRA-DEFENSIVE VIEW SWITCH =========================================
 async function setViewSeat(seat){
   const mySeat = Number(state.mySeat || 1);
   const gid    = String(state.gameId || '');
+  const target = Number(seat);
 
-  // 0) Stop ANY opponent pollers/timers immediately
+  console.log('[view] switching to seat', target, 'mySeat=', mySeat);
+
+  // Stop any running pollers
   if (state.viewPoller && typeof state.viewPoller === 'function'){
     try { state.viewPoller(); } catch(_) {}
     state.viewPoller = null;
   }
   if (state.__pollTimer){ clearInterval(state.__pollTimer); state.__pollTimer = null; }
 
-  // 1) Jumping to an opponent (read-only)
-  if (Number(seat) !== mySeat){
-    state.viewSeat = Number(seat);
+  // Always hard-delete the DOM first
+  hardClearAllDom();
+
+  // Opponent view
+  if (target !== mySeat){
+    state.viewSeat = target;
     state.viewReadOnly = true;
+  if (window.state){ window.state.viewSeat = state.viewSeat; window.state.viewReadOnly = true; }
+
+    state._oppSnapshot = null;
     document.body.classList.add('viewing-opponent');
 
-    // Clean slate before hydrating opponent
-    try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-    try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-    try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
-    try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
-    try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+    try{
+      const doc = await window.StorageAPI.loadPlayerState(gid, target);
+      // Use your existing opponent hydrator if present; else paint minimally
+      if (typeof hydrateOpponentIntoView === 'function'){
+        await hydrateOpponentIntoView(doc);
+      } else {
+        // minimal opponent render
+        if (Array.isArray(doc?.table)){
+          const world = document.getElementById('world');
+          doc.table.forEach(card=>{
+            const el = document.createElement('div');
+            el.className = 'card';
+            el.dataset.owner = 'opp';
+            el.style.position = 'absolute';
+            el.style.left = (card?.x ?? 100) + 'px';
+            el.style.top  = (card?.y ?? 100) + 'px';
+            el.textContent = card?.name ?? 'Card';
+            world?.appendChild(el);
+          });
+        }
+      }
+    }catch(e){
+      console.warn('[setViewSeat] opponent hydrate failed', e);
+    }
 
-    const doc = await window.StorageAPI.loadPlayerState(gid, Number(seat));
-    await hydrateOpponentIntoView(doc);   // ⟵ tags everything with data-owner="opp"
-    startViewPoller();
+    // Hard read-only: no handlers
+    try {
+      document.querySelectorAll('#world .card').forEach(el=>{
+        el.dataset.owner = 'opp';
+        el.style.pointerEvents = 'none';
+      });
+    } catch(_){}
+
+    // If you have an opponent poller, start it AFTER the rebuild
+    try { if (typeof startViewPoller === 'function') startViewPoller(); } catch(_){}
     return;
   }
 
-  // 2) Returning to ME (interactive) — do a “soft hard-refresh”
+  // Returning to my seat
   state.viewSeat = mySeat;
   state.viewReadOnly = false;
+   if (window.state){ window.state.viewSeat = state.viewSeat; window.state.viewReadOnly = false; }
+
+  state._oppSnapshot = null;
   document.body.classList.remove('viewing-opponent');
 
-  // Defensive: kill any stale opponent snapshot
-  state._oppSnapshot = null;
+  // Nuke once more just in case something queued DOM (belt & suspenders)
+  hardClearAllDom();
 
-  // Aggressive multi-zone cleanup
-  try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
-  try { document.getElementById('world')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-  try { document.getElementById('cmdZone')?.querySelectorAll('.card').forEach(n=>n.remove()); } catch(_){}
-  try { document.getElementById('handTrack').innerHTML = ''; } catch(_){}
-  try { document.getElementById('graveyard')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
-  try { document.getElementById('exileZone')?.querySelectorAll('.card, li, .row').forEach(n=>n.remove()); } catch(_){}
+  // Rebuild my entire view from storage (with multiple fallbacks)
+  try{
+    await rebuildMyView();
+	  // After rebuild: prune any late/rogue cards to EXACTLY my doc
+  try { await trimWorldToSeat(mySeat); } catch(_){}
+  // Belt & suspenders: run again soon in case something painted late
+  setTimeout(()=> { trimWorldToSeat(mySeat); }, 60);
 
-  // Also nuke any transient overlays/tooltips/arrows that could linger
-  try { document.querySelectorAll('.cardActions,.cardTooltip,.stackArrow,.cardBadge').forEach(n=>n.remove()); } catch(_){}
+  }catch(e){
+    console.warn('[setViewSeat] rebuildMyView failed, falling back to direct seat doc', e);
+    try{
+      const doc = await window.StorageAPI.loadPlayerState(gid, mySeat);
+      await hydrateSelfFromDocStrict(doc);
+    }catch(e2){
+      console.error('[setViewSeat] fallback self-hydrate failed', e2);
+    }
+  }
 
-  // Re-hydrate MY state fresh + redraw hand
-  await loadGameIntoUI(gid);
-  await Promise.resolve(); // next tick
-  try { renderHand(); } catch(_){}
-
-  // Final micro-sweep in case a late async repainted something
+  // Final microtask sweep to ensure no ghosts
   queueMicrotask(()=>{
-    try { document.querySelectorAll('[data-owner="opp"]').forEach(n => n.remove()); } catch(_){}
+    try { document.querySelectorAll('[data-owner="opp"]').forEach(n=>n.remove()); } catch(_){}
   });
 
-  // One more guard: ask storage to re-assert current seat’s tap/face/badges
-  try { await refreshWorldFromStorage(); } catch(_){}
+  console.log('[view] now on my seat; table nodes:', document.querySelectorAll('#world .card').length, 'hand nodes:', (document.getElementById('handTrack')?.children.length||0));
 }
 
 
 
-// Near your existing listener for the Eye button
-(function wireEyeToggle(){
-  const btn = document.getElementById('viewEyeBtn');
-  if (!btn || btn.__wired) return;
 
-  btn.addEventListener('click', ()=>{
-    const mySeat = Number(state.mySeat || 1);
-    const cur    = Number(state.viewSeat || mySeat);
 
-    if (state.viewReadOnly && cur !== mySeat){
-      // Currently viewing an opponent → go back to me
-      setViewSeat(mySeat);
-    } else {
-      // Currently me → jump to the next other seat (simple 2p: 1↔2)
-      const total = Math.max(2, Number(state.playerCount || 2));
-      const next  = (cur === mySeat)
-        ? ((mySeat % total) + 1)               // first opponent
-        : ((cur % total) + 1);                  // rotate opponents if >2 players
-      setViewSeat(next === mySeat ? ((next % total) + 1) : next);
-    }
-  });
 
-  btn.__wired = true;
-})();
 
 
 
@@ -1045,6 +1143,77 @@ async function ensureTurnSeatMeta(){
 }
 
 
+// Remove any #world card that isn't in the player's doc (or is tagged opp)
+async function trimWorldToSeat(seat){
+  const gid = String(window.AppState?.gameId || '');
+  if (!gid || !Number.isFinite(Number(seat))) return;
+
+  try{
+    const doc = await window.StorageAPI.loadPlayerState(gid, Number(seat));
+    const table = Array.isArray(doc?.Table) ? doc.Table
+                : (Array.isArray(doc?.table) ? doc.table : []);
+    const commander = doc?.Commander ?? doc?.tableCommander ?? null;
+
+    const validIds = new Set();
+    (table||[]).forEach(c => validIds.add(String(c.id)));
+    if (commander && commander.id != null) validIds.add(String(commander.id));
+
+    // kill anything not mine, or anything explicitly tagged as opponent
+    document.querySelectorAll('#world .card').forEach(el=>{
+      const id = String(el.dataset.id || '');
+      const isOpp = el.dataset.owner === 'opp';
+      if (isOpp || !validIds.has(id)) el.remove();
+    });
+  }catch(e){
+    console.warn('[trimWorldToSeat]', e);
+  }
+}
+
+
+(function rebindViewEyeBtn(){
+  const oldBtn = document.getElementById('viewEyeBtn');
+  if (!oldBtn) return;
+
+  // Remove ALL prior listeners by cloning
+  const freshBtn = oldBtn.cloneNode(true);
+  oldBtn.replaceWith(freshBtn);
+
+  // Single awaited toggle using the same `state` that setViewSeat updates
+  freshBtn.addEventListener('click', async (e)=>{
+    try{
+      e?.preventDefault?.();
+
+      const mySeat = Number(
+        (state && state.mySeat) ||
+        document.querySelector('#mySeat')?.value ||
+        1
+      );
+
+      const currentViewSeat = Number(
+        (state && state.viewSeat) ?? mySeat   // read from `state`, not window.state
+      );
+
+      // choose an opponent seat
+      let oppSeat =
+        Number(state?.opponentSeat) ||
+        (Array.isArray(state?.seats)
+          ? Number(state.seats.find(s => Number(s) !== mySeat) || 0)
+          : 0);
+      if (!oppSeat) oppSeat = (mySeat === 1 ? 2 : 1);
+
+      const targetSeat = (currentViewSeat === mySeat) ? oppSeat : mySeat;
+
+      console.log('[eye] click → switching view', { mySeat, currentViewSeat, targetSeat });
+      await setViewSeat(targetSeat);
+
+      const worldCount = document.querySelectorAll('#world .card').length;
+      const handCount  = (document.getElementById('handTrack')?.children.length) || 0;
+      console.log('[eye] post-switch counts', { worldCount, handCount });
+    }catch(err){
+      console.error('[eye] toggle failed', err);
+    }
+  });
+})();
 
 
 
