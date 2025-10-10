@@ -4,6 +4,11 @@
 
 import { CombatStore } from './combat.store.js';
 import { resolveCombatDamage } from './battle.js';
+ import { Notifications } from './modules/notifications.js';
+
+// Init once and expose globally so other modules can emit
+Notifications.init();
+window.Notifications = Notifications;
 
 /* ----------------------------------
    small helpers
@@ -343,48 +348,60 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
   }
 
   ov.querySelector('#confirmAtk').onclick = async () => {
-    try{
-      // build fresh selection (normalize ids) + attach snapshots
-      const trimmed = {};
-      const tableByBase = new Map((getTable() || []).map(c => [normalizeId(c.id), c]));
-      for (const [cid, defSeat] of Object.entries(choices)){
-        if (defSeat != null && !isNaN(defSeat)) {
-          const base = normalizeId(cid);
-          const card = tableByBase.get(base);
-          const snapshot = bakeAttackSnapshot(card);
-          trimmed[base] = {
-            attackerSeat: seat,
-            defenderSeat: Number(defSeat),
-            snapshot
-          };
-          console.log('[attacker.confirm] snapshot', { base, name: card?.name, snapshot });
-        }
+  try{
+    // build fresh selection (normalize ids) + attach snapshots
+    const trimmed = {};
+    const tableByBase = new Map((getTable() || []).map(c => [normalizeId(c.id), c]));
+    for (const [cid, defSeat] of Object.entries(choices)){
+      if (defSeat != null && !isNaN(defSeat)) {
+        const base = normalizeId(cid);
+        const card = tableByBase.get(base);
+        const snapshot = bakeAttackSnapshot(card);
+        trimmed[base] = {
+          attackerSeat: seat,
+          defenderSeat: Number(defSeat),
+          snapshot
+        };
+        console.log('[attacker.confirm] snapshot', { base, name: card?.name, snapshot });
       }
-
-      // 1) clear first to drop any stale keys (exactly like your console helper)
-      await clearAttacksDoc(gid);
-
-      // 2) give the backend a breath so debouncers/replication settle
-      await new Promise(r => setTimeout(r, 150));
-
-      // 3) write the new set (full replace at the top-level `attacks` key)
-      console.log('[CombatStore.write] attacks payload', { gid, seat, attacks: trimmed });
-      await CombatStore.write(gid, {
-        attacks: trimmed,
-        applied: {},
-        recommendedOutcome: null,
-        epoch: Date.now()
-      });
-
-      await CombatStore.setInitiated(gid, { attackingSeat: seat }); // no phase write
-
-      showToast('Attacks declared!');
-      ov.remove();
-    }catch(e){
-      console.error('[attacker.confirm] failed', e);
-      showToast('Could not confirm attacks (see console).');
     }
-  };
+
+    // ⚡ Emit first so everyone sees the banner immediately
+    try {
+      window.Notifications?.emit('combat_initiated', {
+        gameId: gid,
+        seat,                                      // attacker seat
+        payload: { count: Object.keys(trimmed).length } // optional metadata
+      });
+    } catch(e){ console.warn('[combat] emit(combat_initiated) failed', e); }
+
+    // 1) clear first to drop any stale keys (exactly like your console helper)
+    await clearAttacksDoc(gid);
+
+    // 2) give the backend a breath so debouncers/replication settle
+    await new Promise(r => setTimeout(r, 150));
+
+    // 3) write the new set (full replace at the top-level `attacks` key)
+    console.log('[CombatStore.write] attacks payload', { gid, seat, attacks: trimmed });
+    await CombatStore.write(gid, {
+      attacks: trimmed,
+      applied: {},
+      recommendedOutcome: null,
+      epoch: Date.now()
+    });
+
+    // optional: mark initiated in the combats row (kept after emit so UI is fast)
+    await CombatStore.setInitiated(gid, { attackingSeat: seat });
+
+    showToast('Attacks declared!');
+    ov.remove();
+  }catch(e){
+    console.error('[attacker.confirm] failed', e);
+    showToast('Could not confirm attacks (see console).');
+  }
+};
+
+
 
 
 

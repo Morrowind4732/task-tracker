@@ -531,8 +531,37 @@ import {
   saveAttacks, saveBlocks, writeCombatInitiated,
   saveTurnState, readTurnState, startTurnWatcher, snapshotAllSeatsToTable
 } from './modules/env.supabase.js';
+
 // before anything that used to import firebase
 window.firebase = { initializeApp(){}, getApp(){ return {}; } };
+
+ import { Notifications } from './modules/notifications.js';
+
+// Init once and expose globally so other modules can emit
+Notifications.init();
+window.Notifications = Notifications;
+
+// Only show banners when I'm looking at MY field (hide when viewing opponent)
+Notifications.setVisibilityPredicate(() => {
+  const S = window.AppState || {};
+  const my = Number(S.mySeat || 0);
+  const v  = Number(S.viewSeat ?? my);
+  return v === my;
+});
+
+// Subscribe once a game is selected (and on boot if already chosen)
+const trySub = () => {
+  const gid = String(window.AppState?.gameId || document.querySelector('#game')?.value || '');
+  if (gid) Notifications.subscribe(gid);
+};
+trySub();
+document.getElementById('gamePicker')?.addEventListener('click', () => setTimeout(trySub, 50));
+
+
+  // Examples of emitting (wire these where you actually perform the actions):
+  // Notifications.emit('combat_initiated', { gameId: gid, seat: S.mySeat });
+  // Notifications.emit('turn_advanced',    { gameId: gid, seat: S.mySeat, turnIndex: nextTurn });
+  // Notifications.emit('card_played',      { gameId: gid, seat: S.mySeat, payload: { cardId, name, image, typeLine } });
 
 const CARD_BACK_URL = 'https://i.imgur.com/LdOBU1I.jpeg';
 
@@ -567,9 +596,12 @@ window.AppState = state;
       console.log('[boot] restoring lastGameId:', last);
       await waitForStorageReady();
       await loadGameIntoUI(last);
-      await ensureTurnSeatMeta();
-      await hydrateTurnSeatNow();
-      await ensureCombatWiring();  // <-- attaches the detailed battle click logger
+// subscribe notifications for restored game id
+try { window.Notifications?.subscribe(String(last)); } catch {}
+await ensureTurnSeatMeta();
+await hydrateTurnSeatNow();
+await ensureCombatWiring();
+  // <-- attaches the detailed battle click logger
     } catch (e){
       console.warn('[boot] restore failed', e);
     }
@@ -623,34 +655,52 @@ endTurnBtn?.addEventListener('click', async ()=>{
   const playerCount = Number(window.AppState?.playerCount || 2);
 
   // Determine next seat in rotation
-  const metaNow = await window.StorageAPI.loadMeta(gid);
-  const cur = Number(metaNow?.TurnSeat || mySeat);
-  const next = (cur % playerCount) + 1;
+  const metaNow   = await window.StorageAPI.loadMeta(gid);
+  const cur       = Number(metaNow?.TurnSeat || mySeat);
+  const next      = (cur % playerCount) + 1;
   const turnIndex = Number((metaNow?.TurnIndex || 0) + 1);
+
+  // ⚡ Emit early so the UI reacts immediately (do not await)
+  try {
+    window.Notifications?.emit('turn_advanced', { gameId: gid, seat: next, turnIndex });
+    if (typeof window.setActualTurnLabel === 'function') {
+      window.setActualTurnLabel(turnIndex);
+    }
+  } catch {}
+
   // 1) Untap all permanents for the NEXT player (persist to that player's state)
-  await untapAllCardsForSeat(gid, next);
+  try {
+    await untapAllCardsForSeat(gid, next);
 
-// 2) Reset combat in the background
-  const pCombat = window.StorageAPI.resetCombat(gid).catch(e=>console.warn('[end turn] resetCombat', e));
+    // 2) Reset combat in the background
+    const pCombat = window.StorageAPI.resetCombat(gid).catch(e =>
+      console.warn('[end turn] resetCombat', e)
+    );
 
-// 3–5) Do the writes in parallel (no need to refetch meta)
-  const pMeta   = window.StorageAPI.saveMeta(gid, { TurnSeat: next });
-  const pLive   = saveTurnState(gid, { turnSeat: next, turnIndex });
-  const pSnaps  = snapshotAllSeatsToTable(gid, turnIndex);
-  await Promise.all([pMeta, pLive, pSnaps, pCombat]);
-  // update the on-screen "Turn: #"
-if (typeof window.setActualTurnLabel === 'function') {
-  window.setActualTurnLabel(turnIndex);
-}
+    // 3–5) Do the writes in parallel (no need to refetch meta)
+    const pMeta  = window.StorageAPI.saveMeta(gid, { TurnSeat: next, TurnIndex: turnIndex });
+    const pLive  = saveTurnState(gid, { turnSeat: next, turnIndex });
+    const pSnaps = snapshotAllSeatsToTable(gid, turnIndex);
+    await Promise.all([pMeta, pLive, pSnaps, pCombat]);
 
-// 6) Local optimism (optional; watcher will repaint everyone anyway)
-currentTurnSeat = next;
-paintBattleFab();
-showToast?.(`Turn passed to Player ${next}.`);
+    // 6) Local optimism (optional; watcher will repaint everyone anyway)
+    currentTurnSeat = next;
+    paintBattleFab();
+    showToast?.(`Turn passed to Player ${next}.`);
 
-  await refreshWorldFromStorage();
+    await refreshWorldFromStorage();
 
+  } catch (err){
+    console.error('[End Turn] writes failed', err);
+
+  } finally {
+    // keep the on-screen label synced (no duplicate emit here)
+    if (typeof window.setActualTurnLabel === 'function') {
+      window.setActualTurnLabel(turnIndex);
+    }
+  }
 });
+
 
 (async ()=>{
   try {
@@ -1419,14 +1469,51 @@ function makeCardEl(card){
 
   applyFaceImages(el, card);
 
-const pt = document.createElement('div');
-pt.className = 'pt';
-pt.textContent = computePT(card);
-el.appendChild(pt);
+  const pt = document.createElement('div');
+  pt.className = 'pt';
+  pt.textContent = computePT(card);
+  el.appendChild(pt);
 
+  // existing select-on-down
   el.addEventListener('pointerdown', (ev)=>{ ev.stopPropagation(); selectCard(card.id, el); });
+
+  // -------- Double-Tap to Tap/Untap (with desktop dbl-click fallback) --------
+  // Per-element tap memory (don’t leak globals, and don’t fight drag)
+  let _lastTapTs = 0, _lastTapX = 0, _lastTapY = 0;
+  const _DOUBLE_TAP_MS = 300, _DOUBLE_TAP_PX = 8;
+
+  // Desktop convenience: native dblclick
+  el.addEventListener('dblclick', (ev)=>{
+    ev.preventDefault();
+    if (window.state?.viewReadOnly) return;
+    if (typeof toggleTap === 'function') toggleTap(card);
+  }, { passive:false });
+
+  // Touch / pointer-friendly double-tap (independent of dblclick)
+  el.addEventListener('pointerup', (ev)=>{
+    // If we just dragged, ignore as a tap gesture.
+    if (window.draggingCard) return;
+
+    const now = performance.now();
+    const dt  = now - _lastTapTs;
+    const dx  = Math.abs(ev.clientX - _lastTapX);
+    const dy  = Math.abs(ev.clientY - _lastTapY);
+
+    if (dt <= _DOUBLE_TAP_MS && dx <= _DOUBLE_TAP_PX && dy <= _DOUBLE_TAP_PX){
+      // Double-tap detected
+      if (!window.state?.viewReadOnly && typeof toggleTap === 'function'){
+        toggleTap(card);
+      }
+      // reset so a triple tap doesn’t count as two doubles
+      _lastTapTs = 0; _lastTapX = 0; _lastTapY = 0;
+    } else {
+      _lastTapTs = now; _lastTapX = ev.clientX; _lastTapY = ev.clientY;
+    }
+  }, { passive:true });
+
   return el;
 }
+
 
 /* Selection + actions */
 let actionsEl = null, tooltipEl = null;
