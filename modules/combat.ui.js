@@ -38,6 +38,193 @@ function activeFace(card){
   }
   return (card?._faces && card._faces[0]) || {};
 }
+
+function normalizeId(raw) {
+  if (raw == null) return '';
+  let s = String(raw);
+  const ix = s.indexOf('_');
+  if (ix > -1) s = s.slice(0, ix);
+  if (s.startsWith('card-')) s = s.slice(5);
+  return s;
+}
+
+function cardElById(cid){
+  // try exact
+  let el = document.querySelector(`.card[data-id="${cid}"]`);
+  if (el) return el;
+
+  // try normalized/base id (handles id with runtime suffixes like id_1234_abc)
+  const base = normalizeId(cid);
+  if (base) {
+    el = document.querySelector(`.card[data-id^="${base}"]`);
+    if (el) return el;
+  }
+
+  // last-ditch: scan by data-persistent-id if present
+  el = document.querySelector(`.card[data-persistent-id="${base}"]`);
+  return el || null;
+}
+
+function isTapped(card){
+  // accept booleans, "true"/"1", numeric 1
+  const val = card?.tapped;
+  if (val === true || val === 1 || val === '1' || String(val).toLowerCase() === 'true') return true;
+  if (card?.ext && (card.ext.tapped === true || String(card.ext.tapped).toLowerCase() === 'true')) return true;
+
+  const el = cardElById(card?.id);
+  if (!el) return false;
+
+  // class marker
+  if (el.classList?.contains('tapped')) return true;
+
+  // data attributes used in some builds
+  const ds = el.dataset || {};
+  if (ds.tapped === '1' || ds.tapped === 'true') return true;
+
+  // CSS var used by V2 .cardInner { --tap-rot: 90deg }
+  const inner = el.querySelector?.('.cardInner');
+  if (inner) {
+    const rotVar = getComputedStyle(inner).getPropertyValue('--tap-rot') || '';
+    if (/\b90deg\b/.test(rotVar)) return true;
+  }
+
+  // plain transform rotate fallback
+  const style = getComputedStyle(inner || el);
+  const tf = style.transform || '';
+  if (/matrix\(.+\)/.test(tf) || /rotate\(/.test(tf)) {
+    // if rotated near 90deg (cos ~ 0), treat as tapped
+    try {
+      // crude parse: matrix(a,b,c,d,tx,ty); a≈0 and b≈±1 when 90deg
+      const m = tf.match(/matrix\(([^)]+)\)/);
+      if (m) {
+        const [a,b] = m[1].split(',').map(Number);
+        if (Math.abs(a) < 0.25 && Math.abs(Math.abs(b) - 1) < 0.25) return true;
+      }
+    } catch(_) {}
+  }
+  return false;
+}
+
+
+
+function isCommander(card){
+  if (!card) return false;
+  if (card.isCommander || card.ext?.isCommander) return true;
+  // DOM fallback: a data flag on the element
+  const el = cardElById(card.id);
+  if (el && el.dataset && (el.dataset.commander === '1' || el.dataset.isCommander === 'true')) return true;
+  return false;
+}
+
+async function readSeatCommanderStrict(gid, seat){
+  // 1) StorageAPI
+  try {
+    const ps = await window.StorageAPI?.loadPlayerState?.(String(gid), Number(seat));
+    const c = ps?.Commander ?? ps?.tableCommander ?? null;
+    if (c) { console.log('[readSeatCommander] StorageAPI hit'); return c; }
+  } catch(e){ console.warn('[readSeatCommander] StorageAPI fail', e); }
+
+  // 2) supabase-js
+  try {
+    if (window.supabase){
+      const { data, error } = await window.supabase
+        .from('player_states').select('state').eq('game_id', String(gid)).eq('seat', Number(seat)).maybeSingle();
+      if (error) throw error;
+      const st = data?.state || null;
+      const c = st?.Commander ?? st?.tableCommander ?? null;
+      if (c) { console.log('[readSeatCommander] supabase-js hit'); return c; }
+    }
+  } catch(e){ console.warn('[readSeatCommander] supabase-js fail', e); }
+
+  // 3) REST
+  try {
+    if (window.SUPABASE_URL && window.SUPABASE_KEY){
+      const url = `${window.SUPABASE_URL.replace(/\/$/,'')}/rest/v1/player_states`
+        + `?select=state&game_id=eq.${encodeURIComponent(String(gid))}&seat=eq.${Number(seat)}`;
+      const res = await fetch(url, {
+        headers: { apikey: window.SUPABASE_KEY, Authorization: `Bearer ${window.SUPABASE_KEY}`, Accept: 'application/json' }
+      });
+      if (!res.ok) throw new Error(`[REST ${res.status}] ${await res.text().catch(()=> '')}`);
+      const rows = await res.json();
+      const st = rows?.[0]?.state || null;
+      const c = st?.Commander ?? st?.tableCommander ?? null;
+      if (c) { console.log('[readSeatCommander] REST hit'); return c; }
+    }
+  } catch(e){ console.warn('[readSeatCommander] REST fail', e); }
+
+  return null;
+}
+
+
+// Strict hand loader (mirrors readSeatTableStrict)
+async function readSeatHandStrict(gid, seat){
+  // 1) StorageAPI
+  try {
+    const ps = await window.StorageAPI?.loadPlayerState?.(String(gid), Number(seat));
+    const arr = Array.isArray(ps?.Hand) ? ps.Hand : (Array.isArray(ps?.hand) ? ps.hand : []);
+    if (arr.length) { console.log('[readSeatHand] StorageAPI', { rows: arr.length }); return arr; }
+  } catch(e){ console.warn('[readSeatHand] StorageAPI fail', e); }
+
+  // 2) supabase-js
+  try {
+    if (window.supabase){
+      const { data, error } = await window.supabase
+        .from('player_states').select('state').eq('game_id', String(gid)).eq('seat', Number(seat)).maybeSingle();
+      if (error) throw error;
+      const st = data?.state || null;
+      const arr = Array.isArray(st?.Hand) ? st.Hand : (Array.isArray(st?.hand) ? st.hand : []);
+      console.log('[readSeatHand] supabase-js', { rows: arr.length });
+      return arr || [];
+    }
+  } catch(e){ console.warn('[readSeatHand] supabase-js fail', e); }
+
+  // 3) REST
+  try {
+    if (window.SUPABASE_URL && window.SUPABASE_KEY){
+      const url = `${window.SUPABASE_URL.replace(/\/$/,'')}/rest/v1/player_states`
+        + `?select=state&game_id=eq.${encodeURIComponent(String(gid))}&seat=eq.${Number(seat)}`;
+      const res = await fetch(url, {
+        headers: { apikey: window.SUPABASE_KEY, Authorization: `Bearer ${window.SUPABASE_KEY}`, Accept: 'application/json' }
+      });
+      if (!res.ok) throw new Error(`[REST ${res.status}] ${await res.text().catch(()=> '')}`);
+      const rows = await res.json();
+      const st = rows?.[0]?.state || null;
+      const arr = Array.isArray(st?.Hand) ? st.Hand : (Array.isArray(st?.hand) ? st.hand : []);
+      console.log('[readSeatHand] REST', { rows: arr.length });
+      return arr || [];
+    }
+  } catch(e){ console.warn('[readSeatHand] REST fail', e); }
+
+  console.warn('[readSeatHand] no hand found');
+  return [];
+}
+
+function getCommanderFromAnywhere(){
+  // 1) Prefer a live object on the table if present
+  const table = getTable();
+  const found = table.find(c => isCommander(c));
+  if (found) return found;
+
+  // 2) V2 keeps this in AppState.tableCommander
+  const S = getAppState();
+  if (S && S.tableCommander) return S.tableCommander;
+
+  // 3) DOM fallback: if a card sits in #cmdZone, try to read the ref directly
+  const cmdEl = document.querySelector('#cmdZone .card');
+  if (!cmdEl) return null;
+
+  // Try to pull the bound card object (your renderer stores refs on elements)
+  const ref = cmdEl.__cardRef || null;
+  if (ref) return ref;
+
+  // Last-ditch: build a stub from dataset so at least id is usable
+  const cid = cmdEl.getAttribute('data-id');
+  if (!cid) return null;
+  return getById(cid) || { id: cid, name: 'Commander', ext: { isCommander: true } };
+}
+
+
+
 function computePT(card){
   const fromPair = (s) => {
     if (!s || typeof s !== 'string') return null;
@@ -66,7 +253,7 @@ function isCreature(card){
   return tl.includes('creature');
 }
 function rectsOverlap(a,b){ return !(a.right<b.left || a.left>b.right || a.bottom<b.top || a.top>b.bottom); }
-function cardElById(cid){ return document.querySelector(`.card[data-id="${cid}"]`); }
+
 function isInCommanderZone(cid){
   const el = cardElById(String(cid));
   const cmd = document.getElementById('cmdZone');
@@ -76,14 +263,7 @@ function isInCommanderZone(cid){
   return rectsOverlap(cr, zr);
 }
 
-function normalizeId(raw) {
-  if (raw == null) return '';
-  let s = String(raw);
-  const ix = s.indexOf('_');
-  if (ix > -1) s = s.slice(0, ix);
-  if (s.startsWith('card-')) s = s.slice(5);
-  return s;
-}
+
 
 /* ----------------------------------
    Seat table readers (StorageAPI → SB-js → REST)
@@ -173,12 +353,32 @@ export async function fetchAttackerCard({ gid, attackerSeat, cid }) {
   }) || null;
 
   if (!found) {
-    console.warn('[fetchAttackerCard] MISS', {
-      gid, attackerSeat, cid: want, base,
-      tried: ['StorageAPI', 'Supabase (js/REST)'],
-      tableCount: tableArr.length
-    });
-  } else {
+   // Commander fallback: check seat’s commander object
+   const cmd = await readSeatCommanderStrict(gid, attackerSeat);
+   if (cmd) {
+     const idRaw  = String(cmd.id || '');
+     const pidRaw = cmd.persistentId ? String(cmd.persistentId) : '';
+     const idBase  = normalizeId(idRaw);
+     const pidBase = normalizeId(pidRaw);
+     const match =
+       idRaw === want || idRaw === base ||
+       idBase === want || idBase === base ||
+       pidRaw === want || pidRaw === base ||
+       pidBase === want || pidBase === base;
+     if (match) {
+       console.log('[fetchAttackerCard] HIT (commander zone)', {
+         gid, attackerSeat, want, base, matchedId: String(cmd.id), name: cmd.name
+       });
+       return cmd;
+     }
+   }
+   console.warn('[fetchAttackerCard] MISS', {
+     gid, attackerSeat, cid: want, base,
+     tried: ['StorageAPI', 'Supabase (js/REST)'],
+     tableCount: tableArr.length,
+     commanderChecked: !!cmd
+   });
+ } else {
     console.log('[fetchAttackerCard] HIT', {
       gid, attackerSeat, want, base,
       matchedId: String(found.id), name: found.name
@@ -191,18 +391,38 @@ export async function fetchAttackerCard({ gid, attackerSeat, cid }) {
 
 
 export async function clearCombatAttacks(gid = String(window.AppState?.gameId || '')) {
-  // keep dynamic import if you want to isolate load order, or
-  // use the already-imported CombatStore (both are fine):
+  const epoch = Date.now();
   await CombatStore.write(gid, {
     attacks: {},
     recommendedOutcome: null,
     applied: {},
-    epoch: Date.now(),
+    epoch
   });
-  console.log('[combat] attacks cleared for', gid);
+  window.__combatEpochFloor = window.__combatEpochFloor || {};
+  window.__combatEpochFloor[gid] = Math.max(window.__combatEpochFloor[gid] || 0, epoch);
+  console.log('[combat] attacks cleared for', gid, 'epoch', epoch);
 }
+
 window.clearCombatAttacks = clearCombatAttacks; // console convenience
 // ---------------------------------------------------------
+
+// Hard-clear the recommended outcome (and applied flags)
+async function clearOutcome(gid = String(window.AppState?.gameId || '')) {
+  try {
+    const epoch = Date.now();
+    await CombatStore.write(gid, {
+      recommendedOutcome: null,
+      applied: {},
+      epoch
+    });
+    // remember the "floor" so we ignore stale events that come in later
+    window.__combatEpochFloor = window.__combatEpochFloor || {};
+    window.__combatEpochFloor[gid] = Math.max(window.__combatEpochFloor[gid] || 0, epoch);
+    console.log('[combat] recommendedOutcome cleared for', gid, 'epoch', epoch);
+  } catch (e) {
+    console.warn('[clearOutcome] failed', e);
+  }
+}
 
 
 
@@ -234,7 +454,26 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
   `;
   document.body.appendChild(ov);
 
-  const table = getTable().filter(c => isCreature(c) && !isInCommanderZone(c.id));
+  // allow commander even if it's in the commander zone; exclude any tapped
+const table = getTable().filter(c => {
+  if (!isCreature(c)) return false;
+  if (isTapped(c)) return false;
+  // normally exclude commander-zone cards unless it *is* the commander
+  if (isInCommanderZone(c.id) && !isCommander(c)) return false;
+  return true;
+});
+
+const cmd = getCommanderFromAnywhere?.();
+if (cmd && !isTapped(cmd)) {
+  // if commander has a specific controllerSeat, ensure it's mine
+  const mine = Number(cmd.controllerSeat ?? getAppState().mySeat ?? seat) === seat;
+  if (mine) {
+    const present = table.some(c => String(c.id) === String(cmd.id));
+    if (!present) table.unshift(cmd);
+  }
+}
+
+
   const playerCount = Number(getAppState().playerCount || 2);
   const oppSeats = Array.from({length: playerCount}, (_,i)=>i+1).filter(s => s !== seat);
 
@@ -278,16 +517,30 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
   }
   scroller.innerHTML = table.map(rowHtml).join('');
 
-  scroller.addEventListener('click', (e) => {
-    const btn = e.target.closest('.choose'); if (!btn) return;
-    const row = btn.closest('.atk-row'); if (!row) return;
-    const cid = row.dataset.cid;
-    const val = btn.dataset.target === '' ? null : Number(btn.dataset.target);
-    choices[cid] = val;
-    row.querySelectorAll('.choose').forEach(b => { b.style.outline = ''; b.style.boxShadow = ''; });
-    btn.style.outline = '2px solid #6aa9ff';
-    btn.style.boxShadow = '0 0 0 6px rgba(106,169,255,.18) inset';
+ // Attacker overlay: choose defender seat per row
+scroller.addEventListener('click', (e) => {
+  const btn = e.target.closest('.choose');  if (!btn) return;
+  const row = e.target.closest('.atk-row'); if (!row) return;
+
+  const cid = String(row.dataset.cid);
+  const targetSeat = btn.dataset.target; // "" means “don’t attack”
+
+  // update the in-memory choice
+  choices[cid] = (targetSeat === '' ? null : Number(targetSeat));
+
+  // clear previous styling in this row
+  row.querySelectorAll('.choose').forEach(b => {
+    b.style.outline = '';
+    b.style.boxShadow = '';
   });
+
+  // highlight the selected one
+  btn.style.outline = '2px solid #6aa9ff';
+  btn.style.boxShadow = '0 0 0 6px rgba(106,169,255,.18) inset';
+});
+
+
+
 
   ov.querySelector('#closeAtk').onclick = () => ov.remove();
 
@@ -339,19 +592,24 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
 
   // Hard clear of the combat doc’s attack set (and any stale outcome/applied)
   async function clearAttacksDoc(gid){
-    await CombatStore.write(gid, {
-      attacks: {},                 // wipe previous attackers
-      recommendedOutcome: null,    // wipe stale outcome
-      applied: {},                 // wipe per-seat “applied” flags
-      epoch: Date.now(),
-    });
-  }
+  const epoch = Date.now();
+  await CombatStore.write(gid, {
+    attacks: {},
+    recommendedOutcome: null,
+    applied: {},
+    epoch
+  });
+  window.__combatEpochFloor = window.__combatEpochFloor || {};
+  window.__combatEpochFloor[gid] = Math.max(window.__combatEpochFloor[gid] || 0, epoch);
+}
+
 
   ov.querySelector('#confirmAtk').onclick = async () => {
   try{
     // build fresh selection (normalize ids) + attach snapshots
     const trimmed = {};
-    const tableByBase = new Map((getTable() || []).map(c => [normalizeId(c.id), c]));
+    //use the same augmented list we rendered (includes commander)
+  const tableByBase = new Map((table || []).map(c => [normalizeId(c.id), c]));
     for (const [cid, defSeat] of Object.entries(choices)){
       if (defSeat != null && !isNaN(defSeat)) {
         const base = normalizeId(cid);
@@ -360,7 +618,8 @@ export async function openAttackerOverlay({ gameId, mySeat }) {
         trimmed[base] = {
           attackerSeat: seat,
           defenderSeat: Number(defSeat),
-          snapshot
+          snapshot,
+		  name: card?.name || ''
         };
         console.log('[attacker.confirm] snapshot', { base, name: card?.name, snapshot });
       }
@@ -420,6 +679,19 @@ try {
 
 }
 
+function blockersForSeat(seat){
+  return getTable().filter(c =>
+    isCreature(c) &&
+    Number(c.controllerSeat ?? getAppState().mySeat ?? seat) === seat &&
+    !isTapped(c) &&                                       // ⬅️ HARD FILTER: tapped never included
+    (!isInCommanderZone(c.id) || isCommander(c))
+  );
+}
+
+
+
+
+
 /* ------------------------------------------------------
    Defender overlay — choose blockers, compute outcome
 ------------------------------------------------------ */
@@ -456,11 +728,18 @@ export async function openDefenderOverlay({ gameId, mySeat }){
 
   console.log('[combat.ui] defender incoming:', incoming.map(c => ({ id:String(c.id), name:c.name })));
 
-  const myBlockers = getTable().filter(c =>
-    isCreature(c) &&
-    Number(c.controllerSeat || getAppState().mySeat || seat) === seat &&
-    !isInCommanderZone(c.id)
-  );
+let myBlockers = blockersForSeat(seat);
+const cmd2 = getCommanderFromAnywhere();
+// keep commander if present and untapped (without duplicating)
+if (cmd2 && !isTapped(cmd2)) {
+  const mine = Number(cmd2.controllerSeat || getAppState().mySeat || seat) === seat;
+  if (mine) {
+    const present = myBlockers.some(c => String(c.id) === String(cmd2.id));
+    if (!present) myBlockers.unshift(cmd2);
+  }
+}
+
+
 
   const ov = document.createElement('div');
   ov.id = 'combatDefOverlay';
@@ -509,20 +788,35 @@ export async function openDefenderOverlay({ gameId, mySeat }){
     ? incoming.map(attackerRowHtml).join('')
     : `<em>No attackers are assigned to you.</em>`;
 
-  scroller.addEventListener('click', (e) => {
-    const btn = e.target.closest('.choose-blocker'); if (!btn) return;
-    const aCid = normalizeId(btn.dataset.att);
-    const bCid = String(btn.dataset.bid);
-    const list = blocks[aCid] || (blocks[aCid] = []);
-    const ix = list.indexOf(bCid);
-    if (ix === -1) list.push(bCid); else list.splice(ix,1);
-    if (btn.style.outline){
-      btn.style.outline = ''; btn.style.boxShadow = '';
-    }else{
-      btn.style.outline = '2px solid #6aa9ff';
-      btn.style.boxShadow = '0 0 0 6px rgba(106,169,255,.18) inset';
-    }
-  });
+  // Attacker overlay: choose defender seat per row
+scroller.addEventListener('click', (e) => {
+  const btn = e.target.closest('.choose-blocker'); if (!btn) return;
+  const aCid = normalizeId(btn.dataset.att);
+  const bCid = String(btn.dataset.bid);
+
+  // FINAL GATE: if it’s tapped now, it cannot be selected.
+  // commander might not be in AppState.table → fall back to cmd2
+  const blockerObj = getById(bCid) || (cmd2 && String(cmd2.id) === bCid ? cmd2 : null);
+
+  if (!blockerObj || isTapped(blockerObj)) {
+    showToast('That creature is tapped and cannot block.');
+    return;
+  }
+
+  const list = (blocks[aCid] ||= []);
+  const ix = list.indexOf(bCid);
+  if (ix === -1) list.push(bCid); else list.splice(ix, 1);
+
+  if (btn.style.outline){
+    btn.style.outline = ''; btn.style.boxShadow = '';
+  } else {
+    btn.style.outline = '2px solid #6aa9ff';
+    btn.style.boxShadow = '0 0 0 6px rgba(106,169,255,.18) inset';
+  }
+});
+
+
+
 
   ov.querySelector('#closeDef').onclick = () => ov.remove();
   ov.querySelector('#resetDef').onclick = () => {
@@ -740,7 +1034,7 @@ export function showOutcomeOverlay({ data, gameId, mySeat }) {
     const textBits = [];
     if (diedBlockers.size) {
       const names = Array.from(diedBlockers)
-        .map(id => getById(id)?.name || null)
+        .map(id => getById(id)?.name || (cmd2 && String(cmd2.id) === String(id) ? cmd2.name : null))
         .filter(Boolean);
 
       const label = names.length
@@ -792,10 +1086,12 @@ if (!aDead && !diedBlockers.size) textBits.push('No deaths');
         }
       </div>
 
-      <div style="display:flex; gap:8px; justify-content:flex-end;">
-        <button class="pill" id="applyMine">Apply to My Board</button>
-        <button class="pill" id="closeOutcome">Close</button>
-      </div>
+<div style="display:flex; gap:8px; justify-content:flex-end;">
+  <button class="pill" id="ninjutsuBtn">Ninjutsu</button>
+  <button class="pill" id="applyMine">Apply to My Board</button>
+  <button class="pill" id="closeOutcome">Close</button>
+</div>
+
     </div>
   `;
   document.body.appendChild(ov);
@@ -806,7 +1102,181 @@ if (!aDead && !diedBlockers.size) textBits.push('No deaths');
     rows[Number(cb.dataset.idx)].enabled = cb.checked;
   });
 
-  ov.querySelector('#closeOutcome').onclick = ()=> ov.remove();
+  // unified close that also clears stale outcome in Supabase
+  const closeAndClear = async () => {
+    try { await clearOutcome(gid); } catch(_) {}
+    // remove key listener safely
+    try { document.removeEventListener('keydown', onKeydown); } catch(_) {}
+    ov.remove();
+  };
+  
+    // ---------------------------
+  // NINJUTSU FLOW
+  // ---------------------------
+  // ---------------------------
+// NINJUTSU FLOW (with deep logging)
+// ---------------------------
+ov.querySelector('#ninjutsuBtn').onclick = async () => {
+  try{
+    console.log('[ninjutsu] click → open flow');
+
+    // Step 1: choose an UNBLOCKED attacker that *I* control
+    const myUnblocked = rows
+      .map((r, idx) => ({ ...r, idx }))
+      .filter(r => r.enabled && !r.attackerDead && !r.deadBlockers?.size && r.attackerSeat === seat);
+
+    if (!myUnblocked.length){
+      console.warn('[ninjutsu] no unblocked attackers for my seat', { seat, rows });
+      showToast('No unblocked attackers for Ninjutsu.');
+      return;
+    }
+
+    // mini overlay to pick the attacker
+    const pick1 = document.createElement('div');
+    pick1.style.cssText = 'position:fixed;inset:0;z-index:13000;background:rgba(8,12,20,.8);display:flex;align-items:center;justify-content:center;';
+    pick1.innerHTML = `
+      <div style="background:#0b1220;border:1px solid #2b3f63;border-radius:14px;padding:16px;max-width:640px;color:#e7efff">
+        <h3 style="margin:0 0 8px">Ninjutsu — Choose an unblocked attacker</h3>
+        <div id="list1" style="display:grid;gap:8px;margin:8px 0;"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="pill" id="cancel1">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(pick1);
+
+    const list1 = pick1.querySelector('#list1');
+
+    // Build a fast lookup from my current seat's TABLE using normalized ids
+    const gidForNames   = String(gameId || getGameId());
+    const tableArrNames = await (async () => {
+      try { 
+        const ps = await window.StorageAPI.loadPlayerState(gidForNames, seat);
+        return Array.isArray(ps?.Table) ? ps.Table : (Array.isArray(ps?.table) ? ps.table : []);
+      } catch { return []; }
+    })();
+    const nameByBase = new Map(tableArrNames.map(c => [normalizeId(String(c.id)), c]));
+
+    // Render with best-effort name resolution (show names, not ids)
+    list1.innerHTML = myUnblocked.map(u => {
+      const base = normalizeId(String(u.id));
+      const src  = nameByBase.get(base) || getById(u.id) || null;
+      const label = src?.name || base;
+      return `<button class="pill choose-a" data-cid="${u.id}">${label}</button>`;
+    }).join('');
+
+    console.log('[ninjutsu] attacker list', myUnblocked.map(u => {
+      const base = normalizeId(String(u.id));
+      const src  = nameByBase.get(base) || getById(u.id) || null;
+      return {
+        rowId: String(u.id),
+        baseId: base,
+        label: src?.name || '(name-miss)',
+        pos: src ? { x: src.x, y: src.y, left: src.left, top: src.top } : null
+      };
+    }));
+
+    const chooseAttacker = () => new Promise((resolve) => {
+      list1.onclick = (e)=>{
+        const btn = e.target.closest('.choose-a'); if (!btn) return;
+        const cid = String(btn.dataset.cid);
+        const base = normalizeId(cid);
+        const src  = nameByBase.get(base) || getById(cid) || null;
+        console.log('[ninjutsu.pick1] selected attacker', {
+          clickId: cid, baseId: base,
+          name: src?.name || '(name-miss)',
+          pos: src ? { x: src.x, y: src.y, left: src.left, top: src.top } : null
+        });
+        resolve(cid);
+      };
+      pick1.querySelector('#cancel1').onclick = ()=> resolve(null);
+    });
+
+    const aCidBase = await chooseAttacker();
+    pick1.remove();
+    if (!aCidBase) { console.log('[ninjutsu] cancelled on attacker'); return; }
+
+    // Step 2: choose the replacement card from HAND + COMMANDER
+    const gid = String(gameId || getGameId());
+    const myHand = await readSeatHandStrict(gid, seat);
+    const commander = getCommanderFromAnywhere();
+    const options = [...myHand];
+    if (commander && !options.some(c => String(c.id) === String(commander.id))) options.unshift(commander);
+
+    if (!options.length){
+      console.warn('[ninjutsu] hand+commander empty for seat', { seat });
+      showToast('Your hand (and commander) is empty.');
+      return;
+    }
+
+    const pick2 = document.createElement('div');
+    pick2.style.cssText = 'position:fixed;inset:0;z-index:13000;background:rgba(8,12,20,.8);display:flex;align-items:center;justify-content:center;';
+    pick2.innerHTML = `
+      <div style="background:#0b1220;border:1px solid #2b3f63;border-radius:14px;padding:16px;max-width:680px;color:#e7efff">
+        <h3 style="margin:0 0 8px">Ninjutsu — Choose a card from your hand (or commander)</h3>
+        <div id="list2" style="display:grid;gap:8px;margin:8px 0;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="pill" id="cancel2">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(pick2);
+
+    const list2 = pick2.querySelector('#list2');
+    list2.innerHTML = options.map(c => `
+      <button class="pill choose-b" data-id="${String(c.id)}">
+        ${c.name || 'Card'} ${isCommander(c) ? '★(Commander)' : ''}
+      </button>
+    `).join('');
+
+    console.log('[ninjutsu] hand options', options.map(c => ({
+      id: String(c.id), baseId: normalizeId(String(c.id)),
+      name: c.name, isCommander: !!isCommander(c)
+    })));
+
+    const chooseIncoming = () => new Promise((resolve) => {
+      list2.onclick = (e)=>{
+        const btn = e.target.closest('.choose-b'); if (!btn) return;
+        const cid = String(btn.dataset.id);
+        const found = options.find(x => String(x.id) === cid) || null;
+        console.log('[ninjutsu.pick2] selected incoming', {
+          id: cid, baseId: normalizeId(cid), name: found?.name, from: isCommander(found) ? 'Commander' : 'Hand'
+        });
+        resolve(found);
+      };
+      pick2.querySelector('#cancel2').onclick = ()=> resolve(null);
+    });
+
+    const incoming = await chooseIncoming();
+    pick2.remove();
+    if (!incoming) { console.log('[ninjutsu] cancelled on incoming'); return; }
+
+    // Step 3: swap zones (+ rewrite combat key), with deep logs
+    await performNinjutsuSwapAndRecalc({ gid, seat, aCidBase, incoming });
+    showToast('Ninjutsu performed. Recomputed outcome.');
+  } catch (e){
+    console.error('[Ninjutsu] failed', e);
+    showToast('Ninjutsu failed (see console)');
+  }
+};
+
+
+
+  // Close button = cancel → clear outcome
+  ov.querySelector('#closeOutcome').onclick = closeAndClear;
+
+  // Backdrop click (outside the dialog) → clear outcome
+  ov.addEventListener('click', (e) => {
+    if (e.target === ov) closeAndClear();
+  });
+
+  // ESC key → clear outcome
+  const onKeydown = (e) => {
+    if (e.key === 'Escape') closeAndClear();
+  };
+  document.addEventListener('keydown', onKeydown);
+
+  // Apply keeps the overlay behavior you had
   ov.querySelector('#applyMine').onclick = async ()=> {
     try {
       await applyRecommendedToMyBoard({ gameId: gid, mySeat: seat, rows, data: { attacks, recommendedOutcome: ro } });
@@ -816,11 +1286,280 @@ if (!aDead && !diedBlockers.size) textBits.push('No deaths');
       showToast('Could not apply outcome (see console).');
     }
   };
+
 }
 
 /* ------------------------------------------------------
    Apply to my board (deaths, taps, life totals)
 ------------------------------------------------------ */
+async function performNinjutsuSwapAndRecalc({ gid, seat, aCidBase, incoming }){
+  const basePick = normalizeId(String(aCidBase));
+  console.groupCollapsed('[ninjutsu.swap] begin', { gid, seat, attackerBase: basePick });
+
+  // 1) Load current state
+  const doc = await window.StorageAPI.loadPlayerState(gid, seat);
+  if (!doc) throw new Error('No player state for ninjutsu');
+
+  // Copy arrays, keep your original casing
+  const next = { ...(doc || {}) };
+  const TableCap = Array.isArray(next.Table);
+  const HandCap  = Array.isArray(next.Hand);
+  const Table = TableCap ? [...next.Table] : (Array.isArray(next.table) ? [...next.table] : []);
+  const Hand  = HandCap  ? [...next.Hand]  : (Array.isArray(next.hand)  ? [...next.hand]  : []);
+  let Commander = next.Commander ?? next.tableCommander ?? null;
+
+  console.log('[ninjutsu.swap] pre-state',
+    { tableLen: Table.length, handLen: Hand.length, hasCommander: !!Commander });
+
+  // 2) Locate attacker on table (by base id)
+  let idxA  = Table.findIndex(c => normalizeId(String(c.id)) === basePick);
+  let attackerObj = idxA >= 0 ? Table[idxA] : null;
+
+  if (!attackerObj) {
+    console.warn('[ninjutsu.swap] attacker not found in Table — trying hard filter/remove-and-readd fallback');
+  }
+
+  // 3) Determine incoming source
+  const fromCommander = isCommander(incoming) || (Commander && String(incoming.id) === String(Commander.id));
+  let incomingObj = null;
+  if (fromCommander) {
+    incomingObj = Commander || incoming;
+  } else {
+    const ixH = Hand.findIndex(c => String(c.id) === String(incoming.id));
+    console.log('[ninjutsu.swap] hand lookup', { incomingId: String(incoming.id), ixH });
+    if (ixH === -1) {
+      console.error('[ninjutsu.swap] incoming not found in Hand — aborting');
+      throw new Error('Incoming card not found in Hand');
+    }
+    incomingObj = Hand.splice(ixH, 1)[0];
+  }
+
+  // 4) Decide anchor position (if attacker missing, try DOM; else use 0,0)
+  let anchorPos = { x: 0, y: 0, left: 0, top: 0 };
+  if (attackerObj) {
+    anchorPos = { x: attackerObj.x, y: attackerObj.y, left: attackerObj.left, top: attackerObj.top };
+  } else {
+    const el = cardElById(basePick);
+    if (el) {
+      const r = el.getBoundingClientRect();
+      anchorPos = { x: r.x || 0, y: r.y || 0, left: r.left || 0, top: r.top || 0 };
+    }
+  }
+
+  console.log('[ninjutsu.swap] attacker/incoming summary', {
+    attackerFound: !!attackerObj,
+    attackerId: attackerObj ? String(attackerObj.id) : '(missing)',
+    attackerName: attackerObj?.name,
+    incomingId: String(incomingObj?.id || ''),
+    incomingName: incomingObj?.name,
+    fromCommander
+  });
+
+  // 5) Build transformed objects
+  const incomingPlaced = {
+    ...incomingObj,
+    x: anchorPos.x, y: anchorPos.y, left: anchorPos.left, top: anchorPos.top,
+    tapped: true,
+    attacking: true
+  };
+  const attackerToHand = attackerObj ? { ...attackerObj, attacking: false } : null;
+
+  // 6) Perform swap
+  if (attackerObj && idxA >= 0) {
+    // in-place swap
+    Table[idxA] = incomingPlaced;
+    if (attackerToHand) Hand.unshift(attackerToHand);
+    console.log('[ninjutsu.swap] in-place swap done', { idxA });
+  } else {
+    // remove & re-add fallback: strip any table entries with attacker base id and push incoming
+    const before = Table.length;
+    const filtered = Table.filter(c => normalizeId(String(c.id)) !== basePick);
+    const removed = before - filtered.length;
+    filtered.push(incomingPlaced);
+    // return attacker (if we ever had its object) to hand front
+    if (attackerToHand) Hand.unshift(attackerToHand);
+    // commit filtered as Table
+    Table.length = 0; Table.push(...filtered);
+    console.log('[ninjutsu.swap] fallback remove&readd', { removedCount: removed, newTableLen: Table.length });
+  }
+
+  // 7) Update commander zone if used
+  if (fromCommander) {
+    Commander = null; // left the zone
+  }
+
+  // 8) Write back with original casing
+  if (TableCap) next.Table = Table; else next.table = Table;
+  if (HandCap)  next.Hand  = Hand;  else next.hand  = Hand;
+  if ('Commander' in next || Commander) next.Commander = Commander;
+  if ('tableCommander' in next || !next.Commander) next.tableCommander = Commander || null;
+
+  console.log('[ninjutsu.swap] saving state…', {
+    tableLen: Table.length, handLen: Hand.length, hasCommander: !!Commander
+  });
+  await window.StorageAPI.savePlayerStateDebounced(gid, seat, next);
+  console.log('[ninjutsu.swap] save complete');
+
+  // 9) Patch Combat attacks map key (old attacker base -> incoming base)
+  try {
+    const combat = await CombatStore.read(gid);
+    if (combat?.attacks && combat.attacks[basePick]) {
+      const attacks = { ...combat.attacks };
+      const row = attacks[basePick];
+      delete attacks[basePick];
+
+      const baseIncoming = normalizeId(String(incomingPlaced.id));
+      attacks[baseIncoming] = { ...row, name: incomingPlaced.name || row?.name || '' };
+
+      await CombatStore.write(gid, {
+        ...combat,
+        attacks,
+        recommendedOutcome: null,
+        applied: {},
+        epoch: Date.now()
+      });
+      console.log('[ninjutsu.swap] combat key patched', { oldKey: basePick, newKey: baseIncoming });
+    } else {
+      console.log('[ninjutsu.swap] no combat key to patch (maybe local-only test)');
+    }
+  } catch (e) {
+    console.warn('[ninjutsu.swap] attacks-map patch skipped', e);
+  }
+
+// 10) HARD REBUILD — exactly like the eye button (with settle + fallbacks)
+try {
+  // give the debounced write a breath so we reload the new state, not the old one
+  await (window.StorageAPI?.flushDebounces?.() || new Promise(r => setTimeout(r, 150)));
+
+  const seatNow = Number(window.AppState?.viewSeat || window.AppState?.mySeat || 1);
+  console.log('[ninjutsu.swap] hard repaint via setViewSeat', { seat: seatNow });
+
+  if (typeof window.setViewSeat === 'function') {
+    await window.setViewSeat(seatNow);              // nukes + rebuilds + trims (eye button path)
+  } else {
+    // Fallback: manual “eye” sequence (nuke → rebuild → trim → pass)
+    window.hardClearAllDom?.();                     // wipes world/hand/zones/overlays you clear, etc.
+    await window.rebuildMyView?.();                 // rebuilds from storage
+    try { await window.trimWorldToSeat?.(seatNow); } catch (_){}
+    setTimeout(()=> { try { window.trimWorldToSeat?.(seatNow); } catch(_){} }, 60);
+    await window.refreshWorldFromStorage?.();       // final assert pass
+  }
+
+  // Absolute last resort: soft reload to guarantee fresh DOM
+  if (!document.querySelector('#world .card')) {
+    console.warn('[ninjutsu.swap] rebuild produced no cards — soft reload fallback');
+    location.reload();
+  }
+} catch (e) {
+  console.warn('[ninjutsu.swap] hard repaint failed', e);
+  try { location.reload(); } catch(_) {}
+}
+
+
+  console.groupEnd();
+}
+
+
+
+async function recomputeRecommendedOutcome(gid){
+  try{
+    const data = await CombatStore.read(gid);
+    const attacksMap = data?.attacks || {};
+    const blocksByDefender = data?.blocksByDefender || {};
+
+    const notesHtml = [];
+    const deadByAttack = {};
+    const attackerDeadFlags = {};
+    const playerDamage = {};
+    const lifelinkGains = {};
+
+    const addDmg  = (s,n)=>{ if(!n) return; playerDamage[s]=(playerDamage[s]||0)+n; };
+    const addHeal = (s,n)=>{ if(!n) return; lifelinkGains[s]=(lifelinkGains[s]||0)+n; };
+
+    const withSnapshotPT = (card, snap) => {
+      if (!snap?.pt) return card;
+      const clone = { ...card };
+      clone.pt = `${Number(snap.pt.power)||0}/${Number(snap.pt.toughness)||0}`;
+      clone._ptMod = snap.ptMod || clone._ptMod;
+      if (clone.ext) clone.ext.ptMod = snap.ptMod || clone.ext.ptMod;
+      return clone;
+    };
+    const oracleText = (card)=>(card?._scry?.oracle_text || card?.oracle_text || card?._faces?.[0]?.oracle_text || '').toLowerCase();
+const hasLL = (card, snap)=>{
+  if (snap && typeof snap?.hasLifelink === 'boolean') return snap.hasLifelink;
+  if (snap?.effects?.some?.(e => String(e).toLowerCase().includes('lifelink'))) return true;
+  return oracleText(card).includes('lifelink');
+};
+
+
+    // Build per-defender blocks list quickly
+    const blocksLookup = {};
+    for (const [defSeat, map] of Object.entries(blocksByDefender)){
+      for (const [aCid, list] of Object.entries(map || {})){
+        blocksLookup[aCid] = (list || []).map(String);
+      }
+    }
+
+    for (const [aCid, meta] of Object.entries(attacksMap)){
+      const patt = Number(meta?.attackerSeat || 0);
+      const pdef = Number(meta?.defenderSeat || 0);
+
+      const attackerRaw = await fetchAttackerCard({ gid, attackerSeat: patt, cid: aCid });
+      if (!attackerRaw) continue;
+
+      const snap = meta?.snapshot || null;
+      const attacker = withSnapshotPT(attackerRaw, snap);
+
+      const blockers = (blocksLookup[aCid] || []).map(getById).filter(Boolean);
+      const result = resolveCombatDamage(attacker, blockers);
+      const deadBlockers = Array.from(result.deadBlockers || []);
+      const attackerDead = !!result.attackerDead;
+
+      deadByAttack[aCid] = deadBlockers.map(String);
+      attackerDeadFlags[aCid] = attackerDead;
+
+      if (Array.isArray(result?.notes)) notesHtml.push(...result.notes);
+
+      const { power: atkP } = computePT(attacker);
+      const unblocked = !blockers.length && !attackerDead;
+
+      if (!blockers.length) {
+        if (atkP > 0) {
+          addDmg(pdef, atkP);
+          if (hasLL(attacker, snap)) addHeal(patt, atkP);
+        }
+      } else {
+        const firstStrikeKill =
+          !!attackerDead &&
+          Array.isArray(result?.notes) &&
+          result.notes.some(n => n.includes('kills') && n.includes('(first strike)') && n.includes(attacker.name));
+        if (!firstStrikeKill && hasLL(attacker, snap) && atkP > 0) {
+          addHeal(patt, atkP);
+          notesHtml.push(`(P${patt}) ${attacker.name} gains ${atkP} life (lifelink)`);
+        }
+      }
+
+      if (attackerDead && deadBlockers.length){
+        const names = blockers.filter(b => deadBlockers.includes(String(b.id))).map(b => b.name).join(', ');
+        notesHtml.push(`(P${patt}) ${attacker.name} trades with (P${pdef}) ${names}`);
+      } else if (attackerDead){
+        notesHtml.push(`(P${pdef}) blockers kill (P${patt}) ${attacker.name}`);
+      } else if (unblocked){
+        notesHtml.push(`(P${patt}) ${attacker.name} is unblocked → P${pdef} takes ${atkP}${hasLL(attacker, snap) ? ' (lifelink)' : ''}`);
+      } else if (!deadBlockers.length){
+        notesHtml.push(`(P${patt}) ${attacker.name} is blocked — no deaths`);
+      }
+    }
+
+    const epoch = Date.now();
+    const recommendedOutcome = { notesHtml, deadByAttack, attackerDeadFlags, playerDamage, lifelinkGains, epoch };
+    await CombatStore.write(gid, { epoch, recommendedOutcome, applied: {} });
+  } catch(e){
+    console.error('[recomputeRecommendedOutcome] failed', e);
+  }
+}
+
+
 export async function applyRecommendedToMyBoard({ gameId, mySeat, rows, data }) {
   const gid  = String(gameId || getGameId());
   const seat = Number(mySeat ?? getSeatNow());
@@ -984,17 +1723,28 @@ export function startCombatPoller(gameId, _mySeat, onData){
     }
 
     // We open whenever the outcome exists and *this seat* hasn’t applied yet.
-    if (!data?.recommendedOutcome) return;
+if (!data?.recommendedOutcome) return;
 
-    const mySeat = Number(window.AppState?.mySeat || _mySeat || 0);
-    if (data.applied && data.applied[mySeat]) return;
+const mySeat = Number(window.AppState?.mySeat || _mySeat || 0);
+if (data.applied && data.applied[mySeat]) return;
 
-    const roEpoch = Number(data.recommendedOutcome?.epoch || data.epoch || 0);
-    if (!roEpoch || roEpoch === lastEpoch) return;
-    lastEpoch = roEpoch;
+const roEpoch = Number(data.recommendedOutcome?.epoch || data.epoch || 0);
+if (!roEpoch) return;
 
-    console.log('[combat.poller] outcome ready → opening overlay for seat', mySeat, data);
-    showOutcomeOverlay({ data, gameId: gid, mySeat });
+// ignore any event older than our local clear "floor"
+const floor = (window.__combatEpochFloor && window.__combatEpochFloor[gid]) || 0;
+if (roEpoch < floor) {
+  console.log('[combat.poller] ignore stale outcome epoch', roEpoch, '< floor', floor);
+  return;
+}
+
+// also ignore dup epoch reopen attempts
+if (roEpoch === lastEpoch) return;
+lastEpoch = roEpoch;
+
+console.log('[combat.poller] outcome ready → opening overlay for seat', mySeat, { roEpoch, floor });
+showOutcomeOverlay({ data, gameId: gid, mySeat });
+
   });
 
   window.__combatPollers[gid] = unsub;
@@ -1006,10 +1756,14 @@ export function startCombatPoller(gameId, _mySeat, onData){
    Wire the FAB
 ------------------------------------------------------ */
 export function wireBattleFab({ gameId, mySeat, getIsMyTurn, btn }){
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     try{
       const gid  = String(gameId || getGameId());
       const seat = getSeatNow(mySeat);
+
+      // 🔧 Always clear any stale recommendedOutcome when opening a new combat flow
+      try { await clearOutcome(gid); } catch(_) {}
+
       const myTurn = typeof getIsMyTurn === 'function' ? !!getIsMyTurn() : false;
       if (myTurn) return openAttackerOverlay({ gameId: gid, mySeat: seat });
       return openDefenderOverlay({ gameId: gid, mySeat: seat });
@@ -1017,6 +1771,7 @@ export function wireBattleFab({ gameId, mySeat, getIsMyTurn, btn }){
       console.error('[wireBattleFab] failed', e);
     }
   });
+
 }
 
 /* default export */

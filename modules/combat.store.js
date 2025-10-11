@@ -149,9 +149,13 @@ export const CombatStore = {
           "postgres_changes",
           { event: "*", schema: "public", table: TABLE, filter: `game_id=eq.${String(gameId)}` },
           (payload) => {
-            const row = payload.new || payload.old || null;
-            cb(normalize(row));
-          }
+  // prefer NEW; if neither present (e.g., delete), pass null
+  const row = (typeof payload.new !== 'undefined') ? payload.new
+            : (typeof payload.old !== 'undefined') ? payload.old
+            : null;
+  cb(normalize(row));
+}
+
         )
         .subscribe((status) => console.log("[CombatStore.onChange] status:", status));
       return () => SB.removeChannel(channel);

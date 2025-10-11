@@ -557,6 +557,28 @@ const trySub = () => {
 trySub();
 document.getElementById('gamePicker')?.addEventListener('click', () => setTimeout(trySub, 50));
 
+// Start/Restart Table Watcher whenever game changes
+(function ensureTableWatcher(){
+  const start = ()=>{
+    if (!window.AppState?.gameId || !window.startTableWatcher) return;
+    try {
+      if (state._stopTableWatcher) state._stopTableWatcher();
+      state._stopTableWatcher = window.startTableWatcher();
+    } catch(e){ console.warn('[table_watcher] start failed', e); }
+  };
+
+  // When you pick a game
+  const gp = document.getElementById('gamePicker');
+  gp?.addEventListener('click', (e)=>{
+    const btn = e.target.closest('.gameBtn');
+    if (!btn) return;
+    setTimeout(start, 150);
+  });
+
+  // Also try once at boot
+  setTimeout(start, 400);
+})();
+
 
   // Examples of emitting (wire these where you actually perform the actions):
   // Notifications.emit('combat_initiated', { gameId: gid, seat: S.mySeat });
@@ -1075,13 +1097,14 @@ async function setViewSeat(seat){
       console.warn('[setViewSeat] opponent hydrate failed', e);
     }
 
-    // Hard read-only: no handlers
-    try {
-      document.querySelectorAll('#world .card').forEach(el=>{
-        el.dataset.owner = 'opp';
-        el.style.pointerEvents = 'none';
-      });
-    } catch(_){}
+    // Read-only tagging (no UI actions, but allow clicks for tooltip)
+try {
+  document.querySelectorAll('#world .card').forEach(el=>{
+    el.dataset.owner = 'opp';
+    el.dataset.readonly = '1';
+  });
+} catch(_){}
+
 
     // If you have an opponent poller, start it AFTER the rebuild
     try { if (typeof startViewPoller === 'function') startViewPoller(); } catch(_){}
@@ -1653,7 +1676,11 @@ function makeCardEl(card){
   // -------- Double-Tap to Tap/Untap (with desktop dbl-click fallback) --------
   // Per-element tap memory (don’t leak globals, and don’t fight drag)
   let _lastTapTs = 0, _lastTapX = 0, _lastTapY = 0;
-  const _DOUBLE_TAP_MS = 300, _DOUBLE_TAP_PX = 8;
+  // Mobile gets a longer window + a bit more movement tolerance
+const HAS_TOUCH = (navigator.maxTouchPoints || navigator.msMaxTouchPoints || 0) > 0;
+const _DOUBLE_TAP_MS = HAS_TOUCH ? 600 : 300;   // was 300
+const _DOUBLE_TAP_PX = HAS_TOUCH ? 16  : 8;     // was 8
+
 
   // Desktop convenience: native dblclick
   el.addEventListener('dblclick', (ev)=>{
@@ -3597,6 +3624,7 @@ document.addEventListener('click', (e) => {
 
 </script>
 <script type="module" src="./modules/turn.timewarp.js"></script>
+<script type="module" src="./modules/table.watcher.js"></script>
 
 <!-- Storage module import & init -->
 <script type="module">
