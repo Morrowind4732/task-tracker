@@ -1,10 +1,13 @@
 // modules/tooltip.js
-// Public API kept stable with your import line:
+// Public API:
 //   initTooltipSystem, attachTooltip, followTooltip, reflowAll
-// Plus legacy/compat names you already used in v3.html:
 //   showCardTooltip, hideCardTooltip
-// (Also export manaToHtml and clearSelection for convenience)
+//   manaToHtml, clearSelection
+//   attachHandAutoTooltip
 
+/* -----------------------------
+   Mana icons → HTML helpers
+----------------------------- */
 export function manaToHtml(src = '', { asCost = false } = {}) {
   if (!src) return '';
   return String(src).replace(/\{([^}]+)\}/gi, (_, raw) => {
@@ -22,6 +25,9 @@ export function manaToHtml(src = '', { asCost = false } = {}) {
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+/* -----------------------------
+   Scryfall fill-in (when needed)
+----------------------------- */
 const SCRY = 'https://api.scryfall.com';
 async function fetchMissingFieldsByName(name){
   const res = await fetch(`${SCRY}/cards/named?fuzzy=${encodeURIComponent(name)}`);
@@ -36,10 +42,15 @@ async function fetchMissingFieldsByName(name){
   };
 }
 
-// ---------- Tooltip element/state ----------
+/* -----------------------------
+   Tooltip state/DOM
+----------------------------- */
 let tipEl = null;
 let lastPos = { x: 0, y: 0 };
-let anchorEl = null; // if set, we anchor to this element’s left edge
+let anchorEl = null;
+
+const VP_MARGIN = 8;     // viewport breathing room
+const TIP_GAP   = 12;    // gap between card and tooltip
 
 function ensureTip(){
   if (tipEl) return tipEl;
@@ -51,6 +62,7 @@ function ensureTip(){
   document.body.appendChild(tipEl);
   return tipEl;
 }
+
 function renderTooltipHtml(card){
   const name  = escapeHtml(card?.name ?? '');
   const cost  = manaToHtml(card?.mana_cost ?? '', { asCost: true });
@@ -63,22 +75,54 @@ function renderTooltipHtml(card){
     ${text ? `<div class="oracle">${text}</div>` : ''}
   `;
 }
-function positionTooltip(el, sx, sy){
-  const pad = 10;
-  const vw = window.innerWidth, vh = window.innerHeight;
-  el.style.left = `${sx}px`;
-  el.style.top  = `${sy - 12}px`;
-  const r = el.getBoundingClientRect();
-  let x = r.left, y = r.top;
-  if (r.right > vw - pad) x -= (r.right - (vw - pad));
-  if (r.left < pad)       x += (pad - r.left);
-  if (r.top < pad)        y = sy + pad; // flip below finger
-  if (r.bottom > vh - pad) y -= (r.bottom - (vh - pad));
-  el.style.left = `${x}px`; el.style.top = `${y}px`;
-  lastPos.x = x; lastPos.y = y;
+
+/* -----------------------------------------
+   Non-overlapping placement (top-center)
+   Clamps to viewport & flips below if needed
+----------------------------------------- */
+function positionTooltip(el, centerX, anchorTop, anchorBottom, preferAbove = true) {
+  if (!el) return;
+
+  // measure
+  el.style.visibility = 'hidden';
+  el.style.display = 'block';
+
+  const tipRect  = el.getBoundingClientRect();
+  const vpLeft   = 0;
+  const vpTop    = 0;
+  const vpRight  = window.innerWidth;
+  const vpBottom = window.innerHeight;
+
+  // Horizontal: center then clamp
+  let left = Math.round(centerX - tipRect.width / 2);
+  left = Math.max(vpLeft + VP_MARGIN, Math.min(left, vpRight - VP_MARGIN - tipRect.width));
+
+  // Vertical: prefer above; flip if not enough room
+  let top;
+  if (preferAbove) {
+    top = Math.round(anchorTop - TIP_GAP - tipRect.height);
+    if (top < vpTop + VP_MARGIN) {
+      top = Math.round(anchorBottom + TIP_GAP);
+    }
+  } else {
+    top = Math.round(anchorBottom + TIP_GAP);
+    if (top + tipRect.height > vpBottom - VP_MARGIN) {
+      top = Math.round(anchorTop - TIP_GAP - tipRect.height);
+    }
+  }
+
+  el.style.left = `${left}px`;
+  el.style.top  = `${top}px`;
+  el.style.visibility = 'visible';
+  el.dataset.placement = (top + tipRect.height <= anchorTop) ? 'above' : 'below';
+
+  // remember center for reflow fallback
+  lastPos = { x: left + tipRect.width/2, y: top + tipRect.height/2 };
 }
 
-// ---------- Public: init / follow / reflow ----------
+/* -----------------------------
+   Public: init / follow / reflow
+----------------------------- */
 export function initTooltipSystem(){
   ensureTip();
   // click/tap empty background clears selection + hides tooltip
@@ -88,76 +132,67 @@ export function initTooltipSystem(){
   });
   window.addEventListener('resize', ()=> reflowAll());
 }
-export function followTooltip(target, screenY) {
+
+export function followTooltip(target) {
   if (!tipEl || tipEl.style.display === 'none') return;
 
-  // Case A: anchor to a DOM element (preferred)
+  // Case A: anchor to a DOM element
   if (target instanceof Element) {
     anchorEl = target;
     const r = anchorEl.getBoundingClientRect();
-    const pad = 10;
-
-    // Top-center of the card:
-    const sx = r.left + (r.width / 2);
-    const sy = r.top - pad;       // ask to sit above; positionTooltip will flip if needed
-
-    positionTooltip(tipEl, sx, sy);
+    const centerX = r.left + (r.width / 2);
+    positionTooltip(tipEl, centerX, r.top, r.bottom, /*preferAbove*/ true);
     return;
   }
 
-  // Case B: raw coordinates (legacy)
+  // Case B: legacy coords (treat as center point)
   anchorEl = null;
-  const sx = Number(target) || 0;
-  const sy = Number(screenY) || 0;
-  positionTooltip(tipEl, sx, sy);
+  const cx = Number(target?.x ?? target) || 0;
+  const cy = Number(target?.y) || 0;
+  positionTooltip(tipEl, cx, cy, cy, true);
 }
-
 
 export function reflowAll(){
   if (!tipEl || tipEl.style.display === 'none') return;
   if (anchorEl && document.body.contains(anchorEl)) {
-    // recompute from element
     followTooltip(anchorEl);
   } else {
-    // fall back to last absolute position
-    positionTooltip(tipEl, lastPos.x, lastPos.y);
+    // re-place around last center
+    positionTooltip(tipEl, lastPos.x, lastPos.y - 1, lastPos.y + 1, true);
   }
 }
 
-
-// ---------- Public: selection helpers ----------
+/* -----------------------------
+   Public: selection helpers
+----------------------------- */
 export function clearSelection(){
   document.querySelectorAll('.card.selected').forEach(n => n.classList.remove('selected'));
 }
 export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; }
 
-// ---------- Public: legacy names (compat with v3.html) ----------
+/* -----------------------------
+   Public: show/hide (legacy names)
+----------------------------- */
 export async function showCardTooltip(cardOrEl, screenX, screenY){
   const el = ensureTip();
 
-  // If passed a DOM element, resolve full data (dataset OR image alt),
-  // and render the *expansive* template every time.
+  // A) DOM element path (preferred)
   if (cardOrEl instanceof Element) {
-    // Pull a best-available name first (dataset or <img alt>)
-    const guessName =
-      cardOrEl.dataset?.name ||
-      cardOrEl.querySelector('img')?.alt ||
-      '';
+    const r = cardOrEl.getBoundingClientRect();
+    const centerX = r.left + (r.width / 2);
 
-    // Start with any fields already present on the element:
+    // use dataset / alt, then fill missing via Scryfall
     let data = {
-      name:        cardOrEl.dataset?.name        || guessName || '',
+      name:        cardOrEl.dataset?.name        || cardOrEl.querySelector('img')?.alt || '',
       mana_cost:   cardOrEl.dataset?.mana_cost   || '',
       type_line:   cardOrEl.dataset?.type_line   || '',
       oracle_text: cardOrEl.dataset?.oracle_text || ''
     };
-
-    // If anything is missing, fetch from Scryfall by name (once we have a name)
-    if (guessName && (!data.mana_cost || !data.type_line || !data.oracle_text)) {
+    if (data.name && (!data.mana_cost || !data.type_line || !data.oracle_text)) {
       try {
-        const filled = await fetchMissingFieldsByName(guessName);
+        const filled = await fetchMissingFieldsByName(data.name);
         data = { ...data, ...filled };
-        // cache back on the element so future opens are instant
+        // cache back on the element
         cardOrEl.dataset.mana_cost   = data.mana_cost   || '';
         cardOrEl.dataset.type_line   = data.type_line   || '';
         cardOrEl.dataset.oracle_text = data.oracle_text || '';
@@ -167,34 +202,44 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
     el.innerHTML = renderTooltipHtml(data);
     el.style.display = 'block';
     anchorEl = cardOrEl;
-    followTooltip(cardOrEl);
+    positionTooltip(el, centerX, r.top, r.bottom, true);
     return;
   }
 
-  // Otherwise: traditional object + (x,y)
-  el.innerHTML = renderTooltipHtml(cardOrEl || {});
+  // B) Data object path (legacy)
+  const dataObj = cardOrEl || {};
+  el.innerHTML = renderTooltipHtml({
+    name:        dataObj.name        || '',
+    mana_cost:   dataObj.mana_cost   || dataObj.cost || '',
+    type_line:   dataObj.type_line   || dataObj.typeLine || '',
+    oracle_text: dataObj.oracle_text || dataObj.oracle || ''
+  });
   el.style.display = 'block';
   anchorEl = null;
-  positionTooltip(el, Number(screenX)||0, Number(screenY)||0);
-}
 
+  const cx = Number(screenX) || 0;
+  const cy = Number(screenY) || 0;
+  positionTooltip(el, cx, cy - 1, cy + 1, true);
+}
 
 export function hideCardTooltip(){ hideTooltip(); }
 
-// ---------- Public: attach to a card ----------
+/* -----------------------------
+   Public: attach to a card
+----------------------------- */
 export function attachTooltip(cardEl, getCardData, opts = {}){
   const holdMs    = opts.holdMs ?? 350;
   const moveTol   = opts.moveTol ?? 6;
   const singleTap = opts.singleTap !== false; // default true
 
   async function resolveData(){
-    // allow function OR plain object; else fall back to dataset name
+    // function OR object; else fall back to dataset name
     let base =
       (typeof getCardData === 'function' ? await getCardData() :
-       getCardData && typeof getCardData === 'object' ? getCardData :
-       { name: cardEl?.dataset?.name || '' }) || {};
+       (getCardData && typeof getCardData === 'object' ? getCardData :
+        { name: cardEl?.dataset?.name || '' })) || {};
 
-    // normalize any legacy field names
+    // normalize legacy field names
     const normalized = {
       name:        base.name || '',
       mana_cost:   base.mana_cost || base.cost || '',
@@ -202,7 +247,7 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
       oracle_text: base.oracle_text || base.oracle || '',
     };
 
-    // lazily fill from Scryfall if we at least have a name
+    // fill via Scryfall if needed
     if ((!normalized.mana_cost || !normalized.oracle_text || !normalized.type_line) && normalized.name){
       try {
         const filled = await fetchMissingFieldsByName(normalized.name);
@@ -212,11 +257,20 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
     return normalized;
   }
 
-  async function showFromPoint(sx, sy){
+  async function showFromPoint(){
     clearSelection();
     cardEl.classList.add('selected');
+
+    // cache on the element for instant future tooltips
     const data = await resolveData();
-    showCardTooltip(data, sx, sy);
+    if (data) {
+      if (data.mana_cost)   cardEl.dataset.mana_cost   = data.mana_cost;
+      if (data.type_line)   cardEl.dataset.type_line   = data.type_line;
+      if (data.oracle_text) cardEl.dataset.oracle_text = data.oracle_text;
+    }
+
+    // show anchored to the element (top-center, non-overlapping)
+    showCardTooltip(cardEl);
   }
 
   // Long-press
@@ -226,6 +280,7 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
   cardEl.addEventListener('pointerdown', (e)=>{
     const startX = e.clientX, startY = e.clientY;
     let moved = false;
+
     const onMove = (me)=>{
       if (!moved && (Math.abs(me.clientX - startX) > moveTol || Math.abs(me.clientY - startY) > moveTol)){
         moved = true;
@@ -237,12 +292,13 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
       cardEl.removeEventListener('pointerup', onUp);
       cardEl.removeEventListener('pointercancel', onUp);
     };
+
     cardEl.addEventListener('pointermove', onMove, {passive:true});
     cardEl.addEventListener('pointerup', onUp);
     cardEl.addEventListener('pointercancel', onUp);
 
     clearHold();
-    holdTimer = setTimeout(()=>{ if (!moved) showFromPoint(startX, startY); }, holdMs);
+    holdTimer = setTimeout(()=>{ if (!moved) showFromPoint(); }, holdMs);
   });
 
   // Single-tap to show
@@ -252,6 +308,86 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
     cardEl.addEventListener('pointermove', (e)=>{
       if (!moved && (Math.abs(e.clientX - tdx) > moveTol || Math.abs(e.clientY - tdy) > moveTol)){ moved = true; }
     }, {passive:true});
-    cardEl.addEventListener('pointerup', (e)=>{ if (!moved) showFromPoint(e.clientX, e.clientY); });
+    cardEl.addEventListener('pointerup', (e)=>{ if (!moved) showFromPoint(); });
   }
+} // end attachTooltip
+
+/* -------------------------------------------
+   Auto-tooltip for the hand carousel
+   Shows centered card without tapping
+------------------------------------------- */
+// Auto-tooltip for the hand carousel: real-time while swiping (no lift needed)
+export function attachHandAutoTooltip(handEl, { selector = '.card' } = {}){
+  if (!handEl) return;
+
+  let lastEl = null;
+  let rafId = null;
+  let tracking = false;
+
+  const pickCenterCard = () => {
+    const handRect = handEl.getBoundingClientRect();
+    const midX = handRect.left + handRect.width / 2;
+    const cards = Array.from(handEl.querySelectorAll(selector));
+    if (!cards.length) return null;
+
+    let best = null, bestDist = Infinity;
+    for (const c of cards) {
+      const r = c.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const d  = Math.abs(cx - midX);
+      if (d < bestDist) { best = c; bestDist = d; }
+    }
+    return best;
+  };
+
+  const update = () => {
+    const el = pickCenterCard();
+    if (!el) return;
+
+    // make sure tooltip DOM exists
+    if (!tipEl) ensureTip();
+
+    if (el === lastEl) {
+      // Same centered card: just keep the tooltip glued as the list moves
+      if (tipEl && tipEl.style.display !== 'none') followTooltip(el);
+    } else {
+      // New centered card: render (hydrates dataset if needed) and anchor to it
+      lastEl = el;
+      showCardTooltip(el);
+    }
+  };
+
+  const loop = () => {
+    rafId = requestAnimationFrame(() => {
+      update();
+      if (tracking) loop();
+    });
+  };
+
+  const start = () => {
+    if (tracking) return;
+    tracking = true;
+    loop();
+  };
+
+  const stop = () => {
+    tracking = false;
+    if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+    // final snap after momentum ends
+    update();
+  };
+
+  // While finger is down/moving, or while scrolling with inertia → keep updating
+  handEl.addEventListener('pointerdown',  start, { passive: true });
+  handEl.addEventListener('pointermove',  start, { passive: true });
+  handEl.addEventListener('pointerup',    stop,  { passive: true });
+  handEl.addEventListener('pointercancel',stop,  { passive: true });
+  handEl.addEventListener('pointerleave', stop,  { passive: true });
+
+  // Wheel/scroll can happen without pointer events (e.g., momentum)
+  handEl.addEventListener('scroll', start, { passive: true });
+  handEl.addEventListener('wheel',  start, { passive: true });
+
+  // Initial draw for the currently centered card
+  update();
 }

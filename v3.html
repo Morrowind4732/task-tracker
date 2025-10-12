@@ -117,7 +117,7 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   position:absolute; z-index:var(--z-actions); display:block; min-width:220px; max-width:min(420px,92vw);
   background:#0b1220; color:#e7efff; border:1px solid #263a5f; border-radius:12px; box-shadow:0 14px 36px rgba(0,0,0,.55);
   padding:10px 12px; font-size:13px; line-height:1.35; white-space:normal; overflow-wrap:anywhere; word-break:break-word;
-  transform-origin: bottom center; transform: translateX(-50%);
+  transform-origin: top left; transform: none;
   resize: both;
   overflow: auto;
 }
@@ -523,6 +523,14 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 </div>
 
 
+<!-- Connecting overlay -->
+<div class="scrim" id="connectingScrim" style="display:none;">
+  <div class="panel" style="text-align:center">
+    <div id="connectingText" style="font-weight:800;">Establishing connection<span id="connectingDots">.</span></div>
+  </div>
+</div>
+
+
 <!-- Mulligan overlay (friendly: always draw 7 again) -->
 <div class="mulliganOverlay" id="mulliganOverlay">
   <div class="mullPanel">
@@ -540,7 +548,10 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 <script type="module"> 
 // NEW: networking + saves
 import { createPeerRoom } from './modules/net.rtc.js';
-import { initTooltipSystem, attachTooltip, followTooltip, reflowAll, showCardTooltip, hideCardTooltip, clearSelection } from './modules/tooltip.js';
+import { initTooltipSystem, attachTooltip, followTooltip, reflowAll, showCardTooltip, hideCardTooltip, clearSelection, attachHandAutoTooltip } from './modules/tooltip.js';
+
+import Overlays from './modules/overlays.js';
+import Zones from './modules/zones.js';
 
 
 
@@ -575,6 +586,31 @@ const viewEyeBtn = document.getElementById('viewEyeBtn');
 const mySeat = () => parseInt(seatSelect.value, 10) || 1;
 
 const viewingChip = document.getElementById('viewingChip');
+
+// --- Connecting overlay helpers (non-blocking) ---
+const connectingScrim = document.getElementById('connectingScrim');
+const connectingText  = document.getElementById('connectingText');
+const connectingDots  = document.getElementById('connectingDots');
+let _dotsTimer = null;
+
+function showConnecting(msg = 'Establishing connection'){
+  if (connectingText) connectingText.firstChild.nodeValue = msg;
+  if (connectingScrim) connectingScrim.style.display = 'block';
+  // animated ellipsis: ".", "..", "..."
+  if (connectingDots){
+    let n = 1;
+    connectingDots.textContent = '.';
+    _dotsTimer = setInterval(()=>{
+      n = (n % 3) + 1;
+      connectingDots.textContent = '.'.repeat(n);
+    }, 450);
+  }
+}
+
+function hideConnecting(){
+  if (_dotsTimer){ clearInterval(_dotsTimer); _dotsTimer = null; }
+  if (connectingScrim) connectingScrim.style.display = 'none';
+}
 
 
 // === Host/Join/Save/Restore ===
@@ -748,6 +784,37 @@ initTooltipSystem({
   getCam: () => cam,
   screenToWorld,
 });
+attachHandAutoTooltip(document.querySelector('#hand'));
+
+Overlays.init();
+
+Zones.init({
+  zones: {
+    graveyard: document.getElementById('graveyard'),
+    exile:     document.getElementById('exileZone'), // note the id in v3
+    deck:      document.getElementById('deckZone'),
+    hand:      document.getElementById('hand')
+  },
+  worldEl: document.getElementById('world'),
+
+  // Wire these to your v3 helpers:
+  spawnToTable: (card, seat) => window.spawnTableCard?.(card, seat),
+  addToHand:    (card, seat) => window.addToHand?.(card, seat),
+  addToDeck: (card, seat, { position }) => window.addToDeck?.(card, seat, position),
+  shuffleDeck: (seat) => window.shuffleDeck?.(seat),
+  removeTableCardDomById: (cid) => document.querySelector(`.card[data-cid="${cid}"]`)?.remove(),
+  getCardDataById: (cid) => window.getCardDataById?.(cid),
+
+  onMoved: ({ seat, cid, from, to, position }) => {
+  // Broadcast meta so peers update their zone state
+  sendRTC({ type: 'zones:move', seat, cid, from, to, position });
+}
+
+});
+
+function afterYouCreateCardEl(cardEl){
+  Zones.registerDraggableCard(cardEl);
+}
 
 
 
@@ -855,8 +922,13 @@ function onSeatConflict({ seatTaken, options }) {
   if (ok) { seatSelect.value = String(next); alert(`Switched to seat ${next}. Click Host/Join again.`); }
 }
 
+
+
 async function startRTC(role) {
   const id = promptRoomId(); if (!id) return;
+
+  // NEW: non-blocking connecting overlay
+  showConnecting(role === 'host' ? 'Establishing host link' : 'Establishing connection');
 
   // persist session intent
   saveSession({ roomId: id, role, seat: seatNum() });
@@ -870,38 +942,42 @@ async function startRTC(role) {
     onSeatConflict
   });
 
-  // expose + confirm when datachannel is really open
+  // expose + when datachannel/ICE is live
   window.RTC = RTC;
   RTC.opened.then(async () => {
     console.log('[APP] P2P LINK LIVE (datachannel open, ICE connected)');
 
+    // Fade out overlay shortly after link is live
+    setTimeout(hideConnecting, 600);
+
     // Only on “auto reapply” flows, ask to restore the last save for *this* seat
     if (shouldAskRestoreNext()) {
-  markAskRestoreNext(false);
-  try {
-    const ans = confirm('Connection live. Restore your last saved state for this seat?');
-    if (ans) {
-      const latest = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
-      if (latest) {
-        await loadSnapshot({ id: latest.id }); // local full restore
-        if (RTC) {
-          const { table } = window.GameIO.collectState();
-          RTC.send({ type:'state:table', table }); // broadcast only table
+      markAskRestoreNext(false);
+      try {
+        const ans = confirm('Connection live. Restore your last saved state for this seat?');
+        if (ans) {
+          const latest = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
+          if (latest) {
+            await loadSnapshot({ id: latest.id }); // local full restore
+            if (RTC) {
+              const { table } = window.GameIO.collectState();
+              RTC.send({ type:'state:table', table }); // broadcast only table
+            }
+          } else {
+            alert('No prior save found for this seat.');
+          }
         }
-      } else {
-        alert('No prior save found for this seat.');
+      } catch (e) {
+        console.warn('Auto-restore failed', e);
+        alert('Restore failed. Check Supabase and table `game_saves`.');
       }
     }
-  } catch (e) {
-    console.warn('Auto-restore failed', e);
-    alert('Restore failed. Check Supabase and table `game_saves`.');
-  }
-}
   });
 
   console.log('[RTC] ready as', role, 'seat', seatNum(), 'room', id);
-  alert(`${role === 'host' ? 'Hosting' : 'Joined'} room ${id} as P${seatNum()}`);
+  // REMOVED: blocking alert for “Hosting/Joined room …”
 }
+
 
 
 // Example messages we’ll handle now: sync spawn/move, and full restore
@@ -938,6 +1014,16 @@ function handlePeerMessage(msg){
     case 'state:table':
       window.GameIO.applyState({ table: Array.isArray(msg.table) ? msg.table : [] });
       break;
+	  
+	  case 'zones:move': {
+  // Ask Zones to mirror this move locally.
+  // It will remove from table if needed and update zone state.
+  if (typeof Zones.applyRemoteMove === 'function') {
+    Zones.applyRemoteMove(msg.seat, msg); // { seat, from, to, cid, position? }
+  }
+  break;
+}
+
 
     // legacy (keep if you ever send full state intentionally)
     case 'state:apply':
@@ -1092,43 +1178,53 @@ function renderHand(){
 // swipe L/R is handled by the hand scrubber now.
 // This handler is only for: long-press to play, or vertical swipe-up to play.
 function attachHandGestures(el, index){
-  let down=false, sx=0, sy=0, moved=false, hold=null, played=false;
-  const UP_THRESH = 90;   // was 70
-  const HOLD_MS   = 650;  // was 550
+  let down = false, sx = 0, sy = 0, moved = false, hold = null, played = false;
+  const UP_THRESH = 110;   // must swipe this far up to play
+  const HOLD_MS   = 600;   // hold to show tooltip
   const START_MOVE_TOL = 8;
 
   el.addEventListener('pointerdown', (e)=>{
-    down=true; sx=e.clientX; sy=e.clientY; moved=false; played=false;
+    // IMPORTANT: don't let the hand scrubber start on this event
+    e.stopPropagation();
+
+    down = true; sx = e.clientX; sy = e.clientY; moved = false; played = false;
     handTrack.classList.add('swiping');
     el.setPointerCapture?.(e.pointerId);
 
-    // Delay the hold slightly; only fire if NOT scrubbing when the timer ends
+    // Long-press → show tooltip (do NOT play)
     hold = setTimeout(()=>{
       if (!moved && !window.HandScrub?.active){
-        playFromHand(index);
-        played = true;
-        down = false;
+        const cardEl = el.querySelector('.card');
+        if (cardEl) {
+          selectCard(cardEl, e.clientX, e.clientY);
+          showCardTooltip(cardEl, e.clientX, e.clientY);
+        }
       }
     }, HOLD_MS);
   });
 
   el.addEventListener('pointermove', (e)=>{
     if (!down) return;
+    // keep the event local to this card
+    e.stopPropagation();
 
     const dx = e.clientX - sx;
     const dy = sy - e.clientY; // positive = moving up
-
     if (!moved && (Math.abs(dx) > START_MOVE_TOL || Math.abs(dy) > START_MOVE_TOL)) moved = true;
 
-    // If the scrubber is active, cancel the hold and ignore vertical logic
-    if (window.HandScrub?.active){
+    // If scrubbing had turned on somehow, turn it off for clear vertical intent
+    const verticalDominant = Math.abs(dy) > Math.abs(dx) * 1.3;
+    if (verticalDominant && window.HandScrub?.active){
+      window.HandScrub.active = false;
+    }
+
+    // Cancel the long-press if we’re clearly moving or scrubbing
+    if (window.HandScrub?.active || Math.abs(dx) > Math.abs(dy)){
       if (hold){ clearTimeout(hold); hold = null; }
       return;
     }
 
-    // Only treat as "play" when vertical clearly dominates horizontal
-    const verticalDominant = Math.abs(dy) > Math.abs(dx) * 1.4;
-
+    // Strong vertical swipe-up → play
     if (!played && verticalDominant && dy > UP_THRESH){
       if (hold){ clearTimeout(hold); hold = null; }
       playFromHand(index);
@@ -1138,7 +1234,7 @@ function attachHandGestures(el, index){
   }, {passive:false});
 
   const end = ()=>{
-    down=false;
+    down = false;
     if (hold){ clearTimeout(hold); hold = null; }
     handTrack.classList.remove('swiping');
   };
@@ -1147,43 +1243,74 @@ function attachHandGestures(el, index){
 }
 
 
+
+
 // ===== Hand scrub (continuous left/right while held) =====
-// Global-ish flag so card handlers know when the hand scrubber is active
 window.HandScrub = { active: false };
-// ===== Hand scrub (continuous left/right while held) =====
+
 let scrubbing = false;
 let scrubStartX = 0;
+let scrubStartY = 0;          // <-- add this line
 let scrubStartFocus = 0;
-// STEP should match your visual spacing; add a little hysteresis so tiny jitters don't flip focus
 const STEP = 46;
 
+let pendingScrub = false;
+
+
+
+// Capture phase so we still see events even if a child stops propagation.
 handTrack.addEventListener('pointerdown', (e)=>{
   if (!e.target.closest('.handCard')) return;
-  scrubbing = true;
-  window.HandScrub.active = true;
+
+  pendingScrub = true;
+  scrubbing = false;
+  window.HandScrub.active = false;
   scrubStartX = e.clientX;
+  scrubStartY = e.clientY;
   scrubStartFocus = focus;
   handTrack.setPointerCapture?.(e.pointerId);
-}, { passive: true });
+}, { passive: true, capture: true });
 
 handTrack.addEventListener('pointermove', (e)=>{
-  if (!scrubbing) return;
-  const delta = Math.round((scrubStartX - e.clientX) / STEP);
+  if (!pendingScrub && !scrubbing) return;
+
+  const dx = e.clientX - scrubStartX;
+  const dy = e.clientY - scrubStartY;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  // Only activate scrubbing for clearly horizontal intent
+  if (pendingScrub){
+    if (absDx > (STEP/2) && absDx > absDy * 1.3){
+      pendingScrub = false;
+      scrubbing = true;
+      window.HandScrub.active = true;
+    } else {
+      return; // keep waiting for a decisive horizontal move
+    }
+  }
+
+  // Active scrubbing → adjust focus by step
+  const delta = Math.round((-dx) / STEP);
   const next = clamp(scrubStartFocus + delta, 0, hand.length - 1);
   if (next !== focus){
     focus = next;
     renderHand();
   }
-}, {passive:false});
+}, { passive: false, capture: true });
 
 function endScrub(e){
-  if (!scrubbing) return;
-  scrubbing = false;
-  window.HandScrub.active = false;
+  if (!pendingScrub && !scrubbing) return;
+  pendingScrub = false;
+  if (scrubbing){
+    scrubbing = false;
+    window.HandScrub.active = false;
+  }
   try{ handTrack.releasePointerCapture?.(e.pointerId); }catch{}
 }
-handTrack.addEventListener('pointerup', endScrub);
-handTrack.addEventListener('pointercancel', endScrub);
+handTrack.addEventListener('pointerup', endScrub, {capture:true});
+handTrack.addEventListener('pointercancel', endScrub, {capture:true});
+
 
 //------------------------------------
 
@@ -1394,6 +1521,16 @@ applyViewFilter();
 
 
 /* === Ownership + Player View ========================================= */
+// Make seats visible to modules (Zones uses this)
+window.AppState = window.AppState || {};
+Object.defineProperty(window.AppState, 'mySeat',  { get: () => mySeat() });
+Object.defineProperty(window.AppState, 'viewSeat', {
+  get: () => currentViewSeat,
+  set: (v) => { 
+    const next = Number(v) || currentViewSeat; 
+    if (next !== currentViewSeat){ currentViewSeat = next; applyViewFilter(); }
+  }
+});
 
 
 const otherSeat = () => (mySeat() === 1 ? 2 : 1);
