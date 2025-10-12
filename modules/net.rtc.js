@@ -1,179 +1,273 @@
 // modules/net.rtc.js
-// WebRTC datachannel with Supabase Realtime signaling
-// Requires window.SUPABASE (from your env.supabase.js)
+// WebRTC datachannel using Supabase Realtime for signaling + presence.
+// Super chatty logs so we can see *exactly* where it stalls.
+// Now waits for window.SUPABASE_READY (from env.supabase.js) so we never race.
 
+const TAG = '[RTC]';
 const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
 
-function log(...a){ console.log('[RTC]', ...a); }
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const log  = (...a) => console.log(TAG, ...a);
+const warn = (...a) => console.warn(TAG, ...a);
+const err  = (...a) => console.error(TAG, ...a);
 
+// Utility: wait for condition with timeout (for diagnostics)
+async function waitFor(okFn, { timeout = 8000, label = 'cond' } = {}) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    try { if (okFn()) return true; } catch {}
+    await wait(50);
+  }
+  warn('timeout waiting for', label);
+  return false;
+}
+
+// Ensure Supabase is initialized (uses window.SUPABASE_READY if present)
+async function getSupabaseClient() {
+  // Prefer the promise exposed by env.supabase.js
+  if (window.SUPABASE_READY) {
+    try {
+      const c = await window.SUPABASE_READY;
+      if (c) return c;
+    } catch (e) {
+      throw new Error('Supabase init failed (from SUPABASE_READY): ' + (e?.message || e));
+    }
+  }
+  // Fallback: poll for window.SUPABASE
+  const ok = await waitFor(() => !!window.SUPABASE, { timeout: 6000, label: 'window.SUPABASE' });
+  if (!ok) {
+    throw new Error('Supabase env not loaded (window.SUPABASE missing). Did env.supabase.js run?');
+  }
+  return window.SUPABASE;
+}
+
+/**
+ * createPeerRoom
+ * @param {object} opts
+ *  - roomId   (string)  channel name suffix
+ *  - role     ('host'|'join')
+ *  - seat     (1..3)
+ *  - onMessage(fn)
+ *  - onSeatConflict(fn)
+ */
 export async function createPeerRoom({
   roomId,
   role,          // 'host' | 'join'
   seat = 1,
   onMessage = () => {},
   onSeatConflict = () => {}
-}){
-  // accept either global
-  const sb = window.SUPABASE || window.supabase;
-  if (!sb) throw new Error('Supabase env not loaded');
+}) {
+  if (!roomId || !role) throw new Error('createPeerRoom: missing roomId/role');
 
-  const chanName = `rtc_${roomId}`;
+  const sb = await getSupabaseClient();
+  log('connecting realtime for room', roomId, 'as', role, 'seat', seat);
+
+  // --- PeerConnection
   const pc = new RTCPeerConnection({ iceServers: STUN });
-
   let dc = null;
-  let didOpenDC = false;
   let left = false;
 
-  function log(...a){ console.log('[RTC]', ...a); }
+  // visible flags
+  let channelReady = false;
+  let presenceSeen = false;
+  let remoteSeen   = false;
 
-  // ---- promise that resolves when DC is open
-  const opened = new Promise((res) => {
-    const ok = () => { if (!didOpenDC){ didOpenDC = true; res(); log('DATACHANNEL OPEN'); } };
+  // useful promise: resolves when DC is open or pc is connected.
+  const opened = new Promise((resolve) => {
+    const mark = () => {
+      if (dc?.readyState === 'open' || pc.connectionState === 'connected') {
+        log('✔ link live (dc or pc connected)');
+        resolve();
+      }
+    };
     pc.addEventListener('connectionstatechange', () => {
-      log('pc state =', pc.connectionState);
-      if (pc.connectionState === 'connected') ok();
+      log('pc.connectionState =', pc.connectionState);
+      if (pc.connectionState === 'connected') mark();
+      if (pc.connectionState === 'failed') warn('pc failed (likely ICE)');
     });
+    // joiner receives datachannel
     pc.addEventListener('datachannel', (e) => {
       dc = e.channel;
       wireDC(dc, onMessage);
-      dc.addEventListener('open', ok, { once: true });
+      log('ondatachannel:', dc.label);
+      dc.addEventListener('open',  () => { log('dc open (join)');  mark(); });
+      dc.addEventListener('close', () =>  log('dc close (join)'));
     });
   });
 
-  // ---- create channel
-  const channel = sb.channel(chanName, { config: { broadcast: { self: true } } });
+  // For ICE, we need channel reference; we’ll assign after subscribe.
+  let channel = null;
 
-  // small helper: wait until SUBSCRIBED
-  const waitSubscribed = new Promise((resolve) => {
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        log('subscribed realtime channel', roomId);
-        channel.track({ seat, role }).catch(()=>{});
-        resolve();
-      }
-    });
+  pc.addEventListener('icecandidate', (e) => {
+    if (!channelReady) return;
+    if (e.candidate) {
+      log('local ICE → broadcast');
+      channel.send({
+        type: 'broadcast',
+        event: 'sig',
+        payload: { t: 'ice', seat, role, c: e.candidate }
+      });
+    }
+  });
+  pc.addEventListener('iceconnectionstatechange', () => {
+    log('iceConnectionState =', pc.iceConnectionState);
   });
 
-  // don’t send anything before this
-  await waitSubscribed;
+  // --- Realtime channel (signaling + presence)
+  const chanName = `rtc_${roomId}`;
+  channel = sb.channel(chanName, {
+    config: {
+      broadcast: { self: true },          // we see our own (for debug)
+      presence:  { key: `seat-${seat}` }  // presence key shows seat id
+    }
+  });
 
-  // ---- presence: detect seat conflicts and trigger re-offer when second seat appears
-  let seatOk = true;
-  channel.on('presence', { event: 'sync' }, async () => {
-    const states = channel.presenceState();         // { uuid: [{seat,role}], ... }
-    const seats  = Object.values(states).map(a => a?.[0]?.seat).filter(Boolean);
+  // presence sync → detect conflicts + remote presence
+  channel.on('presence', { event: 'sync' }, () => {
+    const states = channel.presenceState(); // {socket_id:[{presence_ref, ...tracked}]}
+    const members = Object.values(states).flat();
+    const seats = members.map((m) => m?.seat).filter(Boolean);
+    presenceSeen = true;
 
-    // conflict if this seat appears >1 times
-    const dupCount = seats.filter(s => s === seat).length;
-    seatOk = dupCount <= 1;
-    log('presence synced ', { room: roomId, seat, seatOk });
+    // remote present?
+    remoteSeen = members.some((m) => m?.seat !== seat);
 
-    if (!seatOk && onSeatConflict){
+    // seat conflict?
+    const sameSeatCount = seats.filter((s) => s === seat).length;
+    const seatOk = sameSeatCount <= 1;
+    log('presence sync', { members: members.length, seats, seatOk, remoteSeen });
+
+    if (!seatOk && onSeatConflict) {
       const taken = new Set(seats);
-      const options = [1,2,3].filter(s => !taken.has(s));
+      const options = [1, 2, 3].filter((s) => !taken.has(s));
       onSeatConflict({ seatTaken: seat, options });
     }
-
-    // If we’re host and there is at least one other seat present, (re)offer immediately.
-    if (role === 'host' && seats.some(s => s !== seat)) {
-      try {
-        const offer = await pc.createOffer({ iceRestart: pc.iceConnectionState !== 'connected' });
-        await pc.setLocalDescription(offer);
-        log('send offer (presence)');
-        channel.send({ type: 'broadcast', event: 'sig', payload:{ t:'offer', seat, role, sdp: offer }});
-      } catch (e) { /* ignore */ }
-    }
   });
 
-  // ---- ICE after we are subscribed
-  pc.addEventListener('icecandidate', (e)=>{
-    if (e.candidate) {
-      log('local ICE → send');
-      channel.send({ type: 'broadcast', event: 'sig', payload: { t:'ice', seat, role, c: e.candidate }});
-    }
-  });
-  pc.addEventListener('iceconnectionstatechange', ()=> log('ice state =', pc.iceConnectionState));
+  // signaling receiver
+  channel.on('broadcast', { event: 'sig' }, async ({ payload }) => {
+    if (!payload) return;
+    if (payload.seat === seat) return; // ignore self-echo
 
-  // ---- signaling receive (after subscribe)
-  channel.on('broadcast', { event:'sig' }, async ({ payload })=>{
-    try{
-      if (!payload) return;
-      const fromSeat = payload.seat;
-      if (fromSeat === seat) return; // ignore self echoes
-
-      if (payload.t === 'offer'){
-        log('recv offer from seat', fromSeat);
+    try {
+      if (payload.t === 'offer') {
+        log('← offer from seat', payload.seat);
         await pc.setRemoteDescription(payload.sdp);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        channel.send({ type:'broadcast', event:'sig', payload:{ t:'answer', seat, role, sdp: answer }});
+        const ans = await pc.createAnswer();
+        await pc.setLocalDescription(ans);
+        log('→ answer');
+        channel.send({ type: 'broadcast', event: 'sig', payload: { t: 'answer', seat, role, sdp: ans } });
 
-      } else if (payload.t === 'answer'){
-        log('recv answer from seat', fromSeat);
-        if (pc.signalingState !== 'stable'){
-          await pc.setRemoteDescription(payload.sdp).catch(()=>{});
+      } else if (payload.t === 'answer') {
+        log('← answer from seat', payload.seat);
+        if (pc.signalingState !== 'stable') {
+          try { await pc.setRemoteDescription(payload.sdp); } catch (e) { warn('setRemoteDescription(answer) failed', e); }
         }
 
-      } else if (payload.t === 'ice'){
-        try{ await pc.addIceCandidate(payload.c); }catch{/* dupes */}
+      } else if (payload.t === 'ice') {
+        try { await pc.addIceCandidate(payload.c); } catch { /* likely dupes */ }
       }
-    }catch(err){ console.warn('[RTC] signal error', err); }
+    } catch (e) {
+      warn('signal handling error', e);
+    }
   });
 
-  // ---- Host vs Join
-  if (role === 'host'){
-    // host creates DC only after subscribed (important on Safari)
-    dc = pc.createDataChannel('game', { ordered:true });
-    wireDC(dc, onMessage);
-    dc.addEventListener('open', () => log('dc open (host)'));
-    dc.addEventListener('close', () => log('dc close (host)'));
+  // subscribe + presence track
+  log('connecting realtime channel:', chanName);
+  await channel.subscribe(async (status) => {
+    log('channel status =', status);
+    if (status === 'SUBSCRIBED') {
+      channelReady = true;
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    log('send offer');
-    channel.send({ type: 'broadcast', event:'sig', payload:{ t:'offer', seat, role, sdp: offer }});
+      // announce our seat/role in presence
+      try {
+        await channel.track({ seat, role, ts: Date.now() });
+        log('presence track sent', { seat, role });
+      } catch (e) {
+        warn('presence track failed', e);
+      }
 
-  } else {
-    log('joiner waiting for offer…');
-    // ondatachannel will fire when offer/answer completes
-  }
+      // host: create DC + send initial offer
+      if (role === 'host') {
+        dc = pc.createDataChannel('game', { ordered: true });
+        wireDC(dc, onMessage);
+        dc.addEventListener('open',  () => log('dc open (host)'));
+        dc.addEventListener('close', () => log('dc close (host)'));
 
-  // backup: timed re-offer if still not connected
-  setTimeout(async ()=>{
-    if (left) return;
-    if (pc.connectionState === 'connected' || pc.signalingState !== 'stable') return;
-    if (role === 'host'){
-      try{
-        const offer = await pc.createOffer({ iceRestart:true });
+        // small delay gives presence a moment to sync on cold start
+        await wait(60);
+
+        const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        log('send offer (timer)');
-        channel.send({ type:'broadcast', event:'sig', payload:{ t:'offer', seat, role, sdp: offer }});
-      }catch{}
+        log('→ offer broadcast');
+        channel.send({ type: 'broadcast', event: 'sig', payload: { t: 'offer', seat, role, sdp: offer } });
+      } else {
+        log('joiner awaiting offer…');
+      }
     }
-  }, 7000);
+  });
 
-  function send(obj){
-    if (!dc || dc.readyState !== 'open') return false;
-    try{ dc.send(JSON.stringify(obj)); return true; }catch{ return false; }
+  // 🔎 Diagnostics: timeouts that explain what didn’t happen
+  // 1) Did realtime subscription/presence happen?
+  await waitFor(() => channelReady, { timeout: 5000, label: 'realtime subscribe' });
+  await waitFor(() => presenceSeen,  { timeout: 5000, label: 'presence sync' });
+
+  // 2) If we never see a remote, we’ll say so (helps when two tabs used wrong room).
+  setTimeout(() => {
+    if (!remoteSeen) warn('No remote presence detected yet — double-check both sides used the SAME roomId and one is Host, the other Join.');
+  }, 5000);
+
+  // 3) If we’re still not connected after 12s, the host forces a re-offer (iceRestart)
+  setTimeout(async () => {
+    if (left) return;
+    if (pc.connectionState === 'connected') return;
+    if (role === 'host') {
+      try {
+        log('still not connected → re-offer (iceRestart)');
+        const offer = await pc.createOffer({ iceRestart: true });
+        await pc.setLocalDescription(offer);
+        channel.send({ type: 'broadcast', event: 'sig', payload: { t: 'offer', seat, role, sdp: offer } });
+      } catch (e) { warn('re-offer failed', e); }
+    }
+  }, 12000);
+
+  // public API
+  function send(obj) {
+    if (!dc || dc.readyState !== 'open') {
+      warn('send() dropped (dc not open)', obj?.type);
+      return false;
+    }
+    try { dc.send(JSON.stringify(obj)); return true; }
+    catch (e) { warn('send() error', e); return false; }
   }
-  async function close(){
+
+  async function close() {
     left = true;
-    try{ channel.unsubscribe(); }catch{}
-    try{ dc && dc.close(); }catch{}
-    try{ pc.close(); }catch{}
+    try { await channel.unsubscribe(); } catch {}
+    try { dc && dc.close(); } catch {}
+    try { pc.close(); } catch {}
   }
 
-  return { send, close, opened, role, seat };
+  // Make life easier for the table page debugger
+  return {
+    pc,
+    get dc() { return dc; },
+    send,
+    close,
+    opened,       // Promise resolves when link is live
+    role,
+    seat,
+    debug: { channelName: chanName }
+  };
 }
 
-
-// ---- internal: wire incoming messages
-function wireDC(dc, onMessage){
-  dc.addEventListener('message', (e)=>{
+// ---- internal: datastream handlers
+function wireDC(dc, onMessage) {
+  dc.addEventListener('message', (e) => {
     let msg = null;
-    try{ msg = JSON.parse(e.data); }catch{}
+    try { msg = JSON.parse(e.data); } catch {}
     if (msg) onMessage(msg);
   });
-  dc.addEventListener('error', (e)=> console.warn('[RTC] dc error', e));
-  dc.addEventListener('close', ()=> console.log('[RTC] DATACHANNEL CLOSED'));
+  dc.addEventListener('error', (e) => console.warn('[RTC/DC] error', e));
+  dc.addEventListener('close', () => console.log('[RTC/DC] closed'));
 }

@@ -323,9 +323,25 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 
 /* Deck Top/Bottom/Shuffle/Cancel popup */
 #deckChoice{
-  position: fixed;               /* align with viewport coords we compute */
-  z-index: var(--z-overlays);    /* above cards/tooltips/scrims */
-  transform: translate(-50%, -8px);  /* center above the deck, with a tiny gap */
+  position: fixed;
+  z-index: var(--z-overlays);
+  transform: translate(-50%, -8px);
+}
+
+/* === Player view helpers ============================================== */
+.viewing-opponent .hand { display:none; }
+.card.hidden-by-view { display:none !important; }
+
+/* Viewing chip (topbar, right side) */
+.viewingChip{
+  justify-self:end;
+  background:#142136;
+  color:#e9f2ff;
+  border:1px solid #35527d;
+  border-radius:10px;
+  padding:6px 10px;
+  font-weight:800;
+  white-space:nowrap;
 }
 
 
@@ -341,7 +357,11 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
     <div class="life-tile"><span>P2</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
     <div class="life-tile"><span>P3</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
   </div>
+
+  <!-- NEW: who you're viewing -->
+  <div class="viewingChip" id="viewingChip" role="status" aria-live="polite">Viewing: P1</div>
 </div>
+
 
 <!-- Drawer -->
 <div id="drawerWrap" class="drawer-wrap expanded">
@@ -518,7 +538,15 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 <script type="module"> 
 // NEW: networking + saves
 import { createPeerRoom } from './modules/net.rtc.js';
-import { saveSnapshot, listSnapshots, loadSnapshot } from './modules/save.snap.js';
+import {
+  saveSnapshot,
+  listSnapshots,
+  loadSnapshot,
+  getLatestSnapshotForSeat
+} from './modules/save.snap.js';
+
+import { saveSession, loadSession, clearSession, markAskRestoreNext, shouldAskRestoreNext } from './modules/session.memory.js';
+
 
 // ====== helpers ======
 const $  = (s, r=document) => r.querySelector(s);
@@ -536,6 +564,49 @@ const deckIn      = $('#deckIn');
 const loadBtn     = $('#loadBtn');
 const resetBtn    = $('#resetBtn'); // decorative; no-op as requested
 const zoomWrapEl = document.querySelector('.zoomWrap');
+
+const viewEyeBtn = document.getElementById('viewEyeBtn');
+const mySeat = () => parseInt(seatSelect.value, 10) || 1;
+
+const viewingChip = document.getElementById('viewingChip');
+
+
+// === Host/Join/Save/Restore ===
+const btnHost    = document.getElementById('btnHost');
+const btnJoin    = document.getElementById('btnJoin');
+const btnSave    = document.getElementById('btnSave');
+const btnRestore = document.getElementById('btnRestore');
+
+let RTC = null;  // { send(), close(), role, seatOk, ... }
+let ROOM_ID = ''; // we’ll prompt once and reuse
+const seatSelect = document.getElementById('mySeat');
+let currentViewSeat = mySeat();
+
+function updateViewingChip(){
+  if (viewingChip) viewingChip.textContent = `Viewing: P${currentViewSeat}`;
+}
+
+
+// --- Auto reapply last session on load ---
+(function tryReapplyLastSession(){
+  const last = loadSession();
+  if (!last) return;
+
+  const { roomId, role, seat } = last;
+  const ok = confirm(`Rejoin last session?\nRoom: ${roomId}\nRole: ${role.toUpperCase()}\nSeat: P${seat}`);
+  if (!ok) return;
+
+  // set UI + internal state to match
+  try {
+    seatSelect.value = String(seat);
+  } catch {}
+  ROOM_ID = roomId;
+  markAskRestoreNext(true); // after link live, ask to restore last save
+  // kick the connection
+  startRTC(role);
+})();
+
+
 // ====== camera (V2 behavior) ======
 // ====== camera (pan/zoom) ======
 const cam = { x:0, y:0, z:1 };
@@ -665,42 +736,43 @@ window.Camera = { cam, applyCam, screenToWorld, worldToScreen, centerOn, setZoom
 // === GameIO adapter (Save/Restore uses this) ===
 window.GameIO = {
   collectState(){
-    // cards on table: read DOM
     const table = Array.from(world.querySelectorAll('.card')).map(el => ({
-      name: el.dataset?.name || '',  // optional: enrich later
+      name: el.dataset?.name || '',
       img:  el.querySelector('img')?.src || '',
       x:    parseFloat(el.style.left) || 0,
       y:    parseFloat(el.style.top)  || 0,
-      tapped: el.classList.contains('tapped') || false
+      tapped: el.classList.contains('tapped') || false,
+      owner: parseInt(el.dataset.owner || '0', 10) || 1,
+      cid:   el.dataset.cid || ''
     }));
-    // hand/deck we have in-memory
     return { deck, hand, table };
   },
-  applyState(state){
+
+  // ⬇ only apply keys that are present; leave others alone
+  applyState(state = {}){
     try{
-      deck = Array.isArray(state.deck) ? state.deck : [];
-      hand = Array.isArray(state.hand) ? state.hand : [];
-      // clear table and respawn
-      world.querySelectorAll('.card').forEach(n => n.remove());
-      for (const c of (state.table||[])) {
-        const x = Number(c.x)||0, y = Number(c.y)||0;
-        spawnTableCard({name:c.name||'', img:c.img||''}, x, y);
-        if (c.tapped) world.lastChild?.classList.add('tapped');
+      if ('deck' in state) deck = Array.isArray(state.deck) ? state.deck : [];
+      if ('hand' in state) hand = Array.isArray(state.hand) ? state.hand : [];
+
+      if ('table' in state) {
+        world.querySelectorAll('.card').forEach(n => n.remove());
+        for (const c of (state.table || [])) {
+          const x = Number(c.x)||0, y = Number(c.y)||0;
+          spawnTableCard({name:c.name||'', img:c.img||''}, x, y, {
+            owner: c.owner ?? 1,
+            cid:   c.cid   || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12)
+          });
+          if (c.tapped) world.lastChild?.classList.add('tapped');
+        }
       }
+
       renderHand();
+      applyViewFilter();
     }catch(e){ console.warn('applyState error', e); }
   }
 };
 
-// === Host/Join/Save/Restore ===
-const btnHost    = document.getElementById('btnHost');
-const btnJoin    = document.getElementById('btnJoin');
-const btnSave    = document.getElementById('btnSave');
-const btnRestore = document.getElementById('btnRestore');
 
-let RTC = null;  // { send(), close(), role, seatOk, ... }
-let ROOM_ID = ''; // we’ll prompt once and reuse
-const seatSelect = document.getElementById('mySeat');
 
 function sendRTC(msg){
   if (!RTC) { console.log('[NET] no RTC yet, drop', msg); return false; }
@@ -732,6 +804,10 @@ function onSeatConflict({ seatTaken, options }) {
 
 async function startRTC(role) {
   const id = promptRoomId(); if (!id) return;
+
+  // persist session intent
+  saveSession({ roomId: id, role, seat: seatNum() });
+
   if (RTC) { try{ await RTC.close(); }catch{} RTC = null; }
   RTC = await createPeerRoom({
     roomId: id,
@@ -740,37 +816,89 @@ async function startRTC(role) {
     onMessage: handlePeerMessage,
     onSeatConflict
   });
+
   // expose + confirm when datachannel is really open
-window.RTC = RTC;
-RTC.opened.then(() => console.log('[APP] P2P LINK LIVE (datachannel open, ICE connected)'));
+  window.RTC = RTC;
+  RTC.opened.then(async () => {
+    console.log('[APP] P2P LINK LIVE (datachannel open, ICE connected)');
+
+    // Only on “auto reapply” flows, ask to restore the last save for *this* seat
+    if (shouldAskRestoreNext()) {
+  markAskRestoreNext(false);
+  try {
+    const ans = confirm('Connection live. Restore your last saved state for this seat?');
+    if (ans) {
+      const latest = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
+      if (latest) {
+        await loadSnapshot({ id: latest.id }); // local full restore
+        if (RTC) {
+          const { table } = window.GameIO.collectState();
+          RTC.send({ type:'state:table', table }); // broadcast only table
+        }
+      } else {
+        alert('No prior save found for this seat.');
+      }
+    }
+  } catch (e) {
+    console.warn('Auto-restore failed', e);
+    alert('Restore failed. Check Supabase and table `game_saves`.');
+  }
+}
+  });
+
   console.log('[RTC] ready as', role, 'seat', seatNum(), 'room', id);
   alert(`${role === 'host' ? 'Hosting' : 'Joined'} room ${id} as P${seatNum()}`);
 }
 
+
 // Example messages we’ll handle now: sync spawn/move, and full restore
 function handlePeerMessage(msg){
-console.log('[NET] recv', msg?.type, msg);
-
   if (!msg || typeof msg !== 'object') return;
   switch (msg.type) {
     case 'spawn':
-      spawnTableCard({ name: msg.name||'', img: msg.img }, msg.x, msg.y);
+      spawnTableCard({ name: msg.name||'', img: msg.img }, msg.x, msg.y, {
+        cid: msg.cid, owner: msg.owner
+      });
+      applyViewFilter();
       break;
+
     case 'move': {
-      const el = findCardByImg(msg.img);
+      const el = findCardByCid(msg.cid);
       if (el) { el.style.left = msg.x+'px'; el.style.top = msg.y+'px'; }
       break;
     }
+
+    case 'tap': {
+      const el = findCardByCid(msg.cid);
+      if (el) {
+        el.classList.toggle('tapped', !!msg.tapped);
+        el.style.setProperty('--tap-rot', msg.tapped ? '90deg' : '0deg');
+      }
+      break;
+    }
+
     case 'state:apply':
       window.GameIO.applyState(msg.state);
       break;
+	  
+	     // ⬇ peer is pushing just the shared battlefield
+    case 'state:table':
+      window.GameIO.applyState({ table: Array.isArray(msg.table) ? msg.table : [] });
+      break;
+
+    // legacy (keep if you ever send full state intentionally)
+    case 'state:apply':
+      // If you keep this around, protect hands:
+      // window.GameIO.applyState({ table: msg.state?.table || [] });
+      break;
   }
 }
-function findCardByImg(src){
-  return Array.from(world.querySelectorAll('.card img'))
-    .map(i=>i.closest('.card'))
-    .find(card => card.querySelector('img')?.src === src);
+
+
+function findCardByCid(cid){
+  return world.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
 }
+
 
 btnHost?.addEventListener('click', ()=> startRTC('host'));
 btnJoin?.addEventListener('click', ()=> startRTC('join'));
@@ -780,33 +908,48 @@ btnSave?.addEventListener('click', async ()=>{
   const id = promptRoomId(); if (!id) return;
   try{
     const meta = await saveSnapshot({ roomId: id, bySeat: seatNum() });
-    alert(`Saved snapshot.\nID: ${meta.id}`);
+    alert(`Saved snapshot for P${seatNum()}.\nID: ${meta.id}`);
   }catch(e){
-    console.warn(e); alert('Save failed. Check Supabase table `game_saves` exists and RLS allows insert.');
+    console.warn(e);
+    alert('Save failed. Check Supabase table `game_saves` exists and RLS allows insert.');
   }
 });
+
 
 // Restore → pick from list, apply locally AND broadcast to peer via RTC
 btnRestore?.addEventListener('click', async ()=>{
   const id = promptRoomId(); if (!id) return;
   try{
-    const rows = await listSnapshots({ roomId: id, limit: 10 });
-    if (!rows.length){ alert('No saves yet.'); return; }
-    const choice = prompt(
-      'Choose save to restore (enter number):\n' +
-      rows.map((r,i)=> `${i+1}. ${r.id}  [P${r.by_seat}]  ${new Date(r.created_at).toLocaleString()}`).join('\n'),
-      '1'
-    );
-    const idx = (parseInt(choice,10)||1)-1;
-    const chosen = rows[idx]; if (!chosen) return;
+    const mine = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
+    let chosen = mine;
+    if (!mine) {
+      const rows = await listSnapshots({ roomId: id, limit: 10 });
+      if (!rows.length){ alert('No saves yet.'); return; }
+      const choice = prompt(
+        'Choose save to restore (enter number):\n' +
+        rows.map((r,i)=> `${i+1}. ${r.id}  [P${r.by_seat}]  ${new Date(r.created_at).toLocaleString()}`).join('\n'),
+        '1'
+      );
+      const idx = (parseInt(choice,10)||1)-1;
+      chosen = rows[idx];
+    }
+    if (!chosen) return;
+
+    // Apply *my* full state locally
     await loadSnapshot({ id: chosen.id });
 
-    // Also push to peer for instant resync
-    if (RTC) RTC.send({ type:'state:apply', state: window.GameIO.collectState() });
+    // Only broadcast the table to peers
+    if (RTC) {
+      const { table } = window.GameIO.collectState();
+      RTC.send({ type:'state:table', table });
+    }
   }catch(e){
-    console.warn(e); alert('Restore failed. Ensure `game_saves` table exists and RLS allows select.');
+    console.warn(e);
+    alert('Restore failed. Ensure `game_saves` table exists and RLS allows select.');
   }
 });
+
+
 
 
 const SCRY = 'https://api.scryfall.com';
@@ -879,38 +1022,68 @@ function renderHand(){
 
 // swipe L/R to focus; long-press OR swipe up to play
 function attachHandGestures(el, index){
-  let down=false, sx=0, sy=0, lastX=0, moved=false, hold=null, played=false;
-  const UP_THRESH = 70, STEP = 42, HOLD_MS = 550;
+  let down=false, sx=0, sy=0, moved=false, hold=null, played=false;
+  const UP_THRESH = 70, HOLD_MS = 550;
 
   el.addEventListener('pointerdown', (e)=>{
-    down=true; sx=lastX=e.clientX; sy=e.clientY; moved=false; played=false;
+    down=true; sx=e.clientX; sy=e.clientY; moved=false; played=false;
     handTrack.classList.add('swiping');
     el.setPointerCapture?.(e.pointerId);
     hold = setTimeout(()=>{ if(!moved){ playFromHand(index); played=true; down=false; } }, HOLD_MS);
   });
+
   el.addEventListener('pointermove', (e)=>{
     if (!down) return;
-    const dx = e.clientX - lastX;
     const totalDx = e.clientX - sx;
     const totalDy = e.clientY - sy;
-
     if (Math.abs(totalDx) > 6 || Math.abs(totalDy) > 6) moved = true;
 
     // swipe up to play
     if (!played && (sy - e.clientY) > UP_THRESH){
-      clearTimeout(hold); playFromHand(index); played=true; down=false; return;
-    }
-
-    if (Math.abs(dx) > STEP){
-      focus = clamp(focus + (dx<0?1:-1), 0, hand.length-1);
-      lastX = e.clientX;
-      renderHand();
+      clearTimeout(hold);
+      playFromHand(index);
+      played = true;
+      down = false;
     }
   }, {passive:false});
+
   const end = ()=>{ down=false; clearTimeout(hold); handTrack.classList.remove('swiping'); };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
 }
+
+// ===== Hand scrub (continuous left/right while held) =====
+let scrubbing = false;
+let scrubStartX = 0;
+let scrubStartFocus = 0;
+const STEP = 42; // same visual step as your fan spacing
+
+handTrack.addEventListener('pointerdown', (e)=>{
+  if (!e.target.closest('.handCard')) return; // only start when grabbing a card
+  scrubbing = true;
+  scrubStartX = e.clientX;
+  scrubStartFocus = focus;
+  handTrack.setPointerCapture?.(e.pointerId);
+});
+
+handTrack.addEventListener('pointermove', (e)=>{
+  if (!scrubbing) return;
+  const delta = Math.round((scrubStartX - e.clientX) / STEP);
+  const next = clamp(scrubStartFocus + delta, 0, hand.length - 1);
+  if (next !== focus){
+    focus = next;
+    renderHand(); // safe: capture is on handTrack, not a card node that gets replaced
+  }
+}, {passive:false});
+
+function endScrub(e){
+  if (!scrubbing) return;
+  scrubbing = false;
+  try{ handTrack.releasePointerCapture?.(e.pointerId); }catch{}
+}
+handTrack.addEventListener('pointerup', endScrub);
+handTrack.addEventListener('pointercancel', endScrub);
+
 
 // play from hand → center of view
 function playFromHand(i){
@@ -930,9 +1103,20 @@ function playFromHand(i){
   const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
   const ch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
 
-  spawnTableCard(card, p.x - cw/2, p.y - ch/2);
-  sendRTC({ type:'spawn', name: card.name||'', img: card.img, x: p.x - cw/2, y: p.y - ch/2 });
+	const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
+const x = p.x - cw/2, y = p.y - ch/2;
+spawnTableCard(card, x, y, { cid, owner: mySeat() });
 
+// IMPORTANT: include cid + owner so the receiver tags it correctly
+sendRTC({
+  type: 'spawn',
+  cid,
+  owner: mySeat(),
+  name: card.name || '',
+  img:  card.img,
+  x,
+  y
+});
 
 }
 
@@ -948,11 +1132,17 @@ function shouldSendMove(img, everyMs=24){
 
 
 // spawn + drag (world coords, zoom/pan aware)
-function spawnTableCard(card, x, y){
+function spawnTableCard(card, x, y, opts = {}){
+  const owner = opts.owner ?? mySeat();
+  const cid   = opts.cid   ?? (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
+
   const el = document.createElement('div');
   el.className = 'card';
   el.style.left = x+'px';
   el.style.top  = y+'px';
+  el.dataset.owner = String(owner);
+  el.dataset.cid   = String(cid);
+  el.dataset.name  = card.name || '';
   el.innerHTML = `
     <div class="cardInner">
       <div class="face front" style="background:none">
@@ -961,9 +1151,30 @@ function spawnTableCard(card, x, y){
     </div>`;
   world.appendChild(el);
 
+  // respect current view immediately
+  if (parseInt(el.dataset.owner,10) !== currentViewSeat) el.classList.add('hidden-by-view');
+
+  // helper: toggle tap locally + broadcast
+  function setTapped(v, broadcast=true){
+    el.classList.toggle('tapped', v);
+    el.style.setProperty('--tap-rot', v ? '90deg' : '0deg');
+    if (broadcast && window.RTC) {
+      window.RTC.send({ type:'tap', cid, tapped: v });
+    }
+  }
+  function toggleTap(broadcast=true){ setTapped(!el.classList.contains('tapped'), broadcast); }
+
+  // drag + double-tap detection
   let dragging=false, ox=0, oy=0;
+  let startX=0, startY=0, moved=false;
+  const MOVE_TOL = 6;     // px
+  const TAP_MS   = 300;   // double-tap window
+  el._lastTapTs  = el._lastTapTs || 0;
+
   el.addEventListener('pointerdown', (e)=>{
-    dragging=true;
+    dragging=true; moved=false;
+    startX = e.clientX; startY = e.clientY;
+
     const r = worldScale.getBoundingClientRect();
     const lx = (e.clientX - r.left - cam.x)/cam.z;
     const ly = (e.clientY - r.top  - cam.y)/cam.z;
@@ -972,26 +1183,50 @@ function spawnTableCard(card, x, y){
     el.setPointerCapture?.(e.pointerId);
     e.stopPropagation();
   });
+
   el.addEventListener('pointermove', (e)=>{
     if (!dragging) return;
+    if (!moved && (Math.abs(e.clientX-startX) > MOVE_TOL || Math.abs(e.clientY-startY) > MOVE_TOL)) moved = true;
+
     const r = worldScale.getBoundingClientRect();
     const lx = (e.clientX - r.left - cam.x)/cam.z;
     const ly = (e.clientY - r.top  - cam.y)/cam.z;
-el.style.left = (lx - ox) + 'px';
-el.style.top  = (ly - oy) + 'px';
-if (shouldSendMove(card.img)) {
-  sendRTC({ type:'move', img: card.img,
-    x: parseFloat(el.style.left)||0,
-    y: parseFloat(el.style.top)||0
-  });
-}
+    el.style.left = (lx - ox) + 'px';
+    el.style.top  = (ly - oy) + 'px';
 
-
+    if (window.RTC) window.RTC.send({
+      type: 'move',
+      cid,
+      x: parseFloat(el.style.left)||0,
+      y: parseFloat(el.style.top)||0
+    });
   });
-  const end=()=>{ dragging=false; };
+
+  const end = (e)=>{
+    // Double-tap: quick second tap, minimal movement, owner only
+    if (!moved) {
+      const now = performance.now();
+      if (now - (el._lastTapTs||0) < TAP_MS) {
+        if (parseInt(el.dataset.owner,10) === mySeat()) {
+          toggleTap(true);          // local + broadcast
+        }
+      }
+      el._lastTapTs = now;
+    }
+    dragging=false;
+  };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
+
+  // Desktop nicety: dblclick also toggles (owner only)
+  el.addEventListener('dblclick', (e)=>{
+    if (parseInt(el.dataset.owner,10) === mySeat()) {
+      toggleTap(true);
+    }
+  });
 }
+
+
 
 // ====== hook up minimal controls ======
 loadBtn?.addEventListener('click', loadDeckFromTextarea);
@@ -1000,6 +1235,41 @@ deckZone?.addEventListener('click', drawOne);
 
 // Optional: auto-load if textarea already has lines
 if ((deckIn?.value||'').trim()) { loadDeckFromTextarea().catch(()=>{}); }
+
+// Start with my seat’s view
+applyViewFilter();
+
+
+
+/* === Ownership + Player View ========================================= */
+
+
+const otherSeat = () => (mySeat() === 1 ? 2 : 1);
+
+function applyViewFilter(){
+  // table cards
+  for (const el of world.querySelectorAll('.card')) {
+    const owner = parseInt(el.dataset.owner || '0', 10);
+    const show = owner === currentViewSeat;
+    el.classList.toggle('hidden-by-view', !show);
+  }
+  // hand: only show mine
+  const seeMine = currentViewSeat === mySeat();
+  handEl.style.display = seeMine ? '' : 'none';
+  document.body.classList.toggle('viewing-opponent', !seeMine);
+
+  updateViewingChip();   
+}
+
+viewEyeBtn?.addEventListener('click', ()=>{
+  currentViewSeat = (currentViewSeat === mySeat()) ? otherSeat() : mySeat();
+  applyViewFilter();     // update + chip
+});
+
+seatSelect?.addEventListener('change', ()=>{
+  if (currentViewSeat !== otherSeat()) currentViewSeat = mySeat();
+  applyViewFilter();     // update + chip
+});
 
 
 // ======= Drawer Controls ===========

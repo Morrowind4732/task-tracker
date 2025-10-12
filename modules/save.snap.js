@@ -1,49 +1,69 @@
 // modules/save.snap.js
-// Minimal Save/Restore to Supabase table `game_saves` (jsonb).
-// Columns: id (uuid, default gen), room_id text, created_at timestamptz default now(),
-//          by_seat int, state jsonb
-//
-// Requires: window.supabase AND window.GameIO { collectState(), applyState(state) }
+// Depends on window.SUPABASE and window.GameIO (collectState/applyState)
 
-export async function saveSnapshot({ roomId, bySeat }) {
-  if (!window.supabase) throw new Error('Supabase missing');
-  if (!window.GameIO?.collectState) throw new Error('GameIO.collectState missing');
-  const sb = window.supabase;
+const TABLE = 'game_saves';
 
-  const state = window.GameIO.collectState();
-  const { data, error } = await sb.from('game_saves').insert({
-    room_id: roomId,
-    by_seat: bySeat,
-    state
-  }).select('id, created_at').single();
-
-  if (error) throw error;
-  return data; // { id, created_at }
+function sb() {
+  if (!window?.SUPABASE) throw new Error('Supabase env not loaded');
+  return window.SUPABASE;
 }
 
-export async function listSnapshots({ roomId, limit = 10 }) {
-  if (!window.supabase) throw new Error('Supabase missing');
-  const sb = window.supabase;
-  const { data, error } = await sb
-    .from('game_saves')
-    .select('id, created_at, by_seat')
-    .eq('room_id', roomId)
-    .order('created_at', { ascending:false })
-    .limit(limit);
+/**
+ * Save current local state into Supabase.
+ * @param {Object} opts
+ * @param {string} opts.roomId
+ * @param {number} opts.bySeat
+ * @returns {Promise<{id:string, room_id:string, by_seat:number, created_at:string}>}
+ */
+export async function saveSnapshot({ roomId, bySeat }){
+  const state = window.GameIO?.collectState?.();
+  if (!state) throw new Error('GameIO.collectState not available');
+  const { data, error } = await sb()
+    .from(TABLE)
+    .insert([{ room_id: roomId, by_seat: bySeat, state }])
+    .select()
+    .single();
   if (error) throw error;
   return data;
 }
 
-export async function loadSnapshot({ id }) {
-  if (!window.supabase) throw new Error('Supabase missing');
-  if (!window.GameIO?.applyState) throw new Error('GameIO.applyState missing');
-  const sb = window.supabase;
-  const { data, error } = await sb
-    .from('game_saves')
-    .select('state')
-    .eq('id', id).single();
+/**
+ * List latest N snapshots for room (all seats).
+ */
+export async function listSnapshots({ roomId, limit = 20 }){
+  const { data, error } = await sb()
+    .from(TABLE)
+    .select('*')
+    .eq('room_id', roomId)
+    .order('created_at', { ascending:false })
+    .limit(limit);
   if (error) throw error;
+  return data || [];
+}
 
-  window.GameIO.applyState(data.state);
-  return true;
+/**
+ * Get the latest snapshot for a specific seat within a room.
+ */
+export async function getLatestSnapshotForSeat({ roomId, seat }){
+  const { data, error } = await sb()
+    .from(TABLE)
+    .select('*')
+    .eq('room_id', roomId)
+    .eq('by_seat', seat)
+    .order('created_at', { ascending:false })
+    .limit(1);
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+
+/**
+ * Load a snapshot by id and apply locally.
+ */
+export async function loadSnapshot({ id }){
+  const { data, error } = await sb().from(TABLE).select('*').eq('id', id).single();
+  if (error) throw error;
+  const state = data?.state;
+  if (!state) throw new Error('No state in snapshot');
+  window.GameIO?.applyState?.(state);
+  return data;
 }
