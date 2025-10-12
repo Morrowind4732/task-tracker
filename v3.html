@@ -117,7 +117,9 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   position:absolute; z-index:var(--z-actions); display:block; min-width:220px; max-width:min(420px,92vw);
   background:#0b1220; color:#e7efff; border:1px solid #263a5f; border-radius:12px; box-shadow:0 14px 36px rgba(0,0,0,.55);
   padding:10px 12px; font-size:13px; line-height:1.35; white-space:normal; overflow-wrap:anywhere; word-break:break-word;
-  transform-origin: bottom center; transform: translateX(-50%) scale(calc(1 / var(--world-zoom)));
+  transform-origin: bottom center; transform: translateX(-50%);
+  resize: both;
+  overflow: auto;
 }
 .cardTooltip h3{ margin:0 0 6px 0; font-size:15px; line-height:1.25; }
 .cardTooltip .typeLine{ color:#9fb4d9; margin-bottom:6px; }
@@ -538,6 +540,10 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 <script type="module"> 
 // NEW: networking + saves
 import { createPeerRoom } from './modules/net.rtc.js';
+import { initTooltipSystem, attachTooltip, followTooltip, reflowAll, showCardTooltip, hideCardTooltip, clearSelection } from './modules/tooltip.js';
+
+
+
 import {
   saveSnapshot,
   listSnapshots,
@@ -607,28 +613,66 @@ function updateViewingChip(){
 })();
 
 
+// === Selection & tooltip helpers =========================================
+
+
+function selectCard(el, sx = null, sy = null){
+  clearSelection();              // from tooltip.js (also hides any open tip)
+  el.classList.add('selected');  // cyan outline (your CSS)
+
+  // If we were called with screen coords (e.g., pointerdown), open the tip now
+  if (sx != null && sy != null) {
+    showCardTooltip(el, sx, sy);
+  }
+  // Anchor/keep-following to left of the card
+  followTooltip(el);
+}
+
+
+
+
+
 // ====== camera (V2 behavior) ======
 // ====== camera (pan/zoom) ======
 const cam = { x:0, y:0, z:1 };
 function applyCam(){
   worldScale.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.z})`;
   document.documentElement.style.setProperty('--world-zoom', String(cam.z));
+ const sel = world.querySelector('.card.selected');
+ if (sel) {
+   followTooltip(sel);
+ } else {
+   // no selection → keep old behavior (re-clamp tooltip in place if visible)
+   reflowAll();
+ }
 }
+
+
 applyCam();
 
 // ——— Pan (empty felt only; ignore cards & hand strip) ———
 let panning=false, baseX=0, baseY=0, startX=0, startY=0;
-worldWrap.addEventListener('pointerdown', e=>{
-  // don’t steal drags from cards or the hand bar
-  if (e.target.closest('.card')) return;
-  const handRect = handEl.getBoundingClientRect();
-  if (e.clientY >= handRect.top) return;
 
+
+worldWrap.addEventListener('pointerdown', (e)=>{
+  // Never steal drags that start directly on a battlefield card
+  if (e.target.closest('.card')) return;
+
+  // If finger is over a hand card, don't start panning (hand scrub owns it)
+  const topEl = document.elementFromPoint(e.clientX, e.clientY);
+  if (topEl && topEl.closest('.handCard')) return;
+
+  // NEW: background tap starts → clear any selected card + hide tooltip
+ clearSelection();
+ hideCardTooltip();
+
+  // Allow panning, even if pointer Y is inside the hand strip region
   panning = true;
   baseX=cam.x; baseY=cam.y; startX=e.clientX; startY=e.clientY;
   worldWrap.classList.add('panning');
   worldWrap.setPointerCapture?.(e.pointerId);
-});
+}, {passive:true});
+
 
 worldWrap.addEventListener('pointermove', e=>{
   if (!panning) return;
@@ -640,6 +684,7 @@ worldWrap.addEventListener('pointermove', e=>{
 const endPan = () => { panning=false; worldWrap.classList.remove('panning'); };
 worldWrap.addEventListener('pointerup', endPan);
 worldWrap.addEventListener('pointercancel', endPan);
+
 
 // ——— Pinch-to-zoom (two fingers) ———
 const activePtrs = new Map();
@@ -697,6 +742,14 @@ worldWrap.addEventListener('wheel', (e)=>{
 
   applyCam();
 },{passive:false});
+
+initTooltipSystem({
+  world,
+  getCam: () => cam,
+  screenToWorld,
+});
+
+
 
 // ——— Utilities & public API (optional, handy later) ———
 function screenToWorld(sx, sy){
@@ -990,29 +1043,45 @@ function drawOne(){
   renderHand();
 }
 
-// V2 rolodex layout
+// V2 rolodex layout (fixed)
 function renderHand(){
   handTrack.innerHTML = '';
   if (!hand.length) return;
-  focus = clamp(focus, 0, hand.length-1);
 
-  const gap = 64;     // px shift per step
-  const spread = 10;  // deg per step
+  focus = clamp(focus, 0, hand.length - 1);
 
-  for (let i=0;i<hand.length;i++){
-    const rel = i - focus;
+  const gap = 64;          // px shift per step
+  const baseSpread = 10;   // deg at center; we’ll taper at edges
 
+  for (let i = 0; i < hand.length; i++){
+    const rel = i - focus;                       // position relative to focus
+
+    // host wrapper for transforms/stacking
     const host = document.createElement('div');
     host.className = 'handCard';
-    if (Math.abs(rel)>=3) host.classList.add('far');
-    else if (Math.abs(rel)===2) host.classList.add('mid');
-    if (rel===0) host.classList.add('focus');
-    host.style.setProperty('--dx', `${rel*gap}px`);
-    host.style.setProperty('--rot', `${rel*spread}deg`);
+    if (Math.abs(rel) >= 3) host.classList.add('far');
+    else if (Math.abs(rel) === 2) host.classList.add('mid');
+    if (rel === 0) host.classList.add('focus');
 
+    // position + tapered rotation
+    host.style.setProperty('--dx', `${rel * gap}px`);
+    const taper = 1 - Math.min(0.5, Math.abs(rel) / 10);           // less tilt further out
+    const rot   = rel * (baseSpread * taper);
+    host.style.setProperty('--rot', `${rot}deg`);
+
+    // natural stacking: focused on top, neighbors beneath
+    host.style.zIndex = String(1000 - Math.abs(rel));
+
+    // card shell
     const shell = document.createElement('div');
     shell.className = 'card';
-    shell.innerHTML = `<div class="cardInner"><div class="face front"><img src="${hand[i].img}" alt="${hand[i].name}" style="width:100%;height:100%;object-fit:cover;border-radius:14px"/></div></div>`;
+    shell.innerHTML =
+      `<div class="cardInner">
+         <div class="face front">
+           <img src="${hand[i].img}" alt="${hand[i].name}"
+                style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+         </div>
+       </div>`;
     host.appendChild(shell);
     handTrack.appendChild(host);
 
@@ -1020,51 +1089,82 @@ function renderHand(){
   }
 }
 
-// swipe L/R to focus; long-press OR swipe up to play
+// swipe L/R is handled by the hand scrubber now.
+// This handler is only for: long-press to play, or vertical swipe-up to play.
 function attachHandGestures(el, index){
   let down=false, sx=0, sy=0, moved=false, hold=null, played=false;
-  const UP_THRESH = 70, HOLD_MS = 550;
+  const UP_THRESH = 90;   // was 70
+  const HOLD_MS   = 650;  // was 550
+  const START_MOVE_TOL = 8;
 
   el.addEventListener('pointerdown', (e)=>{
     down=true; sx=e.clientX; sy=e.clientY; moved=false; played=false;
     handTrack.classList.add('swiping');
     el.setPointerCapture?.(e.pointerId);
-    hold = setTimeout(()=>{ if(!moved){ playFromHand(index); played=true; down=false; } }, HOLD_MS);
+
+    // Delay the hold slightly; only fire if NOT scrubbing when the timer ends
+    hold = setTimeout(()=>{
+      if (!moved && !window.HandScrub?.active){
+        playFromHand(index);
+        played = true;
+        down = false;
+      }
+    }, HOLD_MS);
   });
 
   el.addEventListener('pointermove', (e)=>{
     if (!down) return;
-    const totalDx = e.clientX - sx;
-    const totalDy = e.clientY - sy;
-    if (Math.abs(totalDx) > 6 || Math.abs(totalDy) > 6) moved = true;
 
-    // swipe up to play
-    if (!played && (sy - e.clientY) > UP_THRESH){
-      clearTimeout(hold);
+    const dx = e.clientX - sx;
+    const dy = sy - e.clientY; // positive = moving up
+
+    if (!moved && (Math.abs(dx) > START_MOVE_TOL || Math.abs(dy) > START_MOVE_TOL)) moved = true;
+
+    // If the scrubber is active, cancel the hold and ignore vertical logic
+    if (window.HandScrub?.active){
+      if (hold){ clearTimeout(hold); hold = null; }
+      return;
+    }
+
+    // Only treat as "play" when vertical clearly dominates horizontal
+    const verticalDominant = Math.abs(dy) > Math.abs(dx) * 1.4;
+
+    if (!played && verticalDominant && dy > UP_THRESH){
+      if (hold){ clearTimeout(hold); hold = null; }
       playFromHand(index);
       played = true;
       down = false;
     }
   }, {passive:false});
 
-  const end = ()=>{ down=false; clearTimeout(hold); handTrack.classList.remove('swiping'); };
+  const end = ()=>{
+    down=false;
+    if (hold){ clearTimeout(hold); hold = null; }
+    handTrack.classList.remove('swiping');
+  };
   el.addEventListener('pointerup', end);
   el.addEventListener('pointercancel', end);
 }
 
+
+// ===== Hand scrub (continuous left/right while held) =====
+// Global-ish flag so card handlers know when the hand scrubber is active
+window.HandScrub = { active: false };
 // ===== Hand scrub (continuous left/right while held) =====
 let scrubbing = false;
 let scrubStartX = 0;
 let scrubStartFocus = 0;
-const STEP = 42; // same visual step as your fan spacing
+// STEP should match your visual spacing; add a little hysteresis so tiny jitters don't flip focus
+const STEP = 46;
 
 handTrack.addEventListener('pointerdown', (e)=>{
-  if (!e.target.closest('.handCard')) return; // only start when grabbing a card
+  if (!e.target.closest('.handCard')) return;
   scrubbing = true;
+  window.HandScrub.active = true;
   scrubStartX = e.clientX;
   scrubStartFocus = focus;
   handTrack.setPointerCapture?.(e.pointerId);
-});
+}, { passive: true });
 
 handTrack.addEventListener('pointermove', (e)=>{
   if (!scrubbing) return;
@@ -1072,17 +1172,20 @@ handTrack.addEventListener('pointermove', (e)=>{
   const next = clamp(scrubStartFocus + delta, 0, hand.length - 1);
   if (next !== focus){
     focus = next;
-    renderHand(); // safe: capture is on handTrack, not a card node that gets replaced
+    renderHand();
   }
 }, {passive:false});
 
 function endScrub(e){
   if (!scrubbing) return;
   scrubbing = false;
+  window.HandScrub.active = false;
   try{ handTrack.releasePointerCapture?.(e.pointerId); }catch{}
 }
 handTrack.addEventListener('pointerup', endScrub);
 handTrack.addEventListener('pointercancel', endScrub);
+
+//------------------------------------
 
 
 // play from hand → center of view
@@ -1131,6 +1234,8 @@ function shouldSendMove(img, everyMs=24){
 }
 
 
+
+
 // spawn + drag (world coords, zoom/pan aware)
 function spawnTableCard(card, x, y, opts = {}){
   const owner = opts.owner ?? mySeat();
@@ -1151,6 +1256,15 @@ function spawnTableCard(card, x, y, opts = {}){
     </div>`;
   world.appendChild(el);
 
+ // NEW: attach tooltip for this card (fill real type/cost/oracle if you have it)
+  attachTooltip(el, {
+    name: card.name || '',
+    typeLine: '',
+    costHTML: '',
+    oracle: ''
+  });
+
+
   // respect current view immediately
   if (parseInt(el.dataset.owner,10) !== currentViewSeat) el.classList.add('hidden-by-view');
 
@@ -1164,66 +1278,104 @@ function spawnTableCard(card, x, y, opts = {}){
   }
   function toggleTap(broadcast=true){ setTapped(!el.classList.contains('tapped'), broadcast); }
 
-  // drag + double-tap detection
-  let dragging=false, ox=0, oy=0;
-  let startX=0, startY=0, moved=false;
-  const MOVE_TOL = 6;     // px
-  const TAP_MS   = 300;   // double-tap window
-  el._lastTapTs  = el._lastTapTs || 0;
+  // ----- drag + tap/double-tap (owner)  |  tap-to-select+tooltip (non-owner)
+let dragging=false, ox=0, oy=0;
+let startX=0, startY=0, moved=false;
+const MOVE_TOL = 6;     // px
+const TAP_MS   = 300;   // double-tap window
+el._lastTapTs  = el._lastTapTs || 0;
 
-  el.addEventListener('pointerdown', (e)=>{
-    dragging=true; moved=false;
-    startX = e.clientX; startY = e.clientY;
+el.addEventListener('pointerdown', (e)=>{
+  const isOwner = parseInt(el.dataset.owner,10) === mySeat();
+  
+   // NEW: select + show tooltip immediately on press down
+ selectCard(el);
+showCardTooltip(el, e.clientX, e.clientY);  // <- correct function name
+     
+  // Always track movement to differentiate tap vs drag
+  moved = false; startX = e.clientX; startY = e.clientY;
 
-    const r = worldScale.getBoundingClientRect();
-    const lx = (e.clientX - r.left - cam.x)/cam.z;
-    const ly = (e.clientY - r.top  - cam.y)/cam.z;
-    ox = lx - parseFloat(el.style.left);
-    oy = ly - parseFloat(el.style.top);
+  if (!isOwner){
+    // Read-only: don't start dragging. We’ll handle tap on pointerup.
+    // Prevent battlefield pan from stealing this *tap* sequence.
     el.setPointerCapture?.(e.pointerId);
     e.stopPropagation();
-  });
+    return;
+  }
 
-  el.addEventListener('pointermove', (e)=>{
-    if (!dragging) return;
+  // Owner: begin drag
+  dragging=true;
+  const r = worldScale.getBoundingClientRect();
+  const lx = (e.clientX - r.left - cam.x)/cam.z;
+  const ly = (e.clientY - r.top  - cam.y)/cam.z;
+  ox = lx - parseFloat(el.style.left);
+  oy = ly - parseFloat(el.style.top);
+  el.setPointerCapture?.(e.pointerId);
+  e.stopPropagation();
+});
+
+el.addEventListener('pointermove', (e)=>{
+  if (!dragging) {
     if (!moved && (Math.abs(e.clientX-startX) > MOVE_TOL || Math.abs(e.clientY-startY) > MOVE_TOL)) moved = true;
+    // Even when not dragging, keep the tooltip anchored to the element (pan/zoom or small nudges)
+    followTooltip(el);
+    return;
+  }
 
-    const r = worldScale.getBoundingClientRect();
-    const lx = (e.clientX - r.left - cam.x)/cam.z;
-    const ly = (e.clientY - r.top  - cam.y)/cam.z;
-    el.style.left = (lx - ox) + 'px';
-    el.style.top  = (ly - oy) + 'px';
+  if (!moved && (Math.abs(e.clientX-startX) > MOVE_TOL || Math.abs(e.clientY-startY) > MOVE_TOL)) moved = true;
 
-    if (window.RTC) window.RTC.send({
-      type: 'move',
-      cid,
-      x: parseFloat(el.style.left)||0,
-      y: parseFloat(el.style.top)||0
-    });
+  const r = worldScale.getBoundingClientRect();
+  const lx = (e.clientX - r.left - cam.x)/cam.z;
+  const ly = (e.clientY - r.top  - cam.y)/cam.z;
+  el.style.left = (lx - ox) + 'px';
+  el.style.top  = (ly - oy) + 'px';
+
+  // Keep tooltip glued to the left edge of the card while dragging
+  followTooltip(el);
+
+  if (window.RTC) window.RTC.send({
+    type: 'move',
+    cid,
+    x: parseFloat(el.style.left)||0,
+    y: parseFloat(el.style.top)||0
   });
+});
 
-  const end = (e)=>{
-    // Double-tap: quick second tap, minimal movement, owner only
-    if (!moved) {
-      const now = performance.now();
-      if (now - (el._lastTapTs||0) < TAP_MS) {
-        if (parseInt(el.dataset.owner,10) === mySeat()) {
-          toggleTap(true);          // local + broadcast
-        }
-      }
-      el._lastTapTs = now;
-    }
-    dragging=false;
-  };
-  el.addEventListener('pointerup', end);
-  el.addEventListener('pointercancel', end);
 
-  // Desktop nicety: dblclick also toggles (owner only)
-  el.addEventListener('dblclick', (e)=>{
-    if (parseInt(el.dataset.owner,10) === mySeat()) {
-      toggleTap(true);
+const end = async (e)=>{
+  const isOwner = parseInt(el.dataset.owner,10) === mySeat();
+
+  if (!moved){
+    const now = performance.now();
+
+    // Single/double click timing
+    const isDouble = now - (el._lastTapTs||0) < TAP_MS;
+    el._lastTapTs = now;
+
+    if (isDouble){
+      // owner double-tap = tap/untap broadcast
+      if (isOwner) toggleTap(true);
+    } else {
+      // --- Single tap: select and show tooltip for everyone
+      selectCard(el);
+      await showCardTooltip(el, e.clientX, e.clientY);
     }
-  });
+  }
+
+  dragging=false;
+  try{ el.releasePointerCapture?.(e.pointerId); }catch{}
+};
+
+el.addEventListener('pointerup', end);
+el.addEventListener('pointercancel', end);
+
+// Desktop nicety: dblclick also toggles (owner only)
+el.addEventListener('dblclick', (e)=>{
+  if (parseInt(el.dataset.owner,10) === mySeat()) {
+    toggleTap(true);
+  }
+});
+
 }
 
 
