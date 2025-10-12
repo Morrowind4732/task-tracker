@@ -10,6 +10,7 @@ let supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // 3) Expose globally so other modules (combat.store.js) can use it or fall back to REST
 window.supabase     = supa;
+window.SUPABASE     = supa;  
 window.SUPABASE_URL = SUPABASE_URL;
 window.SUPABASE_KEY = SUPABASE_ANON_KEY;
 

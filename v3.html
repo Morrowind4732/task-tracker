@@ -1,0 +1,1015 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no"/>
+<title>Deck Table — V2 (mobile portrait first)</title>
+
+<link rel="stylesheet" href="mana-master/css/mana.min.css">
+
+
+
+<style>
+:root{
+  --bg:#0e1015; --fg:#e7e9ee; --muted:#9aa3b2; --accent:#6aa9ff;
+  --ok:#42d392; --warn:#ffb84d; --danger:#ff6b6b;
+  --topbar-h:64px;
+  --life-h:40px;
+  --card-w:223px; --card-h:310px;
+  --zone-w:223px; --zone-h:310px;
+
+  /* raise overlays so the settings panel beats the hand & toolbar */
+  --z-tooltip:20; 
+  --z-hand:35; 
+  --z-toolbar:40; 
+  --z-zoom:45; 
+  --z-actions:36; 
+  --z-overlays:10000;
+
+  --hand-scale: .88;
+  --flip-rot: 0deg;
+  --tap-rot: 0deg;
+  --world-zoom: 1;
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+body{ margin:0; background:var(--bg); color:var(--fg); font:14px/1.35 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif; -webkit-tap-highlight-color:transparent; overflow:hidden; }
+button{ font:inherit; color:inherit; cursor:pointer; background:none; border:0; }
+:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:8px; }
+
+/* Top bar */
+.topbar{ position:sticky; top:0; z-index:10; display:grid; grid-template-columns:auto 1fr; align-items:center; gap:10px; height:var(--topbar-h); padding:10px 12px; border-bottom:1px solid #1f2738; background:linear-gradient(180deg,#10141b,#0c1117); }
+.cog{ width:42px; height:42px; border-radius:12px; border:1px solid #24324a; background:#111826; display:grid; place-items:center; font-weight:900; }
+.life-strip{ display:flex; gap:8px; align-items:center; }
+.life-tile{
+  background:#0f141c; border:1px solid #2b3344; border-radius:12px;
+  min-width:90px; padding:6px 10px;
+  display:flex; align-items:center;
+  justify-content:flex-start;   /* was space-between */
+  gap:10px;                     /* adds clear space between “P1” and the life */
+}
+
+.life-main{ color:#ff6b6b; font-weight:800; }
+.life-cmd{ color:#e7e9ee; background:#000; border-radius:8px; padding:0 6px; margin-left:8px; font-weight:700; }
+
+/* Drawer */
+.drawer-wrap{ overflow:hidden; transition:max-height .25s ease; border-bottom:1px solid #1f2738; }
+.drawer-wrap.collapsed{ max-height:0; border-bottom-color:transparent; }
+.drawer-wrap.expanded{ max-height:420px; }
+.drawer{ padding:12px; background:#0b0f15; display:grid; gap:10px; }
+.row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.pill{ background:#1b2a47; color:#d8e7ff; font-weight:700; padding:9px 12px; border-radius:12px; border:1px solid #24324a; }
+select.pill{ padding:8px 10px; }
+textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; border-radius:12px; border:1px solid #24304a; background:#0a0f16; color:var(--fg); font:13px/1.45 ui-monospace,Menlo,Consolas,monospace; }
+
+/* Table */
+.table{ position:relative; height:calc(100% - var(--topbar-h)); background:linear-gradient(180deg,#0d3a1e,#0a2716 40%, #092113); }
+.worldWrap{ position:absolute; inset:0; overflow:hidden; cursor:grab; touch-action:none; }
+.worldWrap.panning{ cursor:grabbing; }
+.worldScale{ position:relative; transform-origin:0 0; will-change:transform; }
+.world{ position:relative; min-width:100%; min-height:100%; padding:24px; }
+
+/* Zones */
+.zone{ position:absolute; width:var(--zone-w); height:var(--zone-h); border:2px dashed rgba(255,255,255,.2); border-radius:12px; background:rgba(0,0,0,.12); display:grid; place-items:center; user-select:none; }
+.zone .label{ color:#d0d6e4; font-weight:700; pointer-events:none; }
+#deckZone{ background:#000 url('https://i.imgur.com/LdOBU1I.jpeg') center/cover no-repeat; border:1px solid #2b3344; }
+#deckZone .label{ display:none; }
+#deckZone{ left:24px; top:24px; }
+#cmdZone{ left:24px; top:calc(24px + var(--zone-h) + 12px); }
+#graveyard{ left:calc(24px + var(--zone-w) + 16px); top:24px; }
+#exileZone{ left:calc(24px + var(--zone-w) + 16px); top:calc(24px + var(--zone-h) + 12px); }
+
+/* Card shells */
+.card{ position:absolute; width:var(--card-w); height:var(--card-h); border-radius:14px; box-shadow:0 10px 26px rgba(0,0,0,.5); touch-action:none; perspective:1000px; transition: width .18s ease, height .18s ease; overflow:visible; }
+.card.tapped{ width:var(--card-h); height:var(--card-w); }
+
+/* Inner 3D flipper */
+.cardInner{
+  position:absolute; left:50%; top:50%; width:100%; height:100%; border-radius:14px;
+  transform-style: preserve-3d; /* CRITICAL: render front/back as real faces */
+  transform-origin:center center;
+  transform: translate(-50%,-50%) rotateZ(var(--tap-rot)) rotateY(var(--flip-rot));
+  transition: transform .35s ease, width .18s ease, height .18s ease;
+}
+.cardTooltip{ z-index: calc(var(--z-actions) + 1); }
+
+.card.tapped .cardInner{ width:var(--card-w); height:var(--card-h); }
+
+.card.selected{ outline:2px solid var(--accent); outline-offset:2px; }
+
+/* Faces */
+.face{
+  position:absolute; inset:0; border-radius:14px;
+  backface-visibility:hidden;  /* hide reverse of each face */
+  background:#1a1f2a center/cover no-repeat;
+}
+.face.back{ transform: rotateY(180deg); } /* back is pre-rotated to face forward when parent flips */
+
+.card .pt{ position:absolute; right:6px; bottom:6px; background:rgba(0,0,0,.7); color:#e7f0ff; border-radius:8px; padding:2px 6px; font-weight:800; z-index:2; }
+
+/* Quick actions */
+.cardActions{ position:absolute; z-index:var(--z-actions); display:flex; flex-direction:column; gap:8px; }
+.cardActions .qa{ width:42px; height:42px; border-radius:50%; background:#0f1725; color:#cfe1ff; border:1px solid #2b3f63; display:grid; place-items:center; font-weight:900; box-shadow:0 8px 20px rgba(0,0,0,.35); }
+
+/* Tooltip */
+.cardTooltip{
+  position:absolute; z-index:var(--z-actions); display:block; min-width:220px; max-width:min(420px,92vw);
+  background:#0b1220; color:#e7efff; border:1px solid #263a5f; border-radius:12px; box-shadow:0 14px 36px rgba(0,0,0,.55);
+  padding:10px 12px; font-size:13px; line-height:1.35; white-space:normal; overflow-wrap:anywhere; word-break:break-word;
+  transform-origin: bottom center; transform: translateX(-50%) scale(calc(1 / var(--world-zoom)));
+}
+.cardTooltip h3{ margin:0 0 6px 0; font-size:15px; line-height:1.25; }
+.cardTooltip .typeLine{ color:#9fb4d9; margin-bottom:6px; }
+.cardTooltip .oracle{ white-space:pre-wrap; }
+
+/* Hand */
+.hand{ position:fixed; left:0; right:0; bottom:56px; z-index:var(--z-hand); display:grid; place-items:center; height:calc(var(--card-h) * .9); pointer-events:none; }
+.handTrack{ position:relative; width:100%; height:100%; }
+.handCard{ --dx:0px; --rot:0deg; position:absolute; left:50%; top:50%; transform:translate(calc(-50% + var(--dx)), -50%) scale(var(--hand-scale)) rotate(var(--rot)); transition: transform .18s ease, opacity .18s ease; pointer-events:auto; }
+.handCard.far { opacity:.35; transform: translate(calc(-50% + var(--dx)), -50%) scale(calc(var(--hand-scale) * .78)) rotate(var(--rot)); }
+.handCard.mid { opacity:.7;  transform: translate(calc(-50% + var(--dx)), -50%) scale(calc(var(--hand-scale) * .88)) rotate(var(--rot)); }
+.handCard.focus{ opacity:1; transform: translate(calc(-50% + var(--dx)), -50%) scale(1) rotate(0deg); z-index:2; }
+.handCard .card{ position:relative; }
+.hand.swiping .handCard{ transition:none !important; }
+
+/* Toolbar */
+.toolbar{ position:fixed; left:0; right:0; bottom:0; z-index:var(--z-toolbar); display:grid; grid-auto-flow:column; justify-content:center; gap:12px; padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px)); background:linear-gradient(180deg, rgba(12,18,28,0), rgba(12,18,28,.88)); border-top:1px solid rgba(255,255,255,.08); }
+.fab{ width:50px; height:50px; border-radius:50%; background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63; display:grid; place-items:center; font-size:20px; box-shadow:0 8px 20px rgba(106,169,255,.18); }
+
+/* Zoom */
+.zoomWrap{ position:fixed; left:8px; top:calc(var(--topbar-h) + 8px); z-index:var(--z-zoom); width:32px; height:220px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:12px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+#zoom{ position:relative; transform: rotate(-90deg); transform-origin:center; width:180px; height:32px; -webkit-appearance:none; appearance:none; background:transparent; outline:none; }
+#zoom::-webkit-slider-runnable-track{ height:6px; border-radius:4px; background:#23324d; }
+#zoom::-webkit-slider-thumb{ -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:#6aa9ff; border:2px solid #0a1426; transform:translateY(-5px); }
+
+/* Overlays */
+.scrim{ position:fixed; inset:0; background:rgba(6,10,16,.6); display:none; z-index:var(--z-overlays); }
+.panel{ position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); width:min(720px,94vw); max-height:80vh; overflow:auto; background:rgba(12,18,28,.98); border:1px solid #24324a; border-radius:14px; padding:12px; }
+.zoneGrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; }
+.thumb{ width:100%; padding-top:140%; border-radius:10px; background:#1a1f2a center/cover no-repeat; position:relative; overflow:hidden; cursor:pointer; }
+
+/* Mobile tweaks */
+@media (max-width: 768px){
+  :root{ --card-w:180px; --card-h:250px; --zone-w:180px; --zone-h:250px; --hand-scale:.86; }
+  .drawer-wrap.expanded{ max-height:360px; }
+}
+@media (max-width: 420px){
+  :root{ --card-w:160px; --card-h:220px; --zone-w:160px; --zone-h:220px; --hand-scale:.84; }
+}
+
+/* Game picker */
+.gamePicker{ display:flex; gap:8px; }
+.gameBtn{ background:#1b2a47; color:#d8e7ff; font-weight:800; padding:8px 12px; border-radius:999px; border:1px solid #24324a; opacity:.85; }
+.gameBtn.active{ background:#314a7d; border-color:#3d5ba0; opacity:1; box-shadow:0 6px 16px rgba(49,74,125,.35) inset; }
+
+/* Mana icon sizing inside tooltip */
+.cardTooltip i.ms{
+  font-size:18px;
+  line-height:1;
+  display:inline-block;
+  vertical-align:-2px;
+  margin:0 2px;
+}
+.cardTooltip .cost i.ms{ font-size:20px; }
+.cardTooltip .ms.ms-cost{ margin:0 1px; } /* tiny spacing tweak */
+
+/* Smooth motion + hide actions while viewing another player */
+.viewing-opponent .card {
+  transition: left .22s ease, top .22s ease, width .18s ease, height .18s ease;
+  cursor: default;
+}
+.viewing-opponent .cardActions { display:none; }
+
+.fab svg{
+  width:22px;
+  height:22px;
+  display:block; /* centers nicely in the grid container */
+}
+
+/* Buttons to the immediate left of the deck (vertically centered) */
+.deck-actions{
+  position: absolute;
+  left: calc(var(--DECK_X) - 64px);
+  top:  calc(var(--DECK_TOP) + (var(--ZONE_H) / 2) - 28px);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  z-index: var(--z-controls);
+}
+/* Only the three buttons next to the deck */
+.deck-actions .sbtn{
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background:#1a2a45;
+  color:#cfe1ff;
+  border:1px solid #2b3f63;
+  font-weight:900;
+  font-size:20px;
+  display:inline-flex;align-items:center;justify-content:center;line-height:1;
+  box-shadow:0 8px 20px rgba(106,169,255,.18);
+}
+.deck-actions .sbtn:active{ transform:scale(.98); }
+
+
+.chatOverlay{
+  position:fixed; inset:0; display:none; z-index:60;
+  background:rgba(6,10,16,.65);
+}
+.chatPanel{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%);
+  width:min(980px,94vw); max-height:82vh; overflow:auto;
+  background:#0b1220; color:#e7efff; border:1px solid #2b3f63;
+  border-radius:14px; padding:12px;
+}
+.chatHeader{
+  display:flex; justify-content:space-between; align-items:center;
+  gap:8px; margin-bottom:10px; font-weight:800;
+}
+.chatClose{ background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63;
+  border-radius:10px; padding:6px 10px; }
+.btn.sm{
+  background:#142136; color:#e9f2ff; border:1px solid #35527d;
+  border-radius:10px; padding:6px 10px; font-weight:800;
+}
+
+.deck-actions,
+.deck-actions .sbtn{
+  touch-action: auto;
+}
+
+/* ==== Stack preview arrow ============================================== */
+.stackArrow{
+  position:absolute; z-index:var(--z-tooltip);
+  display:none; pointer-events:none;
+  padding:6px 10px; border-radius:999px;
+  background:rgba(20,33,54,.92); border:1px solid #35527d;
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+  transform: translate(-50%,-50%) scale(calc(1 / var(--world-zoom)));
+  gap:8px; align-items:center; font-weight:800; color:#e9f2ff;
+}
+.stackArrow svg{ width:22px; height:22px; display:block; }
+.stackArrow.dir-right svg{ transform:rotate(0deg); }
+.stackArrow.dir-left  svg{ transform:rotate(180deg); }
+.stackArrow.dir-up    svg{ transform:rotate(-90deg); }
+
+/* === Mulligan overlay (top-center prompt) =============================== */
+.mulliganOverlay{
+  position:fixed; left:50%; top:10px; transform:translateX(-50%);
+  z-index: var(--z-overlays);
+  display:none; pointer-events:none;
+}
+.mullPanel{
+  pointer-events:auto;
+  background:rgba(12,18,28,.98);
+  border:1px solid #24324a;
+  border-radius:12px;
+  padding:10px 12px;
+  display:flex; align-items:center; gap:10px;
+  box-shadow:0 10px 26px rgba(0,0,0,.45);
+  font-weight:800; color:#e9f2ff;
+}
+.mullPanel .btn{
+  background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63;
+  border-radius:10px; padding:6px 12px; font-weight:900;
+}
+.mullPanel .btn:active{ transform:scale(.98); }
+
+/* === Card Settings overlay ============================================= */
+#cardSettings.scrim{ display:none; }
+.cardSettingsPanel{
+  position:absolute; left:50%; top:50%;
+  transform:translate(-50%,-50%); width:min(820px,94vw); max-height:80vh; overflow:auto;
+  background:rgba(12,18,28,.98); border:1px solid #24324a; border-radius:14px; padding:12px;
+}
+.cs-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.cs-row{ display:grid; grid-template-columns:140px 1fr; gap:10px; align-items:start; margin-bottom:10px; }
+.cs-row .lbl{ color:#9fb4d9; font-weight:800; padding-top:6px; }
+.cs-input, .cs-textarea, .cs-chipinput{ width:100%; background:#0a0f16; color:#e7efff; border:1px solid #24324a; border-radius:10px; padding:8px 10px; }
+.cs-textarea{ min-height:90px; resize:vertical; }
+.cs-chips{ display:flex; gap:6px; flex-wrap:wrap; }
+.cs-chip{ background:#1b2a47; border:1px solid #2b3f63; color:#d8e7ff; border-radius:999px; padding:6px 10px; font-weight:800; }
+.cs-minirow{ display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+.cs-minirow input{ background:#0a0f16; color:#e7efff; border:1px solid #24324a; border-radius:8px; padding:6px 8px; }
+.cs-actions{ display:flex; justify-content:flex-end; gap:8px; margin-top:12px; }
+.cs-btn{ background:#1a2a45; color:#cfe1ff; border:1px solid #2b3f63; border-radius:10px; padding:8px 12px; font-weight:900; }
+.cs-btn.warn{ background:#2a1730; border-color:#5e2a6a; }
+
+/* Counters list */
+.countersWrap{ display:flex; flex-direction:column; gap:6px; }
+.counterRow{ display:grid; grid-template-columns:1fr 90px 34px; gap:8px; }
+.counterRow input{ background:#0a0f16; color:#e7efff; border:1px solid #24324a; border-radius:8px; padding:6px 8px; }
+.counterRow .addBtn, .counterRow .delBtn{
+  background:#142136; color:#e9f2ff; border:1px solid #35527d; border-radius:10px; width:34px; height:34px; font-weight:900;
+}
+
+/* === Under-card anchor badge =========================================== */
+.cardBadge{
+  position:absolute; z-index:var(--z-tooltip);
+  background:rgba(20,33,54,.92); border:1px solid #35527d; color:#e7f2ff;
+  border-radius:10px; padding:6px 8px; display:flex; gap:8px; align-items:center;
+  transform: translate(-50%, 0) scale(calc(1 / var(--world-zoom)));
+  pointer-events:none;
+}
+.cardBadge .bchip{
+  background:#1b2a47; border:1px solid #2b3f63; border-radius:8px; padding:2px 6px; font-weight:800;
+}
+.cardBadge .notes{ max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; opacity:.9; }
+
+.deck-actions{ pointer-events: none; }         /* wrapper ignores hits */
+.deck-actions .sbtn{ pointer-events: auto; }   /* buttons still clickable */
+
+/* Deck Top/Bottom/Shuffle/Cancel popup */
+#deckChoice{
+  position: fixed;               /* align with viewport coords we compute */
+  z-index: var(--z-overlays);    /* above cards/tooltips/scrims */
+  transform: translate(-50%, -8px);  /* center above the deck, with a tiny gap */
+}
+
+
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <button class="cog" id="cogBtn">⚙️</button>
+  <div class="life-strip">
+    <div class="life-tile"><span>P1</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
+    <div class="life-tile"><span>P2</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
+    <div class="life-tile"><span>P3</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
+  </div>
+</div>
+
+<!-- Drawer -->
+<div id="drawerWrap" class="drawer-wrap expanded">
+  <div class="drawer">
+    <div class="row">
+      <label class="pill">Players
+        <select class="pill" id="playerCount">
+          <option>1</option><option selected>2</option><option>3</option>
+        </select>
+      </label>
+      <label class="pill">I am
+        <select class="pill" id="mySeat">
+          <option>1</option><option selected>2</option><option>3</option>
+        </select>
+      </label>
+      <button class="pill" id="lifeEditBtn">Edit Life</button>
+    </div>
+    <textarea class="deck-in" id="deckIn" placeholder="Paste your deck list..."></textarea>
+    <div class="row">
+      <button class="pill" id="loadBtn">Load Deck</button>
+      <button class="pill" id="resetBtn" title="Resets THIS player only">Reset (me)</button>
+    </div>
+    <div class="row">
+      <div class="gamePicker" id="gamePicker">
+  <button class="gameBtn" id="btnHost">Host</button>
+  <button class="gameBtn" id="btnJoin">Join</button>
+  <button class="gameBtn" id="btnSave">Save</button>
+  <button class="gameBtn" id="btnRestore">Restore</button>
+</div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="table" id="table">
+  <div class="worldWrap" id="worldWrap">
+    <div class="worldScale" id="worldScale" style="transform:translate(0px,0px) scale(1);">
+      <div class="world" id="world">
+        <div class="zone" id="deckZone"><div class="label">Deck</div></div>
+		<!-- Left-of-deck actions (🔍 ＋ …) -->
+<div class="deck-actions" id="deckActions">
+  <button class="sbtn" id="deckSearchBtn" title="Search Deck">🔍</button>
+  <button class="sbtn" id="deckAddBtn"    title="Add card / token">＋</button>
+  <button class="sbtn" id="deckMoreBtn"   title="Deck Tools">…</button>
+</div>
+
+        <div class="zone" id="cmdZone"><div class="label">Commander</div></div>
+        <div class="zone" id="graveyard"><div class="label">Graveyard</div></div>
+        <div class="zone" id="exileZone"><div class="label">Exile</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Hand -->
+<div class="hand" id="hand"><div class="handTrack" id="handTrack"></div></div>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <button class="fab" id="battleBtn" title="Battle">⚔️</button>
+  <button class="fab" id="endTurnBtn" title="End Turn">⏭</button>
+  <button class="fab" id="viewEyeBtn" title="View Player">👁</button>
+  <button class="fab" id="turnInfoBtn" title="Turn Info" aria-label="Turn Info">
+  <svg viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+       aria-hidden="true">
+    <circle cx="12" cy="12" r="10"></circle>
+    <path d="M12 16v-4"></path>
+    <path d="M12 8h.01"></path>
+  </svg>
+</button>
+
+</div>
+
+<!-- Zoom -->
+<div class="zoomWrap"><input type="range" id="zoom" min="40" max="160" value="100"/></div>
+
+<!-- Overlays -->
+<div class="scrim" id="zoneOverlay">
+  <div class="panel">
+    <div class="row" style="justify-content:space-between; align-items:center;">
+      <strong id="overlayTitle">Zone</strong>
+      <button class="pill" id="overlayClose">Close</button>
+    </div>
+    <div class="zoneGrid" id="overlayGrid"></div>
+  </div>
+</div>
+
+<div class="deckChoice" id="deckChoice" style="display:none; left:0; top:0;">
+  <button class="pill" data-choice="top">Top</button>
+  <button class="pill" data-choice="bottom">Bottom</button>
+  <button class="pill" data-choice="shuffle">Shuffle</button>
+  <button class="pill" data-choice="cancel">Cancel</button>
+</div>
+
+
+<!-- Card Settings (⚙️) -->
+<div class="scrim" id="cardSettings">
+  <div class="cardSettingsPanel">
+    <div class="cs-header">
+      <strong id="csTitle">Card Settings</strong>
+      <button class="cs-btn" id="csClose">Close</button>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Additional Types</div>
+      <div>
+        <div class="cs-chips" id="csTypesChips"></div>
+        <input class="cs-input" id="csTypesInput" placeholder="Type a type and press Enter (e.g., Wizard)" />
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Additional Effects</div>
+      <div>
+        <div class="cs-chips" id="csEffectsChips"></div>
+        <input class="cs-input" id="csEffectsInput" placeholder="Type an effect and press Enter (e.g., Vigilance)" />
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Chosen Type</div>
+      <input class="cs-input" id="csChosenType" placeholder="e.g., Angel, Wizard, Beast..." />
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">P/T Mod</div>
+      <div class="cs-minirow">
+        <label>Power ± <input type="number" id="csPowMod" style="width:80px" value="0"></label>
+        <label>Toughness ± <input type="number" id="csTghMod" style="width:80px" value="0"></label>
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Counters</div>
+      <div>
+        <div class="countersWrap" id="csCounters"></div>
+        <div class="counterRow">
+          <input id="csNewCounterName" placeholder="counter name (e.g., +1/+1)" />
+          <input id="csNewCounterQty" type="number" placeholder="qty" value="1" />
+          <button class="addBtn" id="csAddCounter">＋</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="cs-row">
+      <div class="lbl">Notes</div>
+      <textarea class="cs-textarea" id="csNotes" placeholder="Anything else..."></textarea>
+    </div>
+
+    <div class="cs-actions">
+      <button class="cs-btn warn" id="csClear">Clear</button>
+      <button class="cs-btn" id="csSave">Save</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Mulligan overlay (friendly: always draw 7 again) -->
+<div class="mulliganOverlay" id="mulliganOverlay">
+  <div class="mullPanel">
+    <span>Mulligan?</span>
+    <button class="btn" id="mullYesBtn">Yes</button>
+    <button class="btn" id="mullNoBtn">No</button>
+  </div>
+</div>
+
+<!-- put this early in the page -->
+<!-- put this BEFORE any scripts that use StorageAPI -->
+<script type="module" src="./modules/env.supabase.js"></script>
+
+
+<script type="module"> 
+// NEW: networking + saves
+import { createPeerRoom } from './modules/net.rtc.js';
+import { saveSnapshot, listSnapshots, loadSnapshot } from './modules/save.snap.js';
+
+// ====== helpers ======
+const $  = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+
+// core nodes (IDs exactly from your HTML)
+const worldWrap   = $('#worldWrap');
+const worldScale  = $('#worldScale');
+const world       = $('#world');
+const handEl      = $('#hand');
+const handTrack   = $('#handTrack');
+const deckZone    = $('#deckZone');
+const deckIn      = $('#deckIn');
+const loadBtn     = $('#loadBtn');
+const resetBtn    = $('#resetBtn'); // decorative; no-op as requested
+const zoomWrapEl = document.querySelector('.zoomWrap');
+// ====== camera (V2 behavior) ======
+// ====== camera (pan/zoom) ======
+const cam = { x:0, y:0, z:1 };
+function applyCam(){
+  worldScale.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.z})`;
+  document.documentElement.style.setProperty('--world-zoom', String(cam.z));
+}
+applyCam();
+
+// ——— Pan (empty felt only; ignore cards & hand strip) ———
+let panning=false, baseX=0, baseY=0, startX=0, startY=0;
+worldWrap.addEventListener('pointerdown', e=>{
+  // don’t steal drags from cards or the hand bar
+  if (e.target.closest('.card')) return;
+  const handRect = handEl.getBoundingClientRect();
+  if (e.clientY >= handRect.top) return;
+
+  panning = true;
+  baseX=cam.x; baseY=cam.y; startX=e.clientX; startY=e.clientY;
+  worldWrap.classList.add('panning');
+  worldWrap.setPointerCapture?.(e.pointerId);
+});
+
+worldWrap.addEventListener('pointermove', e=>{
+  if (!panning) return;
+  cam.x = baseX + (e.clientX - startX);
+  cam.y = baseY + (e.clientY - startY);
+  applyCam();
+},{passive:false});
+
+const endPan = () => { panning=false; worldWrap.classList.remove('panning'); };
+worldWrap.addEventListener('pointerup', endPan);
+worldWrap.addEventListener('pointercancel', endPan);
+
+// ——— Pinch-to-zoom (two fingers) ———
+const activePtrs = new Map();
+let pinchBaseD=0, pinchBaseZ=1;
+
+worldWrap.addEventListener('pointerdown', e=>{
+  activePtrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
+});
+
+worldWrap.addEventListener('pointermove', e=>{
+  if (activePtrs.has(e.pointerId)) {
+    activePtrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
+  }
+  if (activePtrs.size === 2){
+    e.preventDefault();
+    const pts = [...activePtrs.values()];
+    const d = Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y);
+    if (!pinchBaseD){ pinchBaseD=d; pinchBaseZ=cam.z; }
+    const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+    cam.z = clamp(pinchBaseZ * (d/pinchBaseD), 0.5, 2.5);
+    applyCam();
+  }
+},{passive:false});
+
+function endPtr(e){
+  activePtrs.delete(e.pointerId);
+  if (activePtrs.size < 2) pinchBaseD = 0;
+}
+worldWrap.addEventListener('pointerup', endPtr);
+worldWrap.addEventListener('pointercancel', endPtr);
+
+// ——— Wheel zoom anchored at cursor (desktop) ———
+worldWrap.addEventListener('wheel', (e)=>{
+  if (e.ctrlKey) return;            // allow browser zoom when Ctrl/⌘ held
+  e.preventDefault();
+
+  // cursor position in screen space
+  const rect = worldScale.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  // convert to world coords (pre-zoom)
+  const wx = (mx - cam.x) / cam.z;
+  const wy = (my - cam.y) / cam.z;
+
+  // scale step (handles line vs pixel deltas)
+  const step = Math.pow(1.0015, -e.deltaY * (e.deltaMode===1 ? 12 : 1));
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const newZ = clamp(cam.z * step, 0.5, 2.5);
+
+  // keep cursor anchored
+  cam.z = newZ;
+  cam.x = mx - wx * cam.z;
+  cam.y = my - wy * cam.z;
+
+  applyCam();
+},{passive:false});
+
+// ——— Utilities & public API (optional, handy later) ———
+function screenToWorld(sx, sy){
+  const r = worldScale.getBoundingClientRect();
+  return { x: (sx - r.left - cam.x)/cam.z, y: (sy - r.top - cam.y)/cam.z };
+}
+function worldToScreen(wx, wy){
+  const r = worldScale.getBoundingClientRect();
+  return { x: r.left + cam.x + wx*cam.z, y: r.top + cam.y + wy*cam.z };
+}
+function centerOn(wx, wy){
+  const vr = worldWrap.getBoundingClientRect();
+  cam.x = vr.width/2  - wx*cam.z;
+  cam.y = vr.height*0.45 - wy*cam.z; // slight lift so hand doesn’t cover
+  applyCam();
+}
+function setZoom(z, anchorScreenX = null, anchorScreenY = null){
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  z = clamp(z, 0.5, 2.5);
+  if (anchorScreenX!=null && anchorScreenY!=null){
+    const { x:wx, y:wy } = screenToWorld(anchorScreenX, anchorScreenY);
+    cam.z = z;
+    // re-anchor at the same screen spot
+    cam.x = anchorScreenX - wx*cam.z - worldScale.getBoundingClientRect().left;
+    cam.y = anchorScreenY - wy*cam.z - worldScale.getBoundingClientRect().top;
+  } else {
+    cam.z = z;
+  }
+  applyCam();
+}
+
+// expose for other modules (optional)
+window.Camera = { cam, applyCam, screenToWorld, worldToScreen, centerOn, setZoom };
+
+
+// ====== deck / hand (V2 fan, minimal features) ======
+// === GameIO adapter (Save/Restore uses this) ===
+window.GameIO = {
+  collectState(){
+    // cards on table: read DOM
+    const table = Array.from(world.querySelectorAll('.card')).map(el => ({
+      name: el.dataset?.name || '',  // optional: enrich later
+      img:  el.querySelector('img')?.src || '',
+      x:    parseFloat(el.style.left) || 0,
+      y:    parseFloat(el.style.top)  || 0,
+      tapped: el.classList.contains('tapped') || false
+    }));
+    // hand/deck we have in-memory
+    return { deck, hand, table };
+  },
+  applyState(state){
+    try{
+      deck = Array.isArray(state.deck) ? state.deck : [];
+      hand = Array.isArray(state.hand) ? state.hand : [];
+      // clear table and respawn
+      world.querySelectorAll('.card').forEach(n => n.remove());
+      for (const c of (state.table||[])) {
+        const x = Number(c.x)||0, y = Number(c.y)||0;
+        spawnTableCard({name:c.name||'', img:c.img||''}, x, y);
+        if (c.tapped) world.lastChild?.classList.add('tapped');
+      }
+      renderHand();
+    }catch(e){ console.warn('applyState error', e); }
+  }
+};
+
+// === Host/Join/Save/Restore ===
+const btnHost    = document.getElementById('btnHost');
+const btnJoin    = document.getElementById('btnJoin');
+const btnSave    = document.getElementById('btnSave');
+const btnRestore = document.getElementById('btnRestore');
+
+let RTC = null;  // { send(), close(), role, seatOk, ... }
+let ROOM_ID = ''; // we’ll prompt once and reuse
+const seatSelect = document.getElementById('mySeat');
+
+function sendRTC(msg){
+  if (!RTC) { console.log('[NET] no RTC yet, drop', msg); return false; }
+  const ok = RTC.send(msg);
+  if (!ok) console.log('[NET] send dropped (channel not open yet)', msg);
+  else     console.log('[NET] sent', msg.type, msg);
+  return ok;
+}
+
+
+function promptRoomId() {
+  let id = ROOM_ID || (prompt('Enter room code (e.g. ABC123):', ROOM_ID || '') || '').trim().toUpperCase();
+  if (!id) return null;
+  ROOM_ID = id;
+  return id;
+}
+
+function seatNum() {
+  return parseInt(seatSelect.value, 10) || 1;
+}
+
+// Seat conflict handler → offer auto-swap to next free seat
+function onSeatConflict({ seatTaken, options }) {
+  const next = options[0];
+  if (!next) { alert(`Seat ${seatTaken} is already taken. No free seats.`); return; }
+  const ok = confirm(`Seat ${seatTaken} is taken. Switch to seat ${next}?`);
+  if (ok) { seatSelect.value = String(next); alert(`Switched to seat ${next}. Click Host/Join again.`); }
+}
+
+async function startRTC(role) {
+  const id = promptRoomId(); if (!id) return;
+  if (RTC) { try{ await RTC.close(); }catch{} RTC = null; }
+  RTC = await createPeerRoom({
+    roomId: id,
+    role,
+    seat: seatNum(),
+    onMessage: handlePeerMessage,
+    onSeatConflict
+  });
+  // expose + confirm when datachannel is really open
+window.RTC = RTC;
+RTC.opened.then(() => console.log('[APP] P2P LINK LIVE (datachannel open, ICE connected)'));
+  console.log('[RTC] ready as', role, 'seat', seatNum(), 'room', id);
+  alert(`${role === 'host' ? 'Hosting' : 'Joined'} room ${id} as P${seatNum()}`);
+}
+
+// Example messages we’ll handle now: sync spawn/move, and full restore
+function handlePeerMessage(msg){
+console.log('[NET] recv', msg?.type, msg);
+
+  if (!msg || typeof msg !== 'object') return;
+  switch (msg.type) {
+    case 'spawn':
+      spawnTableCard({ name: msg.name||'', img: msg.img }, msg.x, msg.y);
+      break;
+    case 'move': {
+      const el = findCardByImg(msg.img);
+      if (el) { el.style.left = msg.x+'px'; el.style.top = msg.y+'px'; }
+      break;
+    }
+    case 'state:apply':
+      window.GameIO.applyState(msg.state);
+      break;
+  }
+}
+function findCardByImg(src){
+  return Array.from(world.querySelectorAll('.card img'))
+    .map(i=>i.closest('.card'))
+    .find(card => card.querySelector('img')?.src === src);
+}
+
+btnHost?.addEventListener('click', ()=> startRTC('host'));
+btnJoin?.addEventListener('click', ()=> startRTC('join'));
+
+// Save → Supabase row
+btnSave?.addEventListener('click', async ()=>{
+  const id = promptRoomId(); if (!id) return;
+  try{
+    const meta = await saveSnapshot({ roomId: id, bySeat: seatNum() });
+    alert(`Saved snapshot.\nID: ${meta.id}`);
+  }catch(e){
+    console.warn(e); alert('Save failed. Check Supabase table `game_saves` exists and RLS allows insert.');
+  }
+});
+
+// Restore → pick from list, apply locally AND broadcast to peer via RTC
+btnRestore?.addEventListener('click', async ()=>{
+  const id = promptRoomId(); if (!id) return;
+  try{
+    const rows = await listSnapshots({ roomId: id, limit: 10 });
+    if (!rows.length){ alert('No saves yet.'); return; }
+    const choice = prompt(
+      'Choose save to restore (enter number):\n' +
+      rows.map((r,i)=> `${i+1}. ${r.id}  [P${r.by_seat}]  ${new Date(r.created_at).toLocaleString()}`).join('\n'),
+      '1'
+    );
+    const idx = (parseInt(choice,10)||1)-1;
+    const chosen = rows[idx]; if (!chosen) return;
+    await loadSnapshot({ id: chosen.id });
+
+    // Also push to peer for instant resync
+    if (RTC) RTC.send({ type:'state:apply', state: window.GameIO.collectState() });
+  }catch(e){
+    console.warn(e); alert('Restore failed. Ensure `game_saves` table exists and RLS allows select.');
+  }
+});
+
+
+const SCRY = 'https://api.scryfall.com';
+let deck = [];           // [{name,img}]
+let hand = [];
+let focus = 0;
+
+async function fetchCardByName(name){
+  const res = await fetch(`${SCRY}/cards/named?fuzzy=${encodeURIComponent(name)}`);
+  if (!res.ok) throw new Error('Scryfall error for '+name);
+  const data = await res.json();
+  const img = (data.image_uris && (data.image_uris.normal || data.image_uris.large || data.image_uris.png))
+           || (data.card_faces && data.card_faces[0] && (data.card_faces[0].image_uris.normal || data.card_faces[0].image_uris.large));
+  if (!img) throw new Error('No image for '+name);
+  return { name: data.name, img };
+}
+
+async function loadDeckFromTextarea(){
+  const lines = (deckIn.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  deck = []; hand = []; focus = 0;
+  for (const raw of lines){
+    const m = raw.match(/^(\d+)\s+(.+)$/);
+    const qty = m ? parseInt(m[1],10) : 1;
+    const name= m ? m[2] : raw;
+    for (let i=0;i<qty;i++){
+      try{ deck.push(await fetchCardByName(name)); }
+      catch{ deck.push({name, img:'https://via.placeholder.com/488x680/191f2b/9fb4d9?text='+encodeURIComponent(name)}); }
+    }
+  }
+  renderHand();
+}
+
+// click deck zone to draw
+function drawOne(){
+  if (!deck.length) return;
+  hand.push(deck.pop());
+  focus = hand.length-1;
+  renderHand();
+}
+
+// V2 rolodex layout
+function renderHand(){
+  handTrack.innerHTML = '';
+  if (!hand.length) return;
+  focus = clamp(focus, 0, hand.length-1);
+
+  const gap = 64;     // px shift per step
+  const spread = 10;  // deg per step
+
+  for (let i=0;i<hand.length;i++){
+    const rel = i - focus;
+
+    const host = document.createElement('div');
+    host.className = 'handCard';
+    if (Math.abs(rel)>=3) host.classList.add('far');
+    else if (Math.abs(rel)===2) host.classList.add('mid');
+    if (rel===0) host.classList.add('focus');
+    host.style.setProperty('--dx', `${rel*gap}px`);
+    host.style.setProperty('--rot', `${rel*spread}deg`);
+
+    const shell = document.createElement('div');
+    shell.className = 'card';
+    shell.innerHTML = `<div class="cardInner"><div class="face front"><img src="${hand[i].img}" alt="${hand[i].name}" style="width:100%;height:100%;object-fit:cover;border-radius:14px"/></div></div>`;
+    host.appendChild(shell);
+    handTrack.appendChild(host);
+
+    attachHandGestures(host, i);
+  }
+}
+
+// swipe L/R to focus; long-press OR swipe up to play
+function attachHandGestures(el, index){
+  let down=false, sx=0, sy=0, lastX=0, moved=false, hold=null, played=false;
+  const UP_THRESH = 70, STEP = 42, HOLD_MS = 550;
+
+  el.addEventListener('pointerdown', (e)=>{
+    down=true; sx=lastX=e.clientX; sy=e.clientY; moved=false; played=false;
+    handTrack.classList.add('swiping');
+    el.setPointerCapture?.(e.pointerId);
+    hold = setTimeout(()=>{ if(!moved){ playFromHand(index); played=true; down=false; } }, HOLD_MS);
+  });
+  el.addEventListener('pointermove', (e)=>{
+    if (!down) return;
+    const dx = e.clientX - lastX;
+    const totalDx = e.clientX - sx;
+    const totalDy = e.clientY - sy;
+
+    if (Math.abs(totalDx) > 6 || Math.abs(totalDy) > 6) moved = true;
+
+    // swipe up to play
+    if (!played && (sy - e.clientY) > UP_THRESH){
+      clearTimeout(hold); playFromHand(index); played=true; down=false; return;
+    }
+
+    if (Math.abs(dx) > STEP){
+      focus = clamp(focus + (dx<0?1:-1), 0, hand.length-1);
+      lastX = e.clientX;
+      renderHand();
+    }
+  }, {passive:false});
+  const end = ()=>{ down=false; clearTimeout(hold); handTrack.classList.remove('swiping'); };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+
+// play from hand → center of view
+function playFromHand(i){
+  if (i<0 || i>=hand.length) return;
+  const card = hand.splice(i,1)[0];
+  focus = clamp(focus, 0, Math.max(0, hand.length-1));
+  renderHand();
+
+  // place at center of current viewport (slightly above true center so hand doesn’t cover)
+  const vr = worldWrap.getBoundingClientRect();
+  const cx = vr.left + vr.width/2;
+  const cy = vr.top  + vr.height*0.45;
+  const p = screenToWorld(cx, cy);
+
+
+  // card size from CSS variables (defaults)
+  const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
+  const ch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
+
+  spawnTableCard(card, p.x - cw/2, p.y - ch/2);
+  sendRTC({ type:'spawn', name: card.name||'', img: card.img, x: p.x - cw/2, y: p.y - ch/2 });
+
+
+}
+
+const _lastMoveSend = new Map(); // img -> ts
+
+function shouldSendMove(img, everyMs=24){
+  const now = performance.now();
+  const last = _lastMoveSend.get(img) || 0;
+  if (now - last < everyMs) return false;
+  _lastMoveSend.set(img, now);
+  return true;
+}
+
+
+// spawn + drag (world coords, zoom/pan aware)
+function spawnTableCard(card, x, y){
+  const el = document.createElement('div');
+  el.className = 'card';
+  el.style.left = x+'px';
+  el.style.top  = y+'px';
+  el.innerHTML = `
+    <div class="cardInner">
+      <div class="face front" style="background:none">
+        <img src="${card.img}" alt="${card.name}" style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+      </div>
+    </div>`;
+  world.appendChild(el);
+
+  let dragging=false, ox=0, oy=0;
+  el.addEventListener('pointerdown', (e)=>{
+    dragging=true;
+    const r = worldScale.getBoundingClientRect();
+    const lx = (e.clientX - r.left - cam.x)/cam.z;
+    const ly = (e.clientY - r.top  - cam.y)/cam.z;
+    ox = lx - parseFloat(el.style.left);
+    oy = ly - parseFloat(el.style.top);
+    el.setPointerCapture?.(e.pointerId);
+    e.stopPropagation();
+  });
+  el.addEventListener('pointermove', (e)=>{
+    if (!dragging) return;
+    const r = worldScale.getBoundingClientRect();
+    const lx = (e.clientX - r.left - cam.x)/cam.z;
+    const ly = (e.clientY - r.top  - cam.y)/cam.z;
+el.style.left = (lx - ox) + 'px';
+el.style.top  = (ly - oy) + 'px';
+if (shouldSendMove(card.img)) {
+  sendRTC({ type:'move', img: card.img,
+    x: parseFloat(el.style.left)||0,
+    y: parseFloat(el.style.top)||0
+  });
+}
+
+
+  });
+  const end=()=>{ dragging=false; };
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+
+// ====== hook up minimal controls ======
+loadBtn?.addEventListener('click', loadDeckFromTextarea);
+resetBtn?.addEventListener('click', ()=>{/* no-op per your request */});
+deckZone?.addEventListener('click', drawOne);
+
+// Optional: auto-load if textarea already has lines
+if ((deckIn?.value||'').trim()) { loadDeckFromTextarea().catch(()=>{}); }
+
+
+// ======= Drawer Controls ===========
+const cogBtn = document.getElementById('cogBtn');
+
+/* Drawer toggle */
+cogBtn.addEventListener('click', ()=>{
+  const open = !drawerWrap.classList.contains('expanded');
+  drawerWrap.classList.toggle('collapsed', !open);
+  drawerWrap.classList.toggle('expanded', open);
+  zoomWrapEl.style.display = open ? 'none' : 'flex';
+});
+</script>
