@@ -22,6 +22,7 @@
   --z-tooltip:20; 
   --z-hand:35; 
   --z-toolbar:40; 
+  --z-drawer:60;  
   --z-zoom:45; 
   --z-actions:36; 
   --z-overlays:10000;
@@ -54,10 +55,10 @@ button{ font:inherit; color:inherit; cursor:pointer; background:none; border:0; 
 .life-cmd{ color:#e7e9ee; background:#000; border-radius:8px; padding:0 6px; margin-left:8px; font-weight:700; }
 
 /* Drawer */
-.drawer-wrap{ overflow:hidden; transition:max-height .25s ease; border-bottom:1px solid #1f2738; }
+.drawer-wrap{ position:relative; z-index:var(--z-drawer); overflow:hidden; transition:max-height .25s ease; border-bottom:1px solid #1f2738; }
 .drawer-wrap.collapsed{ max-height:0; border-bottom-color:transparent; }
 .drawer-wrap.expanded{ max-height:420px; }
-.drawer{ padding:12px; background:#0b0f15; display:grid; gap:10px; }
+.drawer{ position:relative; z-index:inherit; padding:12px; background:#0b0f15; display:grid; gap:10px; }
 .row{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
 .pill{ background:#1b2a47; color:#d8e7ff; font-weight:700; padding:9px 12px; border-radius:12px; border:1px solid #24324a; }
 select.pill{ padding:8px 10px; }
@@ -355,9 +356,32 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 <div class="topbar">
   <button class="cog" id="cogBtn">⚙️</button>
   <div class="life-strip">
-    <div class="life-tile"><span>P1</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
-    <div class="life-tile"><span>P2</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
-    <div class="life-tile"><span>P3</span><span><span class="life-main">40</span> <span class="life-cmd">20</span></span></div>
+  <div class="life-tile"><span>P1</span>
+    <span>
+      <span class="life-main" data-seat="1" data-field="life">40</span>
+      <span class="life-cmd"  data-seat="1" data-field="cmd">21</span>
+      <span class="life-poison" style="color:#54ff86;font-weight:800" data-seat="1" data-field="poison">0</span>
+    </span>
+  </div>
+  <div class="life-tile"><span>P2</span>
+    <span>
+      <span class="life-main" data-seat="2" data-field="life">40</span>
+      <span class="life-cmd"  data-seat="2" data-field="cmd">21</span>
+      <span class="life-poison" style="color:#54ff86;font-weight:800" data-seat="2" data-field="poison">0</span>
+    </span>
+  </div>
+  <div class="life-tile"><span>P3</span>
+    <span>
+      <span class="life-main" data-seat="3" data-field="life">40</span>
+      <span class="life-cmd"  data-seat="3" data-field="cmd">21</span>
+      <span class="life-poison" style="color:#54ff86;font-weight:800" data-seat="3" data-field="poison">0</span>
+    </span>
+  </div>
+
+  <div class="turn-tile"><span>Turn:</span><span><span class="turn-count">1</span></div>
+</div>
+
+	<div class="turn-tile"><span>Turn:</span><span><span class="turn-count">1</span></div>
   </div>
 
   <!-- NEW: who you're viewing -->
@@ -440,7 +464,8 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 </div>
 
 <!-- Zoom -->
-<div class="zoomWrap"><input type="range" id="zoom" min="40" max="160" value="100"/></div>
+<div class="zoomWrap"><input type="range" id="zoom" min="20" max="200" value="100"/></div>
+
 
 <!-- Overlays -->
 <div class="scrim" id="zoneOverlay">
@@ -542,17 +567,30 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 
 <!-- put this early in the page -->
 <!-- put this BEFORE any scripts that use StorageAPI -->
+<script type="module" src="./modules/card.attributes.js"></script>
 <script type="module" src="./modules/env.supabase.js"></script>
+
+<script type="module" src="./modules/save.snap.js"></script>
+<script type="module" src="./modules/save.snap.attributes.patch.js"></script>
+
+<script type="module" src="./modules/tooltip.js"></script>
+<script type="module" src="./modules/tooltip.cog.patch.js"></script>
+
+<script type="module" src="./modules/battle.ui.js"></script>
 
 
 <script type="module"> 
 // NEW: networking + saves
 import { createPeerRoom } from './modules/net.rtc.js';
 import { initTooltipSystem, attachTooltip, followTooltip, reflowAll, showCardTooltip, hideCardTooltip, clearSelection, attachHandAutoTooltip } from './modules/tooltip.js';
+import {
+  saveAutoSnapshot, listAutoSaves, pruneAutoSaves, loadAutoSnapshot,
+  getSlots, saveToSlot, loadSlot
+} from './modules/save.snap.js';
 
 import Overlays from './modules/overlays.js';
 import Zones from './modules/zones.js';
-
+window.Zones = Zones;
 
 
 import {
@@ -564,6 +602,13 @@ import {
 
 import { saveSession, loadSession, clearSession, markAskRestoreNext, shouldAskRestoreNext } from './modules/session.memory.js';
 
+// More forgiving thresholds on touch
+// Touch capability
+const IS_TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+const MOVE_TOL       = IS_TOUCH ? 12 : 6;    // was 6
+const TAP_MS         = IS_TOUCH ? 550 : 300; // was 300
+const DBL_TAP_SLOP_PX= IS_TOUCH ? 44 : 16;   // spatial leeway between taps
 
 // ====== helpers ======
 const $  = (s, r=document) => r.querySelector(s);
@@ -592,6 +637,29 @@ const connectingScrim = document.getElementById('connectingScrim');
 const connectingText  = document.getElementById('connectingText');
 const connectingDots  = document.getElementById('connectingDots');
 let _dotsTimer = null;
+
+let AUTOSAVE_TIMER = null;
+
+function startAutoSaver(){
+  stopAutoSaver();
+  if (!ROOM_ID) return;
+  const seat = mySeat();
+  AUTOSAVE_TIMER = setInterval(async ()=>{
+    try{
+      await saveAutoSnapshot({ roomId: ROOM_ID, bySeat: seat });
+      // keep only the last 3 minutes worth
+      await pruneAutoSaves({ roomId: ROOM_ID, bySeat: seat, maxAgeMs: 3*60*1000 });
+      console.log('[autosave] ok');
+    }catch(e){
+      console.warn('[autosave] failed', e?.message || e);
+    }
+  }, 60 * 1000);
+}
+
+function stopAutoSaver(){
+  if (AUTOSAVE_TIMER){ clearInterval(AUTOSAVE_TIMER); AUTOSAVE_TIMER = null; }
+}
+
 
 function showConnecting(msg = 'Establishing connection'){
   if (connectingText) connectingText.firstChild.nodeValue = msg;
@@ -622,31 +690,159 @@ const btnRestore = document.getElementById('btnRestore');
 let RTC = null;  // { send(), close(), role, seatOk, ... }
 let ROOM_ID = ''; // we’ll prompt once and reuse
 const seatSelect = document.getElementById('mySeat');
+seatSelect.addEventListener('change', () => {
+  window.CardAttributes?.init({ roomId: ROOM_ID, seat: mySeat() });
+});
+
 let currentViewSeat = mySeat();
 
 function updateViewingChip(){
   if (viewingChip) viewingChip.textContent = `Viewing: P${currentViewSeat}`;
 }
 
+// Rejoin prompt modal (theme-matched, mobile-friendly)
+const RejoinPrompt = {
+  show({ roomId, role, seat }){
+    return new Promise(resolve => {
+      const close = (val) => {
+        cleanup();
+        resolve(val);
+      };
+
+      const el = document.createElement('div');
+      el.className = 'rejoin-backdrop';
+      el.innerHTML = `
+        <div class="rejoin-card" role="dialog" aria-modal="true" aria-labelledby="rejoin-title">
+          <div class="rejoin-head">
+            <div class="rejoin-dot" aria-hidden="true"></div>
+            <div id="rejoin-title" class="rejoin-title">Rejoin last session?</div>
+          </div>
+          <div class="rejoin-body">
+            <div class="rejoin-row"><div class="rejoin-key">Room</div><div class="rejoin-val">${roomId}</div></div>
+            <div class="rejoin-row"><div class="rejoin-key">Role</div><div class="rejoin-val">${String(role).toUpperCase()}</div></div>
+            <div class="rejoin-row"><div class="rejoin-key">Seat</div><div class="rejoin-val">P${seat}</div></div>
+          </div>
+          <div class="rejoin-cta">
+            <button class="btn" data-act="cancel" type="button">Cancel</button>
+            <button class="btn btn-primary" data-act="ok" type="button">Rejoin</button>
+          </div>
+        </div>
+      `.trim();
+
+      // events
+      const onClick = (e) => {
+        const act = e.target?.getAttribute?.('data-act');
+        if (act === 'ok') close(true);
+        if (act === 'cancel') close(false);
+        if (e.target === el) close(false); // click outside to dismiss
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') close(false);
+        if (e.key === 'Enter') close(true);
+      };
+
+      function cleanup(){
+        el.removeEventListener('click', onClick);
+        document.removeEventListener('keydown', onKey, true);
+        el.remove();
+      }
+
+      el.addEventListener('click', onClick);
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(el);
+
+      // initial focus to primary button for quick “Enter”
+      el.querySelector('[data-act="ok"]')?.focus();
+    });
+  }
+};
 
 // --- Auto reapply last session on load ---
-(function tryReapplyLastSession(){
+(async function tryReapplyLastSession(){
   const last = loadSession();
   if (!last) return;
 
+  // Ensure modal styles are present (once)
+  (function ensureRejoinStyles(){
+    if (document.getElementById('rejoin-style')) return;
+    const s = document.createElement('style');
+    s.id = 'rejoin-style';
+    s.textContent = `
+      .rejoin-backdrop{
+        position:fixed; inset:0; z-index:9999;
+        background:rgba(8,12,18,0.6); backdrop-filter: blur(6px);
+        display:grid; place-items:center;
+      }
+      .rejoin-card{
+        width: min(520px, 92vw);
+        border-radius:16px;
+        background: linear-gradient(180deg, #10141b, #0c1117);
+        border:1px solid #24324a;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.45);
+        color: var(--fg);
+        font: 500 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Inter, "Helvetica Neue", Arial;
+        overflow: hidden;
+      }
+      .rejoin-head{
+        padding:16px 18px;
+        border-bottom:1px solid #212a3a;
+        display:flex; align-items:center; gap:10px;
+      }
+      .rejoin-dot{
+        width:10px; height:10px; border-radius:50%;
+        background: var(--ok, #42d392); box-shadow: 0 0 12px rgba(66,211,146,0.6);
+      }
+      .rejoin-title{ font-size:16px; font-weight:700; letter-spacing:.2px; }
+      .rejoin-body{
+        padding:18px;
+        color: var(--muted);
+      }
+      .rejoin-row{ display:flex; align-items:center; gap:10px; margin:6px 0; }
+      .rejoin-key{
+        min-width:72px; color:#8fa1c1; font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:.6px;
+      }
+      .rejoin-val{ color: var(--fg); font-weight:600; }
+      .rejoin-cta{
+        display:flex; gap:10px; justify-content:flex-end;
+        padding:16px 18px; border-top:1px solid #212a3a; background:#0c1117;
+      }
+      .btn{
+        appearance:none; border:1px solid #24324a; background:#111826; color:var(--fg);
+        border-radius:12px; padding:10px 14px; font-weight:700; letter-spacing:.3px; cursor:pointer;
+        transition: transform .04s ease, border-color .15s ease, background .15s ease;
+      }
+      .btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+      .btn:hover{ border-color:#32425c; background:#0f1520; }
+      .btn:active{ transform: translateY(1px); }
+      .btn-primary{
+        border-color: color-mix(in srgb, var(--accent), #000 35%);
+        background: linear-gradient(180deg, color-mix(in srgb, var(--accent), #000 75%), color-mix(in srgb, var(--accent), #000 82%));
+      }
+      .btn-primary:hover{
+        border-color: var(--accent);
+        background: linear-gradient(180deg, color-mix(in srgb, var(--accent), #000 65%), color-mix(in srgb, var(--accent), #000 75%));
+      }
+    `;
+    document.head.appendChild(s);
+  })();
+
   const { roomId, role, seat } = last;
-  const ok = confirm(`Rejoin last session?\nRoom: ${roomId}\nRole: ${role.toUpperCase()}\nSeat: P${seat}`);
+  const ok = await RejoinPrompt.show({ roomId, role, seat });
   if (!ok) return;
 
   // set UI + internal state to match
-  try {
-    seatSelect.value = String(seat);
-  } catch {}
+  try { seatSelect.value = String(seat); } catch {}
+
   ROOM_ID = roomId;
-  markAskRestoreNext(true); // after link live, ask to restore last save
-  // kick the connection
+  window.CardAttributes?.init({ roomId: ROOM_ID, seat: mySeat() });
+  window.BattleUI?.init({ roomId: ROOM_ID, seat: mySeat() });
+
+  markAskRestoreNext(true); // silent auto-restore happens later, no extra popup
   startRTC(role);
 })();
+
+
+
 
 
 // === Selection & tooltip helpers =========================================
@@ -670,6 +866,9 @@ function selectCard(el, sx = null, sy = null){
 
 // ====== camera (V2 behavior) ======
 // ====== camera (pan/zoom) ======
+const Z_MIN = 0.2;   // was 0.5
+const Z_MAX = 3.0;   // was 2.5
+
 const cam = { x:0, y:0, z:1 };
 function applyCam(){
   worldScale.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.z})`;
@@ -738,10 +937,30 @@ worldWrap.addEventListener('pointermove', e=>{
     e.preventDefault();
     const pts = [...activePtrs.values()];
     const d = Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y);
-    if (!pinchBaseD){ pinchBaseD=d; pinchBaseZ=cam.z; }
-    const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-    cam.z = clamp(pinchBaseZ * (d/pinchBaseD), 0.5, 2.5);
-    applyCam();
+    if (!pinchBaseD) {
+  pinchBaseD = d;
+  pinchBaseZ = cam.z;
+
+  // Capture the midpoint between the two fingers in screen space
+  const midX = (pts[0].x + pts[1].x) / 2;
+  const midY = (pts[0].y + pts[1].y) / 2;
+
+  // Store world coordinates of that midpoint so we can lock onto it
+  const rect = worldScale.getBoundingClientRect();
+  const wx = (midX - rect.left - cam.x) / cam.z;
+  const wy = (midY - rect.top - cam.y) / cam.z;
+  cam._pinchAnchor = { midX, midY, wx, wy };
+}
+
+const newZ = Math.max(Z_MIN, Math.min(Z_MAX, pinchBaseZ * (d / pinchBaseD)));
+const { midX, midY, wx, wy } = cam._pinchAnchor || { midX: 0, midY: 0, wx: 0, wy: 0 };
+
+// Keep the anchor point stable under the midpoint
+cam.x = midX - wx * newZ - worldScale.getBoundingClientRect().left;
+cam.y = midY - wy * newZ - worldScale.getBoundingClientRect().top;
+cam.z = newZ;
+applyCam();
+
   }
 },{passive:false});
 
@@ -769,7 +988,7 @@ worldWrap.addEventListener('wheel', (e)=>{
   // scale step (handles line vs pixel deltas)
   const step = Math.pow(1.0015, -e.deltaY * (e.deltaMode===1 ? 12 : 1));
   const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  const newZ = clamp(cam.z * step, 0.5, 2.5);
+  const newZ = clamp(cam.z * step, Z_MIN, Z_MAX);
 
   // keep cursor anchored
   cam.z = newZ;
@@ -798,11 +1017,41 @@ Zones.init({
   worldEl: document.getElementById('world'),
 
   // Wire these to your v3 helpers:
-  spawnToTable: (card, seat) => window.spawnTableCard?.(card, seat),
-  addToHand:    (card, seat) => window.addToHand?.(card, seat),
-  addToDeck: (card, seat, { position }) => window.addToDeck?.(card, seat, position),
+  spawnToTable: (card, seat) => {
+    // place at current viewport center using the ZOOM-aware helpers
+    const vr = worldWrap.getBoundingClientRect();
+    const cx = vr.left + vr.width / 2;
+    const cy = vr.top  + vr.height * 0.45;
+    const { x, y } = screenToWorld(cx, cy);
+
+    // IMPORTANT: keep the same id/cid so Zones' state stays consistent
+    const cid = card.id || card.cid || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
+    // remember for tooltips/overlays
+    if (typeof rememberCid === 'function') rememberCid(cid, card);
+
+    // low-level placement with the correct owner + cid
+    spawnTableCard({ name: card.name || '', img: card.img || '' }, x, y, { owner: seat, cid });
+  },
+  addToHand: (card, seat) => window.addToHand?.(card, seat),
+  addToDeck: (card, seat, options) => window.addToDeck?.(card, seat, options),
   shuffleDeck: (seat) => window.shuffleDeck?.(seat),
-  removeTableCardDomById: (cid) => document.querySelector(`.card[data-cid="${cid}"]`)?.remove(),
+  removeTableCardDomById: (cid) => {
+  const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+  if (!el) return;
+
+  // If this card is currently selected / showing a tooltip, clear it now
+  try {
+    if (el.classList.contains('selected')) {
+      // these are imported at top of v3.html from ./modules/tooltip.js
+      clearSelection?.();
+      hideCardTooltip?.();
+    }
+  } catch {}
+
+  // Remove the element from the battlefield
+  try { el.remove(); } catch {}
+},
+
   getCardDataById: (cid) => window.getCardDataById?.(cid),
 
   onMoved: ({ seat, cid, from, to, position }) => {
@@ -812,9 +1061,25 @@ Zones.init({
 
 });
 
-function afterYouCreateCardEl(cardEl){
+
+
+
+function afterYouCreateCardEl(cardEl, meta){
+  // Ensure CID exists ASAP
+  if (meta?.cid && !cardEl.dataset.cid) cardEl.dataset.cid = String(meta.cid);
+
+  // 🔹 Stamp base P/T so the attributes overlay can combine immediately
+  // meta.card should be your scryfall-ish object with power/toughness (strings like "2", "3", "*", etc.)
+  if (meta?.card) {
+    const p = meta.card.power, t = meta.card.toughness;
+    if (p != null) cardEl.dataset.baseP = String(p);
+    if (t != null) cardEl.dataset.baseT = String(t);
+  }
+
   Zones.registerDraggableCard(cardEl);
 }
+
+
 
 
 
@@ -835,7 +1100,7 @@ function centerOn(wx, wy){
 }
 function setZoom(z, anchorScreenX = null, anchorScreenY = null){
   const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
-  z = clamp(z, 0.5, 2.5);
+  z = clamp(z, Z_MIN, Z_MAX);
   if (anchorScreenX!=null && anchorScreenY!=null){
     const { x:wx, y:wy } = screenToWorld(anchorScreenX, anchorScreenY);
     cam.z = z;
@@ -856,16 +1121,63 @@ window.Camera = { cam, applyCam, screenToWorld, worldToScreen, centerOn, setZoom
 // === GameIO adapter (Save/Restore uses this) ===
 window.GameIO = {
   collectState(){
-    const table = Array.from(world.querySelectorAll('.card')).map(el => ({
-      name: el.dataset?.name || '',
-      img:  el.querySelector('img')?.src || '',
-      x:    parseFloat(el.style.left) || 0,
-      y:    parseFloat(el.style.top)  || 0,
-      tapped: el.classList.contains('tapped') || false,
-      owner: parseInt(el.dataset.owner || '0', 10) || 1,
-      cid:   el.dataset.cid || ''
-    }));
-    return { deck, hand, table };
+    // 1) battlefield cards (DOM-based)
+    const toNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
+
+const table = Array.from(world.querySelectorAll('.card')).map(el => ({
+  name:  el.dataset?.name || '',
+  img:   el.querySelector('img')?.src || '',
+  x:     parseFloat(el.style.left) || 0,
+  y:     parseFloat(el.style.top)  || 0,
+  tapped: el.classList.contains('tapped') || false,
+  owner: parseInt(el.dataset.owner || '0', 10) || 1,
+  cid:   el.dataset.cid || '',
+
+  ogpower:     toNum(el.dataset.baseP),
+  ogtoughness: toNum(el.dataset.baseT),
+  ogloyalty:   toNum(el.dataset.baseL),
+
+  // NEW: OG types/effects (read from dataset if present)
+  ogTypes:   (()=>{ try{ return JSON.parse(el.dataset.ogTypes||'[]') }catch{ return [] } })(),
+  ogEffects: (()=>{ try{ return JSON.parse(el.dataset.ogEffects||'[]') }catch{ return [] } })()
+}));
+
+
+
+    // 2) zones (graveyard/exile/hand/deck/table) per seat
+    const zones = {};
+    const norm = (st)=>({
+      table:     Array.isArray(st?.table)     ? st.table     : [],
+      graveyard: Array.isArray(st?.graveyard) ? st.graveyard : [],
+      exile:     Array.isArray(st?.exile)     ? st.exile     : [],
+      hand:      Array.isArray(st?.hand)      ? st.hand      : [],
+      deck:      Array.isArray(st?.deck)      ? st.deck      : [],
+    });
+
+    try {
+  const Z = (typeof Zones !== 'undefined' && Zones) || (window && window.Zones);
+  if (Z) {
+    if (typeof Z.exportState === 'function') {
+      const all = Z.exportState();                         // { [seat]: {table,graveyard,exile,hand,deck} }
+      for (const [seat, st] of Object.entries(all || {})) zones[seat] = norm(st);
+    } else if (Z.zoneState instanceof Map) {
+      for (const [seat, st] of Z.zoneState.entries())      zones[seat] = norm(st);
+    } else if (Z.zoneState && typeof Z.zoneState === 'object') {
+      for (const seat of Object.keys(Z.zoneState))         zones[seat] = norm(Z.zoneState[seat]);
+    }
+  }
+} catch (e) {
+  console.warn('[save] zones snapshot failed:', e);
+}
+
+
+    // 3) hand/deck come from local arrays
+    //    (top-of-deck is END of the array per your draw())
+    return { deck, hand, table, zones, life: window.Life?.state || {} };
+
   },
 
   // ⬇ only apply keys that are present; leave others alone
@@ -878,19 +1190,45 @@ window.GameIO = {
         world.querySelectorAll('.card').forEach(n => n.remove());
         for (const c of (state.table || [])) {
           const x = Number(c.x)||0, y = Number(c.y)||0;
-          spawnTableCard({name:c.name||'', img:c.img||''}, x, y, {
-            owner: c.owner ?? 1,
-            cid:   c.cid   || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12)
-          });
+          spawnTableCard({
+  name: c.name || '',
+  img:  c.img  || '',
+  power:       c.power,
+  toughness:   c.toughness,
+  loyalty:     c.loyalty,
+  type_line:   c.type_line,
+
+  ogpower:     c.ogpower,
+  ogtoughness: c.ogtoughness,
+  ogloyalty:   c.ogloyalty,
+
+  // NEW:
+  ogTypes:     Array.isArray(c.ogTypes) ? c.ogTypes : [],
+  ogEffects:   Array.isArray(c.ogEffects) ? c.ogEffects : []
+}, x, y, {
+  owner: c.owner ?? 1,
+  cid:   c.cid   || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12)
+});
+
           if (c.tapped) world.lastChild?.classList.add('tapped');
         }
       }
+
+      // ✅ restore zones for each seat, if provided
+      if (state.zones && window.Zones && typeof Zones.restoreFromState === 'function') {
+        for (const [seatStr, st] of Object.entries(state.zones)) {
+          const seat = Number(seatStr) || 1;
+          Zones.restoreFromState(seat, st);
+        }
+      }
+if (state.life) { window.Life?.load(state.life); }
 
       renderHand();
       applyViewFilter();
     }catch(e){ console.warn('applyState error', e); }
   }
 };
+
 
 
 
@@ -902,13 +1240,86 @@ function sendRTC(msg){
   return ok;
 }
 
+// ===== Life model (life, commander life, poison) =========================
+const DEFAULT_LIFE = { life: 40, cmd: 21, poison: 0 }; // EDH defaults + poison shown; adjust cmd if you prefer 20
+window.Life = {
+  state: { 1:{...DEFAULT_LIFE}, 2:{...DEFAULT_LIFE}, 3:{...DEFAULT_LIFE} },
+
+  get(seat){ seat = Number(seat)||1; return this.state[seat] || (this.state[seat] = {...DEFAULT_LIFE}); },
+  set(seat, patch){
+    seat = Number(seat)||1;
+    this.state[seat] = { ...this.get(seat), ...patch };
+    renderLifeStrip();
+    // broadcast to peers
+    sendRTC({ type:'life:update', seat, life: this.state[seat] });
+  },
+  load(all){ if (!all || typeof all !== 'object') return;
+    for (const s of [1,2,3]) if (all[s]) this.state[s] = { ...DEFAULT_LIFE, ...all[s] };
+    renderLifeStrip();
+  }
+};
+
+function renderLifeStrip(){
+  document.querySelectorAll('[data-seat][data-field]').forEach(span=>{
+    const seat  = Number(span.dataset.seat);
+    const field = span.dataset.field;
+    const v = window.Life.get(seat)[field];
+    span.textContent = String(v ?? '');
+  });
+}
+
+renderLifeStrip();
+
+// quick editor (reuses your overlay look)
+document.getElementById('lifeEditBtn')?.addEventListener('click', ()=>{
+  const seat = mySeat();
+  const cur  = Life.get(seat);
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  panel.innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <strong>Edit Life — P${seat}</strong>
+      <button class="pill js-close">Close</button>
+    </div>
+    <div class="row" style="gap:10px;margin-top:8px">
+      <label class="pill">Life <input id="lifeLife" type="number" style="width:80px" value="${cur.life}"></label>
+      <label class="pill">Cmd  <input id="lifeCmd"  type="number" style="width:80px" value="${cur.cmd}"></label>
+      <label class="pill">Poison <input id="lifePoison" type="number" style="width:80px" value="${cur.poison}"></label>
+      <button class="pill" id="lifeSave">Save</button>
+    </div>`;
+  scrim.appendChild(panel);
+  document.body.appendChild(scrim);
+  scrim.style.display = 'block';
+  const close = ()=>{ try{document.body.removeChild(scrim);}catch{} };
+  panel.querySelector('.js-close').onclick = close;
+  scrim.onclick = (e)=>{ if (e.target===scrim) close(); };
+  panel.querySelector('#lifeSave').onclick = ()=>{
+    Life.set(seat, {
+      life:   Number(panel.querySelector('#lifeLife').value),
+      cmd:    Number(panel.querySelector('#lifeCmd').value),
+      poison: Number(panel.querySelector('#lifePoison').value)
+    });
+    close();
+  };
+});
+
+// receive life updates from peers
+function applyLifeFromPeer(seat, lifeObj){ window.Life.set(seat, lifeObj); }
+
 
 function promptRoomId() {
   let id = ROOM_ID || (prompt('Enter room code (e.g. ABC123):', ROOM_ID || '') || '').trim().toUpperCase();
+  ROOM_ID = id;
+window.CardAttributes?.init({ roomId: ROOM_ID, seat: mySeat() });   // ← add this
+
   if (!id) return null;
   ROOM_ID = id;
+  startAutoSaver();               // ← start autosave whenever a room is chosen
   return id;
 }
+
 
 function seatNum() {
   return parseInt(seatSelect.value, 10) || 1;
@@ -950,28 +1361,24 @@ async function startRTC(role) {
     // Fade out overlay shortly after link is live
     setTimeout(hideConnecting, 600);
 
-    // Only on “auto reapply” flows, ask to restore the last save for *this* seat
-    if (shouldAskRestoreNext()) {
-      markAskRestoreNext(false);
-      try {
-        const ans = confirm('Connection live. Restore your last saved state for this seat?');
-        if (ans) {
-          const latest = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
-          if (latest) {
-            await loadSnapshot({ id: latest.id }); // local full restore
-            if (RTC) {
-              const { table } = window.GameIO.collectState();
-              RTC.send({ type:'state:table', table }); // broadcast only table
-            }
-          } else {
-            alert('No prior save found for this seat.');
-          }
-        }
-      } catch (e) {
-        console.warn('Auto-restore failed', e);
-        alert('Restore failed. Check Supabase and table `game_saves`.');
+// Only on “auto reapply” flows, silently try to restore the last save for *this* seat
+if (shouldAskRestoreNext()) {
+  markAskRestoreNext(false);
+  try {
+    const latest = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
+    if (latest) {
+      await loadSnapshot({ id: latest.id }); // local full restore
+      if (RTC) {
+        const { table } = window.GameIO.collectState();
+        RTC.send({ type:'state:table', table }); // broadcast only table
       }
     }
+    // If no latest, do nothing (no warning popup)
+  } catch (e) {
+    console.warn('Auto-restore failed', e); // no alert
+  }
+}
+
   });
 
   console.log('[RTC] ready as', role, 'seat', seatNum(), 'room', id);
@@ -985,11 +1392,62 @@ function handlePeerMessage(msg){
   if (!msg || typeof msg !== 'object') return;
   switch (msg.type) {
     case 'spawn':
-      spawnTableCard({ name: msg.name||'', img: msg.img }, msg.x, msg.y, {
-        cid: msg.cid, owner: msg.owner
-      });
-      applyViewFilter();
-      break;
+  spawnTableCard({
+    name: msg.name || '',
+    img:  msg.img,
+    ogpower:     Number.isFinite(msg?.ogpower)     ? msg.ogpower     : undefined,
+    ogtoughness: Number.isFinite(msg?.ogtoughness) ? msg.ogtoughness : undefined,
+    ogloyalty:   Number.isFinite(msg?.ogloyalty)   ? msg.ogloyalty   : undefined,
+
+    // NEW:
+    ogTypes:   Array.isArray(msg?.ogTypes)   ? msg.ogTypes   : [],
+    ogEffects: Array.isArray(msg?.ogEffects) ? msg.ogEffects : []
+  }, msg.x, msg.y, { cid: msg.cid, owner: msg.owner });
+  applyViewFilter();
+  break;
+
+case 'life:update':
+  applyLifeFromPeer(Number(msg.seat)||1, msg.life || {});
+  break;
+
+
+
+    case 'cast:announce': {
+  const fromSeat = Number(msg.owner)||1;
+  if (fromSeat === mySeat()) break; // ignore our own
+
+  Overlays.openCastPrompt({
+    card: {
+      name: msg.name, img: msg.img,
+      mana_cost: msg.mana_cost,
+      type_line: msg.type_line,
+      oracle_text: msg.oracle_text,
+      power: msg.power, toughness: msg.toughness, loyalty: msg.loyalty
+    },
+    timeoutMs: 5000,
+    onResolve: () => {
+      sendRTC({ type:'cast:resolve', castId: msg.castId, name: msg.name, owner: msg.owner });
+    },
+    onCounter: () => {
+      sendRTC({ type:'cast:counter', castId: msg.castId, name: msg.name, owner: msg.owner, by: mySeat() });
+    }
+  });
+  break;
+}
+
+case 'cast:resolve': {
+  Overlays?.notify?.('ok', `${msg.name || 'Spell'} resolves.`);
+  break;
+}
+
+case 'cast:counter': {
+  if ((Number(msg.owner)||0) === mySeat()) {
+    Overlays?.notify?.('danger', `Stop — ${msg.name || 'Your spell'} has been countered.`);
+  }
+  break;
+}
+
+
 
     case 'move': {
       const el = findCardByCid(msg.cid);
@@ -1044,49 +1502,64 @@ btnJoin?.addEventListener('click', ()=> startRTC('join'));
 
 // Save → Supabase row
 btnSave?.addEventListener('click', async ()=>{
-  const id = promptRoomId(); if (!id) return;
-  try{
-    const meta = await saveSnapshot({ roomId: id, bySeat: seatNum() });
-    alert(`Saved snapshot for P${seatNum()}.\nID: ${meta.id}`);
-  }catch(e){
-    console.warn(e);
-    alert('Save failed. Check Supabase table `game_saves` exists and RLS allows insert.');
-  }
+  if (!ROOM_ID) { alert('No room set'); return; }
+  const seat = mySeat();
+
+  // Preload current slots so the overlay shows timestamps instead of "Empty"
+  const rows = await getSlots({ roomId: ROOM_ID });  // [{room_id,slot,snapshot_id,by_seat,updated_at}]
+  const slots = (rows || []).map(r => ({
+    slot: Number(r.slot),
+    label: `Slot ${r.slot}`,
+    savedAt: r.updated_at
+  }));
+
+  Overlays.openSaveSlots({
+    roomId: ROOM_ID,
+    seat,
+    slots,                                  // <-- overlay expects an array
+    onSave: (slot) =>                       // <-- overlay calls onSave(n)
+      saveToSlot({ roomId: ROOM_ID, bySeat: seat, slot })
+    // onDelete is optional; omit for now
+  });
 });
 
 
-// Restore → pick from list, apply locally AND broadcast to peer via RTC
+
+
+// Restore → pick from list
 btnRestore?.addEventListener('click', async ()=>{
-  const id = promptRoomId(); if (!id) return;
-  try{
-    const mine = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
-    let chosen = mine;
-    if (!mine) {
-      const rows = await listSnapshots({ roomId: id, limit: 10 });
-      if (!rows.length){ alert('No saves yet.'); return; }
-      const choice = prompt(
-        'Choose save to restore (enter number):\n' +
-        rows.map((r,i)=> `${i+1}. ${r.id}  [P${r.by_seat}]  ${new Date(r.created_at).toLocaleString()}`).join('\n'),
-        '1'
-      );
-      const idx = (parseInt(choice,10)||1)-1;
-      chosen = rows[idx];
-    }
-    if (!chosen) return;
+  if (!ROOM_ID) { alert('No room set'); return; }
+  const seat = mySeat();
 
-    // Apply *my* full state locally
-    await loadSnapshot({ id: chosen.id });
+  // Fetch lists now; overlay expects data arrays, not provider functions
+  const [manual, autos] = await Promise.all([
+    listSnapshots({ roomId: ROOM_ID, limit: 25 }),
+    listAutoSaves({ roomId: ROOM_ID, bySeat: seat, limit: 25 })
+  ]);
 
-    // Only broadcast the table to peers
-    if (RTC) {
-      const { table } = window.GameIO.collectState();
-      RTC.send({ type:'state:table', table });
-    }
-  }catch(e){
-    console.warn(e);
-    alert('Restore failed. Ensure `game_saves` table exists and RLS allows select.');
-  }
+  Overlays.openRestorePicker({
+    roomId: ROOM_ID,
+    seat,
+    manual,                                     // array of manual saves
+    autos,                                      // array of autosaves
+    onRestoreSave: (id) => loadSnapshot({ id }),       // correct callback names
+    onRestoreAuto: (id) => loadAutoSnapshot({ id })
+    // NOTE: this overlay does not show slots; if you want slots here, we can extend it.
+  });
 });
+
+
+window.debugListAutos = () =>
+  listAutoSaves({ roomId: ROOM_ID, bySeat: mySeat(), limit: 25 }).then(x => (console.log('debug autos:', x), x));
+
+window.debugListManual = () =>
+  listSnapshots({ roomId: ROOM_ID, limit: 25 }).then(x => (console.log('debug manual:', x), x));
+
+window.debugListSlots = () =>
+  getSlots({ roomId: ROOM_ID }).then(x => (console.log('debug slots:', x), x));
+
+
+
 
 
 
@@ -1095,16 +1568,73 @@ const SCRY = 'https://api.scryfall.com';
 let deck = [];           // [{name,img}]
 let hand = [];
 let focus = 0;
+// Mini-Stack tracking (one-at-a-time is fine for now)
+const PENDING_CASTS = new Map(); // castId -> { bySeat, cid, card, x, y }
+function makeCastId(){ return (crypto?.randomUUID?.() || (Date.now()+'-'+Math.random())).slice(0,18); }
+
 
 async function fetchCardByName(name){
   const res = await fetch(`${SCRY}/cards/named?fuzzy=${encodeURIComponent(name)}`);
   if (!res.ok) throw new Error('Scryfall error for '+name);
   const data = await res.json();
-  const img = (data.image_uris && (data.image_uris.normal || data.image_uris.large || data.image_uris.png))
-           || (data.card_faces && data.card_faces[0] && (data.card_faces[0].image_uris.normal || data.card_faces[0].image_uris.large));
+
+  const face = Array.isArray(data.card_faces) && data.card_faces.length
+    ? data.card_faces[0]
+    : data;
+
+  const img =
+    (data.image_uris && (data.image_uris.normal || data.image_uris.large || data.image_uris.png)) ||
+    (face.image_uris && (face.image_uris.normal || face.image_uris.large || face.image_uris.png));
   if (!img) throw new Error('No image for '+name);
-  return { name: data.name, img };
+
+  const toNum = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const basePower   = face.power     ?? data.power     ?? null; // may be "*"
+  const baseTough   = face.toughness ?? data.toughness ?? null;
+  const baseLoyalty = face.loyalty   ?? data.loyalty   ?? null;
+
+  // ---- OG TYPES (split type_line) ----
+  const tlRaw = (data.type_line || face.type_line || '').trim();
+  // type_line looks like "Legendary Creature — Elf Druid"
+  const [left, right] = tlRaw.split('—').map(s => (s||'').trim());
+  const leftParts  = left ? left.split(/\s+/).filter(Boolean) : [];
+  // Split into buckets if you ever need them; for now we only care about a single combined list
+  const supertypes = leftParts.filter(x => /^(Basic|Legendary|Ongoing|Snow|World)$/i.test(x));
+  const cardTypes  = leftParts.filter(x => /^(Artifact|Battle|Creature|Conspiracy|Dungeon|Enchantment|Instant|Land|Monster|Phenomenon|Plane|Planeswalker|Scheme|Sorcery|Tribal|Vanguard)$/i.test(x));
+  const subtypes   = (right ? right.split(/\s+/).filter(Boolean) : []);
+  const ogTypes    = [...supertypes, ...cardTypes, ...subtypes];
+
+  // ---- OG EFFECTS (innate keywords only) ----
+  // Scryfall's `keywords` is exactly what we want (Flying, Lifelink, Deathtouch, etc)
+  const ogEffects = Array.isArray(data.keywords) ? data.keywords.slice() : [];
+
+  return {
+    name: data.name,
+    img,
+    type_line: tlRaw,
+    power: basePower,
+    toughness: baseTough,
+    loyalty: baseLoyalty,
+
+    // ← numeric OGs (as you already had)
+    ogpower:     toNum(basePower),
+    ogtoughness: toNum(baseTough),
+    ogloyalty:   toNum(baseLoyalty),
+
+    // ← NEW: always-on printed stuff
+    ogTypes,
+    ogEffects,
+
+    // (optional helpers you may want later)
+    mana_cost: data.mana_cost || face.mana_cost || '',
+    oracle_text: data.oracle_text || face.oracle_text || ''
+  };
 }
+
+
 
 async function loadDeckFromTextarea(){
   const lines = (deckIn.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
@@ -1330,25 +1860,73 @@ function playFromHand(i){
 
 
   // card size from CSS variables (defaults)
-  const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
+   const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
   const ch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
 
-	const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
-const x = p.x - cw/2, y = p.y - ch/2;
-spawnTableCard(card, x, y, { cid, owner: mySeat() });
+  const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
+  rememberCid(cid, card);
+  const x = p.x - cw/2, y = p.y - ch/2;
 
-// IMPORTANT: include cid + owner so the receiver tags it correctly
-sendRTC({
+  // 1) SPAWN NOW (authoritative local + broadcast to peers)
+  spawnTableCard(card, x, y, { cid, owner: mySeat() });
+  sendRTC({
   type: 'spawn',
   cid,
   owner: mySeat(),
   name: card.name || '',
-  img:  card.img,
-  x,
-  y
+  img:  card.img || '',
+  x, y,
+  ogpower:     Number.isFinite(card?.ogpower)     ? card.ogpower     : (Number.isFinite(+card?.power) ? +card.power : undefined),
+  ogtoughness: Number.isFinite(card?.ogtoughness) ? card.ogtoughness : (Number.isFinite(+card?.toughness) ? +card.toughness : undefined),
+  ogloyalty:   Number.isFinite(card?.ogloyalty)   ? card.ogloyalty   : (Number.isFinite(+card?.loyalty) ? +card.loyalty : undefined),
+
+  // 🔹 NEW: send OG lists so the remote sees badges immediately
+  ogTypes:     Array.isArray(card?.ogTypes)   ? card.ogTypes   : [],
+  ogEffects:   Array.isArray(card?.ogEffects) ? card.ogEffects : [],
+
+  type_line:   card.type_line || '',
+  mana_cost:   card.mana_cost || '',
+  oracle_text: card.oracle_text || '',
+  power:       card.power ?? '',
+  toughness:   card.toughness ?? '',
+  loyalty:     card.loyalty ?? ''
 });
 
+
+  // 2) ANNOUNCE (opponent gets the 5s decision overlay; no blocking)
+  const castId = makeCastId();
+  sendRTC({
+    type: 'cast:announce',
+    castId,
+    owner: mySeat(),
+    cid,
+    name: card.name || '',
+    img:  card.img || '',
+    mana_cost:   card.mana_cost || '',
+    type_line:   card.type_line || '',
+    oracle_text: card.oracle_text || '',
+    power:       card.power ?? '',
+    toughness:   card.toughness ?? '',
+    loyalty:     card.loyalty ?? ''
+  });
+
+
+
+
 }
+
+function finalizeCast(castId){
+  const meta = PENDING_CASTS.get(castId);
+  if (!meta) return;
+  const { cid, card, x, y, bySeat } = meta;
+  PENDING_CASTS.delete(castId);
+
+  // actual spawn (authoritative cid+owner)
+  spawnTableCard(card, x, y, { cid, owner: bySeat });
+  applyViewFilter?.();
+}
+
+
 
 const _lastMoveSend = new Map(); // img -> ts
 
@@ -1361,26 +1939,127 @@ function shouldSendMove(img, everyMs=24){
 }
 
 
+// --- Store simple card data by cid so overlays/zones can hydrate quickly
+const CID_DATA = new Map();
+function rememberCid(cid, card) {
+  if (!cid || !card) return;
+  CID_DATA.set(String(cid), {
+    id: String(cid),
+    name: card.name || '',
+    img:  card.img  || '',
+    type_line: card.type_line || '',
+    power: card.power ?? null,
+    toughness: card.toughness ?? null,
+    loyalty: card.loyalty ?? null,
+    ogpower: card.ogpower,
+    ogtoughness: card.ogtoughness,
+    ogloyalty: card.ogloyalty,
+    // NEW
+    ogTypes: Array.isArray(card.ogTypes) ? card.ogTypes.slice() : [],
+    ogEffects: Array.isArray(card.ogEffects) ? card.ogEffects.slice() : []
+  });
+}
+
+
+window.getCardDataById = (cid) => {
+  const key = String(cid || '');
+  if (CID_DATA.has(key)) return CID_DATA.get(key);
+  // fallback: look at the DOM if the card is still on table
+  const el = document.querySelector(`.card[data-cid="${CSS.escape(key)}"]`);
+  if (!el) return null;
+  return {
+    id: key,
+    name: el.dataset?.name || '',
+    img:  el.querySelector('img')?.src || ''
+  };
+};
+
+// ——— UI mutators used by Zones
+window.addToHand = (card, seat) => {
+  if (seat !== mySeat()) return;
+  // push the full card object (keep ogpower/ogtoughness/ogloyalty)
+  hand.push({ ...card });
+  focus = hand.length - 1;
+  renderHand();
+};
+
+
+window.addToDeck = (card, seat, { position } = {}) => {
+  if (seat !== mySeat()) return;
+  const item = { ...card };
+  if (position === 'bottom') {
+    deck.unshift(item);
+  } else if (position === 'shuffle') {
+    const idx = Math.floor(Math.random() * (deck.length + 1));
+    deck.splice(idx, 0, item);
+  } else {
+    deck.push(item); // top
+  }
+};
+
+
+window.shuffleDeck = (seat) => {
+  if (seat !== mySeat()) return;
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  // (no UI refresh necessary until next draw)
+};
 
 
 // spawn + drag (world coords, zoom/pan aware)
 function spawnTableCard(card, x, y, opts = {}){
   const owner = opts.owner ?? mySeat();
   const cid   = opts.cid   ?? (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
-
+rememberCid(cid, card);
   const el = document.createElement('div');
+  // Seed printed base from OGs (prefer) or raw power/toughness if numeric
+const n = v => {
+  const k = Number(v);
+  return Number.isFinite(k) ? k : NaN;
+};
+const ogP = n(card?.ogpower), ogT = n(card?.ogtoughness);
+const p   = n(card?.power),   t   = n(card?.toughness);
+
+if (Number.isFinite(ogP)) el.dataset.baseP = String(ogP);
+else if (Number.isFinite(p)) el.dataset.baseP = String(p);
+
+if (Number.isFinite(ogT)) el.dataset.baseT = String(ogT);
+else if (Number.isFinite(t)) el.dataset.baseT = String(t);
+
+// Stamp OG types/effects to the DOM dataset so attributes/badges can read instantly
+if (Array.isArray(card?.ogTypes) && card.ogTypes.length) {
+  // store as JSON string; safer for multi-word types like "Phyrexian — Elf"
+  el.dataset.ogTypes = JSON.stringify(card.ogTypes);
+}
+if (Array.isArray(card?.ogEffects) && card.ogEffects.length) {
+  el.dataset.ogEffects = JSON.stringify(card.ogEffects);
+}
+
+
+// (optional) let attributes know it’s a creature, etc.
+if (card?.type_line) el.dataset.typeLine = String(card.type_line);
+
   el.className = 'card';
   el.style.left = x+'px';
   el.style.top  = y+'px';
   el.dataset.owner = String(owner);
   el.dataset.cid   = String(cid);
   el.dataset.name  = card.name || '';
+  // Stamp base P/T/L if we have numeric OGs (for overlays and snapshot)
+if (Number.isFinite(card?.ogpower))   el.dataset.baseP = String(card.ogpower);
+if (Number.isFinite(card?.ogtoughness)) el.dataset.baseT = String(card.ogtoughness);
+// loyalty (if you want to surface later)
+if (Number.isFinite(card?.ogloyalty)) el.dataset.baseL = String(card.ogloyalty);
+
   el.innerHTML = `
     <div class="cardInner">
       <div class="face front" style="background:none">
         <img src="${card.img}" alt="${card.name}" style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
       </div>
     </div>`;
+	
   world.appendChild(el);
 
  // NEW: attach tooltip for this card (fill real type/cost/oracle if you have it)
@@ -1406,6 +2085,10 @@ function spawnTableCard(card, x, y, opts = {}){
   function toggleTap(broadcast=true){ setTapped(!el.classList.contains('tapped'), broadcast); }
 
   // ----- drag + tap/double-tap (owner)  |  tap-to-select+tooltip (non-owner)
+
+
+
+
 let dragging=false, ox=0, oy=0;
 let startX=0, startY=0, moved=false;
 const MOVE_TOL = 6;     // px
@@ -1475,23 +2158,37 @@ const end = async (e)=>{
   if (!moved){
     const now = performance.now();
 
-    // Single/double click timing
-    const isDouble = now - (el._lastTapTs||0) < TAP_MS;
+    // Track last tap time + position for spatial slop
+    const lastTs = el._lastTapTs || 0;
+    const lastX  = el._lastTapX  || e.clientX;
+    const lastY  = el._lastTapY  || e.clientY;
+
+    const dt = now - lastTs;
+    const dx = Math.abs((e.clientX || 0) - lastX);
+    const dy = Math.abs((e.clientY || 0) - lastY);
+    const withinTime  = dt > 0 && dt <= TAP_MS;
+    const withinSlop  = dx <= DBL_TAP_SLOP_PX && dy <= DBL_TAP_SLOP_PX;
+    const isDouble    = withinTime && withinSlop;
+
+    // update last-tap markers for next time
     el._lastTapTs = now;
+    el._lastTapX  = e.clientX;
+    el._lastTapY  = e.clientY;
 
     if (isDouble){
       // owner double-tap = tap/untap broadcast
       if (isOwner) toggleTap(true);
     } else {
-      // --- Single tap: select and show tooltip for everyone
+      // Single tap: select + tooltip
       selectCard(el);
       await showCardTooltip(el, e.clientX, e.clientY);
     }
   }
 
-  dragging=false;
+  dragging = false;
   try{ el.releasePointerCapture?.(e.pointerId); }catch{}
 };
+
 
 el.addEventListener('pointerup', end);
 el.addEventListener('pointercancel', end);
@@ -1564,6 +2261,21 @@ seatSelect?.addEventListener('change', ()=>{
 // ======= Drawer Controls ===========
 const cogBtn = document.getElementById('cogBtn');
 
+document.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('[data-card-cog], .cardCogBtn')) e.stopPropagation();
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('[data-card-cog], .cardCogBtn')) e.stopPropagation();
+});
+
+document.addEventListener('mousedown', (e) => {
+  if (e.target.closest('[data-card-cog], .cardCogBtn')) e.stopPropagation();
+});
+
+
+
+
 /* Drawer toggle */
 cogBtn.addEventListener('click', ()=>{
   const open = !drawerWrap.classList.contains('expanded');
@@ -1571,4 +2283,179 @@ cogBtn.addEventListener('click', ()=>{
   drawerWrap.classList.toggle('expanded', open);
   zoomWrapEl.style.display = open ? 'none' : 'flex';
 });
+
+// --- Wire deck action buttons (🔍, ＋, …) ---
+const deckSearchBtn = document.getElementById('deckSearchBtn');
+const deckAddBtn    = document.getElementById('deckAddBtn');
+const deckMoreBtn   = document.getElementById('deckMoreBtn');
+
+// 🔍 Search deck — unchanged
+deckSearchBtn.addEventListener('click', async ()=>{
+  const seat = mySeat();
+  const deckCards = await window.getDeckCardsForSeat?.(seat) || [];
+  Overlays.openDeckSearch({
+    seat,
+    deckCards,
+    onMove:(card,dest)=>{
+  if (dest==='table')   window.spawnCardAtViewCenter?.(card, seat);
+  if (dest==='hand')    window.addToHand?.(card, seat);
+  if (dest==='graveyard'||dest==='exile')
+    window.moveCardToZone?.(card, dest, seat);
+},
+    onCloseAskShuffle:(doShuffle)=>{ if (doShuffle) window.shuffleDeck?.(seat); }
+  });
+});
+
+// ＋ Add any card — UPDATED to use onMove
+deckAddBtn.addEventListener('click', ()=>{
+  const seat = mySeat();
+  Overlays.openAddCard({
+    seat,
+    onMove:(card,dest)=>{
+  if (dest==='table')   window.spawnCardAtViewCenter?.(card, seat);
+  if (dest==='hand')    window.addToHand?.(card, seat);
+  if (dest==='graveyard'||dest==='exile')
+    window.moveCardToZone?.(card, dest, seat);
+}
+  });
+});
+
+// … Deck tools — unchanged
+deckMoreBtn.addEventListener('click', ()=>{
+  const seat = mySeat();
+  Overlays.openDeckOptions({
+    seat,
+    onDrawX:(n)=> window.drawXCards?.(seat,n),
+    onMillX:(n)=> window.millXCards?.(seat,n),
+    onCascade:(opts)=> window.startCascade?.(seat, opts),
+    onShuffle:()=> window.shuffleDeck?.(seat)
+  });
+});
+
+
+window.getDeckCardsForSeat = async (seat)=>{
+  // We only track a single local deck in v3; top of deck is the array end.
+  // Return in draw order (top-first) and include the fields the overlays expect.
+  return (Array.isArray(deck) ? deck.slice().reverse() : []).map((c, i)=>({
+    id: `deck-${i}`,           // stable-ish id for overlay removal
+    name: c.name || '',
+    img:  c.img  || '',
+    // optional fields used by filters (safe defaults):
+    type_line: c.type_line || '',
+    mana_cost: c.mana_cost || '',
+    oracle_text: c.oracle_text || ''
+  }));
+};
+window.drawXCards = (seat,n)=> console.log(`[draw] P${seat} draws ${n}`);
+window.millXCards = (seat,n)=> console.log(`[mill] P${seat} mills ${n}`);
+
+window.spawnCardAtViewCenter = (card, seat)=>{
+  const vr = worldWrap.getBoundingClientRect();
+  const cx = vr.left + vr.width/2;
+  const cy = vr.top  + vr.height*0.45;
+  const { x, y } = screenToWorld(cx, cy);
+  const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
+  spawnTableCard({ ...card }, x, y, { owner: seat, cid });
+};
+
+
+// Utils
+function notify(msg){ try{ Overlays.notify('info', msg); }catch{} }
+
+// DRAW X → move from top-of-deck to hand
+window.drawXCards = (seat, n)=>{
+  n = Math.max(1, n|0);
+  const drawn = [];
+  while (n-- > 0 && Array.isArray(deck) && deck.length){
+    const c = deck.pop();       // top of deck
+    drawn.push(c);
+    window.addToHand?.(c, seat);
+  }
+  if (!drawn.length){ notify('Deck is empty.'); return; }
+  notify(`Drew ${drawn.length} card${drawn.length!==1?'s':''}.`);
+};
+
+// MILL X → move from top-of-deck to graveyard
+// MILL X → move from top-of-deck to graveyard (with ids so Zones can track them)
+window.millXCards = (seat, n)=>{
+  n = Math.max(1, n|0);
+  let moved = 0;
+
+  while (n-- > 0 && Array.isArray(deck) && deck.length){
+    const c = deck.pop();                 // top of deck
+    Zones?.addToZone?.({ seat, zoneName:'graveyard', card: c });  // ← authoritative
+    moved++;
+  }
+
+  Overlays.notify('info', `Milled ${moved}.`);
+  Zones?.emitChange?.({ seat, zoneName:'graveyard' });
+};
+
+
+
+
+// CASCADE (reveal until hit, cast for free, bottom the rest randomly)
+window.startCascade = (seat, opts={ value:0, strictLess:true, ignoreLands:true })=>{
+  const N = Math.max(0, Number(opts.value||0)|0);
+  const strict = !!opts.strictLess;       // true => < N, false => ≤ N
+  const ignoreLands = !!opts.ignoreLands; // true => skip lands as candidates
+
+  if (!Array.isArray(deck) || !deck.length){
+    notify('Deck is empty.');
+    return;
+  }
+
+  const revealed = [];
+  let hit = null;
+
+  // Helper to read mana value (fall back across common fields)
+  const mvOf = (c)=>{
+  if (Number.isFinite(c?.mana_value)) return c.mana_value|0;
+  if (Number.isFinite(c?.cmc))        return c.cmc|0;
+  if (Number.isFinite(c?.converted_mana_cost)) return c.converted_mana_cost|0;
+  return 0; // treat missing as 0 (lands typically)
+};
+
+  const isLand = (c)=>{
+  const tl = (c?.type_line || c?.type || '').toLowerCase();
+  if (tl.includes('land')) return true;
+  if (Array.isArray(c?.types)      && c.types.some(t => String(t).toLowerCase()==='land')) return true;
+  if (Array.isArray(c?.supertypes) && c.supertypes.some(t => String(t).toLowerCase()==='land')) return true;
+  return false;
+};
+
+
+  // Reveal from the top until we find a candidate
+  while (deck.length){
+    const c = deck.pop();            // reveal
+    revealed.push(c);
+
+    const mv = mvOf(c);
+    const mvOk = strict ? (mv < N) : (mv <= N);
+    const landOk = ignoreLands ? !isLand(c) : true;
+
+    if (landOk && mvOk){
+      hit = c;
+      break;
+    }
+  }
+
+  // Bottom the rest in random order (top is array end ⇒ bottom is array start)
+  const toBottom = revealed.filter(c => c !== hit);
+  for (let i = toBottom.length - 1; i > 0; i--){
+    const j = (Math.random()* (i+1))|0;
+    [toBottom[i], toBottom[j]] = [toBottom[j], toBottom[i]];
+  }
+  // Put on bottom (front)
+  deck.unshift(...toBottom);
+
+  // If we found a hit, “cast” it (spawn to table center for now)
+  if (hit){
+    window.spawnCardAtViewCenter?.(hit, seat);
+    notify(`Cascade hit: ${hit.name || 'card'}`);
+  } else {
+    notify('Cascade revealed the entire deck — no valid hit.');
+  }
+};
+
 </script>

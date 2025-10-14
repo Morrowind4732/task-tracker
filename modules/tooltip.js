@@ -4,6 +4,12 @@
 //   showCardTooltip, hideCardTooltip
 //   manaToHtml, clearSelection
 //   attachHandAutoTooltip
+//
+// ✨ Enhancements added:
+//   - PT badge at bottom-right of tooltip (larger, like real cards).
+//   - Anchored round cog button to the right of the card while tooltip is visible.
+//     * Dispatches "card:cog" CustomEvent on click with { el: anchorEl }
+//     * Also tries window.openCardSettings?.(anchorEl) if present.
 
 /* -----------------------------
    Mana icons → HTML helpers
@@ -39,18 +45,25 @@ async function fetchMissingFieldsByName(name){
     mana_cost: d.mana_cost || '',
     type_line: d.type_line || '',
     oracle_text: d.oracle_text || (face?.oracle_text || ''),
+    power:      (d.power ?? face?.power ?? ''),
+    toughness:  (d.toughness ?? face?.toughness ?? ''),
+    loyalty:    (d.loyalty ?? face?.loyalty ?? ''), // planeswalkers
   };
 }
 
 /* -----------------------------
-   Tooltip state/DOM
+   Tooltip + Cog state/DOM
 ----------------------------- */
 let tipEl = null;
 let lastPos = { x: 0, y: 0 };
 let anchorEl = null;
 
+// NEW: a small, floating cog button anchored to the right of the card
+let cogEl = null;
+
 const VP_MARGIN = 8;     // viewport breathing room
 const TIP_GAP   = 12;    // gap between card and tooltip
+const COG_GAP   = 10;    // gap between card's right edge and cog
 
 function ensureTip(){
   if (tipEl) return tipEl;
@@ -59,20 +72,117 @@ function ensureTip(){
   tipEl.style.position = 'absolute';
   tipEl.style.display  = 'none';
   tipEl.setAttribute('role','dialog');
+
+  // Ensure the tooltip itself is a positioning context for the PT badge.
+  tipEl.style.position = 'absolute';
+
   document.body.appendChild(tipEl);
   return tipEl;
+}
+
+// NEW: Build/ensure the anchored cog button once
+function ensureCog(){
+  if (cogEl) return cogEl;
+  cogEl = document.createElement('button');
+  cogEl.type = 'button';
+  cogEl.className = 'cardCogBtn';
+  cogEl.style.position = 'absolute';
+  cogEl.style.display = 'none';
+  cogEl.style.zIndex = '10002';  // above tooltip/actions
+  cogEl.style.width = '42px';
+  cogEl.style.height = '42px';
+  cogEl.style.borderRadius = '50%';
+  cogEl.style.background = '#0f1725';
+  cogEl.style.color = '#cfe1ff';
+  cogEl.style.border = '1px solid #2b3f63';
+  cogEl.style.boxShadow = '0 8px 20px rgba(106,169,255,.18)';
+  cogEl.style.display = 'none';
+  cogEl.style.alignItems = 'center';
+  cogEl.style.justifyContent = 'center';
+  cogEl.style.display = 'none';
+  cogEl.style.cursor = 'pointer';
+
+  cogEl.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         aria-hidden="true" style="width:22px;height:22px;display:block;">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3 12a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 6.82 7c.56 0 1.08-.21 1.51-.58A1.65 1.65 0 0 0 9.84 5H10a2 2 0 1 1 4 0h.16a1.65 1.65 0 0 0 1.51 1.42c.43.04.84.21 1.16.53l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06c-.32.32-.49.73-.53 1.16z"></path>
+    </svg>
+  `;
+
+  // Click → fire a semantic event and try any existing settings hook
+  cogEl.addEventListener('click', () => {
+    try {
+      // semantic event for anyone listening
+      const ev = new CustomEvent('card:cog', { detail: { el: anchorEl }, bubbles: true });
+      (anchorEl || document).dispatchEvent(ev);
+    } catch {}
+    try {
+      // app-provided helper (optional)
+      window.openCardSettings?.(anchorEl);
+    } catch {}
+  });
+
+  document.body.appendChild(cogEl);
+  return cogEl;
+}
+
+// NEW: position the cog relative to the anchored card
+function positionCog(targetEl){
+  if (!cogEl || !targetEl) return;
+  const r = targetEl.getBoundingClientRect();
+  const x = Math.round(r.right + COG_GAP);
+  const y = Math.round(r.top + r.height / 2 - 21); // center vertically (21 = 42/2)
+  cogEl.style.left = `${x}px`;
+  cogEl.style.top  = `${y}px`;
+  cogEl.style.display = 'grid';
+}
+
+function hideCog(){
+  if (cogEl) cogEl.style.display = 'none';
 }
 
 function renderTooltipHtml(card){
   const name  = escapeHtml(card?.name ?? '');
   const cost  = manaToHtml(card?.mana_cost ?? '', { asCost: true });
   const tline = escapeHtml(card?.type_line ?? '');
-  const text  = manaToHtml(card?.oracle_text ?? '');
+  const text  = manaToHtml(card?.oracle_text ?? '', { asCost: true });
+
+  // PT badge at bottom-right, larger to pop visually; loyalty fallback for walkers
+  const showPT = (card?.power ?? '') !== '' && (card?.toughness ?? '') !== '';
+  const showL  = !showPT && (card?.loyalty ?? '') !== '';
+  const ptBadge = showPT
+    ? `<div class="ptBadge"
+         style="
+           position:absolute; right:10px; bottom:8px;
+           font-weight:900; font-size:20px; line-height:1;
+           background:rgba(20,33,54,.92); border:1px solid #35527d;
+           color:#e9f2ff; border-radius:10px; padding:2px 8px; pointer-events:none;">
+         ${escapeHtml(card.power)}/${escapeHtml(card.toughness)}
+       </div>`
+    : (showL
+        ? `<div class="ptBadge"
+             style="
+               position:absolute; right:10px; bottom:8px;
+               font-weight:900; font-size:20px; line-height:1;
+               background:rgba(20,33,54,.92); border:1px solid #35527d;
+               color:#e9f2ff; border-radius:10px; padding:2px 8px; pointer-events:none;">
+             L: ${escapeHtml(card.loyalty)}
+           </div>`
+        : '');
+
+  // Bottom padding so text doesn't collide with the badge
+  const padStyle = `style="padding-bottom:28px;"`;
+
   return `
-    <h3>${name}</h3>
-    ${cost ? `<div class="cost">${cost}</div>` : ''}
-    ${tline ? `<div class="typeLine">${tline}</div>` : ''}
-    ${text ? `<div class="oracle">${text}</div>` : ''}
+    <div ${padStyle}>
+      <h3>${name}</h3>
+      ${cost ? `<div class="cost">${cost}</div>` : ''}
+      ${tline ? `<div class="typeLine">${tline}</div>` : ''}
+      ${text ? `<div class="oracle">${text}</div>` : ''}
+      ${ptBadge}
+    </div>
   `;
 }
 
@@ -125,11 +235,21 @@ function positionTooltip(el, centerX, anchorTop, anchorBottom, preferAbove = tru
 ----------------------------- */
 export function initTooltipSystem(){
   ensureTip();
-  // click/tap empty background clears selection + hides tooltip
+  ensureCog();
+  cogEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
+
+
+  // click/tap empty background clears selection + hides tooltip + cog
   document.addEventListener('pointerdown', (e)=>{
-    if (e.target.closest('.card') || e.target.closest('.cardTooltip')) return;
-    clearSelection(); hideTooltip();
-  });
+  if (
+    e.target.closest('.card') ||
+    e.target.closest('.cardTooltip') ||
+    e.target.closest('.cardCogBtn')   // ← allow clicks anywhere inside the cog
+  ) return;
+  clearSelection(); hideTooltip(); hideCog();
+});
+
+
   window.addEventListener('resize', ()=> reflowAll());
 }
 
@@ -142,6 +262,10 @@ export function followTooltip(target) {
     const r = anchorEl.getBoundingClientRect();
     const centerX = r.left + (r.width / 2);
     positionTooltip(tipEl, centerX, r.top, r.bottom, /*preferAbove*/ true);
+
+    // keep the cog glued to the card’s right edge
+    ensureCog();
+    positionCog(anchorEl);
     return;
   }
 
@@ -150,6 +274,9 @@ export function followTooltip(target) {
   const cx = Number(target?.x ?? target) || 0;
   const cy = Number(target?.y) || 0;
   positionTooltip(tipEl, cx, cy, cy, true);
+
+  // No card element to anchor → hide the cog
+  hideCog();
 }
 
 export function reflowAll(){
@@ -159,6 +286,7 @@ export function reflowAll(){
   } else {
     // re-place around last center
     positionTooltip(tipEl, lastPos.x, lastPos.y - 1, lastPos.y + 1, true);
+    hideCog();
   }
 }
 
@@ -168,34 +296,47 @@ export function reflowAll(){
 export function clearSelection(){
   document.querySelectorAll('.card.selected').forEach(n => n.classList.remove('selected'));
 }
-export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; }
+export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; hideCog(); }
 
 /* -----------------------------
    Public: show/hide (legacy names)
 ----------------------------- */
 export async function showCardTooltip(cardOrEl, screenX, screenY){
   const el = ensureTip();
+  ensureCog();
 
   // A) DOM element path (preferred)
   if (cardOrEl instanceof Element) {
     const r = cardOrEl.getBoundingClientRect();
     const centerX = r.left + (r.width / 2);
 
-    // use dataset / alt, then fill missing via Scryfall
+    // Read everything we can from dataset first (incl. P/T & loyalty)
     let data = {
       name:        cardOrEl.dataset?.name        || cardOrEl.querySelector('img')?.alt || '',
       mana_cost:   cardOrEl.dataset?.mana_cost   || '',
       type_line:   cardOrEl.dataset?.type_line   || '',
-      oracle_text: cardOrEl.dataset?.oracle_text || ''
+      oracle_text: cardOrEl.dataset?.oracle_text || '',
+      power:       cardOrEl.dataset?.power       || '',
+      toughness:   cardOrEl.dataset?.toughness   || '',
+      loyalty:     cardOrEl.dataset?.loyalty     || '',
     };
-    if (data.name && (!data.mana_cost || !data.type_line || !data.oracle_text)) {
+
+    // Fetch if ANY key field is missing (incl. P/T unless loyalty exists)
+    const needsFill =
+      !data.mana_cost || !data.type_line || !data.oracle_text ||
+      (!data.loyalty && (data.power === '' || data.toughness === ''));
+
+    if (data.name && needsFill) {
       try {
         const filled = await fetchMissingFieldsByName(data.name);
         data = { ...data, ...filled };
-        // cache back on the element
+        // cache everything back on the element so future opens don't drop P/T
         cardOrEl.dataset.mana_cost   = data.mana_cost   || '';
         cardOrEl.dataset.type_line   = data.type_line   || '';
         cardOrEl.dataset.oracle_text = data.oracle_text || '';
+        cardOrEl.dataset.power       = (data.power      ?? '') + '';
+        cardOrEl.dataset.toughness   = (data.toughness  ?? '') + '';
+        cardOrEl.dataset.loyalty     = (data.loyalty    ?? '') + '';
       } catch {}
     }
 
@@ -203,6 +344,9 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
     el.style.display = 'block';
     anchorEl = cardOrEl;
     positionTooltip(el, centerX, r.top, r.bottom, true);
+
+    // show/position the cog next to the card
+    positionCog(anchorEl);
     return;
   }
 
@@ -212,7 +356,10 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
     name:        dataObj.name        || '',
     mana_cost:   dataObj.mana_cost   || dataObj.cost || '',
     type_line:   dataObj.type_line   || dataObj.typeLine || '',
-    oracle_text: dataObj.oracle_text || dataObj.oracle || ''
+    oracle_text: dataObj.oracle_text || dataObj.oracle || '',
+    power:       dataObj.power       ?? '',
+    toughness:   dataObj.toughness   ?? '',
+    loyalty:     dataObj.loyalty     ?? '',
   });
   el.style.display = 'block';
   anchorEl = null;
@@ -220,6 +367,9 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
   const cx = Number(screenX) || 0;
   const cy = Number(screenY) || 0;
   positionTooltip(el, cx, cy - 1, cy + 1, true);
+
+  // no DOM anchor → hide the cog
+  hideCog();
 }
 
 export function hideCardTooltip(){ hideTooltip(); }
@@ -239,16 +389,23 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
        (getCardData && typeof getCardData === 'object' ? getCardData :
         { name: cardEl?.dataset?.name || '' })) || {};
 
-    // normalize legacy field names
+    // normalize legacy + include P/T/loyalty (respect existing dataset caches)
     const normalized = {
       name:        base.name || '',
       mana_cost:   base.mana_cost || base.cost || '',
       type_line:   base.type_line || base.typeLine || '',
       oracle_text: base.oracle_text || base.oracle || '',
+      power:       base.power ?? cardEl.dataset?.power ?? '',
+      toughness:   base.toughness ?? cardEl.dataset?.toughness ?? '',
+      loyalty:     base.loyalty ?? cardEl.dataset?.loyalty ?? '',
     };
 
-    // fill via Scryfall if needed
-    if ((!normalized.mana_cost || !normalized.oracle_text || !normalized.type_line) && normalized.name){
+    // fill via Scryfall if ANY core field missing (incl. P/T unless loyalty exists)
+    const needsFill =
+      !normalized.mana_cost || !normalized.oracle_text || !normalized.type_line ||
+      (!normalized.loyalty && (normalized.power === '' || normalized.toughness === ''));
+
+    if (needsFill && normalized.name){
       try {
         const filled = await fetchMissingFieldsByName(normalized.name);
         return { ...normalized, ...filled };
@@ -261,12 +418,15 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
     clearSelection();
     cardEl.classList.add('selected');
 
-    // cache on the element for instant future tooltips
+    // cache on the element for instant future tooltips (incl. P/T & loyalty)
     const data = await resolveData();
     if (data) {
       if (data.mana_cost)   cardEl.dataset.mana_cost   = data.mana_cost;
       if (data.type_line)   cardEl.dataset.type_line   = data.type_line;
       if (data.oracle_text) cardEl.dataset.oracle_text = data.oracle_text;
+      cardEl.dataset.power     = (data.power     ?? '') + '';
+      cardEl.dataset.toughness = (data.toughness ?? '') + '';
+      cardEl.dataset.loyalty   = (data.loyalty   ?? '') + '';
     }
 
     // show anchored to the element (top-center, non-overlapping)
@@ -346,14 +506,17 @@ export function attachHandAutoTooltip(handEl, { selector = '.card' } = {}){
 
     // make sure tooltip DOM exists
     if (!tipEl) ensureTip();
+    ensureCog();
 
     if (el === lastEl) {
-      // Same centered card: just keep the tooltip glued as the list moves
-      if (tipEl && tipEl.style.display !== 'none') followTooltip(el);
+      // Same centered card: just keep the tooltip & cog glued as the list moves
+      if (tipEl && tipEl.style.display !== 'none') {
+        followTooltip(el); // will position both tooltip and cog
+      }
     } else {
       // New centered card: render (hydrates dataset if needed) and anchor to it
       lastEl = el;
-      showCardTooltip(el);
+      showCardTooltip(el); // will also position cog
     }
   };
 

@@ -22,35 +22,35 @@ API:
   Zones.handleDrop(cardEl);            // call on pointerup
   Zones.openZone(zoneName, seat?);     // 'graveyard' | 'exile'
   Zones.restoreFromState(seat, state?);
+  // v3.html – Zones.init config
+spawnToTable: (card, seat) => window.spawnCardAtViewCenter?.(card, seat),
+
 */
-
-
 
 const Zones = {
   cfg: null,
   els: { graveyard:null, exile:null, deck:null, hand:null, world:null },
   zoneState: new Map(), // seat -> { table:[], graveyard:[], exile:[], hand:[], deck:[] }
 
-applyRemoteMove(seat, meta = {}){
-  const s   = Number(seat || this.getViewSeat()) || 1;
-  const from= String(meta.from || '');
-  const to  = String(meta.to   || '');
-  const cid = String(meta.cid  || '');
-  if (!from || !to || !cid) return;
+  applyRemoteMove(seat, meta = {}){
+    const s   = Number(seat || this.getViewSeat()) || 1;
+    const from= String(meta.from || '');
+    const to  = String(meta.to   || '');
+    const cid = String(meta.cid  || '');
+    if (!from || !to || !cid) return;
 
-  (async () => {
-    await this._moveBetween(s, { from, to, cid });
+    (async () => {
+      await this._moveBetween(s, { from, to, cid });
 
-    // Mirror the sender's side-effects that touch shared UI:
-    if (to === 'table') {
-      try { this.cfg.spawnToTable?.(await this._hydrate(cid), s); } catch {}
-    }
+      // Mirror the sender's side-effects that touch shared UI:
+      if (to === 'table') {
+        try { this.cfg.spawnToTable?.(await this._hydrate(cid), s); } catch {}
+      }
 
-    // NOTE: for 'hand' or 'deck' we do NOT mutate the peer’s private hand/deck UI.
-    // We only keep our internal zoneState in sync so overlays show correct lists.
-  })().catch(err => console.warn('[Zones] applyRemoteMove error', err));
-},
-
+      // NOTE: for 'hand' or 'deck' we do NOT mutate the peer’s private hand/deck UI.
+      // We only keep our internal zoneState in sync so overlays show correct lists.
+    })().catch(err => console.warn('[Zones] applyRemoteMove error', err));
+  },
 
   init(opts = {}){
     this.cfg = opts || {};
@@ -70,6 +70,31 @@ applyRemoteMove(seat, meta = {}){
       if (cardEl && this.isTableCard(cardEl)) this.handleDrop(cardEl);
     });
   },
+  
+  getZoneCards({ seat, zoneName }) {
+  const s = Number(seat ?? this.getViewSeat()) || 1;
+  const st = this._ensureSeatState(s);
+  return Array.isArray(st[zoneName]) ? st[zoneName].slice() : [];
+},
+
+async addToZone({ seat, zoneName, card }) {
+  const s = Number(seat ?? this.getViewSeat()) || 1;
+  const cid = card?.id || card?.cid || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
+  await this._moveBetween(s, { from:'deck', to: zoneName, cid, hydrate:{ ...card, id: cid } });
+  return cid;
+},
+
+async moveFromZone({ seat, from, to, card }) {
+  const s = Number(seat ?? this.getViewSeat()) || 1;
+  const cid = card?.id || card?.cid || card?.name || '';
+  if (!cid) return;
+  await this._moveBetween(s, { from, to, cid, hydrate: card });
+},
+
+emitChange(/*{ seat, zoneName }*/) {
+  // no-op: Overlays will refetch via fetchCards when provided
+},
+
 
   getViewSeat(){
     // v3 exposes current seat via select#mySeat and tracks view in code.
@@ -79,6 +104,7 @@ applyRemoteMove(seat, meta = {}){
       return Number(app.viewSeat ?? app.mySeat ?? 1) || 1;
     } catch { return 1; }
   },
+
   getGameId(){
     return String(window.ROOM_ID || window.AppState?.gameId || '');
   },
@@ -98,6 +124,7 @@ applyRemoteMove(seat, meta = {}){
     const areaC = Math.max(1, cardRect.width*cardRect.height);
     return inter / areaC;
   },
+
   _detectOverlappingZone(cardEl){
     const cardRect = cardEl.getBoundingClientRect();
     let best=null, bestScore=0;
@@ -173,24 +200,37 @@ applyRemoteMove(seat, meta = {}){
       console.warn('[Zones] handleDrop error', err);
     }
   },
+
   _cleanupAfterDeckInsert(cid, el){
     try{ this.cfg.removeTableCardDomById?.(cid); }catch{}
     try{ el.remove(); }catch{}
   },
 
   // ---- overlays ----
-  openZone(zoneName, seat){
+  async openZone(zoneName, seat){
     if (!(zoneName === 'graveyard' || zoneName === 'exile')) return;
     const s = Number(seat ?? this.getViewSeat()) || 1;
+
     const st = this._ensureSeatState(s);
-    const list = Array.isArray(st[zoneName]) ? st[zoneName] : [];
+    const rawList = Array.isArray(st[zoneName]) ? st[zoneName] : [];
+
+    // NEW: hydrate so each has img + name
+    const list = await Promise.all(rawList.map(async c => {
+      const cid = c?.id || c?.cid || c;
+      const data = await this._hydrate(cid, c);
+      return { ...data, cid };
+    }));
 
     Overlays.openZoneList({
       title: `${zoneName.toUpperCase()} — P${s}`,
-      seat: s, zoneName, cards: list,
+      seat: s,
+      zoneName,
+      cards: list,
+	  fetchCards: () => this.getZoneCards({ seat: s, zoneName }),
       onMove: async (card, dest)=>{
         const cid = card.id || card.cid || cardElId(card);
         await this._moveBetween(s, { from: zoneName, to: dest, cid, hydrate: card });
+
         if (dest === 'table'){
           try{ this.cfg.spawnToTable?.(await this._hydrate(cid, card), s); }catch{}
         } else if (dest === 'hand'){
@@ -198,6 +238,7 @@ applyRemoteMove(seat, meta = {}){
         } else if (dest === 'deck'){
           try{ this.cfg.addToDeck?.(await this._hydrate(cid, card), s, { position:'top' }); }catch{}
         }
+
         this.cfg.onMoved?.({ seat: s, cid, from: zoneName, to: dest });
       }
     });
@@ -212,6 +253,7 @@ applyRemoteMove(seat, meta = {}){
     }
     return this.zoneState.get(seat);
   },
+
   async _hydrate(cid, fallback){
     if (fallback?.name) return fallback;
     try{
@@ -220,14 +262,17 @@ applyRemoteMove(seat, meta = {}){
     }catch{}
     return { id: cid, name: cid, mana_cost:'', type_line:'', oracle_text:'', img:'' };
   },
+
   _removeById(arr, cid){
     const i = arr.findIndex(x => (x.id || x.cid || x) === cid);
     if (i >= 0) arr.splice(i,1);
   },
+
   _pushIfMissing(arr, item){
     const id = item.id || item.cid || item;
     if (!arr.some(x => (x.id || x.cid || x) === id)) arr.push(item);
   },
+
   async _moveBetween(seat, { from, to, cid, hydrate }){
     const st = this._ensureSeatState(seat);
     if (Array.isArray(st[from])) this._removeById(st[from], cid);
@@ -248,24 +293,28 @@ applyRemoteMove(seat, meta = {}){
       const gameId = this.getGameId();
       return await window.StorageAPI.savePlayerState(gameId, seat, { state });
     }
+
     // Otherwise, if Supabase is present and you have a table
     const SB = window.supabase;
     if (!SB || typeof SB.from !== 'function') return;  // ← guard
+
     const gameId = this.getGameId();
     const payload = { game_id: gameId, seat, state };
-
     const { error } = await SB.from('player_states').upsert(payload, { onConflict: 'game_id,seat' });
     if (error) console.warn('[Zones] save error', error);
   },
+
   async _loadSeatState(seat){
     if (window.StorageAPI?.loadPlayerState){
       const gameId = this.getGameId();
       const snap = await window.StorageAPI.loadPlayerState(gameId, seat);
       return snap?.state || { table:[], graveyard:[], exile:[], hand:[], deck:[] };
     }
- const SB = window.supabase;
- if (!SB || typeof SB.from !== 'function')
-   return { table:[], graveyard:[], exile:[], hand:[], deck:[] };  
+
+    const SB = window.supabase;
+    if (!SB || typeof SB.from !== 'function')
+      return { table:[], graveyard:[], exile:[], hand:[], deck:[] };
+
     const gameId = this.getGameId();
     const { data, error } = await SB
       .from('player_states')
@@ -273,9 +322,14 @@ applyRemoteMove(seat, meta = {}){
       .eq('game_id', gameId)
       .eq('seat', seat)
       .maybeSingle();
-    if (error) { console.warn('[Zones] load error', error); return { table:[], graveyard:[], exile:[], hand:[], deck:[] }; }
+
+    if (error) {
+      console.warn('[Zones] load error', error);
+      return { table:[], graveyard:[], exile:[], hand:[], deck:[] };
+    }
     return data?.state || { table:[], graveyard:[], exile:[], hand:[], deck:[] };
   },
+
   async restoreFromState(seat, state){
     const st = state || await this._loadSeatState(seat);
     this.zoneState.set(seat, {

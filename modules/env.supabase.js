@@ -91,3 +91,12 @@
     }
   })();
 })();
+
+// --- ESM bridge exports so other modules can "import" the client ---
+// Promise that resolves to the supabase client:
+export const supaReady = window.SUPABASE_READY;
+// Synchronous getter (returns null until ready):
+export function supa() { return window.SUPABASE || null; }
+// default export = the ready promise (handy for `await import(...)`)
+export default supaReady;
+
