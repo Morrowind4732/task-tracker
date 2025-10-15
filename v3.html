@@ -381,8 +381,6 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   <div class="turn-tile"><span>Turn:</span><span><span class="turn-count">1</span></div>
 </div>
 
-	<div class="turn-tile"><span>Turn:</span><span><span class="turn-count">1</span></div>
-  </div>
 
   <!-- NEW: who you're viewing -->
   <div class="viewingChip" id="viewingChip" role="status" aria-live="polite">Viewing: P1</div>
@@ -869,18 +867,47 @@ function selectCard(el, sx = null, sy = null){
 const Z_MIN = 0.2;   // was 0.5
 const Z_MAX = 3.0;   // was 2.5
 
+// camera state
 const cam = { x:0, y:0, z:1 };
+
 function applyCam(){
   worldScale.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.z})`;
   document.documentElement.style.setProperty('--world-zoom', String(cam.z));
- const sel = world.querySelector('.card.selected');
- if (sel) {
-   followTooltip(sel);
- } else {
-   // no selection → keep old behavior (re-clamp tooltip in place if visible)
-   reflowAll();
- }
+
+  const sel = world.querySelector('.card.selected');
+  if (sel) {
+    followTooltip(sel);
+  } else {
+    reflowAll();
+  }
+  // NEW: keep the slider in sync with camera zoom
+  syncZoomUI();
 }
+// ===== Zoom slider wiring =====
+const zoomEl = document.getElementById('zoom');
+
+function syncZoomUI(){
+  if (!zoomEl) return;
+  // Match slider range to our Z_MIN..Z_MAX (e.g. 0.2 ↔ 20, 3.0 ↔ 300)
+  const min = Math.round(Z_MIN * 100);
+  const max = Math.round(Z_MAX * 100);
+  if (zoomEl.min !== String(min)) zoomEl.min = String(min);
+  if (zoomEl.max !== String(max)) zoomEl.max = String(max);
+
+  const val = Math.round(cam.z * 100);
+  if (zoomEl.value !== String(val)) zoomEl.value = String(val);
+}
+
+// Dragging the slider zooms toward the viewport center
+zoomEl?.addEventListener('input', (e) => {
+  const v = Number(e.target.value) || 100;
+  const z = v / 100;
+  const vr = worldWrap.getBoundingClientRect();
+  const cx = vr.left + vr.width / 2;
+  const cy = vr.top  + vr.height / 2;
+  setZoom(z, cx, cy);
+});
+
 
 
 applyCam();
@@ -923,53 +950,60 @@ worldWrap.addEventListener('pointercancel', endPan);
 
 // ——— Pinch-to-zoom (two fingers) ———
 const activePtrs = new Map();
-let pinchBaseD=0, pinchBaseZ=1;
+let pinchPrevD = 0;
 
-worldWrap.addEventListener('pointerdown', e=>{
+worldWrap.addEventListener('pointerdown', (e)=>{
   activePtrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
-});
+}, {passive:true});
 
-worldWrap.addEventListener('pointermove', e=>{
-  if (activePtrs.has(e.pointerId)) {
-    activePtrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
-  }
-  if (activePtrs.size === 2){
-    e.preventDefault();
-    const pts = [...activePtrs.values()];
-    const d = Math.hypot(pts[1].x-pts[0].x, pts[1].y-pts[0].y);
-    if (!pinchBaseD) {
-  pinchBaseD = d;
-  pinchBaseZ = cam.z;
+worldWrap.addEventListener('pointermove', (e)=>{
+  if (!activePtrs.has(e.pointerId)) return;
+  activePtrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
 
-  // Capture the midpoint between the two fingers in screen space
+  if (activePtrs.size !== 2) return;
+
+  e.preventDefault();
+
+  const pts = [...activePtrs.values()];
   const midX = (pts[0].x + pts[1].x) / 2;
   const midY = (pts[0].y + pts[1].y) / 2;
 
-  // Store world coordinates of that midpoint so we can lock onto it
-  const rect = worldScale.getBoundingClientRect();
-  const wx = (midX - rect.left - cam.x) / cam.z;
-  const wy = (midY - rect.top - cam.y) / cam.z;
-  cam._pinchAnchor = { midX, midY, wx, wy };
-}
+  // distance between fingers in screen space
+  const d = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
 
-const newZ = Math.max(Z_MIN, Math.min(Z_MAX, pinchBaseZ * (d / pinchBaseD)));
-const { midX, midY, wx, wy } = cam._pinchAnchor || { midX: 0, midY: 0, wx: 0, wy: 0 };
-
-// Keep the anchor point stable under the midpoint
-cam.x = midX - wx * newZ - worldScale.getBoundingClientRect().left;
-cam.y = midY - wy * newZ - worldScale.getBoundingClientRect().top;
-cam.z = newZ;
-applyCam();
-
+  // On the first frame of a pinch, initialize previous distance
+  if (!pinchPrevD) {
+    pinchPrevD = d;
+    return;
   }
-},{passive:false});
+
+  // Compute world point under the CURRENT midpoint BEFORE changing zoom
+  const rect = worldScale.getBoundingClientRect();
+  const mx = midX - rect.left;
+  const my = midY - rect.top;
+  const wx = (mx - cam.x) / cam.z;
+  const wy = (my - cam.y) / cam.z;
+
+  // Scale factor since last event (frame-to-frame, avoids jumpiness)
+  const step = d / pinchPrevD;
+  const newZ = Math.max(Z_MIN, Math.min(Z_MAX, cam.z * step));
+
+  // Keep that same world point anchored under the moving midpoint
+  cam.z = newZ;
+  cam.x = mx - wx * cam.z;
+  cam.y = my - wy * cam.z;
+
+  pinchPrevD = d;
+  applyCam();
+}, {passive:false});
 
 function endPtr(e){
   activePtrs.delete(e.pointerId);
-  if (activePtrs.size < 2) pinchBaseD = 0;
+  if (activePtrs.size < 2) pinchPrevD = 0;
 }
-worldWrap.addEventListener('pointerup', endPtr);
-worldWrap.addEventListener('pointercancel', endPtr);
+worldWrap.addEventListener('pointerup', endPtr, {passive:true});
+worldWrap.addEventListener('pointercancel', endPtr, {passive:true});
+
 
 // ——— Wheel zoom anchored at cursor (desktop) ———
 worldWrap.addEventListener('wheel', (e)=>{
@@ -1259,6 +1293,14 @@ window.Life = {
   }
 };
 
+// right under window.Life = { ... }
+window.Life.setSilent = function(seat, patch){
+  seat = Number(seat)||1;
+  this.state[seat] = { ...this.get(seat), ...patch };
+  renderLifeStrip();                 // update UI, but DON'T send to peers
+};
+
+
 function renderLifeStrip(){
   document.querySelectorAll('[data-seat][data-field]').forEach(span=>{
     const seat  = Number(span.dataset.seat);
@@ -1306,7 +1348,7 @@ document.getElementById('lifeEditBtn')?.addEventListener('click', ()=>{
 });
 
 // receive life updates from peers
-function applyLifeFromPeer(seat, lifeObj){ window.Life.set(seat, lifeObj); }
+function applyLifeFromPeer(seat, lifeObj){ window.Life.setSilent(seat, lifeObj || {}); }
 
 
 function promptRoomId() {

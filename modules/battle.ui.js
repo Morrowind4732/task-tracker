@@ -183,6 +183,53 @@ function canBlock(blockerCid, attackerCid){
 }
 
 // --- replace activeSeats() with this pair ---
+// Build the same kind of payload Zones sees during drag/drop
+function _cardPayloadForZone(cid){
+  const el   = findCardEl(cid);
+  const meta = window.getCardDataById?.(cid) || {};
+  return {
+    cid,
+    name: el?.dataset?.name || meta.name || String(cid),
+    img:  getCardImgSrc(cid),
+    types: Array.isArray(CardAttributes.get(cid)?.ogTypes)
+      ? CardAttributes.get(cid).ogTypes
+      : (meta.types || []),
+    seat: seatOfCard(cid) || getCardSeatFromDom(el) || mySeat()
+  };
+}
+
+// Move via Zones; try known shapes, then fall back
+async function _moveToZone(cid, to='graveyard'){
+  const card = _cardPayloadForZone(cid);
+  const seat = card.seat || mySeat();
+
+  try {
+    // v3 API (preferred)
+    if (typeof Zones?.moveFromZone === 'function'){
+      await Zones.moveFromZone({ seat, from:'table', to, card });
+      return true;
+    }
+    // alt: single-call "move"
+    if (typeof Zones?.move === 'function'){
+      await Zones.move({ seat, from:'table', to, card });
+      return true;
+    }
+    // alt: explicit remove/add pair
+    if (typeof Zones?.remove === 'function' && typeof Zones?.add === 'function'){
+      await Zones.remove({ seat, zone:'table', cid });
+      await Zones.add({ seat, zone:to, card });
+      return true;
+    }
+  } catch (err){
+    console.warn('[Battle] Zones move error', { cid, to, seat, err });
+  }
+
+  // Last resort so combat can still proceed visually
+  findCardEl(cid)?.remove();
+  return false;
+}
+
+
 
 function seatCountFromV3(){
   // Drawer select is the source of truth in v3
@@ -271,6 +318,25 @@ function isTapped(el){
   if (!v) return false;
   const t = String(v).trim();
   return t !== '' && t !== '0' && t !== '0deg';
+}
+
+function tapCard(cid, on = true){
+  const el = findCardEl(cid);
+  if (!el) return;
+
+  const wasTapped = el.classList.contains('tapped');
+  if (on){
+    el.classList.add('tapped');
+    try { el.style.setProperty('--tap-rot', '90deg'); } catch{}
+  } else {
+    el.classList.remove('tapped');
+    try { el.style.setProperty('--tap-rot', '0deg'); } catch{}
+  }
+
+  // broadcast only if the state actually changed
+  if (wasTapped !== !!on){
+    try { window.RTC?.send?.({ type:'tap', cid, tapped:on }); } catch{}
+  }
 }
 
 
@@ -710,33 +776,20 @@ if (all){
   },
 
   // ----- APPLY (life/poison + deaths) -----
-  async _apply(chosen){
+async _apply(chosen){
   // 1) Gather all deaths
   const deaths = [];
-  chosen.forEach(o => {
+  chosen.forEach(o=>{
     if (o.aDies) deaths.push(o.attacker.cid);
-    (o.blockers || []).forEach(b => { if (b.dies) deaths.push(b.cid); });
+    (o.blockers||[]).forEach(b=>{ if (b.dies) deaths.push(b.cid); });
   });
 
-  // 2) Move each death from table → graveyard using Zones (persisted)
-  //    We decide seat per-card using seatOfCard().
+  // 2) Move each corpse from battlefield → graveyard through Zones (persists & syncs)
   for (const cid of deaths){
-    const seat = seatOfCard(cid) || this.seat; // fallback to my seat if unknown
-    try {
-      await Zones.moveFromZone({
-        seat,
-        from:'table',
-        to:'graveyard',
-        card:{ cid }
-      });
-    } catch (e) {
-      console.warn('[Battle] zones move error', cid, e);
-      // Soft fallback: if Zones is unavailable for some reason, remove the DOM node.
-      findCardEl(cid)?.remove();
-    }
+    await _moveToZone(cid, 'graveyard');
   }
 
-  // 3) Life/poison changes
+  // 3) Life / poison / heal
   const atkSeat = this.seat;
   const defSeat = resolveDefenderSeat(atkSeat);
   let dmg=0, poison=0, heal=0;
@@ -755,8 +808,23 @@ if (all){
     window.Life.set(atkSeat, { life: cur.life + heal });
   }
 
+ // 4) Tap surviving attackers (unless they have Vigilance)
+  const deadSet = new Set();
+  chosen.forEach(o=>{
+    if (o.aDies) deadSet.add(o.attacker.cid);
+    (o.blockers || []).forEach(b => { if (b.dies) deadSet.add(b.cid); });
+  });
+
+  // Use the attackers that were recorded for this combat
+  (this.attackers || []).forEach(cid => {
+    if (deadSet.has(cid)) return;                  // died → don't tap (already moved)
+    const hasVigilance = eff(cid).has('vigilance');
+    if (!hasVigilance) tapCard(cid, true);         // rotate/tap
+  });
+
   Overlays.notify?.('ok','Combat applied.');
 },
+
 
   // ----- Supabase -----
   async _save(patch){
