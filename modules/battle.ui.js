@@ -74,6 +74,15 @@ let supabase = null; supaReady.then(c => supabase = c);
   display:block;
 }
 
+/* outcome rows with checkboxes */
+.outRow{
+  display:flex; align-items:flex-start; gap:10px; padding:8px; margin-bottom:6px;
+}
+.outRow input[type="checkbox"]{
+  margin-top:4px; transform:scale(1.2);
+}
+.outRow.disabled{ opacity:.55; pointer-events:none; }
+
 
   `;
   document.head.appendChild(s);
@@ -127,6 +136,9 @@ const findCardEl = (cid)=>document.querySelector(`.card[data-cid="${CSS.escape(S
 const getFaceBG = (el)=>{ const f=el?.querySelector('.face.front')||el; let bg=f.style.backgroundImage; try{ if(!bg) bg=getComputedStyle(f).backgroundImage; }catch{} return bg||'none'; };
 
 
+// --- FS/DS helpers (DS implies FS) ---
+const _hasFS = (s)=> s.has('first strike') || s.has('firststrike') || s.has('double strike') || s.has('doublestrike');
+const _hasDS = (s)=> s.has('double strike') || s.has('doublestrike');
 
 
 
@@ -164,6 +176,42 @@ function eff(cid){
   return out;
 }
 
+// --- Deterministic + Idempotent helpers ---
+function _deathList(outcomes){
+  const deaths = new Set();
+  (outcomes||[]).forEach(o=>{
+    if (o?.aDies && o?.attacker?.cid) deaths.add(String(o.attacker.cid));
+    (o?.blockers||[]).forEach(b=>{ if (b?.dies && b?.cid) deaths.add(String(b.cid)); });
+  });
+  return Array.from(deaths);
+}
+
+// Every client runs local apply exactly once per (applyToken, hash)
+async function _markLocalApplied(ctx, token, hash){
+  ctx._applied = ctx._applied || new Set();
+  const key = `${token}::${hash}`;
+  if (ctx._applied.has(key)) return false;
+  ctx._applied.add(key);
+  return true;
+}
+
+
+function _outcomeHash(outcomes, selected){
+  try {
+    const key = (outcomes||[]).map((o,i)=>{
+      const sel = (selected?.[i] === false) ? '0' : '1';
+      const a = `${o?.attacker?.cid||''}:${o?.aDies?'1':'0'}`;
+      const bs = (o?.blockers||[]).map(b=>`${b?.cid||''}:${b?.dies?'1':'0'}`).sort().join('|');
+      const pl = `${o?.toPlayer||0}:${o?.poisonToPlayer||0}:${o?.lifeGain||0}`;
+      return `${sel}::${a}::${bs}::${pl}`;
+    }).sort().join('||');
+    let h = 0; for (let i=0;i<key.length;i++){ h = ((h<<5)-h) + key.charCodeAt(i); h|=0; }
+    return String(h);
+  } catch { return '0'; }
+}
+
+
+
 function types(cid){
   const list = (CardAttributes.get(cid)?.ogTypes || []).map(s=>String(s).toLowerCase());
   return new Set(list);
@@ -187,16 +235,32 @@ function canBlock(blockerCid, attackerCid){
 function _cardPayloadForZone(cid){
   const el   = findCardEl(cid);
   const meta = window.getCardDataById?.(cid) || {};
+  const attr = CardAttributes.get?.(cid) || {};
+
+  // Base P/T stamped on the DOM when the card was created
+  const baseP = (el && el.dataset.baseP != null) ? String(el.dataset.baseP) : (meta.baseP ?? meta.power ?? null);
+  const baseT = (el && el.dataset.baseT != null) ? String(el.dataset.baseT) : (meta.baseT ?? meta.toughness ?? null);
+
+  // Effects & types from DOM/attributes/cache
+  const ogEffects = Array.isArray(getInnateEffects(cid)) ? getInnateEffects(cid) : (meta.ogEffects || []);
+  const ogTypes   = Array.isArray(attr.ogTypes) ? attr.ogTypes : (meta.ogTypes || meta.types || []);
+
   return {
-    cid,
+    id: String(cid),
+    cid: String(cid),
     name: el?.dataset?.name || meta.name || String(cid),
     img:  getCardImgSrc(cid),
-    types: Array.isArray(CardAttributes.get(cid)?.ogTypes)
-      ? CardAttributes.get(cid).ogTypes
-      : (meta.types || []),
+    baseP: baseP,             // string (can be "*", "?", etc.)
+    baseT: baseT,             // string
+    ogEffects,
+    ogTypes,
+    // keep a snapshot of current mods so resurrects still show right away
+    ptMod: attr.ptMod ? { ...attr.ptMod } : undefined,
+    types: ogTypes,           // Zones/open overlays expect .types sometimes
     seat: seatOfCard(cid) || getCardSeatFromDom(el) || mySeat()
   };
 }
+
 
 // Move via Zones; try known shapes, then fall back
 async function _moveToZone(cid, to='graveyard'){
@@ -352,6 +416,21 @@ const BattleUI = {
     console.log('[Battle] init', { roomId, seat:this.seat });
   },
 
+async _maybeLocalApply(state, precomputedHash){
+  const token = state?.meta?.applyToken || state?.meta?.createdAt || '0';
+  const hash  = precomputedHash || _outcomeHash(state?.outcomes || [], state?.selected || []);
+  const ok = await _markLocalApplied(this, token, hash);
+  if (!ok) return; // already applied locally
+
+  try {
+    await this._apply(state); // does DOM/Zones/Life work locally
+    console.log('[Battle][Apply] Local apply complete on seat', this.seat, 'token:', token, 'hash:', hash);
+  } catch (e){
+    console.warn('[Battle][Apply] Local apply failed', e);
+  }
+},
+
+
   openRolePrompt(){
     openPanel({
       title:'Combat',
@@ -369,58 +448,65 @@ const BattleUI = {
 
 
 
-  pickAttackers(){
-   const mySeat = this.seat;
-   const pool = $$(`.card[data-cid]`).filter(el =>
-     getCardSeatFromDom(el) === mySeat &&
-     !isTapped(el) &&
-     canAttack(el.dataset.cid)
-   );
+     pickAttackers(){
+    const mySeat = this.seat;
+    const pool = $$(`.card[data-cid]`).filter(el =>
+      getCardSeatFromDom(el) === mySeat &&
+      !isTapped(el) &&
+      canAttack(el.dataset.cid)
+    );
 
     if (!pool.length){ Overlays.notify?.('warn','No untapped creatures can attack.'); return; }
+
     const html = `<div class="battleGrid">${
       pool.map(el=>{
         const cid = el.dataset.cid, name = el.dataset.name || cid, pt = PT(cid);
-const src = getCardImgSrc(cid);
-const kws = Array.from(eff(cid));
-
-return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
-  <div class="art" style="background-image:${src ? `url('${src}')` : 'none'}"></div>
-  <div class="meta"><span>${pt.p}/${pt.t}</span><span>${name}</span></div>
-  ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
-</div>`;
-
-
-
+        const src = getCardImgSrc(cid);
+        const kws = Array.from(eff(cid));
+        return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
+          <div class="art" style="background-image:${src ? `url('${src}')` : 'none'}"></div>
+          <div class="meta"><span>${pt.p}/${pt.t}</span><span>${name}</span></div>
+          ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
+        </div>`;
       }).join('')
     }</div>`;
+
     const panel = openPanel({ title:'Choose Attackers', html, footer:`<button class="pill" id="ok">Confirm Attackers</button>` });
+
     $$('.js-b', panel).forEach(n=>{
-  n.onclick = ()=>{
-    const cid = n.dataset.cid;
-    if (seatOfCard(cid) !== this.seat) return; // ignore wrong-seat clicks
-    n.classList.toggle('selected');
-  };
-});
+      n.onclick = ()=>{
+        const cid = n.dataset.cid;
+        if (seatOfCard(cid) !== this.seat) return; // ignore wrong-seat clicks
+        n.classList.toggle('selected');
+      };
+    });
 
     panel.querySelector('#ok').onclick = async ()=>{
       const sel = $$('.js-b.selected', panel).map(n=>n.dataset.cid);
       if (!sel.length) return Overlays.notify?.('warn','Pick at least one attacker.');
+
       closePanel(panel);
       this.attackers = sel;
+
+      // Persist the combat start with the ATTACKER'S SEAT recorded
       await this._save({
-  phase: 'waiting_for_blocks',
-  attackers: sel,
-  blockers: {},
-  outcomes: [],
-  confirmations: {},
-  applyBy: null,
-  meta: { createdAt: Date.now() }
-});
+        phase: 'waiting_for_blocks',
+        attackers: sel,
+        attackerSeat: this.seat,
+        blockers: {},
+        outcomes: [],
+        confirmations: {},
+        applyBy: null,
+        meta: { createdAt: Date.now() }
+      });
+
+      // Heads-up for the other client(s)
+      try { window.RTC?.send?.({ type:'combat_init', bySeat: this.seat, attackers: sel }); } catch {}
 
       this.waitForBlocks();
     };
   },
+
 
   waitForAttackers(){
     Overlays.notify?.('info','Waiting for attackers…');
@@ -457,34 +543,33 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
 
   pickBlockers(){
     const attackers = this.attackers.slice();
-      const mySeat = this.seat; // I'm the defender when this UI opens
-  const blockersAll = $$(`.card[data-cid]`).filter(el =>
-    getCardSeatFromDom(el) === mySeat && !isTapped(el)
-  );
+    const mySeat = this.seat; // I'm the defender when this UI opens
+
+    const blockersAll = $$(`.card[data-cid]`).filter(el =>
+      getCardSeatFromDom(el) === mySeat && !isTapped(el)
+    );
     const chosen = {}; // atk -> [blk order]
 
     const html = attackers.map(atk=>{
       const name = findCardEl(atk)?.dataset.name || atk; const pt=PT(atk);
       const buttons = blockersAll.map(b=>{
-  const bid = b.dataset.cid, ok = canBlock(bid, atk);
-  const src = getCardImgSrc(bid);
-  const kws = Array.from(eff(bid));
-   // ← same helper used for attackers
-  return `
-    <button class="blkBtn js-assign" data-atk="${atk}" data-blk="${bid}" ${ok?'':'disabled'}
-            style="display:flex;align-items:flex-start;gap:8px">
-      <span style="
-        width:28px;height:40px;flex:0 0 28px;
-        background:${src ? `url('${src}')` : '#222'};
-        background-size:cover;background-position:center;
-        border-radius:4px"></span>
-      <span class="blkMeta">
-        <div class="blkName">${b.dataset.name || bid}</div>
-        ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
-      </span>
-    </button>`;
-}).join('') + `<button class="blkBtn warn js-none" data-atk="${atk}">No blocks</button>`;
-
+        const bid = b.dataset.cid, ok = canBlock(bid, atk);
+        const src = getCardImgSrc(bid);
+        const kws = Array.from(eff(bid));
+        return `
+          <button class="blkBtn js-assign" data-atk="${atk}" data-blk="${bid}" ${ok?'':'disabled'}
+                  style="display:flex;align-items:flex-start;gap:8px">
+            <span style="
+              width:28px;height:40px;flex:0 0 28px;
+              background:${src ? `url('${src}')` : '#222'};
+              background-size:cover;background-position:center;
+              border-radius:4px"></span>
+            <span class="blkMeta">
+              <div class="blkName">${b.dataset.name || bid}</div>
+              ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
+            </span>
+          </button>`;
+      }).join('') + `<button class="blkBtn warn js-none" data-atk="${atk}">No blocks</button>`;
 
       return `<div class="atk-row" data-atk="${atk}" style="margin-bottom:10px">
         <div style="font-weight:900;margin-bottom:6px">${name} — ${pt.p}/${pt.t}</div>
@@ -497,6 +582,7 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
       html, footer:`<button class="pill" id="ok">Confirm Blocks</button>`,
       onAttach:(p)=>{
         const used = new Set();
+
         $$('.js-assign', p).forEach(btn=>{
           btn.onclick = ()=>{
             const atk=btn.dataset.atk, blk=btn.dataset.blk;
@@ -506,6 +592,7 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
             else { chosen[atk] = chosen[atk].filter(x=>x!==blk); used.delete(blk); }
           };
         });
+
         $$('.js-none', p).forEach(btn=>{
           btn.onclick=()=>{
             const atk=btn.dataset.atk;
@@ -516,31 +603,46 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
             chosen[atk]=[];
           };
         });
+
         p.querySelector('#ok').onclick = async ()=>{
-  closePanel(p);
-  this.blockers = chosen;
+          closePanel(p);
+          this.blockers = chosen;
 
-  // Compute outcomes here (defender), then publish for everyone
-  const outcomes = this._computeAll();
-  const seats = activeSeats();
-  const confirmations = Object.fromEntries(seats.map(s => [String(s), false]));
+          // Make sure we keep the original attacker's seat (read from state set by attacker)
+          const stateBefore = await this._load();
+          const attackerSeat = Number(stateBefore?.attackerSeat) || Number(this.seat) || 1;
 
-  await this._save({
-    phase: 'outcome_ready',
-    attackers,          // from pickBlockers() scope (const attackers = this.attackers.slice();)
-    blockers: chosen,
-    outcomes,
-    confirmations,
-    applyBy: null,
-    meta: { createdAt: Date.now() }
-  });
+          // Compute outcomes here (defender), then publish for everyone
+          const outcomes = this._computeAll();
+		  // compute a stable hash for this exact set of checked outcomes
+const applyHash = _outcomeHash(outcomesAll || [], selected);
 
-  Overlays.notify?.('ok','Blocks locked. Waiting for everyone to confirm outcome…');
-};
+const seats = activeSeats();
+const confirmations = Object.fromEntries(seats.map(s => [String(s), false]));
+const selected = outcomes.map(() => true);                 // ← NEW: all checked
+const deathList = _deathList(outcomes);
 
+await this._save({
+  phase: 'outcome_ready',
+  attackers,
+  attackerSeat,        // who started the combat
+  blockers: chosen,
+  outcomes,
+  selected,            // ← NEW
+  confirmations,
+  applyBy: null,
+  deathList,
+  meta: { createdAt: Date.now(), appliedHash: null, applyToken: null }
+});
+
+
+
+          Overlays.notify?.('ok','Blocks locked. Waiting for everyone to confirm outcome…');
+        };
       }
     });
   },
+
 
   // ===== Outcome engine (supports FS/DS/Trample/Lifelink/Deathtouch/Indestructible/Infect) =====
   _calcOneBattle(attackerCid, blkList){
@@ -559,60 +661,122 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
     const trample = A.eff.has('trample');
 
     function dealFromAttacker(ptPower, phase){
-      if (!Bs.length){
-        if (infect){ poisonToPlayer += ptPower; steps.push(`[${phase}] ${A.name} deals ${ptPower} infect (poison) to player`); }
-        else       { toPlayer += ptPower;       steps.push(`[${phase}] ${A.name} deals ${ptPower} to player`); }
-        if (lifelink(A.eff)) { lifeGain += ptPower; steps.push(`[${phase}] Attacker gains ${ptPower} life (lifelink)`); }
-        return;
-      }
-      let dmgLeft = ptPower;
-      for (const B of Bs){
-        if (dmgLeft<=0) break;
-        const lethal = deathtouch(A.eff) ? 1 : Math.max(0, B.pt.t);
-        const assign = Math.min(dmgLeft, lethal);
-        B._taken = (B._taken||0) + assign;
-        dmgLeft -= assign;
-        steps.push(`[${phase}] ${A.name} assigns ${assign} to ${B.name}${deathtouch(A.eff)?' (deathtouch)':''}`);
-      }
-      if (trample && dmgLeft>0){
-        if (infect){ poisonToPlayer += dmgLeft; steps.push(`[${phase}] trample → ${dmgLeft} infect to player`); }
-        else       { toPlayer += dmgLeft;       steps.push(`[${phase}] trample → ${dmgLeft} to player`); }
-      }
-      if (lifelink(A.eff)) { lifeGain += ptPower; steps.push(`[${phase}] Attacker gains ${ptPower} life (lifelink)`); }
+  let dealtThisStep = 0;
+
+  if (!Bs.length){
+    if (infect){ poisonToPlayer += ptPower; }
+    else       { toPlayer       += ptPower; }
+    dealtThisStep += ptPower;
+    steps.push(`[${phase}] ${A.name} deals ${ptPower}${infect?' infect (poison)':''} to player`);
+  } else {
+    let dmgLeft = ptPower;
+    for (const B of Bs){
+      if (dmgLeft<=0) break;
+
+      // sustained damage across steps/orders
+      const already = Math.max(0, B._taken || 0);
+      const remainingToughness = Math.max(0, (B.pt.t|0) - already);
+      const lethal = deathtouch(A.eff) ? 1 : remainingToughness;
+      const assign = Math.min(dmgLeft, lethal);
+      if (assign <= 0) continue;
+
+      B._taken = already + assign;
+if (deathtouch(A.eff) && assign > 0) B._touchedByDT = true;  // ← lethal touch mark
+dmgLeft -= assign;
+dealtThisStep += assign;
+
+steps.push(`[${phase}] ${A.name} assigns ${assign} to ${B.name}${deathtouch(A.eff)?' (deathtouch)':''}` +
+           (remainingToughness>0 ? ` [remaining→${Math.max(0, remainingToughness-assign)}]` : ''));
+
     }
 
-    function blockersStrike(phase){
-      for (const B of Bs){
-        const power = Math.max(0, B.pt.p);
-        if (power<=0) continue;
-        A._taken = (A._taken||0) + power;
-        steps.push(`[${phase}] ${B.name} deals ${power} to ${A.name}${deathtouch(B.eff)?' (deathtouch)':''}`);
-      }
+    // excess goes to player only if trample
+    if (trample && dmgLeft>0){
+      if (infect){ poisonToPlayer += dmgLeft; }
+      else       { toPlayer       += dmgLeft; }
+      dealtThisStep += dmgLeft;
+      steps.push(`[${phase}] trample → ${dmgLeft}${infect?' infect (poison)':''} to player`);
     }
+  }
 
-    if (first){ dealFromAttacker(Math.max(0,A.pt.p), 'first'); }
-    if (Bs.some(b=>b.eff.has('first strike')||b.eff.has('firststrike'))) blockersStrike('first');
+  // lifelink = life gained equals actual damage dealt this step
+  if (lifelink(A.eff) && dealtThisStep>0){
+    lifeGain += dealtThisStep;
+    steps.push(`[${phase}] Attacker gains ${dealtThisStep} life (lifelink)`);
+  }
+}
 
-    Bs.forEach(B=>{ B._deadFirst = (B._taken||0) >= B.pt.t && !indestruct(B.eff); });
-    const aDeadFirst = (A._taken||0) >= A.pt.t && !indestruct(A.eff);
 
-    if (!first || dbl){ dealFromAttacker(Math.max(0,A.pt.p), 'normal'); }
-    if (!aDeadFirst){
-      const livingBlockers = Bs.filter(b=>!b._deadFirst);
-      for (const B of livingBlockers){
-        if (B.eff.has('first strike')||B.eff.has('firststrike')) continue;
-        const power = Math.max(0, B.pt.p);
-        if (power<=0) continue;
-        A._taken = (A._taken||0) + power;
-        steps.push(`[normal] ${B.name} deals ${power} to ${A.name}${deathtouch(B.eff)?' (deathtouch)':''}`);
-      }
-    }
 
-    const aDies = (A._taken||0) >= A.pt.t && !indestruct(A.eff);
-    Bs.forEach(B=>B.dies = ((B._taken||0) >= B.pt.t) && !indestruct(B.eff));
+
+    function blockersStrike(phase, { onlyFS=false, normalStep=false } = {}){
+  for (const B of Bs){
+    if (B._deadFirst && normalStep) continue;
+
+    const hasFS = _hasFS(B.eff);
+    const hasDS = _hasDS(B.eff);
+
+    if (onlyFS && !hasFS) continue;
+    if (normalStep && hasFS && !hasDS) continue;
+
+    const power = Math.max(0, B.pt.p);
+    if (power<=0) continue;
+
+    A._taken = (A._taken||0) + power;
+    if (deathtouch(B.eff) && power>0) A._touchOfDeath = true;   // ← add this
+
+    steps.push(`[${phase}] ${B.name} deals ${power} to ${A.name}${deathtouch(B.eff)?' (deathtouch)':''}`);
+  }
+}
+
+
+
+
+    const atkHasFS = _hasFS(A.eff);
+const atkHasDS = _hasDS(A.eff);
+const anyBlkFS = Bs.some(b => _hasFS(b.eff));
+
+// First-strike step
+if (atkHasFS) dealFromAttacker(Math.max(0, A.pt.p), 'first');
+if (anyBlkFS) blockersStrike('first', { onlyFS:true });
+
+// Mark deaths after first-strike
+Bs.forEach(B=>{
+  B._deadFirst = !indestruct(B.eff) && ( ((B._taken||0) >= B.pt.t) || !!B._touchedByDT );
+});
+const aDeadFirst = !indestruct(A.eff) && ( ((A._taken||0) >= A.pt.t) || !!A._touchOfDeath );
+
+
+
+// Normal step
+// Attacker swings in normal if:
+//  - it didn't have FS, OR it has DS; AND
+//  - it survived first-strike
+if ((!atkHasFS || atkHasDS) && !aDeadFirst){
+  dealFromAttacker(Math.max(0, A.pt.p), 'normal');
+}
+
+// Blockers swing in normal if they are:
+//  - alive after first-strike, AND
+//  - either (no FS) OR (have DS)
+if (!aDeadFirst){
+  blockersStrike('normal', { normalStep:true });
+}
+
+// Final death flags
+const aDies = !indestruct(A.eff) && ( ((A._taken||0) >= A.pt.t) || !!A._touchOfDeath );
+
+Bs.forEach(B=>{
+  B.dies = !indestruct(B.eff) && ( ((B._taken||0) >= B.pt.t) || !!B._touchedByDT );
+});
+
+
+
 
     return { attacker:A, blockers:Bs, toPlayer, poisonToPlayer, lifeGain, aDies, steps };
   },
+
+
 
   _computeAll(){
     const results = [];
@@ -640,9 +804,33 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
       if (s.phase === 'outcome_ready'){
         this._openOrRefreshOutcomeOverlay(s);
       } else if (s.phase === 'applying'){
-        // make sure overlay shows "applying..." and disables controls
-        if (this._outcomePanel) this._renderOutcomeOverlay(this._outcomePanel, s, { locked:true });
-      } else if (s.phase === 'done'){
+  if (this._outcomePanel) {
+    this._renderOutcomeOverlay(this._outcomePanel, s, { locked:true });
+  }
+
+  // Every client applies locally once per token/hash
+  const applyHash = _outcomeHash(s.outcomes || [], s.selected || []);
+  this._maybeLocalApply(s, applyHash);
+
+  // Watchdog: if applying is stuck > 8000ms, try to finalize as follower
+  try {
+    const started = Number(s?.meta?.applyStartedAt) || 0;
+    if (started && (Date.now() - started > 8000)) {
+      // If appliedHash already set, just flip to done
+      if (s?.meta?.appliedHash && s.meta.appliedHash === applyHash) {
+        await this._save({ ...s, phase:'done' });
+      } else {
+        // We rerun local apply (idempotent) and finalize
+        await this._maybeLocalApply(s, applyHash);
+        await this._save({ ...s, phase:'done', meta: { ...(s.meta||{}), appliedHash: applyHash } });
+      }
+    }
+  } catch (e){
+    console.warn('[Battle][Watchdog] finalize error', e);
+  }
+
+} else if (s.phase === 'done'){
+
         if (this._outcomePanel){ closePanel(this._outcomePanel); this._outcomePanel = null; }
       }
     }, 1000);
@@ -671,159 +859,243 @@ return `<div class="bcard js-b" data-cid="${cid}" title="${name}">
 
 
   _renderOutcomeOverlay(panel, state, { locked=false } = {}){
-    const wrap = panel.querySelector('.outcome');
-    if (!wrap) return;
+  const wrap = panel.querySelector('.outcome');
+  if (!wrap) return;
 
-    const outcomes = state.outcomes || [];
-    const seats = activeSeats();
-    const conf = state.confirmations || {};
-    const allConfirmed = seats.every(s => !!conf[String(s)]);
+  const outcomes = state.outcomes || [];
+  const seats = activeSeats();
+  const conf = state.confirmations || {};
+  const allConfirmed = seats.every(s => !!conf[String(s)]);
+  const attackerSeat = Number(state?.attackerSeat) || 1;
 
-    const rows = outcomes.map((o)=>{
-      const name = o.attacker.name;
-      const blkNames = (o.blockers||[]).map(b=>b.name).join(', ') || 'Unblocked';
-      const deaths = [
-        o.aDies ? `${name} dies` : null,
-        ...(o.blockers||[]).filter(b=>b.dies).map(b=>`${b.name} dies`)
-      ].filter(Boolean).join(' • ') || 'No deaths';
-      const playerLine = (o.poisonToPlayer>0) ? `Player gets ${o.poisonToPlayer} poison`
-                         : (o.toPlayer>0)     ? `Player takes ${o.toPlayer} damage`
-                         : 'No player damage';
-      const ll = o.lifeGain>0 ? `Attacker gains ${o.lifeGain} life` : '';
-      return `
-        <div class="pill" style="display:block; padding:8px; margin-bottom:6px">
+  // use mask; default to all true
+  const selected = Array.isArray(state.selected) ? state.selected.slice() : outcomes.map(()=>true);
+
+  // normalize lengths
+  while (selected.length < outcomes.length) selected.push(true);
+  if (selected.length > outcomes.length) selected.length = outcomes.length;
+
+  // live “what dies” if applied now
+  const filtered = outcomes.filter((_,i) => selected[i] !== false);
+  const liveDeathList = _deathList(filtered); // eslint helper var (kept for debug)
+
+  const rows = outcomes.map((o, i)=>{
+    const checked = selected[i] !== false;
+    // helper to print "P# Name"
+const _pn = (cid, fallback) => {
+  const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+  const seat = getCardSeatFromDom(el) || seatOfCard(cid) || '?';
+  const name = el?.dataset?.name || window.getCardDataById?.(cid)?.name || fallback || String(cid);
+  return `P${seat} ${name}`;
+};
+
+const name = _pn(o.attacker.cid, o.attacker.name);
+const blkNames = (o.blockers||[]).map(b=>_pn(b.cid, b.name)).join(', ') || 'Unblocked';
+const deaths = [
+  (o.aDies ? `${_pn(o.attacker.cid, o.attacker.name)} dies` : null),
+  ...(o.blockers||[])
+    .filter(b=>b.dies)
+    .map(b=>`${_pn(b.cid, b.name)} dies`)
+].filter(Boolean).join(' • ') || 'No deaths';
+
+    const playerLine = (o.poisonToPlayer>0) ? `Player gets ${o.poisonToPlayer} poison`
+                       : (o.toPlayer>0)     ? `Player takes ${o.toPlayer} damage`
+                       : 'No player damage';
+    const ll = o.lifeGain>0 ? `Attacker gains ${o.lifeGain} life` : '';
+    return `
+      <label class="outRow ${locked?'disabled':''}">
+        <input type="checkbox" data-oi="${i}" ${checked?'checked':''} ${locked?'disabled':''}/>
+        <div class="pill" style="display:block; flex:1; padding:8px;">
           <div style="font-weight:800">${name} vs ${blkNames}</div>
           <div>${playerLine}${ll?` — ${ll}`:''}</div>
           <div>${deaths}</div>
         </div>
-      `;
-    }).join('');
-
-    const who = activeSeats().map(s=>{
-      const ok = !!conf[String(s)];
-      return `<span class="seatBadge ${ok?'confirmed':'pending'}">P${s}: ${ok?'Confirmed':'Pending'}</span>`;
-    }).join('');
-
-    const buttons = activeSeats().map(s=>{
-      const mine = (s === this.seat);
-      const ok = !!conf[String(s)];
-      const dis = (locked || ok) ? 'disabled' : '';
-      return `<button class="pill" data-seat="${s}" ${mine?'':'disabled'} ${dis}>Confirm P${s}</button>`;
-    }).join(' ');
-
-    wrap.innerHTML = `
-      <div style="display:flex;flex-direction:column;gap:10px">
-        ${rows || '<div>No outcome computed.</div>'}
-        <div class="outcome-who">${who}</div>
-        <div class="row" style="gap:8px;justify-content:flex-end">${buttons}</div>
-        ${locked?'<div style="opacity:.8">Applying…</div>':''}
-        ${allConfirmed && !locked?'<div style="opacity:.8">All confirmed. Waiting for apply…</div>':''}
-      </div>
+      </label>
     `;
+  }).join('');
 
-    // bind my confirm button only
-    wrap.querySelectorAll('button[data-seat]').forEach(btn=>{
-      const seat = Number(btn.dataset.seat);
-      if (seat !== this.seat) return;
-      btn.onclick = async ()=>{
-        // toggle to true (cannot unconfirm for now)
-        const s = await this._load() || {};
-        const conf2 = { ...(s.confirmations||{}) };
-        conf2[String(this.seat)] = true;
+  const who = seats.map(s=>{
+    const ok = !!conf[String(s)];
+    return `<span class="seatBadge ${ok?'confirmed':'pending'}">P${s}: ${ok?'Confirmed':'Pending'}</span>`;
+  }).join('');
 
-        // if all confirmed after we set ours → try to apply
-        const all = activeSeats().every(x => !!conf2[String(x)]);
+  const buttons = seats.map(s=>{
+    const mine = (s === this.seat);
+    const ok = !!conf[String(s)];
+    const dis = (locked || ok) ? 'disabled' : '';
+    return `<button class="pill" data-seat="${s}" ${mine?'':'disabled'} ${dis}>Confirm P${s}</button>`;
+  }).join(' ');
 
-        await this._save({
-  ...s,
-  // stay in outcome_ready while adding my confirmation
-  phase: 'outcome_ready',
-  confirmations: conf2
+  wrap.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${rows || '<div>No outcome computed.</div>'}
+      <div class="outcome-who">${who}</div>
+      <div class="row" style="gap:8px;justify-content:flex-end">${buttons}</div>
+      ${locked?'<div style="opacity:.8">Applying…</div>':''}
+      ${allConfirmed && !locked?'<div style="opacity:.8">All confirmed. Waiting for apply…</div>':''}
+    </div>
+  `;
+
+  // checkbox behavior: save mask + recompute deathList + reset confirmations
+wrap.querySelectorAll('input[type="checkbox"][data-oi]').forEach(chk=>{
+  chk.onchange = async ()=>{
+    const idx = Number(chk.dataset.oi);
+    const cur = await this._load() || {};
+    const sel = Array.isArray(cur.selected) ? cur.selected.slice() : (cur.outcomes||[]).map(()=>true);
+    sel[idx] = !!chk.checked;
+
+    // Recompute deaths based on current selection
+    const filt = (cur.outcomes||[]).filter((_,i)=> sel[i] !== false);
+    const newDeaths = _deathList(filt);
+
+    // Reset confirmations (everyone must re-confirm after a change)
+    const seats = activeSeats();
+    const resetConf = Object.fromEntries(seats.map(s => [String(s), false]));
+
+    // Persist
+    await this._save({
+      ...cur,
+      phase: 'outcome_ready',
+      selected: sel,
+      deathList: newDeaths,
+      confirmations: resetConf,
+      // scrub any prior apply metadata to be safe
+      meta: { ...(cur.meta||{}), appliedHash: null, applyToken: null, applyStartedAt: null }
+    });
+
+    // Re-render
+    const again = await this._load();
+    this._renderOutcomeOverlay(panel, again, { locked:false });
+  };
 });
 
-if (all){
-  // --- Leader election and double-apply guard ---
-  // 1) Re-read; only proceed if still outcome_ready
-  const before = await this._load();
-  if (!before || before.phase !== 'outcome_ready') return;
 
-  // 2) Try to become the apply leader
-  const leaderSeat = this.seat;
-  await this._save({ ...before, phase:'applying', applyBy: leaderSeat });
+  // my confirm button (same flow, but hashes include selected)
+  wrap.querySelectorAll('button[data-seat]').forEach(btn=>{
+    const seat = Number(btn.dataset.seat);
+    if (seat !== this.seat) return;
 
-  // 3) Verify we actually became leader
-  const now = await this._load();
-  if (!now || now.phase !== 'applying' || now.applyBy !== leaderSeat) return;
+    btn.onclick = async ()=>{
+      const s1 = await this._load() || {};
+      const conf2 = { ...(s1.confirmations||{}) };
+      conf2[String(this.seat)] = true;
+      await this._save({ ...s1, phase:'outcome_ready', confirmations: conf2 });
 
-  // 4) Guard against re-entry
-  this._applyGuardId = now?.meta?.createdAt || Date.now();
-  if (this._lastAppliedId === this._applyGuardId) return;
-  this._lastAppliedId = this._applyGuardId;
+      const s2 = await this._load();
+      const seatsAll = activeSeats();
+      const allNow = seatsAll.every(x => !!s2?.confirmations?.[String(x)]);
+      if (!allNow) return;
 
-  try {
-    await this._apply(now.outcomes || []);
-    await this._save({ phase:'done' });
-  } catch (e){
-    console.warn('apply error', e);
-    Overlays.notify?.('danger','Apply failed; finalizing round.');
-    await this._save({ phase:'done' });
-  }
-}
+      const hash = _outcomeHash(s2.outcomes || [], s2.selected || []);
+      const token = s2?.meta?.applyToken || (s2?.meta?.createdAt || Date.now());
 
+      if (s2?.meta?.appliedHash && s2.meta.appliedHash === hash){
+        await this._save({ ...s2, phase:'done' });
+        return;
+      }
 
-      };
-    });
-  },
+      await this._save({
+        ...s2,
+        phase:'applying',
+        applyBy: this.seat,
+        meta: { ...(s2.meta||{}), applyToken: token, applyStartedAt: Date.now() }
+      });
+
+      try {
+        window.RTC?.send?.({
+          type: 'battle:apply',
+          hash,
+          state: await this._load()
+        });
+      } catch(e){ console.warn('[RTC] send battle:apply failed', e); }
+
+      const s3 = await this._load();
+      if (!s3 || s3.phase !== 'applying') return;
+      const leaderSeat = s3.applyBy;
+
+      await this._maybeLocalApply(s3, hash);
+
+      if (this.seat === leaderSeat){
+        await this._save({ ...s3, phase:'done', meta: { ...(s3.meta||{}), appliedHash: hash } });
+        try { window.RTC?.send?.({ type: 'battle:done', hash }); } catch(e){}
+      }
+    };
+  });
+},
+
 
   // ----- APPLY (life/poison + deaths) -----
-async _apply(chosen){
-  // 1) Gather all deaths
-  const deaths = [];
-  chosen.forEach(o=>{
-    if (o.aDies) deaths.push(o.attacker.cid);
-    (o.blockers||[]).forEach(b=>{ if (b.dies) deaths.push(b.cid); });
-  });
+// ----- APPLY (life/poison + deaths) -----
+// Pass full state to ensure seat correctness + idempotency
+async _apply(state){
+  // Use only CHECKED outcomes
+  const selected = Array.isArray(state?.selected) ? state.selected : (state?.outcomes||[]).map(()=>true);
+  const outcomesAll = state?.outcomes || [];
+  const outcomes = outcomesAll.filter((_,i)=> selected[i] !== false);
 
-  // 2) Move each corpse from battlefield → graveyard through Zones (persists & syncs)
-  for (const cid of deaths){
-    await _moveToZone(cid, 'graveyard');
+  const attackerSeat = Number(state?.attackerSeat) || 1;
+  const defenderSeat = resolveDefenderSeat(attackerSeat);
+  const attackersRecorded = Array.isArray(state?.attackers) ? state.attackers.slice() : (this.attackers||[]);
+
+  // death list from FILTERED outcomes (or use precomputed)
+  const intendedDeaths = Array.isArray(state?.deathList)
+    ? state.deathList.slice()
+    : _deathList(outcomes);
+
+  console.groupCollapsed('[Battle][Apply] Start');
+  console.log('roomId:', this.roomId, 'applyBy seat:', this.seat, 'attackerSeat:', attackerSeat, 'defenderSeat:', defenderSeat);
+  console.log('phase:', state?.phase, 'applyToken:', state?.meta?.applyToken);
+  console.table(intendedDeaths.map(cid=>{
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    const name = el?.dataset?.name || window.getCardDataById?.(cid)?.name || cid;
+    return { cid, name, existsInDom: !!el, seat: getCardSeatFromDom(el) || seatOfCard(cid) || null };
+  }));
+  console.groupEnd();
+
+  for (const cid of intendedDeaths){
+    try { await _moveToZone(cid, 'graveyard'); }
+    catch (err){ console.warn('[Battle][Apply] moveToZone failed', { cid, err }); }
   }
 
-  // 3) Life / poison / heal
-  const atkSeat = this.seat;
-  const defSeat = resolveDefenderSeat(atkSeat);
   let dmg=0, poison=0, heal=0;
-  chosen.forEach(o=>{ dmg+=o.toPlayer; poison+=o.poisonToPlayer; heal+=o.lifeGain; });
+  outcomes.forEach(o=>{ dmg+=o.toPlayer|0; poison+=o.poisonToPlayer|0; heal+=o.lifeGain|0; });
 
-  if (poison>0){
-    const cur = window.Life.get(defSeat);
-    window.Life.set(defSeat, { poison: Math.max(0, cur.poison + poison) });
-  }
-  if (dmg>0){
-    const cur = window.Life.get(defSeat);
-    window.Life.set(defSeat, { life: cur.life - dmg });
-  }
-  if (heal>0){
-    const cur = window.Life.get(atkSeat);
-    window.Life.set(atkSeat, { life: cur.life + heal });
+  try {
+    if (poison>0){
+      const cur = window.Life.get(defenderSeat);
+      window.Life.set(defenderSeat, { poison: Math.max(0, (cur?.poison||0) + poison) });
+    }
+    if (dmg>0){
+      const cur = window.Life.get(defenderSeat);
+      window.Life.set(defenderSeat, { life: Math.max(0, (cur?.life||0) - dmg) });
+    }
+    if (heal>0){
+      const cur = window.Life.get(attackerSeat);
+      window.Life.set(attackerSeat, { life: (cur?.life||0) + heal });
+    }
+  } catch (err){
+    console.warn('[Battle][Apply] life/poison update error', err);
   }
 
- // 4) Tap surviving attackers (unless they have Vigilance)
-  const deadSet = new Set();
-  chosen.forEach(o=>{
-    if (o.aDies) deadSet.add(o.attacker.cid);
-    (o.blockers || []).forEach(b => { if (b.dies) deadSet.add(b.cid); });
-  });
-
-  // Use the attackers that were recorded for this combat
-  (this.attackers || []).forEach(cid => {
-    if (deadSet.has(cid)) return;                  // died → don't tap (already moved)
+  const deadSet = new Set(intendedDeaths.map(String));
+  attackersRecorded.forEach(cid=>{
+    if (deadSet.has(String(cid))) return;
     const hasVigilance = eff(cid).has('vigilance');
-    if (!hasVigilance) tapCard(cid, true);         // rotate/tap
+    if (!hasVigilance) tapCard(cid, true);
   });
+
+  console.groupCollapsed('[Battle][Apply] After');
+  console.table(intendedDeaths.map(cid=>{
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    const name = el?.dataset?.name || window.getCardDataById?.(cid)?.name || cid;
+    return { cid, name, stillInDom: !!el };
+  }));
+  console.log('dmg:', dmg, 'poison:', poison, 'heal:', heal);
+  console.groupEnd();
 
   Overlays.notify?.('ok','Combat applied.');
 },
+
 
 
   // ----- Supabase -----

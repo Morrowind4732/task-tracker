@@ -255,13 +255,66 @@ emitChange(/*{ seat, zoneName }*/) {
   },
 
   async _hydrate(cid, fallback){
-    if (fallback?.name) return fallback;
-    try{
-      const d = await Promise.resolve(this.cfg.getCardDataById?.(cid));
-      if (d) return d;
-    }catch{}
-    return { id: cid, name: cid, mana_cost:'', type_line:'', oracle_text:'', img:'' };
-  },
+  const id = String(cid);
+
+  // 1) Ask your store/cache (e.g., Scryfall-ish object)
+  let fromStore = {};
+  try {
+    const d = await Promise.resolve(this.cfg.getCardDataById?.(id));
+    if (d && typeof d === 'object') fromStore = d;
+  } catch {}
+
+  // 2) Snapshot from the current DOM (if on table or still around)
+  let fromDom = {};
+  try {
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(id)}"]`);
+    if (el) {
+      const ogEffects = (() => {
+        try { return el.dataset.ogEffects ? JSON.parse(el.dataset.ogEffects) : []; } catch { return []; }
+      })();
+      const ogTypes = (() => {
+        try { return el.dataset.ogTypes ? JSON.parse(el.dataset.ogTypes) : []; } catch { return []; }
+      })();
+      fromDom = {
+        id,
+        cid: id,
+        name: el.dataset.name || id,
+        img:  el.querySelector('.face.front img')?.src || '',
+        baseP: el.dataset.baseP ?? null,
+        baseT: el.dataset.baseT ?? null,
+        ogEffects,
+        ogTypes,
+      };
+    }
+  } catch {}
+
+  // 3) Fallback object (typically from Battle) already has rich fields now
+  const fb = (fallback && typeof fallback === 'object') ? fallback : {};
+
+  // 4) Merge in priority: fallback (Battle) → DOM → store → minimal defaults
+  const merged = {
+    id,
+    cid: id,
+    name: id,
+    img: '',
+    mana_cost: '',
+    type_line: '',
+    oracle_text: '',
+    ...fromStore,
+    ...fromDom,
+    ...fb
+  };
+
+  // Normalize baseP/baseT to strings (can be "*", "?" etc.)
+  if (merged.baseP != null) merged.baseP = String(merged.baseP);
+  if (merged.baseT != null) merged.baseT = String(merged.baseT);
+
+  // Prefer explicit ogTypes if only generic types exist
+  if (!Array.isArray(merged.ogTypes) && Array.isArray(merged.types)) merged.ogTypes = merged.types;
+
+  return merged;
+},
+
 
   _removeById(arr, cid){
     const i = arr.findIndex(x => (x.id || x.cid || x) === cid);

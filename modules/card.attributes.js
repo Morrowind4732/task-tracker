@@ -409,13 +409,20 @@ detectManaVariant();
   injectCss() {
     if (document.getElementById('attr-style')) return;
     const s = document.createElement('style');
+	// Preserve caller/page values for overlay scale bounds.
+// Only set defaults if not already defined in :root (e.g., v3.html).
+{
+  const rs = getComputedStyle(document.documentElement);
+  const hasMin = rs.getPropertyValue('--overlayScaleMin').trim() !== '';
+  const hasMax = rs.getPropertyValue('--overlayScaleMax').trim() !== '';
+  if (!hasMin) document.documentElement.style.setProperty('--overlayScaleMin', '1');
+  if (!hasMax) document.documentElement.style.setProperty('--overlayScaleMax', '3.5');
+}
+
     s.id = 'attr-style';
     s.textContent = `
 	/* inside injectCss() -> s.textContent, add near the top */
-:root{
-  --overlayScaleMin: 1;      /* never smaller than normal size */
-  --overlayScaleMax: 3.5;    /* <- bump this to 3.5x (tweak to taste) */
-}
+
 
 /* (optional) nudge font sizes so they benefit more from scaling */
 .cardAttrPT        { font-size: 1.2em; }
@@ -441,7 +448,8 @@ detectManaVariant();
         text-shadow: 0 1px 1px rgba(0,0,0,0.6);
         pointer-events:none;
         z-index: 3;
-        transform: scale(var(--overlayScale,1));
+        transform: scale(calc(var(--overlayScale,1) * var(--attrBoost,1.6)));
+
         transform-origin: bottom right;
       }
 
@@ -451,7 +459,8 @@ detectManaVariant();
   inset:0;
   pointer-events:none;
   z-index:4; /* was 2; must beat transformed .cardInner on all clients */
-  transform: scale(var(--overlayScale,1));
+  transform: scale(calc(var(--overlayScale,1) * var(--attrBoost,1.6)));
+
   transform-origin: bottom left;
 }
 
@@ -552,7 +561,10 @@ detectManaVariant();
         cursor:pointer;
       }
     `;
+	document.documentElement.style.setProperty('--attrBoost', '1.6');
+
     document.head.appendChild(s);
+	
   },
 
   get(cid) {
@@ -930,8 +942,11 @@ function computeOverlayScale(){
   const inv = 1 / Math.max(0.001, s);          // inverse scale keeps overlays readable
   const cs = getComputedStyle(document.documentElement);
   const MIN = parseFloat(cs.getPropertyValue('--overlayScaleMin')) || 1;
-  const MAX = parseFloat(cs.getPropertyValue('--overlayScaleMax')) || 3.5;
-  return Math.min(Math.max(inv, MIN), MAX);    // clamp to tunables
+const MAX = parseFloat(cs.getPropertyValue('--overlayScaleMax')) || 3.5;
+const base = Math.min(Math.max(inv, MIN), MAX);
+const boost = parseFloat(cs.getPropertyValue('--attrBoost')) || 1;
+return base * boost;
+
 }
 
 

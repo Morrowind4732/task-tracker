@@ -149,14 +149,17 @@ function renderTooltipHtml(card){
   const tline = escapeHtml(card?.type_line ?? '');
   const text  = manaToHtml(card?.oracle_text ?? '', { asCost: true });
 
-  // PT badge at bottom-right, larger to pop visually; loyalty fallback for walkers
+  // define once
   const showPT = (card?.power ?? '') !== '' && (card?.toughness ?? '') !== '';
   const showL  = !showPT && (card?.loyalty ?? '') !== '';
+
   const ptBadge = showPT
     ? `<div class="ptBadge"
          style="
            position:absolute; right:10px; bottom:8px;
-           font-weight:900; font-size:20px; line-height:1;
+           font-weight:900;
+           font-size:calc(22px * var(--tooltipBadgeScale, 1.6));
+           line-height:1;
            background:rgba(20,33,54,.92); border:1px solid #35527d;
            color:#e9f2ff; border-radius:10px; padding:2px 8px; pointer-events:none;">
          ${escapeHtml(card.power)}/${escapeHtml(card.toughness)}
@@ -165,7 +168,9 @@ function renderTooltipHtml(card){
         ? `<div class="ptBadge"
              style="
                position:absolute; right:10px; bottom:8px;
-               font-weight:900; font-size:20px; line-height:1;
+               font-weight:900;
+               font-size:calc(22px * var(--tooltipBadgeScale, 1.6));
+               line-height:1;
                background:rgba(20,33,54,.92); border:1px solid #35527d;
                color:#e9f2ff; border-radius:10px; padding:2px 8px; pointer-events:none;">
              L: ${escapeHtml(card.loyalty)}
@@ -185,6 +190,7 @@ function renderTooltipHtml(card){
     </div>
   `;
 }
+
 
 /* -----------------------------------------
    Non-overlapping placement (top-center)

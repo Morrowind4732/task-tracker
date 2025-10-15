@@ -161,6 +161,9 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   :root{ --card-w:160px; --card-h:220px; --zone-w:160px; --zone-h:220px; --hand-scale:.84; }
 }
 
+:root{ --badgeBoost: 1.35; } /* try 1.2–1.6 */
+
+
 /* Game picker */
 .gamePicker{ display:flex; gap:8px; }
 .gameBtn{ background:#1b2a47; color:#d8e7ff; font-weight:800; padding:8px 12px; border-radius:999px; border:1px solid #24324a; opacity:.85; }
@@ -313,7 +316,9 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   position:absolute; z-index:var(--z-tooltip);
   background:rgba(20,33,54,.92); border:1px solid #35527d; color:#e7f2ff;
   border-radius:10px; padding:6px 8px; display:flex; gap:8px; align-items:center;
-  transform: translate(-50%, 0) scale(calc(1 / var(--world-zoom)));
+  /* baseline boost (multiplies the existing inverse-zoom behavior) */
+transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBoost, 1.35)));
+
   pointer-events:none;
 }
 .cardBadge .bchip{
@@ -346,6 +351,17 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   font-weight:800;
   white-space:nowrap;
 }
+
+/* === Badge size override: free from card scale === */
+.cardBadge {
+  transform: none !important;            /* stop inheriting card transform chain */
+  transform-origin: top center;
+  scale: var(--badgeBoost, 1.8);         /* pure scale multiplier, editable */
+  position: fixed !important;            /* no longer nested inside the card box */
+  pointer-events: none;
+  z-index: var(--z-tooltip);
+}
+
 
 
 </style>
@@ -1052,20 +1068,31 @@ Zones.init({
 
   // Wire these to your v3 helpers:
   spawnToTable: (card, seat) => {
-    // place at current viewport center using the ZOOM-aware helpers
-    const vr = worldWrap.getBoundingClientRect();
-    const cx = vr.left + vr.width / 2;
-    const cy = vr.top  + vr.height * 0.45;
-    const { x, y } = screenToWorld(cx, cy);
+  const vr = worldWrap.getBoundingClientRect();
+  const cx = vr.left + vr.width / 2;
+  const cy = vr.top  + vr.height * 0.45;
+  const { x, y } = screenToWorld(cx, cy);
 
-    // IMPORTANT: keep the same id/cid so Zones' state stays consistent
-    const cid = card.id || card.cid || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
-    // remember for tooltips/overlays
-    if (typeof rememberCid === 'function') rememberCid(cid, card);
+  const cid = card.id || card.cid || (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
+  if (typeof rememberCid === 'function') rememberCid(cid, card);
 
-    // low-level placement with the correct owner + cid
-    spawnTableCard({ name: card.name || '', img: card.img || '' }, x, y, { owner: seat, cid });
-  },
+  // Create the card element
+  spawnTableCard({ name: card.name || '', img: card.img || '' }, x, y, { owner: seat, cid });
+
+  // Immediately stamp base stats + innate on the new DOM node so PT() works
+  try {
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    if (el) {
+      if (card.baseP != null) el.dataset.baseP = String(card.baseP);
+      if (card.baseT != null) el.dataset.baseT = String(card.baseT);
+      if (Array.isArray(card.ogEffects)) el.dataset.ogEffects = JSON.stringify(card.ogEffects);
+      if (Array.isArray(card.ogTypes))   el.dataset.ogTypes   = JSON.stringify(card.ogTypes);
+      // also keep the owner stamp consistent if provided
+      if (!el.dataset.owner && seat != null) el.dataset.owner = String(seat);
+    }
+  } catch {}
+},
+
   addToHand: (card, seat) => window.addToHand?.(card, seat),
   addToDeck: (card, seat, options) => window.addToDeck?.(card, seat, options),
   shuffleDeck: (seat) => window.shuffleDeck?.(seat),
@@ -1523,6 +1550,29 @@ case 'cast:counter': {
   }
   break;
 }
+
+    case 'battle:apply': {
+      // A peer is telling us to run local, idempotent apply.
+      // BattleUI._maybeLocalApply(state, hash) safely no-ops if we already did it.
+      try {
+        window.BattleUI?._maybeLocalApply(msg.state, msg.hash);
+      } catch(e) {
+        console.warn('[RTC] battle:apply handler error', e);
+      }
+      break;
+    }
+
+    case 'battle:done': {
+      // Optional: nudge UI/overlay if a peer finalized already.
+      try {
+        // If your overlay is open, BattleUI's poller will close on 'done'.
+        // This message is just a helpful nudge in case a poll tick is delayed.
+        // No state mutation here; Supabase remains the source of truth.
+        Overlays?.notify?.('ok', 'Combat resolved (peer).');
+      } catch {}
+      break;
+    }
+
 
 
     // legacy (keep if you ever send full state intentionally)
