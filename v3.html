@@ -446,6 +446,20 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
   display:block;
 }
 
+/* Hand wants horizontal gestures; don’t fight it */
+#hand { touch-action: pan-x; }
+
+/* Prevent native image dragging/selecting from interfering */
+.handCard img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.card img, .handCard img {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
 
 </style>
 </head>
@@ -675,6 +689,7 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 
 <script type="module" src="./modules/tooltip.js"></script>
 <script type="module" src="./modules/tooltip.cog.patch.js"></script>
+<script type="module" src="./modules/tooltip.activate.patch.js"></script>
 
 <script type="module" src="./modules/battle.ui.js"></script>
 
@@ -742,6 +757,11 @@ document.querySelector('.js-ui-settings')?.addEventListener('click', () => {
   document.querySelector('.drawer-wrap')?.classList.remove('expanded');
   UIConstants.openSettingsOverlay();
 });
+
+// Kill native image drag for our cards/hand (prevents ghost-copy cursor)
+document.addEventListener('dragstart', (e) => {
+  if (e.target.closest('.card, .handCard')) e.preventDefault();
+}, true);
 
 
 // --- Connecting overlay helpers (non-blocking) ---
@@ -1035,16 +1055,22 @@ let panning=false, baseX=0, baseY=0, startX=0, startY=0;
 
 
 worldWrap.addEventListener('pointerdown', (e)=>{
-  // Never steal drags that start directly on a battlefield card
-  if (e.target.closest('.card')) return;
+  // 1) battlefield card? let card drag handle it
+  if (e.target.closest('#world .card')) return;
 
-  // If finger is over a hand card, don't start panning (hand scrub owns it)
+  // 2) zones? don't pan; let their click handlers fire
+  if (e.target.closest('#deckZone, #graveyard, #exileZone, #cmdZone, [data-zone]')) return;
+
+  // 3) hand? let HandScrub own it
   const topEl = document.elementFromPoint(e.clientX, e.clientY);
   if (topEl && topEl.closest('.handCard')) return;
 
+  // 🔹 If a pinch is in progress, do NOT start panning
+  if (isPinching) return;
+
   // NEW: background tap starts → clear any selected card + hide tooltip
- clearSelection();
- hideCardTooltip();
+  clearSelection();
+  hideCardTooltip();
 
   // Allow panning, even if pointer Y is inside the hand strip region
   panning = true;
@@ -1053,13 +1079,54 @@ worldWrap.addEventListener('pointerdown', (e)=>{
   worldWrap.setPointerCapture?.(e.pointerId);
 }, {passive:true});
 
+// === Enable desktop dragging for cards (mouse + touch unified) ===
+// Only drag CARDS ON THE TABLE (inside #world), never the hand.
+document.addEventListener('pointerdown', e => {
+  // If the pointer started in the hand strip, let HandScrub own it.
+  if (e.target.closest('#hand') || e.target.closest('.handCard')) return;
+
+  // Only allow dragging for battlefield cards
+  const card = e.target.closest('#world .card');
+  if (!card) return;
+
+  e.preventDefault();
+  const start = { x: e.clientX, y: e.clientY };
+  const orig = {
+    left: parseFloat(card.style.left || 0),
+    top:  parseFloat(card.style.top  || 0)
+  };
+  card.setPointerCapture?.(e.pointerId);
+
+  const move = ev => {
+    const dx = ev.clientX - start.x;
+    const dy = ev.clientY - start.y;
+    card.style.left = `${orig.left + dx / cam.z}px`;
+    card.style.top  = `${orig.top  + dy / cam.z}px`;
+  };
+
+  const up = () => {
+    card.releasePointerCapture?.(e.pointerId);
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+    if (window.Zones?.handleDrop) Zones.handleDrop(card);
+  };
+
+  document.addEventListener('pointermove', move, { passive: false });
+  document.addEventListener('pointerup', up, { passive: true });
+  document.addEventListener('pointercancel', up, { passive: true });
+}, { passive: false });
+
+
+
 
 worldWrap.addEventListener('pointermove', e=>{
-  if (!panning) return;
+  if (!panning || isPinching) return;  // 🔹 block pan during pinch
   cam.x = baseX + (e.clientX - startX);
   cam.y = baseY + (e.clientY - startY);
   applyCam();
 },{passive:false});
+
 
 const endPan = () => { panning=false; worldWrap.classList.remove('panning'); };
 worldWrap.addEventListener('pointerup', endPan);
@@ -1069,6 +1136,9 @@ worldWrap.addEventListener('pointercancel', endPan);
 // ——— Pinch-to-zoom (two fingers) ———
 const activePtrs = new Map();
 let pinchPrevD = 0;
+let isPinching = false;   // 🔹 NEW: gate panning while true
+
+
 
 worldWrap.addEventListener('pointerdown', (e)=>{
   activePtrs.set(e.pointerId, { x:e.clientX, y:e.clientY });
@@ -1080,6 +1150,7 @@ worldWrap.addEventListener('pointermove', (e)=>{
 
   if (activePtrs.size !== 2) return;
 
+  isPinching = true;          // 🔹 now actively pinching → disable pan
   e.preventDefault();
 
   const pts = [...activePtrs.values()];
@@ -1115,12 +1186,17 @@ worldWrap.addEventListener('pointermove', (e)=>{
   applyCam();
 }, {passive:false});
 
+
 function endPtr(e){
   activePtrs.delete(e.pointerId);
-  if (activePtrs.size < 2) pinchPrevD = 0;
+  if (activePtrs.size < 2) {
+    pinchPrevD = 0;
+    isPinching = false;   // 🔹 pinch ended → allow panning again
+  }
 }
 worldWrap.addEventListener('pointerup', endPtr, {passive:true});
 worldWrap.addEventListener('pointercancel', endPtr, {passive:true});
+
 
 
 // ——— Wheel zoom anchored at cursor (desktop) ———
@@ -1915,10 +1991,9 @@ async function drawOneAnimated(seat, {stagger=0, duration=420} = {}){
 function drawOne(){ drawOneAnimated(mySeat()); }
 
 // Animated batch draw (sequential)
-async function drawXAnimated(seat, n, { gap=120, firstDelay=0, duration=420 } = {}){
+async function drawXAnimated(seat, n, { gap=60, firstDelay=0, duration=300 } = {}){
   let count = 0;
   for (let i=0; i<n; i++){
-    // stagger each flight slightly so it feels like peeling one by one
     const ok = await drawOneAnimated(seat, { stagger: (i===0? firstDelay : i*gap), duration });
     if (!ok) break;
     count++;
@@ -1927,11 +2002,13 @@ async function drawXAnimated(seat, n, { gap=120, firstDelay=0, duration=420 } = 
   return count;
 }
 
-// Override your previous global drawXCards to point at the animated version
+
+// Override global drawXCards to use fast timings
 window.drawXCards = async (seat, n) => {
   n = Math.max(1, n|0);
-  return drawXAnimated(seat, n, { gap: 120, duration: 420 });
+  return drawXAnimated(seat, n, { gap: 60, duration: 300, firstDelay: 0 });
 };
+
 
 // ---- Hand gap/slot helpers ----
 let GHOST_AT = -1; // -1 = off
@@ -1994,8 +2071,9 @@ function renderHand(){
     shell.innerHTML =
       `<div class="cardInner">
          <div class="face front">
-           <img src="${hand[i].img}" alt="${hand[i].name}"
-                style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+           <img draggable="false" src="${hand[i].img}" alt="${hand[i].name}"
+     style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+
          </div>
        </div>`;
     host.appendChild(shell);
@@ -2062,13 +2140,13 @@ async function flyCardToHand({ img, duration=420, delay=0 }){
 
   await ghost.animate(keyframes, {
     duration,
-    easing: 'cubic-bezier(.2,.7,.2,1)',
+    easing: 'cubic-bezier(.22,.9,.1,1)',
     fill: 'forwards'
   }).finished.catch(()=>{});
 
   // quick fade-out so the "catch" feels snappy
-  await ghost.animate([{opacity:1},{opacity:0}], {duration:120, fill:'forwards'}).finished.catch(()=>{});
-  ghost.remove();
+await ghost.animate([{opacity:1},{opacity:0}], {duration:80, fill:'forwards'}).finished.catch(()=>{});
+ghost.remove();
 }
 
 
@@ -2371,7 +2449,8 @@ async function initialDraw7(){
   const n = Math.min(7, Array.isArray(deck) ? deck.length : 0);
   if (n <= 0) { notify('Deck is empty.'); return; }
 
-  await drawXAnimated(seat, n, { gap: 70, firstDelay: 30, duration: 340 });
+  // Fast: starts immediately, overlaps heavily
+  await drawXAnimated(seat, n, { gap: 10, firstDelay: 0, duration: 100 });
   showMull();
 }
 
@@ -2449,7 +2528,8 @@ if (Number.isFinite(card?.ogloyalty)) el.dataset.baseL = String(card.ogloyalty);
   el.innerHTML = `
     <div class="cardInner">
       <div class="face front" style="background:none">
-        <img src="${card.img}" alt="${card.name}" style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+        <img draggable="false" src="${card.img}" alt="${card.name}" style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+
       </div>
     </div>`;
 	

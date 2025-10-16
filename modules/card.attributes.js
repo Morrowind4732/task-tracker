@@ -171,6 +171,18 @@ function ensurePtBadge(el){
   return badge;
 }
 
+// Small badge above the PT badge that shows temporary P/T deltas (EOT/Linked)
+function ensurePtTempBadge(el){
+  let badge = el.querySelector('.cardAttrPTTemp');
+  if (!badge){
+    badge = document.createElement('div');
+    badge.className = 'cardAttrPTTemp';
+    el.appendChild(badge);
+  }
+  return badge;
+}
+
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Icon + name helpers (ManaMaster)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -648,6 +660,47 @@ detectManaVariant();
         padding:4px 8px;
         cursor:pointer;
       }
+	  
+	  /* ───── TEMP effect chip (shows EOT / Linked) ───── */
+.cardAttrEffect--temp{
+  background:#2a1f0f !important;
+  border-color:#b07a11 !important;
+  color:#ffe9b3 !important;
+  opacity:0.98;
+}
+
+/* ───── Small badge showing total TEMP P/T delta ───── */
+.cardAttrPTTemp{
+  position:absolute;
+  right:8px;              /* same right as PT */
+  bottom:44px;            /* just above the PT badge */
+  transform-origin: bottom right;
+  transform: scale(calc(var(--overlayScale,1) * var(--ptBadgeScale,1.05))) !important;
+
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+
+  background:rgba(255,196,77,.16);
+  border:1px solid #b07a11;
+  color:#ffd58a;
+  padding:2px 6px;
+  border-radius:8px;
+  font-weight:800;
+  line-height:1;
+  box-shadow:0 2px 6px rgba(0,0,0,.45);
+  z-index:4;
+  pointer-events:none;
+}
+.cardAttrPTTemp .tag{
+  font-size:.78em;
+  opacity:.85;
+  border:1px solid rgba(255,213,138,.25);
+  padding:0 4px;
+  border-radius:6px;
+}
+
+	  
     `;
 	document.documentElement.style.setProperty('--attrBoost', '1.6');
 
@@ -697,6 +750,7 @@ detectManaVariant();
             if (!cid) continue;
 
             ensurePtBadge(el);
+			ensurePtTempBadge(el);
 ensureOverlayRoot(el);
 
 // NEW: seed missing info so PT can render without interaction
@@ -718,6 +772,7 @@ autoSeedMissingPT(el, cid).finally(()=>{
             const cid = el.getAttribute('data-cid');
             if (cid){
               ensurePtBadge(el);
+			  ensurePtTempBadge(el);
               ensureOverlayRoot(el);
               this.refreshPT(cid);
               requestAnimationFrame(()=> this.refreshPT(cid));
@@ -925,6 +980,25 @@ allEffects.forEach(raw => {
   effWrap.appendChild(n);
 });
 
+// TEMP effects (from activation system): render with a different tint + mode label
+const tempEffects = Array.isArray(data.tempEffects) ? data.tempEffects : [];
+tempEffects.forEach(eff => {
+  if (!eff || !eff.ability) return;
+  const n = document.createElement('div');
+  n.className = 'cardAttrEffect cardAttrEffect--temp';
+  const modeTag = eff.mode === 'LINKED' ? 'Linked' : (eff.mode === 'EOT' ? 'EOT' : 'Temp');
+  // try to show an icon if we know it; else plain text
+  const k1 = normKey(String(eff.ability));
+  const k2 = k1.replace(/-/g,'');    // doublestrike
+  const k3 = k1.replace(/-/g,' ');   // double strike
+  const slug = ICON_MAP_EFFECT[k1] || ICON_MAP_EFFECT[k2] || ICON_MAP_EFFECT[k3] || null;
+  const icon = slug ? iconHTML(slug) : '';
+  n.innerHTML = icon
+    ? `${icon} <span>${eff.ability}</span> <span class="tag">${modeTag}</span>`
+    : `<span>${eff.ability}</span> <span class="tag">${modeTag}</span>`;
+  effWrap.appendChild(n);
+});
+
 
     // Notes (if you want the little 📝, keep as-is)
     if (data.notes) {
@@ -1021,8 +1095,36 @@ allEffects.forEach(raw => {
     const modStrP = modP ? (modP > 0 ? `+${modP}` : `${modP}`) : '';
     const modStrT = modT ? (modT > 0 ? `+${modT}` : `${modT}`) : '';
     badge.textContent = `${baseStrP}${modStrP}/${baseStrT}${modStrT}`;
-  } else {
+   } else {
     badge.textContent = `${p}/${t}`;
+  }
+
+  // ───── TEMP P/T badge ─────
+  const attrsForTemp = this.cache?.[cid] || {};
+  const tempList = Array.isArray(attrsForTemp.tempPT) ? attrsForTemp.tempPT : [];
+  let tPow = 0, tTgh = 0;
+  let hasEOT = false, hasLinked = false;
+  for (const e of tempList){
+    tPow += Number(e?.pow || 0);
+    tTgh += Number(e?.tgh || 0);
+    if (e?.mode === 'EOT') hasEOT = true;
+    if (e?.mode === 'LINKED') hasLinked = true;
+  }
+  const tBadge = ensurePtTempBadge(el);
+  if ((tPow !== 0 || tTgh !== 0) && isCreature){
+    const tag = hasEOT && hasLinked ? 'EOT+Linked' : (hasLinked ? 'Linked' : 'EOT');
+    const pStr = (tPow >= 0 ? `+${tPow}` : `${tPow}`);
+    const tStr = (tTgh >= 0 ? `+${tTgh}` : `${tTgh}`);
+    tBadge.style.display = 'inline-flex';
+    tBadge.innerHTML = `<span>${pStr}/${tStr}</span><span class="tag">${tag}</span>`;
+    // keep zoom-consistent
+    try {
+      const os = el.querySelector('.cardAttrRoot') || el;
+      const scale = getComputedStyle(os).getPropertyValue('--overlayScale') || '1';
+      tBadge.style.setProperty('--overlayScale', scale);
+    } catch {}
+  } else {
+    tBadge.style.display = 'none';
   }
 
   // keep PT badge readable during zoom
@@ -1035,10 +1137,12 @@ allEffects.forEach(raw => {
   return true;
 },
 
+
   reapplyAll(){
     const cards = document.querySelectorAll('.card[data-cid]');
     cards.forEach(card => {
       ensurePtBadge(card);
+	  ensurePtTempBadge(el);
       ensureOverlayRoot(card);
 	  autoSeedMissingPT(card, card.getAttribute('data-cid'));
 

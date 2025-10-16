@@ -60,6 +60,9 @@ let anchorEl = null;
 
 // NEW: a small, floating cog button anchored to the right of the card
 let cogEl = null;
+// NEW: a mirrored magic-wand button anchored to the left of the card
+let wandEl = null;
+
 
 const VP_MARGIN = 8;     // viewport breathing room
 const TIP_GAP   = 12;    // gap between card and tooltip
@@ -168,6 +171,58 @@ function ensureCog(){
   document.body.appendChild(cogEl);
   return cogEl;
 }
+
+// NEW: Build/ensure the anchored wand button once
+function ensureWand(){
+  if (wandEl) return wandEl;
+  wandEl = document.createElement('button');
+  wandEl.type = 'button';
+  wandEl.className = 'cardActBtn';
+  wandEl.style.position = 'absolute';
+  wandEl.style.display = 'none';
+  wandEl.style.zIndex = '10002';  // above tooltip/actions
+  wandEl.style.width = '42px';
+  wandEl.style.height = '42px';
+  wandEl.style.borderRadius = '50%';
+  wandEl.style.background = '#0f1725';
+  wandEl.style.color = '#cfe1ff';
+  wandEl.style.border = '1px solid #2b3f63';
+  wandEl.style.boxShadow = '0 8px 20px rgba(106,169,255,.18)';
+  wandEl.style.alignItems = 'center';
+  wandEl.style.justifyContent = 'center';
+  wandEl.style.cursor = 'pointer';
+  // Magic wand (fallback ✨ if 🪄 unsupported)
+  wandEl.textContent = '🪄';
+
+  // Keep clicks reliable (no event swallowing)
+  wandEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
+  wandEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    try {
+      const ev = new CustomEvent('card:activate', { detail: { el: anchorEl }, bubbles: true });
+      (anchorEl || document).dispatchEvent(ev);
+    } catch {}
+  });
+
+  document.body.appendChild(wandEl);
+  return wandEl;
+}
+
+// NEW: position the wand relative to the anchored card (left side)
+function positionWand(targetEl){
+  if (!wandEl || !targetEl) return;
+  const r = targetEl.getBoundingClientRect();
+  const x = Math.round(r.left - (COG_GAP + 42)); // mirror cog gap; 42 = button width
+  const y = Math.round(r.top + r.height / 2 - 21); // center vertically
+  wandEl.style.left = `${x}px`;
+  wandEl.style.top  = `${y}px`;
+  wandEl.style.display = 'grid';
+}
+
+function hideWand(){
+  if (wandEl) wandEl.style.display = 'none';
+}
+
 
 // NEW: position the cog relative to the anchored card
 function positionCog(targetEl){
@@ -284,19 +339,22 @@ function positionTooltip(el, centerX, anchorTop, anchorBottom, preferAbove = tru
 ----------------------------- */
 export function initTooltipSystem(){
   ensureTip();
-  ensureCog();
-  cogEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
+ensureCog();
+ensureWand();
+cogEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
+wandEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
 
-
-  // click/tap empty background clears selection + hides tooltip + cog
-  document.addEventListener('pointerdown', (e)=>{
+// click/tap empty background clears selection + hides tooltip + buttons
+document.addEventListener('pointerdown', (e)=>{
   if (
     e.target.closest('.card') ||
     e.target.closest('.cardTooltip') ||
-    e.target.closest('.cardCogBtn')   // ← allow clicks anywhere inside the cog
+    e.target.closest('.cardCogBtn') ||   // allow clicks anywhere inside the cog
+    e.target.closest('.cardActBtn')      // allow clicks anywhere inside the wand
   ) return;
-  clearSelection(); hideTooltip(); hideCog();
+  clearSelection(); hideTooltip(); hideCog(); hideWand();
 });
+
 
 
   window.addEventListener('resize', ()=> reflowAll());
@@ -312,10 +370,12 @@ export function followTooltip(target) {
     const centerX = r.left + (r.width / 2);
     positionTooltip(tipEl, centerX, r.top, r.bottom, /*preferAbove*/ true);
 
-    // keep the cog glued to the card’s right edge
-    ensureCog();
-    positionCog(anchorEl);
-    return;
+// keep the buttons glued to the card’s edges
+ensureCog(); ensureWand();
+positionCog(anchorEl);
+positionWand(anchorEl);
+return;
+
   }
 
   // Case B: legacy coords (treat as center point)
@@ -324,8 +384,9 @@ export function followTooltip(target) {
   const cy = Number(target?.y) || 0;
   positionTooltip(tipEl, cx, cy, cy, true);
 
-  // No card element to anchor → hide the cog
-  hideCog();
+// No card element to anchor → hide the buttons
+hideCog(); hideWand();
+
 }
 
 export function reflowAll(){
@@ -334,8 +395,9 @@ export function reflowAll(){
     followTooltip(anchorEl);
   } else {
     // re-place around last center
-    positionTooltip(tipEl, lastPos.x, lastPos.y - 1, lastPos.y + 1, true);
-    hideCog();
+positionTooltip(tipEl, lastPos.x, lastPos.y - 1, lastPos.y + 1, true);
+hideCog(); hideWand();
+
   }
 }
 
@@ -345,7 +407,8 @@ export function reflowAll(){
 export function clearSelection(){
   document.querySelectorAll('.card.selected').forEach(n => n.classList.remove('selected'));
 }
-export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; hideCog(); }
+export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; hideCog(); hideWand(); }
+
 
 /* -----------------------------
    Public: show/hide (legacy names)
@@ -407,9 +470,11 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
     anchorEl = cardOrEl;
     positionTooltip(el, centerX, r.top, r.bottom, true);
 
-    // show/position the cog next to the card
-    positionCog(anchorEl);
-    return;
+    // show/position the buttons next to the card
+positionCog(anchorEl);
+positionWand(anchorEl);
+return;
+
   }
 
   // B) Data object path (legacy)
@@ -430,8 +495,9 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
   const cy = Number(screenY) || 0;
   positionTooltip(el, cx, cy - 1, cy + 1, true);
 
-  // no DOM anchor → hide the cog
-  hideCog();
+  // no DOM anchor → hide the buttons
+hideCog(); hideWand();
+
 }
 
 export function hideCardTooltip(){ hideTooltip(); }
