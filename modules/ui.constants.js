@@ -1,301 +1,256 @@
 // ================================
 // FILE: modules/ui.constants.js
-// Size/scale constants with runtime settings overlay
+// UI size/scale constants + runtime settings overlay
+// - Card/zone width & height are ratio-locked pairs
+// - Hand vertical offset slider (controls --hand-bottom)
+// - PT/tooltip sizes wired to CSS vars used in v3.html
+// - Reset-to-defaults button
 // ================================
 
 const VARS = {
-  cardWidth:        { label: 'Card Width',        default: 223, min: 150, max: 420, unit: 'px' },
-  cardHeight:       { label: 'Card Height',       default: 310, min: 180, max: 620, unit: 'px' },
-  zoneWidth:        { label: 'Zone Width',        default: 223, min: 150, max: 420, unit: 'px' },
-  zoneHeight:       { label: 'Zone Height',       default: 310, min: 180, max: 620, unit: 'px' },
-  handScale:        { label: 'Hand Scale',        default: 0.88, min: 0.5,  max: 1.5, step: 0.01 },
-  handBottom:       { label: 'Hand Vertical (px from bottom)', default: 56, min: 0, max: 240, unit: 'px' },
-  tooltipFontSize:  { label: 'Tooltip Font',      default: 13,  min: 10,   max: 24,  unit: 'px' },
-  tooltipIconSize:  { label: 'Tooltip Icon',      default: 18,  min: 12,   max: 32,  unit: 'px' },
-  ptBadgeScale:     { label: 'P/T Badge Scale',   default: 1.35, min: 0.6,  max: 3.5, step: 0.05 },
+  // Card sizing (ratio-locked pair)
+  cardWidth:       { label: 'Card Width',         default: 223, min: 150, max: 350, step: 1,   unit: 'px' },
+  cardHeight:      { label: 'Card Height',        default: 310, min: 180, max: 450, step: 1,   unit: 'px' },
+
+  // Zone thumbnails (ratio-locked pair, same native ratio as cards)
+  zoneWidth:       { label: 'Zone Width',         default: 223, min: 150, max: 350, step: 1,   unit: 'px' },
+  zoneHeight:      { label: 'Zone Height',        default: 310, min: 180, max: 450, step: 1,   unit: 'px' },
+
+  // Hand presentation
+  handScale:       { label: 'Hand Scale',         default: 0.88, min: 0.5, max: 1.5, step: 0.01 },
+  handBottom:      { label: 'Hand Vertical Offset', default: 56,  min: 0,   max: 220, step: 1,  unit: 'px' }, // <- feeds --hand-bottom
+
+  // Tooltip / icon sizing
+  tooltipFontSize: { label: 'Tooltip Font Size',  default: 13,  min: 10,  max: 24,  step: 1,   unit: 'px' },
+  tooltipIconSize: { label: 'Tooltip Icon Size',  default: 18,  min: 12,  max: 32,  step: 1,   unit: 'px' },
+
+  // PT / badge multiplier (multiplies overlayScale that’s based on card height)
+  ptBadgeScale:    { label: 'P/T Badge Scale',    default: 1.35, min: 0.6, max: 3.5, step: 0.05 },
+  
+  effectsScale:     { label: 'Ability Badge Scale',   default: 1,    min: 0.6, max: 2.5, step: 0.05 },
+effectsOffsetX:   { label: 'Ability Row Offset X',  default: 0,    min: -40, max:  40, unit: 'px', step: 1 },
+effectsOffsetY:   { label: 'Ability Row Offset Y',  default: 0,    min: -40, max:  40, unit: 'px', step: 1 },
+effectsRightSafe:{ label: 'Ability Right Safe',     default: 0,    min:   0, max: 120, unit: 'px', step: 1 },
+tooltipBadgeScale:{ label: 'Tooltip Badge Scale',   default: 1.6,  min: 0.8, max: 3.0, step: 0.05 },
+
 };
+
+// Native card aspect used by your art frames (keeps everything crisp)
+const CARD_ASPECT = VARS.cardHeight.default / VARS.cardWidth.default; // 310 / 223 ≈ 1.390
+const ZONE_ASPECT = VARS.zoneHeight.default / VARS.zoneWidth.default; // same as cards (by default)
+
+// Keys that move in pairs
+const CARD_PAIR = ['cardWidth', 'cardHeight'];
+const ZONE_PAIR = ['zoneWidth', 'zoneHeight'];
+
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function fmt(val, key) {
+  const unit = VARS[key].unit || '';
+  const step = VARS[key].step || 1;
+  const isInt = Number(step) >= 1;
+  const out = isInt ? Math.round(val) : Number(val).toFixed(String(step).split('.')[1]?.length || 0);
+  return `${out}${unit}`;
+}
 
 const UIConstants = {
   values: {},
-  _aspectLocked: true,
-  _aspect: null,
+  _ui: { inputs: new Map(), labels: new Map() },
+  _syncLock: false, // prevents recursive slider jitter
 
   init(){
-    for (const [key, cfg] of Object.entries(VARS)){
+    // Load persisted or defaults
+    for (const [key, cfg] of Object.entries(VARS)) {
       const saved = localStorage.getItem('ui_' + key);
       this.values[key] = saved !== null ? parseFloat(saved) : cfg.default;
     }
-    const savedLock = localStorage.getItem('ui_lockAspect');
-    this._aspectLocked = savedLock === null ? true : savedLock === '1';
-    this._aspect = this.values.cardHeight / Math.max(1, this.values.cardWidth);
+    // Coerce pairs to be consistent on boot
+    this._enforceAspectFrom('cardWidth');
+    this._enforceAspectFrom('zoneWidth');
     this.apply();
   },
 
   apply(){
     const root = document.documentElement;
-    for (const [key, val] of Object.entries(this.values)){
-      const unit = VARS[key].unit || '';
-      root.style.setProperty(`--${key}`, `${val}${unit}`);
-    }
-    // overlays auto-scale with card height relative to default 310
-    const overlayScale = (this.values.cardHeight / VARS.cardHeight.default) || 1;
-    root.style.setProperty('--overlayScale', overlayScale.toFixed(4));
+  for (const [key, val] of Object.entries(this.values)){
+    const cfg = VARS[key], unit = cfg.unit || '';
+    // map camelCase -> CSS --kebab
+    const cssName = '--' + key.replace(/[A-Z]/g, m => '-' + m.toLowerCase());
+    root.style.setProperty(cssName, String(val) + unit);
+  }
+    // Primary CSS variables used in v3.html
+    root.style.setProperty('--cardWidth',      this.values.cardWidth + 'px');
+    root.style.setProperty('--cardHeight',     this.values.cardHeight + 'px');
+    root.style.setProperty('--zoneWidth',      this.values.zoneWidth + 'px');
+    root.style.setProperty('--zoneHeight',     this.values.zoneHeight + 'px');
+
+    root.style.setProperty('--handScale',      String(this.values.handScale));
+    root.style.setProperty('--hand-bottom',    (this.values.handBottom|0) + 'px');
+
+    root.style.setProperty('--tooltipFontSize', this.values.tooltipFontSize + 'px');
+    root.style.setProperty('--tooltipIconSize', this.values.tooltipIconSize + 'px');
+
+    root.style.setProperty('--ptBadgeScale',    String(this.values.ptBadgeScale));
+
+    // Overlay/badges rely on overlayScale = cardHeight / 310px (already in CSS),
+    // so updating --cardHeight is enough for PT/effect badges to resize.
+    // Still, keep any visible readouts in sync:
+    this._refreshOverlayReadouts();
   },
 
+  // ---------- Aspect helpers ----------
+  _enforceAspectFrom(changedKey){
+    if (this._syncLock) return;
+
+    const pair = (changedKey.startsWith('card') ? CARD_PAIR
+               : changedKey.startsWith('zone') ? ZONE_PAIR : null);
+    if (!pair) return;
+
+    const [wKey, hKey] = [pair[0], pair[1]];
+    const cfgW = VARS[wKey], cfgH = VARS[hKey];
+    const aspect = (pair === CARD_PAIR) ? CARD_ASPECT : ZONE_ASPECT;
+
+    this._syncLock = true;
+    try {
+      if (changedKey === wKey) {
+        const w = clamp(this.values[wKey], cfgW.min, cfgW.max);
+        const newH = clamp(w * aspect, cfgH.min, cfgH.max);
+        this.values[wKey] = w;
+        this.values[hKey] = newH;
+        this._syncOneUI(wKey, w);
+        this._syncOneUI(hKey, newH);
+      } else if (changedKey === hKey) {
+        const h = clamp(this.values[hKey], cfgH.min, cfgH.max);
+        const newW = clamp(h / aspect, cfgW.min, cfgW.max);
+        this.values[hKey] = h;
+        this.values[wKey] = newW;
+        this._syncOneUI(hKey, h);
+        this._syncOneUI(wKey, newW);
+      }
+    } finally {
+      this._syncLock = false;
+    }
+  },
+
+  _syncOneUI(key, val){
+    // update slider & label if they exist
+    const input = this._ui.inputs.get(key);
+    const label = this._ui.labels.get(key);
+    if (input && String(input.value) !== String(val)) input.value = val;
+    if (label) label.textContent = fmt(val, key);
+  },
+
+  _refreshOverlayReadouts(){
+    for (const key of Object.keys(VARS)) {
+      const lab = this._ui.labels.get(key);
+      if (lab) lab.textContent = fmt(this.values[key], key);
+    }
+  },
+
+  // ---------- Overlay ----------
   openSettingsOverlay(){
+    // Build once per open
     const scrim = document.createElement('div');
     scrim.className = 'scrim';
     scrim.style.display = 'block';
 
     const panel = document.createElement('div');
     panel.className = 'panel';
+    panel.style.maxWidth = '820px';
     panel.innerHTML = `
       <div class="row" style="justify-content:space-between;align-items:center;">
         <strong>⚙ Interface Settings</strong>
-        <button class="pill js-close">Close</button>
+        <div class="row">
+          <button class="pill js-reset">Reset to defaults</button>
+          <button class="pill js-close">Close</button>
+        </div>
       </div>
-      <div class="panel-body"></div>
     `;
 
-    // light, local CSS to avoid collisions with battlefield .card styles
-    const style = document.createElement('style');
-    style.textContent = `
-      .ui-sections{ display:grid; gap:12px; padding:12px 0; }
-      .ui-section{ background:rgba(0,0,0,.25); border:1px solid #2b3f63; border-radius:10px; padding:10px; }
-      .ui-section .row{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-      .ui-section label{ font-weight:800; display:block; margin-bottom:4px; }
-      .ui-section input[type="range"]{ width:100%; }
-      .ui-footer{ display:flex; justify-content:flex-end; }
-    `;
-    panel.appendChild(style);
+    const body = document.createElement('div');
+    body.style.display = 'grid';
+    body.style.gridTemplateColumns = 'minmax(220px, 1fr) minmax(280px, 2fr)';
+    body.style.gap = '12px';
+    body.style.padding = '12px 0';
 
-    const body = panel.querySelector('.panel-body');
-    const sectionsWrap = document.createElement('div');
-    sectionsWrap.className = 'ui-sections';
+    // Clear UI caches for this render
+    this._ui.inputs.clear();
+    this._ui.labels.clear();
 
-    // ---------- Card size (with aspect lock) ----------
-    sectionsWrap.appendChild(_mkSection(`
-      <div style="font-weight:800;margin-bottom:6px">Card Size</div>
-      <div class="row">
-        <div style="flex:1 1 280px">
-          <label>${VARS.cardWidth.label}: <span id="val-cardWidth">${this.values.cardWidth}</span>${VARS.cardWidth.unit||''}</label>
-          <input id="rng-cardWidth" type="range" min="${VARS.cardWidth.min}" max="${VARS.cardWidth.max}" step="${VARS.cardWidth.step||1}" value="${this.values.cardWidth}">
-        </div>
-        <div style="flex:1 1 280px">
-          <label>${VARS.cardHeight.label}: <span id="val-cardHeight">${this.values.cardHeight}</span>${VARS.cardHeight.unit||''}</label>
-          <input id="rng-cardHeight" type="range" min="${VARS.cardHeight.min}" max="${VARS.cardHeight.max}" step="${VARS.cardHeight.step||1}" value="${this.values.cardHeight}">
-        </div>
-        <label style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
-          <input id="chk-lockAspect" type="checkbox" ${this._aspectLocked ? 'checked' : ''}>
-          <span>Lock aspect</span>
-        </label>
-      </div>
-    `));
+    // Build rows
+    for (const [key, cfg] of Object.entries(VARS)){
+      const row = document.createElement('div');
+      row.style.display = 'contents'; // let children fill the 2-column grid
 
-    // ---------- Zone size ----------
-    sectionsWrap.appendChild(_mkSection(`
-      <div style="font-weight:800;margin-bottom:6px">Zone Card Size</div>
-      <div class="row">
-        <div style="flex:1 1 280px">
-          <label>${VARS.zoneWidth.label}: <span id="val-zoneWidth">${this.values.zoneWidth}</span>${VARS.zoneWidth.unit||''}</label>
-          <input id="rng-zoneWidth" type="range" min="${VARS.zoneWidth.min}" max="${VARS.zoneWidth.max}" step="${VARS.zoneWidth.step||1}" value="${this.values.zoneWidth}">
-        </div>
-        <div style="flex:1 1 280px">
-          <label>${VARS.zoneHeight.label}: <span id="val-zoneHeight">${this.values.zoneHeight}</span>${VARS.zoneHeight.unit||''}</label>
-          <input id="rng-zoneHeight" type="range" min="${VARS.zoneHeight.min}" max="${VARS.zoneHeight.max}" step="${VARS.zoneHeight.step||1}" value="${this.values.zoneHeight}">
-        </div>
-      </div>
-    `));
+      const label = document.createElement('label');
+      label.style.fontWeight = '800';
+      label.style.display = 'block';
+      label.style.paddingTop = '6px';
+      label.textContent = cfg.label + ': ';
 
-    // ---------- Hand controls ----------
-    sectionsWrap.appendChild(_mkSection(`
-      <div style="font-weight:800;margin-bottom:6px">Hand</div>
-      <div class="row">
-        <div style="flex:1 1 280px">
-          <label>${VARS.handScale.label}: <span id="val-handScale">${this.values.handScale}</span></label>
-          <input id="rng-handScale" type="range" min="${VARS.handScale.min}" max="${VARS.handScale.max}" step="${VARS.handScale.step||0.01}" value="${this.values.handScale}">
-        </div>
-        <div style="flex:1 1 280px">
-          <label>${VARS.handBottom.label}: <span id="val-handBottom">${this.values.handBottom}</span>${VARS.handBottom.unit||''}</label>
-          <input id="rng-handBottom" type="range" min="${VARS.handBottom.min}" max="${VARS.handBottom.max}" step="${VARS.handBottom.step||1}" value="${this.values.handBottom}">
-        </div>
-      </div>
-      <div style="opacity:.8;font-size:12px;margin-top:6px">
-        Tip: If you shrink your hand cards, raise the vertical offset so the fan stays off the battlefield.
-      </div>
-    `));
+      const valSpan = document.createElement('span');
+      valSpan.id = 'val-' + key;
+      valSpan.style.opacity = '.9';
+      valSpan.style.fontWeight = '700';
+      valSpan.textContent = fmt(this.values[key], key);
+      label.appendChild(valSpan);
 
-    // ---------- Tooltip + PT badge ----------
-    sectionsWrap.appendChild(_mkSection(`
-      <div style="font-weight:800;margin-bottom:6px">Tooltips & Badges</div>
-      <div class="row">
-        <div style="flex:1 1 220px">
-          <label>${VARS.tooltipFontSize.label}: <span id="val-tooltipFontSize">${this.values.tooltipFontSize}</span>${VARS.tooltipFontSize.unit||''}</label>
-          <input id="rng-tooltipFontSize" type="range" min="${VARS.tooltipFontSize.min}" max="${VARS.tooltipFontSize.max}" step="${VARS.tooltipFontSize.step||1}" value="${this.values.tooltipFontSize}">
-        </div>
-        <div style="flex:1 1 220px">
-          <label>${VARS.tooltipIconSize.label}: <span id="val-tooltipIconSize">${this.values.tooltipIconSize}</span>${VARS.tooltipIconSize.unit||''}</label>
-          <input id="rng-tooltipIconSize" type="range" min="${VARS.tooltipIconSize.min}" max="${VARS.tooltipIconSize.max}" step="${VARS.tooltipIconSize.step||1}" value="${this.values.tooltipIconSize}">
-        </div>
-        <div style="flex:1 1 220px">
-          <label>${VARS.ptBadgeScale.label}: <span id="val-ptBadgeScale">${this.values.ptBadgeScale}</span></label>
-          <input id="rng-ptBadgeScale" type="range" min="${VARS.ptBadgeScale.min}" max="${VARS.ptBadgeScale.max}" step="${VARS.ptBadgeScale.step||0.05}" value="${this.values.ptBadgeScale}">
-        </div>
-      </div>
-      <div style="opacity:.8;font-size:12px;margin-top:6px">
-        Badges also auto-scale with card height via <code>--overlayScale</code>.
-      </div>
-    `));
+      const inputWrap = document.createElement('div');
+      const input = document.createElement('input');
+      input.type  = 'range';
+      input.min   = cfg.min;
+      input.max   = cfg.max;
+      input.step  = cfg.step || 1;
+      input.value = this.values[key];
+      input.style.width = '100%';
 
-    // ---------- Reset ----------
-    sectionsWrap.appendChild(_mkSection(`
-      <div class="ui-footer">
-        <button id="btn-resetDefaults" class="pill warn">Reset to Defaults</button>
-      </div>
-    `));
+      // Store references
+      this._ui.inputs.set(key, input);
+      this._ui.labels.set(key, valSpan);
 
-    body.appendChild(sectionsWrap);
+      input.addEventListener('input', () => {
+        const val = parseFloat(input.value);
+        this.values[key] = val;
+        localStorage.setItem('ui_' + key, String(val));
+
+        // Keep aspect-locked pairs in sync (no feedback loops)
+        if (key.startsWith('card') || key.startsWith('zone')) {
+          this._enforceAspectFrom(key);
+        }
+
+        // Apply immediately
+        this.apply();
+      });
+
+      inputWrap.appendChild(input);
+      body.appendChild(label);
+      body.appendChild(inputWrap);
+    }
+
+    panel.appendChild(body);
     scrim.appendChild(panel);
     document.body.appendChild(scrim);
 
-    const close = ()=>scrim.remove();
+    const close = ()=>{ try{ scrim.remove(); }catch{} };
     panel.querySelector('.js-close')?.addEventListener('click', close);
-    scrim.addEventListener('click', e=>{ if (e.target===scrim) close(); });
+    scrim.addEventListener('click', e => { if (e.target === scrim) close(); });
 
-    // ------- Wiring helpers -------
-    const byId = (id)=>panel.querySelector('#'+id);
-    const setVal = (id, v)=>{ const el=byId(id); if (el) el.textContent = v; };
-    const bind = (key, rngId, valId)=>{
-      const rng = byId(rngId);
-      rng?.addEventListener('input', ()=>{
-        const v = parseFloat(rng.value);
-        this.values[key] = v;
-        localStorage.setItem('ui_'+key, String(v));
-        setVal(valId, v);
-        this.apply();
-      });
-    };
+    panel.querySelector('.js-reset')?.addEventListener('click', () => {
+      // wipe stored values
+      for (const key of Object.keys(VARS)) localStorage.removeItem('ui_' + key);
+      // restore defaults
+      for (const [key, cfg] of Object.entries(VARS)) this.values[key] = cfg.default;
 
-    // standard binds
-    bind('zoneWidth',       'rng-zoneWidth',       'val-zoneWidth');
-    bind('zoneHeight',      'rng-zoneHeight',      'val-zoneHeight');
-    bind('handScale',       'rng-handScale',       'val-handScale');
-    bind('handBottom',      'rng-handBottom',      'val-handBottom');
-    bind('tooltipFontSize', 'rng-tooltipFontSize', 'val-tooltipFontSize');
-    bind('tooltipIconSize', 'rng-tooltipIconSize', 'val-tooltipIconSize');
-    bind('ptBadgeScale',    'rng-ptBadgeScale',    'val-ptBadgeScale');
+      // re-coerce pairs (in case defaults ever change)
+      this._enforceAspectFrom('cardWidth');
+      this._enforceAspectFrom('zoneWidth');
 
-    // aspect lock
-    const chkLock = byId('chk-lockAspect');
-    chkLock?.addEventListener('change', ()=>{
-      this._aspectLocked = !!chkLock.checked;
-      localStorage.setItem('ui_lockAspect', this._aspectLocked ? '1' : '0');
-      if (this._aspectLocked){
-        this._aspect = this.values.cardHeight / Math.max(1, this.values.cardWidth);
-      }
-    });
-
-    // card size coupling
-    const rngCW = byId('rng-cardWidth');
-    const rngCH = byId('rng-cardHeight');
-
-    rngCW?.addEventListener('input', ()=>{
-      let w = clamp(+rngCW.value, VARS.cardWidth.min, VARS.cardWidth.max);
-      let h = this.values.cardHeight;
-      if (this._aspectLocked){
-        h = clamp(Math.round(w * this._aspect), VARS.cardHeight.min, VARS.cardHeight.max);
-        rngCH.value = String(h);
-        setVal('val-cardHeight', h);
-      }
-      this.values.cardWidth = w;  setVal('val-cardWidth', w);
-      this.values.cardHeight = h;
-      localStorage.setItem('ui_cardWidth',  String(w));
-      localStorage.setItem('ui_cardHeight', String(h));
-
-      // keep zones aligned with battlefield card size (optional)
-      syncZone(w, h);
       this.apply();
+      this._refreshOverlayReadouts();
     });
-
-    rngCH?.addEventListener('input', ()=>{
-      let h = clamp(+rngCH.value, VARS.cardHeight.min, VARS.cardHeight.max);
-      let w = this.values.cardWidth;
-      if (this._aspectLocked){
-        w = clamp(Math.round(h / Math.max(0.001, this._aspect)), VARS.cardWidth.min, VARS.cardWidth.max);
-        rngCW.value = String(w);
-        setVal('val-cardWidth', w);
-      }
-      this.values.cardHeight = h; setVal('val-cardHeight', h);
-      this.values.cardWidth  = w;
-      localStorage.setItem('ui_cardHeight', String(h));
-      localStorage.setItem('ui_cardWidth',  String(w));
-
-      syncZone(w, h);
-      this.apply();
-    });
-
-    byId('btn-resetDefaults')?.addEventListener('click', ()=>{
-      for (const [key, cfg] of Object.entries(VARS)){
-        this.values[key] = cfg.default;
-        localStorage.setItem('ui_'+key, String(cfg.default));
-      }
-      this._aspectLocked = true;
-      localStorage.setItem('ui_lockAspect', '1');
-      this._aspect = VARS.cardHeight.default / Math.max(1, VARS.cardWidth.default);
-
-      // push values into controls
-      rngCW.value = String(VARS.cardWidth.default);
-      rngCH.value = String(VARS.cardHeight.default);
-      setVal('val-cardWidth',  VARS.cardWidth.default);
-      setVal('val-cardHeight', VARS.cardHeight.default);
-
-      byId('rng-zoneWidth').value  = String(VARS.zoneWidth.default);
-      byId('rng-zoneHeight').value = String(VARS.zoneHeight.default);
-      setVal('val-zoneWidth',  VARS.zoneWidth.default);
-      setVal('val-zoneHeight', VARS.zoneHeight.default);
-
-      byId('rng-handScale').value  = String(VARS.handScale.default);
-      byId('rng-handBottom').value = String(VARS.handBottom.default);
-      setVal('val-handScale',  VARS.handScale.default);
-      setVal('val-handBottom', VARS.handBottom.default);
-
-      byId('rng-tooltipFontSize').value = String(VARS.tooltipFontSize.default);
-      byId('rng-tooltipIconSize').value = String(VARS.tooltipIconSize.default);
-      setVal('val-tooltipFontSize', VARS.tooltipFontSize.default);
-      setVal('val-tooltipIconSize', VARS.tooltipIconSize.default);
-
-      byId('rng-ptBadgeScale').value = String(VARS.ptBadgeScale.default);
-      setVal('val-ptBadgeScale', VARS.ptBadgeScale.default);
-
-      byId('chk-lockAspect').checked = true;
-
-      // keep zones aligned with defaults
-      syncZone(VARS.cardWidth.default, VARS.cardHeight.default);
-      this.apply();
-    });
-
-    // helpers
-    function _mkSection(inner){
-      const d = document.createElement('div');
-      d.className = 'ui-section';
-      d.innerHTML = inner;
-      return d;
-    }
-    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-    const syncZone = (w, h)=>{
-      // if you want them independent, remove this block
-      UIConstants.values.zoneWidth  = w;
-      UIConstants.values.zoneHeight = h;
-      const zW = byId('rng-zoneWidth'), zH = byId('rng-zoneHeight');
-      if (zW && zH){
-        zW.value = String(w); zH.value = String(h);
-        setVal('val-zoneWidth',  w);
-        setVal('val-zoneHeight', h);
-        localStorage.setItem('ui_zoneWidth',  String(w));
-        localStorage.setItem('ui_zoneHeight', String(h));
-      }
-    };
   }
 };
+
+// Apply immediately at import (v3.html calls apply() on load, but this is safe)
+UIConstants.init();
 
 export default UIConstants;

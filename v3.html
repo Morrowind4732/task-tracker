@@ -108,16 +108,24 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 }
 
 /* Inner 3D flipper */
-.cardInner{
-  position:absolute; left:50%; top:50%; width:100%; height:100%; border-radius:14px;
-  transform-style: preserve-3d; /* CRITICAL: render front/back as real faces */
-  transform-origin:center center;
-  transform: translate(-50%,-50%) rotateZ(var(--tap-rot)) rotateY(var(--flip-rot));
-  transition: transform .35s ease, width .18s ease, height .18s ease;
-}
-.cardTooltip{ z-index: calc(var(--z-actions) + 1); }
+  .cardInner{
+    position:absolute; left:50%; top:50%; width:100%; height:100%; border-radius:14px;
+    transform-style: preserve-3d;
+    transform-origin:center center;
+    transform: translate(-50%,-50%) rotateZ(var(--tap-rot)) rotateY(var(--flip-rot));
+    transition: transform .35s ease, width .18s ease, height .18s ease;
+  }
+  .cardTooltip{ z-index: calc(var(--z-actions) + 1); }
 
-.card.tapped .cardInner{ width:var(--card-w); height:var(--card-h); }
+  .card.tapped .cardInner{
+    width:var(--card-w);
+    height:var(--card-h);
+  }
+
+  .card.in-cmd .cardInner{
+    /* Commander zone: logically tapped but no visual rotate */
+    transform: translate(-50%,-50%) rotateZ(0deg) rotateY(var(--flip-rot));
+  }
 
 .card.selected{ outline:2px solid var(--accent); outline-offset:2px; }
 
@@ -129,13 +137,26 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 }
 .face.back{ transform: rotateY(180deg); } /* back is pre-rotated to face forward when parent flips */
 
+/* Hide P/T by default */
 .card .pt{
   position:absolute; right:6px; bottom:6px;
   background:rgba(0,0,0,.7); color:#e7f0ff; border-radius:8px;
   padding:2px 6px; font-weight:800; z-index:2;
   transform: scale(calc(var(--overlayScale) * var(--badgeBoost)));
   transform-origin: bottom right;
+  display:none;
 }
+
+/* Show P/T only for CREATURES (base or OG P/T present) */
+.card[data-type_line*="Creature"][data-base-p]:not([data-base-p=""]):not([data-base-p="?"])[data-base-t]:not([data-base-t=""]):not([data-base-t="?"]) .pt,
+.card[data-type_line*="Creature"][data-ogpower]:not([data-ogpower=""]):not([data-ogpower="?"])[data-ogtoughness]:not([data-ogtoughness=""]):not([data-ogtoughness="?"]) .pt { display:block; }
+
+/* Planeswalkers still show (loyalty uses same visual spot) */
+.card[data-ogloyalty]:not([data-ogloyalty=""]):not([data-ogloyalty="?"]) .pt,
+.card[data-loyalty]:not([data-loyalty=""]):not([data-loyalty="?"]) .pt { display:block; }
+
+
+
 
 /* Quick actions */
 .cardActions{ position:absolute; z-index:var(--z-actions); display:flex; flex-direction:column; gap:8px; }
@@ -392,6 +413,38 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
   z-index: var(--z-tooltip);
 }
 
+:root{
+  --effects-scale: 1;
+  --effects-offset-x: 0px;
+  --effects-offset-y: 0px;
+  --effects-right-safe: 0px;     /* subtracts space from effects row max-width */
+  --tooltipBadgeScale: 1.6;
+  --tooltip-font-size: 13px;     /* ensure present & global */
+  --tooltip-icon-size: 18px;
+}
+
+/* Tooltip body text size */
+.tt-body, .tooltip .body, .tooltip .content{
+  font-size: var(--tooltip-font-size, 13px) !important;
+  line-height: 1.25;
+}
+
+
+/* === Flying card (deck → hand) ====================== */
+.fly-card{
+  position:fixed;
+  width:var(--card-w);
+  height:var(--card-h);
+  border-radius:14px;
+  box-shadow:0 10px 26px rgba(0,0,0,.55);
+  pointer-events:none;
+  will-change:transform, opacity;
+  /* start values get set inline; end handled by WAAPI */
+}
+.fly-card img{
+  width:100%; height:100%; object-fit:cover; border-radius:14px;
+  display:block;
+}
 
 
 </style>
@@ -636,6 +689,8 @@ import {
 } from './modules/save.snap.js';
 
 import Overlays from './modules/overlays.js';
+import { initTurnUpkeep } from './modules/turn.upkeep.js';
+
   import UIConstants from './modules/ui.constants.js';
   UIConstants.apply();
 
@@ -889,6 +944,9 @@ const RejoinPrompt = {
 
   // set UI + internal state to match
   try { seatSelect.value = String(seat); } catch {}
+  // NEW → immediately view the restored seat
+  currentViewSeat = Number(seat);
+  applyViewFilter();
 
   ROOM_ID = roomId;
   window.CardAttributes?.init({ roomId: ROOM_ID, seat: mySeat() });
@@ -896,6 +954,7 @@ const RejoinPrompt = {
 
   markAskRestoreNext(true); // silent auto-restore happens later, no extra popup
   startRTC(role);
+
 })();
 
 
@@ -1100,14 +1159,17 @@ attachHandAutoTooltip(document.querySelector('#hand'));
 
 Overlays.init();
 
-Zones.init({
-  zones: {
-    graveyard: document.getElementById('graveyard'),
-    exile:     document.getElementById('exileZone'), // note the id in v3
-    deck:      document.getElementById('deckZone'),
-    hand:      document.getElementById('hand')
-  },
-  worldEl: document.getElementById('world'),
+  Zones.init({
+    zones: {
+      graveyard: document.getElementById('graveyard'),
+      exile:     document.getElementById('exileZone'),
+      deck:      document.getElementById('deckZone'),
+      hand:      document.getElementById('hand'),
+      cmd:       document.getElementById('cmdZone')
+    },
+    worldEl: document.getElementById('world'),
+    screenToWorld, // used for snapping to commander zone center
+
 
   // Wire these to your v3 helpers:
   spawnToTable: (card, seat) => {
@@ -1329,6 +1391,8 @@ if (state.life) { window.Life?.load(state.life); }
 
       renderHand();
       applyViewFilter();
+
+
     }catch(e){ console.warn('applyState error', e); }
   }
 };
@@ -1472,6 +1536,13 @@ async function startRTC(role) {
 
     // Fade out overlay shortly after link is live
     setTimeout(hideConnecting, 600);
+currentViewSeat = seatNum();
+applyViewFilter();
+
+// close drawer the same way the cog does (only if it's open)
+if (drawerWrap.classList.contains('expanded')) cogBtn.click();
+
+	
 
 // Only on “auto reapply” flows, silently try to restore the last save for *this* seat
 if (shouldAskRestoreNext()) {
@@ -1703,6 +1774,18 @@ const SCRY = 'https://api.scryfall.com';
 let deck = [];           // [{name,img}]
 let hand = [];
 let focus = 0;
+
+// ==== Mulligan state ====
+let hasDrawn = true;        // false until we accept our opening hand
+let mullOpen  = false;       // true while the "Mulligan?" overlay is up
+// DOM hooks for the overlay
+const mullOverlay = document.getElementById('mulliganOverlay');
+const mullYesBtn  = document.getElementById('mullYesBtn');
+const mullNoBtn   = document.getElementById('mullNoBtn');
+// helpers
+const showMull = ()=>{ if (mullOverlay){ mullOverlay.style.display='block'; mullOpen = true; } };
+const hideMull = ()=>{ if (mullOverlay){ mullOverlay.style.display='none';  mullOpen = false; } };
+
 // Mini-Stack tracking (one-at-a-time is fine for now)
 const PENDING_CASTS = new Map(); // castId -> { bySeat, cid, card, x, y }
 function makeCastId(){ return (crypto?.randomUUID?.() || (Date.now()+'-'+Math.random())).slice(0,18); }
@@ -1773,7 +1856,12 @@ async function fetchCardByName(name){
 
 async function loadDeckFromTextarea(){
   const lines = (deckIn.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+
+  // reset all local play zones for this seat's deck/hand
   deck = []; hand = []; focus = 0;
+  hasDrawn = false;     // opening hand not drawn yet
+  hideMull();           // just in case it was open
+
   for (const raw of lines){
     const m = raw.match(/^(\d+)\s+(.+)$/);
     const qty = m ? parseInt(m[1],10) : 1;
@@ -1783,16 +1871,90 @@ async function loadDeckFromTextarea(){
       catch{ deck.push({name, img:'https://via.placeholder.com/488x680/191f2b/9fb4d9?text='+encodeURIComponent(name)}); }
     }
   }
+
+  // Shuffle freshly loaded deck
+  window.shuffleDeck?.(mySeat());
+
+  renderHand();
+  // (No auto-draw here; first click on deck will draw 7 + ask Mulligan)
+}
+
+
+// Single draw with animation
+async function drawOneAnimated(seat, {stagger=0, duration=420} = {}){
+  if (!deck.length) { notify('Deck is empty.'); return false; }
+
+  const insertAt = clamp(focus + 1, 0, hand.length);
+  // 1) insert an invisible ghost so neighbors shift immediately
+  insertGhostAt(insertAt);
+
+  const card = deck.pop();
+
+  // 2) fly to the ghost slot
+  await flyCardToHand({ img: card.img, duration, delay: stagger });
+
+  // 3) swap ghost → real card, focus on it, re-render
+  hand[insertAt] = { ...card };
+  focus = insertAt;
+  clearGhost();
+  renderHand();
+
+  // 4) ensure tooltip shows on the new center card
+  const host = handTrack.querySelector('.handCard.focus .card');
+  if (host){
+    const r = host.getBoundingClientRect();
+    showCardTooltip(host, r.left, r.top);
+    followTooltip(host);
+  }
+
+  return true;
+}
+
+
+// Replace previous click-draw handler call-sites to use this:
+function drawOne(){ drawOneAnimated(mySeat()); }
+
+// Animated batch draw (sequential)
+async function drawXAnimated(seat, n, { gap=120, firstDelay=0, duration=420 } = {}){
+  let count = 0;
+  for (let i=0; i<n; i++){
+    // stagger each flight slightly so it feels like peeling one by one
+    const ok = await drawOneAnimated(seat, { stagger: (i===0? firstDelay : i*gap), duration });
+    if (!ok) break;
+    count++;
+  }
+  if (count > 0) notify(`Drew ${count} card${count!==1?'s':''}.`);
+  return count;
+}
+
+// Override your previous global drawXCards to point at the animated version
+window.drawXCards = async (seat, n) => {
+  n = Math.max(1, n|0);
+  return drawXAnimated(seat, n, { gap: 120, duration: 420 });
+};
+
+// ---- Hand gap/slot helpers ----
+let GHOST_AT = -1; // -1 = off
+
+function clearGhost(){ GHOST_AT = -1; }
+
+function insertGhostAt(idx){
+  // insert a lightweight placeholder into the hand array
+  GHOST_AT = idx;
+  hand.splice(idx, 0, { __ghost: true });
   renderHand();
 }
 
-// click deck zone to draw
-function drawOne(){
-  if (!deck.length) return;
-  hand.push(deck.pop());
-  focus = hand.length-1;
-  renderHand();
+// screen point for a slot *relative to current focus*
+function handSlotScreenPoint(relFromFocus = 0){
+  const tr = handTrack.getBoundingClientRect();
+  const hr = handEl.getBoundingClientRect();
+  const gap = 64; // keep in sync with renderHand gap
+  const x = tr.left + tr.width/2 + relFromFocus * gap;
+  const y = hr.top + hr.height/2;
+  return { x, y };
 }
+
 
 // V2 rolodex layout (fixed)
 function renderHand(){
@@ -1806,6 +1968,9 @@ function renderHand(){
 
   for (let i = 0; i < hand.length; i++){
     const rel = i - focus;                       // position relative to focus
+
+    // Skip drawing the ghost; it still participates in indexing/fan spacing
+    if (hand[i]?.__ghost) continue;
 
     // host wrapper for transforms/stacking
     const host = document.createElement('div');
@@ -1839,6 +2004,73 @@ function renderHand(){
     attachHandGestures(host, i);
   }
 }
+
+// ==== Deck → Hand animation ======================================
+const PREFERS_REDUCED_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+
+function deckCenterScreenPoint(){
+  const r = deckZone.getBoundingClientRect();
+  return { x: r.left + r.width/2, y: r.top + r.height/2 };
+}
+
+function handCatchPoint({ toGhost = false } = {}){
+  if (toGhost && GHOST_AT >= 0){
+    // aim for the slot just inserted (by definition: focus+1)
+    const rel = (GHOST_AT - focus);
+    return handSlotScreenPoint(rel);
+  }
+  // default: center of track
+  const hr = handEl.getBoundingClientRect();
+  const tr = handTrack.getBoundingClientRect();
+  return { x: tr.left + tr.width/2, y: hr.top + hr.height/2 };
+}
+
+
+// Read CSS variables safely (numbers only)
+function readCSSNumber(el, varName, fallback){
+  const v = getComputedStyle(el).getPropertyValue(varName).trim();
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+async function flyCardToHand({ img, duration=420, delay=0 }){
+  // Respect user's reduced-motion
+  if (PREFERS_REDUCED_MOTION) { await new Promise(r=>setTimeout(r, Math.max(0, delay))); return; }
+
+  const start = deckCenterScreenPoint();
+  const end   = handCatchPoint({ toGhost: true });
+
+
+  const ghost = document.createElement('div');
+  ghost.className = 'fly-card';
+  ghost.style.left = `${start.x - (readCSSNumber(document.documentElement,'--card-w',223)/2)}px`;
+  ghost.style.top  = `${start.y - (readCSSNumber(document.documentElement,'--card-h',310)/2)}px`;
+  ghost.innerHTML  = `<img alt="" src="${img}">`;
+  document.body.appendChild(ghost);
+
+  // Target scale roughly matches hand scale
+  const handScale = readCSSNumber(document.documentElement, '--hand-scale', 0.88) || 0.88;
+
+  // Use WAAPI so we don't fight existing CSS transitions
+  const keyframes = [
+    { transform: 'translate(0px, 0px) scale(1)',   opacity: 0.98, offset: 0 },
+    { transform: `translate(${end.x - start.x}px, ${end.y - start.y}px) scale(${handScale})`, opacity: 1, offset: 1 }
+  ];
+
+  // optional stagger
+  if (delay > 0) await new Promise(r=>setTimeout(r, delay));
+
+  await ghost.animate(keyframes, {
+    duration,
+    easing: 'cubic-bezier(.2,.7,.2,1)',
+    fill: 'forwards'
+  }).finished.catch(()=>{});
+
+  // quick fade-out so the "catch" feels snappy
+  await ghost.animate([{opacity:1},{opacity:0}], {duration:120, fill:'forwards'}).finished.catch(()=>{});
+  ghost.remove();
+}
+
 
 // swipe L/R is handled by the hand scrubber now.
 // This handler is only for: long-press to play, or vertical swipe-up to play.
@@ -2083,17 +2315,19 @@ function rememberCid(cid, card) {
     name: card.name || '',
     img:  card.img  || '',
     type_line: card.type_line || '',
+    mana_cost: card.mana_cost || '',
+    oracle_text: card.oracle_text || '',           // ← add this
     power: card.power ?? null,
     toughness: card.toughness ?? null,
     loyalty: card.loyalty ?? null,
     ogpower: card.ogpower,
     ogtoughness: card.ogtoughness,
     ogloyalty: card.ogloyalty,
-    // NEW
     ogTypes: Array.isArray(card.ogTypes) ? card.ogTypes.slice() : [],
     ogEffects: Array.isArray(card.ogEffects) ? card.ogEffects.slice() : []
   });
 }
+
 
 
 window.getCardDataById = (cid) => {
@@ -2131,6 +2365,26 @@ window.addToDeck = (card, seat, { position } = {}) => {
     deck.push(item); // top
   }
 };
+
+async function initialDraw7(){
+  const seat = mySeat();
+  const n = Math.min(7, Array.isArray(deck) ? deck.length : 0);
+  if (n <= 0) { notify('Deck is empty.'); return; }
+
+  await drawXAnimated(seat, n, { gap: 70, firstDelay: 30, duration: 340 });
+  showMull();
+}
+
+
+function doMulligan(){
+  // Return current hand to deck, shuffle, and re-draw 7.
+  if (Array.isArray(hand) && hand.length){
+    deck.push(...hand.splice(0)); // put entire hand back on top (we’ll shuffle)
+  }
+  window.shuffleDeck?.(mySeat());
+  renderHand();
+  initialDraw7();        // draw 7 again and re-ask
+}
 
 
 window.shuffleDeck = (seat) => {
@@ -2174,7 +2428,11 @@ if (Array.isArray(card?.ogEffects) && card.ogEffects.length) {
 
 
 // (optional) let attributes know it’s a creature, etc.
-if (card?.type_line) el.dataset.typeLine = String(card.type_line);
+if (card?.type_line) {
+  el.dataset.type_line = String(card.type_line); // <-- needed for CSS
+  el.dataset.typeLine  = String(card.type_line); // legacy/other code paths
+}
+
 
   el.className = 'card';
   el.style.left = x+'px';
@@ -2199,11 +2457,17 @@ if (Number.isFinite(card?.ogloyalty)) el.dataset.baseL = String(card.ogloyalty);
 
  // NEW: attach tooltip for this card (fill real type/cost/oracle if you have it)
   attachTooltip(el, {
-    name: card.name || '',
-    typeLine: '',
-    costHTML: '',
-    oracle: ''
-  });
+  name: card.name || '',
+  typeLine: '',
+  costHTML: '',
+  oracle: card.oracle_text || ''
+});
+
+// Also stamp directly on the node so other modules can read it fast
+if (card.oracle_text) {
+  el.dataset.oracle = String(card.oracle_text);
+}
+
 
 
   // respect current view immediately
@@ -2342,7 +2606,27 @@ el.addEventListener('dblclick', (e)=>{
 // ====== hook up minimal controls ======
 loadBtn?.addEventListener('click', loadDeckFromTextarea);
 resetBtn?.addEventListener('click', ()=>{/* no-op per your request */});
-deckZone?.addEventListener('click', drawOne);
+deckZone?.addEventListener('click', ()=>{
+  // If Mulligan prompt is visible, block drawing more cards
+  if (mullOpen) return;
+
+  if (!hasDrawn){
+    initialDraw7();
+  } else {
+    drawOne(); // normal single-card draw after mulligan is accepted
+  }
+});
+
+mullYesBtn?.addEventListener('click', ()=>{
+  // Friendly mulligan: always redraw 7; keep asking until "No"
+  doMulligan();
+});
+
+mullNoBtn?.addEventListener('click', ()=>{
+  // Lock in this hand; future deck clicks draw one card at a time
+  hasDrawn = true;
+  hideMull();
+});
 
 // Optional: auto-load if textarea already has lines
 if ((deckIn?.value||'').trim()) { loadDeckFromTextarea().catch(()=>{}); }
@@ -2408,7 +2692,7 @@ document.addEventListener('mousedown', (e) => {
   if (e.target.closest('[data-card-cog], .cardCogBtn')) e.stopPropagation();
 });
 
-
+initTurnUpkeep({ endTurnBtnSelector: '#endTurnBtn' });
 
 
 /* Drawer toggle */
@@ -2481,8 +2765,6 @@ window.getDeckCardsForSeat = async (seat)=>{
     oracle_text: c.oracle_text || ''
   }));
 };
-window.drawXCards = (seat,n)=> console.log(`[draw] P${seat} draws ${n}`);
-window.millXCards = (seat,n)=> console.log(`[mill] P${seat} mills ${n}`);
 
 window.spawnCardAtViewCenter = (card, seat)=>{
   const vr = worldWrap.getBoundingClientRect();

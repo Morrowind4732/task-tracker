@@ -51,11 +51,79 @@ function tryNum(v){
   return Number.isFinite(n) ? n : NaN;
 }
 
+
+
 function deepClone(o){
   // structuredClone if available (fast), else JSON fallback
   if (typeof structuredClone === 'function') return structuredClone(o);
   return JSON.parse(JSON.stringify(o ?? null));
 }
+
+// --- Minimal Scryfall fill (mirrors tooltip.js) ---
+async function fetchMissingFieldsByName_CARDATTR(name){
+  try{
+    const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`);
+    if (!res.ok) throw new Error('scryfall');
+    const d = await res.json();
+    const face = Array.isArray(d.card_faces) && d.card_faces[0] ? d.card_faces[0] : null;
+    return {
+      name: d.name || name,
+      mana_cost: d.mana_cost || '',
+      type_line: d.type_line || '',
+      oracle_text: d.oracle_text || (face?.oracle_text || ''),
+      power:      (d.power ?? face?.power ?? ''),
+      toughness:  (d.toughness ?? face?.toughness ?? ''),
+      loyalty:    (d.loyalty ?? face?.loyalty ?? ''),
+    };
+  }catch{ return null; }
+}
+
+// Auto-seed dataset so PT can render with no interaction.
+// We only stamp P/T for real creatures.
+async function autoSeedMissingPT(el, cid){
+  if (!(el instanceof Element)) return;
+  // Try to determine if we already have enough to render
+  const name = el.dataset?.name || el.querySelector('img')?.alt || '';
+  const tlFromDom = el.dataset?.type_line || '';
+  const tlFromMeta = (window.Zones?.getCardDataById?.(cid)?.type_line) || '';
+  const tl = tlFromDom || tlFromMeta;
+
+  // If we already know it's a creature and either baseP/baseT or power/toughness exist, nothing to do.
+  const alreadyCreature = /\bCreature\b/i.test(tl);
+  const hasAnyPT = (el.dataset.power ?? '') !== '' || (el.dataset.baseP ?? '') !== '';
+  if (alreadyCreature && hasAnyPT) return;
+
+  // If Zones can give us OG P/T, stamp those first (fast path)
+  try{
+    const meta = window.Zones?.getCardDataById?.(cid);
+    const mp = Number(meta?.ogpower);
+    const mt = Number(meta?.ogtoughness);
+    const mtl = String(meta?.type_line || '');
+    if (mtl && !el.dataset.type_line) el.dataset.type_line = mtl;
+    if (/\bCreature\b/i.test(mtl) && Number.isFinite(mp) && Number.isFinite(mt)){
+      el.dataset.baseP = String(mp);
+      el.dataset.baseT = String(mt);
+      return;
+    }
+  }catch{}
+
+  // Fallback: fetch by name (only if we know the name)
+  if (!name) return;
+  const filled = await fetchMissingFieldsByName_CARDATTR(name);
+  if (!filled) return;
+
+  if (!el.dataset.type_line && filled.type_line) el.dataset.type_line = filled.type_line;
+  const isCreature = /\bCreature\b/i.test(filled.type_line || '');
+  const hasPT = (filled.power ?? '') !== '' && (filled.toughness ?? '') !== '';
+  if (isCreature && hasPT){
+    // prefer baseP/baseT so later mods stack correctly
+    el.dataset.baseP = String(filled.power);
+    el.dataset.baseT = String(filled.toughness);
+  }
+  // Loyalty for planeswalkers
+  if ((filled.loyalty ?? '') !== '') el.dataset.loyalty = String(filled.loyalty);
+}
+
 
 
 // Prefer stored original base; then DOM; then Snapshot OGs; then Snapshot P/T.
@@ -186,6 +254,26 @@ function iconHTML(slug){
   if (!slug) return '';
   const cls = `ms ms-${ICON_VARIANT}${slug}`;
   return `<i class="${cls}"></i>`;
+}
+
+// --- Helpers: read type_line & loyalty cleanly (DOM → Zones meta fallback) ---
+function getTypeLine(el, cid){
+  const fromDom  = el?.dataset?.type_line || el?.getAttribute?.('data-type_line') || '';
+  if (fromDom) return String(fromDom);
+  try {
+    const meta = window.Zones?.getCardDataById ? window.Zones.getCardDataById(cid) : null;
+    return String(meta?.type_line || '');
+  } catch { return ''; }
+}
+
+function getLoyalty(el, cid){
+  const fromDom = el?.dataset?.ogloyalty ?? el?.dataset?.loyalty ?? el?.getAttribute?.('data-ogloyalty') ?? el?.getAttribute?.('data-loyalty');
+  if (fromDom != null && String(fromDom).trim() !== '' && String(fromDom).trim() !== '?') return String(fromDom).trim();
+  try {
+    const meta = window.Zones?.getCardDataById ? window.Zones.getCardDataById(cid) : null;
+    const val = meta?.ogloyalty ?? meta?.loyalty;
+    return (val != null && String(val).trim() !== '' && String(val).trim() !== '?') ? String(val).trim() : '';
+  } catch { return ''; }
 }
 
 
@@ -343,7 +431,7 @@ const CardAttributes = {
     if (!this._pending || !this._pending.size) return;
     const ids = Array.from(this._pending);
     this._pending.clear();
-    ids.forEach(cid => { this.applyToDom(cid); this.refreshPT(cid); });
+    ids.forEach(cid => { this.applyToDom(cid); this.refreshPT(cid); autoSeedMissingPT(document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`), cid);});
     requestAnimationFrame(()=> ids.forEach(cid => this.refreshPT(cid)));
   },
 
@@ -432,8 +520,7 @@ detectManaVariant();
 
       /* ───── PT badge (unchanged position) ───── */
       .cardAttrPT {
-        position:absolute;
-        bottom:6px; right:8px;
+
         font-size:1.15em; font-weight:800; line-height:1;
         color:#fff;
         padding:2px 8px;
@@ -447,10 +534,10 @@ detectManaVariant();
         -webkit-text-stroke: 0.5px rgba(0,0,0,0.85);
         text-shadow: 0 1px 1px rgba(0,0,0,0.6);
         pointer-events:none;
-        z-index: 3;
-        transform: scale(calc(var(--overlayScale,1) * var(--attrBoost,1.6)));
-
-        transform-origin: bottom right;
+  position:absolute; bottom:6px; right:8px;
+  transform-origin: bottom right;
+  transform: scale(calc(var(--overlayScale,1) * var(--ptBadgeScale,1.35))) !important;
+  z-index:4;
       }
 
       /* ───── Root overlay container that inverse-scales with world zoom ───── */
@@ -491,26 +578,27 @@ detectManaVariant();
       .cardAttrCounter i.ms { font-size:1.05em; }
 
       /* ───── Effects/Types → bottom-center row ───── */
-      .cardAttrEffects {
-        position:absolute;
-        left:50%; bottom:6px;
-        transform: translateX(-50%);
-        display:flex; flex-wrap:wrap;
-        justify-content:center;
-        gap:6px;
-        max-width: 80%;
-      }
-      .cardAttrEffect {
-        display:flex; align-items:center; gap:6px;
+.cardAttrEffects{
+  position:absolute;
+  left: calc(50% + var(--effects-offset-x, 0px));
+  bottom: calc(6px + var(--effects-offset-y, 0px));
+  transform: translateX(-50%);
+  display:flex; flex-wrap:wrap; justify-content:center; gap:6px;
+  max-width: calc(80% - var(--effects-right-safe, 0px));
+  z-index:3;
         background:rgba(0,0,0,0.55);
         color:#fff;
-        padding:4px 8px;
-        border-radius:10px;
-        border:1px solid rgba(255,255,255,0.25);
+ font-size: calc(0.8em * var(--effects-scale, 1)) !important;
+  font-weight:800; color:#eaf2ff; background:#162338cc;
+  padding:2px 6px; border-radius:8px;
+  border:1px solid #2b3f63;
+  white-space:nowrap; pointer-events:none;
+
+
         box-shadow:0 2px 6px rgba(0,0,0,0.45);
-        font-size:0.8em;
+
         line-height:1;
-        pointer-events:none;
+
         white-space:nowrap;
       }
       .cardAttrEffect i.ms { font-size:1.1em; }
@@ -609,12 +697,16 @@ detectManaVariant();
             if (!cid) continue;
 
             ensurePtBadge(el);
-            ensureOverlayRoot(el);
-            this.refreshPT(cid);
-            requestAnimationFrame(()=> this.refreshPT(cid));
+ensureOverlayRoot(el);
 
-     this.applyToDom(cid);
-this._pending.delete(cid);
+// NEW: seed missing info so PT can render without interaction
+autoSeedMissingPT(el, cid).finally(()=>{
+  this.refreshPT(cid);
+  requestAnimationFrame(()=> this.refreshPT(cid));
+  this.applyToDom(cid);
+  this._pending.delete(cid);
+});
+
 
           }
         }
@@ -849,65 +941,107 @@ allEffects.forEach(raw => {
   },
 
   refreshPT(cid){
-    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
-    if (!el) return false;
+  const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+  if (!el) return false;
 
-    // seed DOM base from snapshot OGs once if missing
-    try {
-      const hasBase = el.dataset.baseP != null && el.dataset.baseT != null;
-      if (!hasBase && window.Zones?.getCardDataById){
-        const meta = window.Zones.getCardDataById(cid);
-        const mp = tryNum(meta?.ogpower);
-        const mt = tryNum(meta?.ogtoughness);
-        if (Number.isFinite(mp)) el.dataset.baseP = String(mp);
-        if (Number.isFinite(mt)) el.dataset.baseT = String(mt);
-      }
-    } catch {}
+  // Decide visibility first: only Creatures (PT) or Planeswalkers (loyalty)
+  const tl   = getTypeLine(el, cid);
+  const isCreature     = /\bCreature\b/i.test(tl);
+  const isPlaneswalker = /\bPlaneswalker\b/i.test(tl);
 
-    const attrs = this.cache?.[cid] || {};
-    const { p: baseP, t: baseT } = resolveBasePT(cid, el, attrs);
-    const { p, t } = combinePT(baseP, baseT, attrs);
-    const badge = ensurePtBadge(el);
+  // Ensure we have (or create) the badge, but we’ll show/hide it explicitly.
+  const badge = ensurePtBadge(el);
 
-    if (p == null || t == null){
-      const modP = Number(attrs?.ptMod?.pow ?? 0);
-      const modT = Number(attrs?.ptMod?.tgh ?? 0);
-
-      const meta = window.Zones?.getCardDataById ? window.Zones.getCardDataById(cid) : null;
-      const mOgP = tryNum(meta?.ogpower);
-      const mOgT = tryNum(meta?.ogtoughness);
-
-      const ogP = tryNum(attrs?.ptMod?.ogpow);
-      const ogT = tryNum(attrs?.ptMod?.ogtgh);
-
-      const baseStrP =
-        Number.isFinite(ogP)  ? String(ogP)  :
-        Number.isFinite(baseP) ? String(baseP) :
-        Number.isFinite(mOgP) ? String(mOgP) : '?';
-
-      const baseStrT =
-        Number.isFinite(ogT)  ? String(ogT)  :
-        Number.isFinite(baseT) ? String(baseT) :
-        Number.isFinite(mOgT) ? String(mOgT) : '?';
-
-      const modStrP = modP ? (modP > 0 ? `+${modP}` : `${modP}`) : '';
-      const modStrT = modT ? (modT > 0 ? `+${modT}` : `${modT}`) : '';
-      badge.textContent = `${baseStrP}${modStrP}/${baseStrT}${modStrT}`;
-    } else {
-      badge.textContent = `${p}/${t}`;
+  // PLANEWALKER: render “L: N” and bail
+  if (isPlaneswalker){
+    const loy = getLoyalty(el, cid);
+    if (loy){
+      badge.style.display = 'block';
+      badge.textContent = `L: ${loy}`;
+      // keep readable under zoom
+      try {
+        const os = el.querySelector('.cardAttrRoot') || el;
+        const scale = getComputedStyle(os).getPropertyValue('--overlayScale') || '1';
+        badge.style.setProperty('--overlayScale', scale);
+      } catch {}
+      return true;
     }
+    // no loyalty value → hide badge
+    badge.style.display = 'none';
+    return false;
+  }
 
-    // keep PT badge readable during zoom
-    badge.style.setProperty('--overlayScale', getComputedStyle(el.querySelector('.cardAttrRoot'))?.getPropertyValue('--overlayScale') || '1');
+  // NOT A CREATURE → hide badge and bail
+  if (!isCreature){
+    badge.style.display = 'none';
+    return false;
+  }
 
-    return true;
-  },
+  // --- Creature path: compute base + modifiers like before ---
+  // seed DOM base from snapshot OGs once if missing
+  try {
+    const hasBase = el.dataset.baseP != null && el.dataset.baseT != null;
+    if (!hasBase && window.Zones?.getCardDataById){
+      const meta = window.Zones.getCardDataById(cid);
+      const mp = (meta && Number(meta.ogpower));      // may be NaN
+      const mt = (meta && Number(meta.ogtoughness));  // may be NaN
+      if (Number.isFinite(mp)) el.dataset.baseP = String(mp);
+      if (Number.isFinite(mt)) el.dataset.baseT = String(mt);
+    }
+  } catch {}
+
+  const attrs = this.cache?.[cid] || {};
+  const { p: baseP, t: baseT } = resolveBasePT(cid, el, attrs);
+  const { p, t } = combinePT(baseP, baseT, attrs);
+
+  badge.style.display = 'block';
+
+  if (p == null || t == null){
+    // fall back to og/base + modifier strings to avoid "?+5/?+1"
+    const modP = Number(attrs?.ptMod?.pow ?? 0);
+    const modT = Number(attrs?.ptMod?.tgh ?? 0);
+
+    const meta = window.Zones?.getCardDataById ? window.Zones.getCardDataById(cid) : null;
+    const mOgP = Number(meta?.ogpower);
+    const mOgT = Number(meta?.ogtoughness);
+
+    const ogP  = Number(attrs?.ptMod?.ogpow);
+    const ogT  = Number(attrs?.ptMod?.ogtgh);
+
+    const baseStrP =
+      Number.isFinite(ogP)  ? String(ogP)  :
+      Number.isFinite(baseP) ? String(baseP) :
+      Number.isFinite(mOgP) ? String(mOgP) : '?';
+
+    const baseStrT =
+      Number.isFinite(ogT)  ? String(ogT)  :
+      Number.isFinite(baseT) ? String(baseT) :
+      Number.isFinite(mOgT) ? String(mOgT) : '?';
+
+    const modStrP = modP ? (modP > 0 ? `+${modP}` : `${modP}`) : '';
+    const modStrT = modT ? (modT > 0 ? `+${modT}` : `${modT}`) : '';
+    badge.textContent = `${baseStrP}${modStrP}/${baseStrT}${modStrT}`;
+  } else {
+    badge.textContent = `${p}/${t}`;
+  }
+
+  // keep PT badge readable during zoom
+  try {
+    const os = el.querySelector('.cardAttrRoot') || el;
+    const scale = getComputedStyle(os).getPropertyValue('--overlayScale') || '1';
+    badge.style.setProperty('--overlayScale', scale);
+  } catch {}
+
+  return true;
+},
 
   reapplyAll(){
     const cards = document.querySelectorAll('.card[data-cid]');
     cards.forEach(card => {
       ensurePtBadge(card);
       ensureOverlayRoot(card);
+	  autoSeedMissingPT(card, card.getAttribute('data-cid'));
+
       this.applyToDom(card.getAttribute('data-cid'));
     });
   },

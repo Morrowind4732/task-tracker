@@ -61,14 +61,44 @@ const Zones = {
     this.els.deck      = opts.zones?.deck      || document.getElementById('deckZone');
     this.els.hand      = opts.zones?.hand      || document.getElementById('hand');
 
+    this.els.cmd       = opts.zones?.cmd       || document.getElementById('cmdZone');
     this.els.graveyard?.addEventListener('click', ()=> this.openZone('graveyard'));
     this.els.exile?.addEventListener('click',     ()=> this.openZone('exile'));
 
     // Global pointerup safety net to catch unhandled drops
-    document.addEventListener('pointerup', (e)=>{
-      const cardEl = e.target?.closest?.('.card');
-      if (cardEl && this.isTableCard(cardEl)) this.handleDrop(cardEl);
-    });
+document.addEventListener('pointerup', (e)=>{
+  // Prefer the card we marked as "dragging" in pointerdown.
+  const tagged = document.querySelector('.card[data-dragging="1"]');
+  const cardEl = tagged || e.target?.closest?.('.card');
+  if (cardEl) delete cardEl.dataset.dragging;
+  if (cardEl && this.isTableCard(cardEl)) this.handleDrop(cardEl);
+}, { capture:true });
+
+document.addEventListener('pointerdown', (e)=>{
+  const el = e.target?.closest?.('.card');
+  if (!el) return;
+
+  // Mark active drag target so pointerup can find it even if the up fires on a zone.
+  el.dataset.dragging = '1';
+
+  if (el.dataset.inCmd === '1' || el.classList.contains('in-cmd')) {
+    el.classList.remove('tapped', 'in-cmd');
+    el.style.removeProperty('--tap-rot');
+    delete el.dataset.inCmd;
+
+    try{
+      const owner = Number(el.dataset?.owner || this.getViewSeat()) || this.getViewSeat();
+      const st = this._ensureSeatState(owner);
+      const cid = el.dataset?.cid || el.getAttribute('data-cid');
+      if (Array.isArray(st.cmd) && cid){
+        const i = st.cmd.findIndex(x => (x.id||x.cid||x) === cid);
+        if (i >= 0) st.cmd.splice(i,1);
+        this._saveSeatState(owner, st);
+      }
+    }catch{}
+  }
+}, { capture:true });
+
   },
   
   getZoneCards({ seat, zoneName }) {
@@ -113,35 +143,79 @@ emitChange(/*{ seat, zoneName }*/) {
   registerDraggableCard(el){ el?.addEventListener?.('pointerup', ()=> this.handleDrop(el)); },
 
   // ---- geometry ----
-  _intersectRatio(cardRect, zoneRect){
-    const left   = Math.max(cardRect.left, zoneRect.left);
-    const top    = Math.max(cardRect.top,  zoneRect.top);
-    const right  = Math.min(cardRect.right,zoneRect.right);
-    const bottom = Math.min(cardRect.bottom,zoneRect.bottom);
-    const w = Math.max(0, right - left);
-    const h = Math.max(0, bottom - top);
-    const inter = w*h;
-    const areaC = Math.max(1, cardRect.width*cardRect.height);
-    return inter / areaC;
-  },
+_intersectRatio(cardRect, zoneRect){
+  const left   = Math.max(cardRect.left, zoneRect.left);
+  const top    = Math.max(cardRect.top,  zoneRect.top);
+  const right  = Math.min(cardRect.right,zoneRect.right);
+  const bottom = Math.min(cardRect.bottom,zoneRect.bottom);
+  const w = Math.max(0, right - left);
+  const h = Math.max(0, bottom - top);
+  const inter = w*h;
+  const areaC = Math.max(1, cardRect.width*cardRect.height);
+  return inter / areaC;
+},
+
+// Current world zoom: ratio of rendered size to layout size
+_getWorldZoom(){
+  try{
+    const ws = document.getElementById('worldScale') || this.els.world;
+    if (!ws) return 1;
+    const rW = ws.getBoundingClientRect().width;
+    const oW = ws.offsetWidth || 1;
+    return rW / oW;
+  }catch{ return 1; }
+},
+
 
   _detectOverlappingZone(cardEl){
-    const cardRect = cardEl.getBoundingClientRect();
-    let best=null, bestScore=0;
-    const candidates = [
-      ['graveyard', this.els.graveyard],
-      ['exile',     this.els.exile],
-      ['hand',      this.els.hand],
-      ['deck',      this.els.deck],
-    ];
-    for (const [name, el] of candidates){
-      if (!el) continue;
-      const r = el.getBoundingClientRect();
-      const s = this._intersectRatio(cardRect, r);
-      if (s > bestScore){ bestScore = s; best = name; }
+  const cardRect = cardEl.getBoundingClientRect();
+  let best = null, bestScore = 0;
+
+  const candidates = [
+    ['graveyard', this.els.graveyard],
+    ['exile',     this.els.exile],
+    ['hand',      this.els.hand],
+    ['deck',      this.els.deck],
+    ['cmd',       this.els.cmd],
+  ];
+
+  // Card center (used as a tie-breaker)
+  const cx = cardRect.left + cardRect.width  / 2;
+  const cy = cardRect.top  + cardRect.height / 2;
+
+  for (const [name, el] of candidates){
+    if (!el) continue;
+    const zr = el.getBoundingClientRect();
+
+    // 1) Intersection ratio (area overlap / card area)
+    const left   = Math.max(cardRect.left, zr.left);
+    const top    = Math.max(cardRect.top,  zr.top);
+    const right  = Math.min(cardRect.right,zr.right);
+    const bottom = Math.min(cardRect.bottom,zr.bottom);
+    const w = Math.max(0, right - left);
+    const h = Math.max(0, bottom - top);
+    const inter = w * h;
+    const areaC = Math.max(1, cardRect.width * cardRect.height);
+    const ratio = inter / areaC;
+
+    // 2) Center-in-zone gets a small bonus
+    const centerIn =
+      cx >= zr.left && cx <= zr.right && cy >= zr.top && cy <= zr.bottom
+        ? 0.15 : 0; // bonus
+
+    const score = ratio + centerIn;
+
+    if (score > bestScore){
+      bestScore = score;
+      best = [name, el];
     }
-    return bestScore >= 0.15 ? best : null;
-  },
+  }
+
+  // Require a small threshold so micro overlaps don’t trigger
+  return (bestScore >= 0.12) ? best[0] : null;
+},
+
+
 
   async handleDrop(cardEl){
     try{
@@ -159,6 +233,61 @@ emitChange(/*{ seat, zoneName }*/) {
         this.cfg.onMoved?.({ seat: owner, cid, from:'table', to:zone });
         return;
       }
+	  
+	   if (zone === 'cmd'){
+  try {
+    const zr = this.els.cmd.getBoundingClientRect();
+    const cx = zr.left + zr.width  / 2;
+    const cy = zr.top  + zr.height / 2;
+
+    // Card size in WORLD space (screen px divided by zoom)
+    const zoom = this._getWorldZoom();
+    const rect = cardEl.getBoundingClientRect();
+    const cwWorld = rect.width  / Math.max(zoom, 0.0001);
+    const chWorld = rect.height / Math.max(zoom, 0.0001);
+
+    let wx, wy;
+
+    if (this.screenToWorld){
+      const p = this.screenToWorld(cx, cy); // world center of commander zone
+      wx = p.x - (cwWorld / 2);
+      wy = p.y - (chWorld / 2);
+    } else {
+      // Fallback: approximate world conversion via worldScale rect
+      const ws = document.getElementById('worldScale') || this.els.world?.parentElement || this.els.world;
+      const r  = ws?.getBoundingClientRect?.();
+      const mx = cx - (r?.left || 0);
+      const my = cy - (r?.top  || 0);
+      const wxRaw = (mx) / Math.max(zoom, 0.0001);
+      const wyRaw = (my) / Math.max(zoom, 0.0001);
+      wx = wxRaw - (cwWorld / 2);
+      wy = wyRaw - (chWorld / 2);
+    }
+
+    cardEl.style.position = 'absolute';
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      cardEl.style.left = `${wx}px`;
+      cardEl.style.top  = `${wy}px`;
+    }));
+  } catch {}
+
+  cardEl.classList.add('tapped');
+  cardEl.classList.add('in-cmd');
+  cardEl.style.setProperty('--tap-rot', '0deg');
+  cardEl.dataset.inCmd = '1';
+
+  const owner = Number(cardEl.dataset?.owner || this.getViewSeat()) || this.getViewSeat();
+  const st = this._ensureSeatState(owner);
+  if (!Array.isArray(st.cmd)) st.cmd = [];
+  const cid = cardEl.dataset?.cid || cardEl.getAttribute('data-cid');
+  if (cid && !st.cmd.some(x => (x.id||x.cid||x) === cid)) {
+    st.cmd.push({ id: cid });
+    await this._saveSeatState(owner, st);
+  }
+  return;
+}
+
+
 
       if (zone === 'hand'){
         await this._moveBetween(owner, { from:'table', to:'hand', cid });
@@ -248,11 +377,12 @@ emitChange(/*{ seat, zoneName }*/) {
 
   // ---- state/persistence ----
   _ensureSeatState(seat){
-    if (!this.zoneState.has(seat)){
-      this.zoneState.set(seat, { table:[], graveyard:[], exile:[], hand:[], deck:[] });
-    }
-    return this.zoneState.get(seat);
-  },
+  if (!this.zoneState.has(seat)){
+    this.zoneState.set(seat, { table:[], graveyard:[], exile:[], hand:[], deck:[], cmd:[] });
+  }
+  return this.zoneState.get(seat);
+},
+
 
   async _hydrate(cid, fallback){
   const id = String(cid);

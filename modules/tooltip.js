@@ -73,12 +73,53 @@ function ensureTip(){
   tipEl.style.display  = 'none';
   tipEl.setAttribute('role','dialog');
 
-  // Ensure the tooltip itself is a positioning context for the PT badge.
-  tipEl.style.position = 'absolute';
+  // ⬇ add once: variable + CSS for tooltip text
+  const rs = getComputedStyle(document.documentElement);
+  if (!rs.getPropertyValue('--tooltipFontScale').trim()) {
+    document.documentElement.style.setProperty('--tooltipFontScale', '1');
+  }
+  if (!document.getElementById('card-tooltip-style')) {
+    const s = document.createElement('style');
+    s.id = 'card-tooltip-style';
+    s.textContent = `
+      .cardTooltip{
+        /* base 14px × adjustable scale */
+        font-size: calc(14px * var(--tooltipFontScale, 1));
+        line-height: 1.35;
+      }
+      .cardTooltip h3{
+        margin:0 0 4px;
+        font-weight:800;
+        font-size: calc(16px * var(--tooltipFontScale, 1));
+      }
+      .cardTooltip .typeLine{ opacity:.9; margin:6px 0; }
+      .cardTooltip .oracle{ white-space:pre-wrap; }
+    `;
+    document.head.appendChild(s);
+  }
+if (!document.getElementById('tooltip-font-style')) {
+  const s = document.createElement('style');
+  s.id = 'tooltip-font-style';
+  s.textContent = `
+    .cardTooltip {
+      font-size: var(--tooltipFontSize, 13px);
+      line-height: 1.4;
+    }
+    .cardTooltip h3 {
+      font-size: calc(var(--tooltipFontSize, 13px) * 1.2);
+    }
+    .cardTooltip .typeLine,
+    .cardTooltip .oracle {
+      font-size: var(--tooltipFontSize, 13px);
+    }
+  `;
+  document.head.appendChild(s);
+}
 
   document.body.appendChild(tipEl);
   return tipEl;
 }
+
 
 // NEW: Build/ensure the anchored cog button once
 function ensureCog(){
@@ -149,9 +190,11 @@ function renderTooltipHtml(card){
   const tline = escapeHtml(card?.type_line ?? '');
   const text  = manaToHtml(card?.oracle_text ?? '', { asCost: true });
 
-  // define once
-  const showPT = (card?.power ?? '') !== '' && (card?.toughness ?? '') !== '';
+  // show P/T only for real creatures; planeswalkers use loyalty
+  const isCreature = /\bCreature\b/i.test(card?.type_line || '');
+  const showPT = isCreature && (card?.power ?? '') !== '' && (card?.toughness ?? '') !== '';
   const showL  = !showPT && (card?.loyalty ?? '') !== '';
+
 
   const ptBadge = showPT
     ? `<div class="ptBadge"
@@ -336,13 +379,26 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
       try {
         const filled = await fetchMissingFieldsByName(data.name);
         data = { ...data, ...filled };
-        // cache everything back on the element so future opens don't drop P/T
+
+        // cache everything back onto the element
         cardOrEl.dataset.mana_cost   = data.mana_cost   || '';
         cardOrEl.dataset.type_line   = data.type_line   || '';
         cardOrEl.dataset.oracle_text = data.oracle_text || '';
-        cardOrEl.dataset.power       = (data.power      ?? '') + '';
-        cardOrEl.dataset.toughness   = (data.toughness  ?? '') + '';
-        cardOrEl.dataset.loyalty     = (data.loyalty    ?? '') + '';
+
+        // Only stamp P/T for REAL creatures (not vehicles/auras/etc)
+        const isCreature = /\bCreature\b/i.test(data.type_line || '');
+        const hasPT = (data.power ?? '') !== '' && (data.toughness ?? '') !== '';
+        if (isCreature && hasPT) {
+          cardOrEl.dataset.power     = String(data.power);
+          cardOrEl.dataset.toughness = String(data.toughness);
+        } else {
+          delete cardOrEl.dataset.power;
+          delete cardOrEl.dataset.toughness;
+        }
+
+        // Loyalty (planeswalkers) may exist without P/T
+        cardOrEl.dataset.loyalty = (data.loyalty ?? '') + '';
+
       } catch {}
     }
 
@@ -424,16 +480,26 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
     clearSelection();
     cardEl.classList.add('selected');
 
-    // cache on the element for instant future tooltips (incl. P/T & loyalty)
+    // cache on the element for instant future tooltips (guard P/T by type)
     const data = await resolveData();
     if (data) {
       if (data.mana_cost)   cardEl.dataset.mana_cost   = data.mana_cost;
       if (data.type_line)   cardEl.dataset.type_line   = data.type_line;
       if (data.oracle_text) cardEl.dataset.oracle_text = data.oracle_text;
-      cardEl.dataset.power     = (data.power     ?? '') + '';
-      cardEl.dataset.toughness = (data.toughness ?? '') + '';
-      cardEl.dataset.loyalty   = (data.loyalty   ?? '') + '';
+
+      const isCreature = /\bCreature\b/i.test(data.type_line || '');
+      const hasPT = (data.power ?? '') !== '' && (data.toughness ?? '') !== '';
+      if (isCreature && hasPT) {
+        cardEl.dataset.power     = String(data.power);
+        cardEl.dataset.toughness = String(data.toughness);
+      } else {
+        delete cardEl.dataset.power;
+        delete cardEl.dataset.toughness;
+      }
+
+      cardEl.dataset.loyalty = (data.loyalty ?? '') + '';
     }
+
 
     // show anchored to the element (top-center, non-overlapping)
     showCardTooltip(cardEl);

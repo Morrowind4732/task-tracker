@@ -74,6 +74,20 @@ let supabase = null; supaReady.then(c => supabase = c);
   display:block;
 }
 
+/* P/T pill + name row for blockers */
+.blkBtn .blkMeta .blkTop{
+  display:flex; align-items:center; gap:6px; line-height:1.2;
+}
+.blkBtn .blkMeta .blkPT{
+  font-weight:800;
+  padding:2px 6px;
+  border-radius:6px;
+  border:1px solid #2f6b40;
+  background:#15371e;
+  color:#b7ffd0;
+  font-size:13px;
+}
+
 /* outcome rows with checkboxes */
 .outRow{
   display:flex; align-items:flex-start; gap:10px; padding:8px; margin-bottom:6px;
@@ -542,106 +556,109 @@ async _maybeLocalApply(state, precomputedHash){
 
 
   pickBlockers(){
-    const attackers = this.attackers.slice();
-    const mySeat = this.seat; // I'm the defender when this UI opens
+  const attackers = this.attackers.slice();
+  const mySeat = this.seat; // I'm the defender when this UI opens
 
-    const blockersAll = $$(`.card[data-cid]`).filter(el =>
-      getCardSeatFromDom(el) === mySeat && !isTapped(el)
-    );
-    const chosen = {}; // atk -> [blk order]
+  const blockersAll = $$(`.card[data-cid]`).filter(el =>
+    getCardSeatFromDom(el) === mySeat && !isTapped(el)
+  );
+  const chosen = {}; // atk -> [blk order]
 
-    const html = attackers.map(atk=>{
-      const name = findCardEl(atk)?.dataset.name || atk; const pt=PT(atk);
-      const buttons = blockersAll.map(b=>{
-        const bid = b.dataset.cid, ok = canBlock(bid, atk);
-        const src = getCardImgSrc(bid);
-        const kws = Array.from(eff(bid));
-        return `
-          <button class="blkBtn js-assign" data-atk="${atk}" data-blk="${bid}" ${ok?'':'disabled'}
-                  style="display:flex;align-items:flex-start;gap:8px">
-            <span style="
-              width:28px;height:40px;flex:0 0 28px;
-              background:${src ? `url('${src}')` : '#222'};
-              background-size:cover;background-position:center;
-              border-radius:4px"></span>
-            <span class="blkMeta">
-              <div class="blkName">${b.dataset.name || bid}</div>
-              ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
-            </span>
-          </button>`;
-      }).join('') + `<button class="blkBtn warn js-none" data-atk="${atk}">No blocks</button>`;
+  const html = attackers.map(atk=>{
+    const name = findCardEl(atk)?.dataset.name || atk; const pt=PT(atk);
 
-      return `<div class="atk-row" data-atk="${atk}" style="margin-bottom:10px">
-        <div style="font-weight:900;margin-bottom:6px">${name} — ${pt.p}/${pt.t}</div>
-        <div class="row" style="gap:6px;flex-wrap:wrap">${buttons}</div>
-      </div>`;
-    }).join('');
+    const buttons = blockersAll.map(b=>{
+      const bid = b.dataset.cid;
+      const ok = canBlock(bid, atk);
+      const src = getCardImgSrc(bid);
+      const kws = Array.from(eff(bid));
+      const bpt = PT(bid);
 
-    const panel = openPanel({
-      title:'Assign Blockers (click order = damage order)',
-      html, footer:`<button class="pill" id="ok">Confirm Blocks</button>`,
-      onAttach:(p)=>{
-        const used = new Set();
+      return `
+        <button class="blkBtn js-assign" data-atk="${atk}" data-blk="${bid}" ${ok?'':'disabled'}
+                style="display:flex;align-items:flex-start;gap:8px">
+          <span style="
+            width:28px;height:40px;flex:0 0 28px;
+            background:${src ? `url('${src}')` : '#222'};
+            background-size:cover;background-position:center;
+            border-radius:4px"></span>
+          <span class="blkMeta">
+            <div class="blkTop">
+              <span class="blkPT">${bpt.p}/${bpt.t}</span>
+              <span class="blkName">${b.dataset.name || bid}</span>
+            </div>
+            ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
+          </span>
+        </button>`;
+    }).join('') + `<button class="blkBtn warn js-none" data-atk="${atk}">No blocks</button>`;
 
-        $$('.js-assign', p).forEach(btn=>{
-          btn.onclick = ()=>{
-            const atk=btn.dataset.atk, blk=btn.dataset.blk;
-            if (used.has(blk) && !btn.classList.contains('active')) return;
-            chosen[atk] = chosen[atk] || [];
-            if (btn.classList.toggle('active')){ chosen[atk].push(blk); used.add(blk); }
-            else { chosen[atk] = chosen[atk].filter(x=>x!==blk); used.delete(blk); }
-          };
-        });
+    return `<div class="atk-row" data-atk="${atk}" style="margin-bottom:10px">
+      <div style="font-weight:900;margin-bottom:6px">${name} — ${pt.p}/${pt.t}</div>
+      <div class="row" style="gap:6px;flex-wrap:wrap">${buttons}</div>
+    </div>`;
+  }).join('');
 
-        $$('.js-none', p).forEach(btn=>{
-          btn.onclick=()=>{
-            const atk=btn.dataset.atk;
-            (chosen[atk]||[]).forEach(blk=>{
-              used.delete(blk);
-              p.querySelector(`.js-assign[data-atk="${atk}"][data-blk="${blk}"]`)?.classList.remove('active');
-            });
-            chosen[atk]=[];
-          };
-        });
+  const panel = openPanel({
+    title:'Assign Blockers (click order = damage order)',
+    html, footer:`<button class="pill" id="ok">Confirm Blocks</button>`,
+    onAttach:(p)=>{
+      const used = new Set();
 
-        p.querySelector('#ok').onclick = async ()=>{
-          closePanel(p);
-          this.blockers = chosen;
-
-          // Make sure we keep the original attacker's seat (read from state set by attacker)
-          const stateBefore = await this._load();
-          const attackerSeat = Number(stateBefore?.attackerSeat) || Number(this.seat) || 1;
-
-          // Compute outcomes here (defender), then publish for everyone
-          const outcomes = this._computeAll();
-		  // compute a stable hash for this exact set of checked outcomes
-const applyHash = _outcomeHash(outcomesAll || [], selected);
-
-const seats = activeSeats();
-const confirmations = Object.fromEntries(seats.map(s => [String(s), false]));
-const selected = outcomes.map(() => true);                 // ← NEW: all checked
-const deathList = _deathList(outcomes);
-
-await this._save({
-  phase: 'outcome_ready',
-  attackers,
-  attackerSeat,        // who started the combat
-  blockers: chosen,
-  outcomes,
-  selected,            // ← NEW
-  confirmations,
-  applyBy: null,
-  deathList,
-  meta: { createdAt: Date.now(), appliedHash: null, applyToken: null }
-});
-
-
-
-          Overlays.notify?.('ok','Blocks locked. Waiting for everyone to confirm outcome…');
+      $$('.js-assign', p).forEach(btn=>{
+        btn.onclick = ()=>{
+          const atk=btn.dataset.atk, blk=btn.dataset.blk;
+          if (used.has(blk) && !btn.classList.contains('active')) return;
+          chosen[atk] = chosen[atk] || [];
+          if (btn.classList.toggle('active')){ chosen[atk].push(blk); used.add(blk); }
+          else { chosen[atk] = chosen[atk].filter(x=>x!==blk); used.delete(blk); }
         };
-      }
-    });
-  },
+      });
+
+      $$('.js-none', p).forEach(btn=>{
+        btn.onclick=()=>{
+          const atk=btn.dataset.atk;
+          (chosen[atk]||[]).forEach(blk=>{
+            used.delete(blk);
+            p.querySelector(`.js-assign[data-atk="${atk}"][data-blk="${blk}"]`)?.classList.remove('active');
+          });
+          chosen[atk]=[];
+        };
+      });
+
+      p.querySelector('#ok').onclick = async ()=>{
+        closePanel(p);
+        this.blockers = chosen;
+
+        // Keep the original attacker's seat (state set by attacker)
+        const stateBefore = await this._load();
+        const attackerSeat = Number(stateBefore?.attackerSeat) || Number(this.seat) || 1;
+
+        const outcomes = this._computeAll();
+
+        // defaults: everything checked, confirmations reset
+        const seats = activeSeats();
+        const confirmations = Object.fromEntries(seats.map(s => [String(s), false]));
+        const selected = outcomes.map(() => true);
+        const deathList = _deathList(outcomes);
+
+        await this._save({
+          phase: 'outcome_ready',
+          attackers,
+          attackerSeat,
+          blockers: chosen,
+          outcomes,
+          selected,
+          confirmations,
+          applyBy: null,
+          deathList,
+          meta: { createdAt: Date.now(), appliedHash: null, applyToken: null }
+        });
+
+        Overlays.notify?.('ok','Blocks locked. Waiting for everyone to confirm outcome…');
+      };
+    }
+  });
+},
 
 
   // ===== Outcome engine (supports FS/DS/Trample/Lifelink/Deathtouch/Indestructible/Infect) =====
