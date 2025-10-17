@@ -565,14 +565,19 @@ detectManaVariant();
 
 
       /* ───── Counters → bottom-left stacked upward ───── */
-      .cardAttrCounters {
-        position:absolute;
-        left:6px; bottom:6px;
-        display:flex;
-        flex-direction:column-reverse; /* newest appears above previous */
-        align-items:flex-start;
-        gap:4px;
-      }
+      .cardAttrCounters{
+  position:absolute;
+  /* anchor to same bottom-center as Effects row */
+  left: calc(50% + var(--effects-offset-x, 0px));
+  bottom: calc(6px + var(--effects-offset-y, 0px) + var(--effects-h, 0px) + var(--stack-gap, 6px));
+  transform: translateX(-50%);
+
+  display:flex;
+  flex-direction:column;       /* build DOWN under effects */
+  align-items:flex-start;
+  gap:4px;
+}
+
       .cardAttrCounter {
         display:flex; align-items:center; gap:6px;
         background:rgba(0,0,0,0.7);
@@ -672,8 +677,8 @@ detectManaVariant();
 /* ───── Small badge showing total TEMP P/T delta ───── */
 .cardAttrPTTemp{
   position:absolute;
-  right:8px;              /* same right as PT */
-  bottom:44px;            /* just above the PT badge */
+  right:8px;                 /* same right as PT */
+  bottom:44px;               /* just above the PT badge */
   transform-origin: bottom right;
   transform: scale(calc(var(--overlayScale,1) * var(--ptBadgeScale,1.05))) !important;
 
@@ -681,24 +686,27 @@ detectManaVariant();
   align-items:center;
   gap:6px;
 
-  background:rgba(255,196,77,.16);
-  border:1px solid #b07a11;
+  /* match PT badge BG/border, but with yellow text */
+  background:rgba(0,0,0,0.65);
+  border:1px solid rgba(255,255,255,0.25);
   color:#ffd58a;
+
   padding:2px 6px;
   border-radius:8px;
   font-weight:800;
   line-height:1;
-  box-shadow:0 2px 6px rgba(0,0,0,.45);
+  box-shadow:0 2px 6px rgba(0,0,0,0.45);
   z-index:4;
   pointer-events:none;
 }
 .cardAttrPTTemp .tag{
   font-size:.78em;
-  opacity:.85;
-  border:1px solid rgba(255,213,138,.25);
+  opacity:.9;
+  border:1px solid rgba(255,213,138,.35);
   padding:0 4px;
   border-radius:6px;
 }
+
 
 	  
     `;
@@ -924,24 +932,33 @@ this.cache[cid] = deepClone(data);
     const data = this.cache[cid] || {};
 
     // ── Counters container (bottom-left, stack up)
-    const countersWrap = ensureChild(root, 'cardAttrCounters');
-    (data.counters || []).forEach(c=>{
-      if (!c || !String(c.name||'').trim()) return;
-      const qty = Math.max(1, Number(c.qty||1));
-      const n = document.createElement('div');
-      n.className = 'cardAttrCounter';
+const countersWrap = ensureChild(root, 'cardAttrCounters');
 
-      const key = normKey(c.name);
-      const prot = matchProtection(c.name); // counters rarely "protection", but just in case
-      const slug = prot ? 'protection' : ICON_MAP_COUNTER[key];
+// Accept both array form [{ name, qty }] and object form { "+1/+1": 2 }
+let countersData = data.counters || [];
+if (!Array.isArray(countersData) && countersData && typeof countersData === 'object') {
+  countersData = Object.entries(countersData).map(([name, qty]) => ({ name, qty }));
+}
 
-      const icon = slug ? iconHTML(slug) : '';
-      n.innerHTML = icon
-        ? `${icon} <span>${c.name}×${qty}</span>`
-        : `<span>${c.name}×${qty}</span>`;
+countersData.forEach(c => {
+  if (!c || !String(c.name || '').trim()) return;
+  const qty = Math.max(1, Number(c.qty || 1));
 
-      countersWrap.appendChild(n);
-    });
+  const n = document.createElement('div');
+  n.className = 'cardAttrCounter';
+
+  const key  = normKey(c.name);
+  const prot = matchProtection(c.name); // usually not for counters, but safe
+  const slug = prot ? 'protection' : ICON_MAP_COUNTER[key];
+
+  const icon = slug ? iconHTML(slug) : '';
+  n.innerHTML = icon
+    ? `${icon} <span>${c.name}×${qty}</span>`
+    : `<span>${c.name}×${qty}</span>`;
+
+  countersWrap.appendChild(n);
+});
+
 
     // ── Effects/types container (bottom-center)
 const effWrap = ensureChild(root, 'cardAttrEffects');
@@ -999,6 +1016,8 @@ tempEffects.forEach(eff => {
   effWrap.appendChild(n);
 });
 
+// Make counters sit directly below effects
+root.style.setProperty('--effects-h', (effWrap?.offsetHeight || 0) + 'px');
 
     // Notes (if you want the little 📝, keep as-is)
     if (data.notes) {

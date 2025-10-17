@@ -164,7 +164,11 @@ function PT(cid){
   return { p: ogP + mP, t: ogT + mT };
 }
 function eff(cid){
-  const lower = (arr)=> (arr||[]).map(s => String(s).toLowerCase().trim());
+  // accepts array of strings _or_ array of { ability }
+  const lower = (arr)=> (arr||[]).map(v => {
+    const s = (v && typeof v === 'object') ? v.ability : v;
+    return String(s ?? '').toLowerCase().trim();
+  });
 
   // pull from DOM/v3 cache (our reliable innate source)
   const innate = lower(getInnateEffects(cid));
@@ -175,7 +179,7 @@ function eff(cid){
     ...innate,
     ...lower(a.ogEffects),
     ...lower(a.effects),
-    ...lower(a.tempEffects),
+    ...lower(a.tempEffects),   // handles [{ ability:'flying', mode:'EOT' }, ...]
   ].filter(Boolean);
 
   // normalize common variants so checks never miss
@@ -564,8 +568,11 @@ async _maybeLocalApply(state, precomputedHash){
   );
   const chosen = {}; // atk -> [blk order]
 
+
   const html = attackers.map(atk=>{
-    const name = findCardEl(atk)?.dataset.name || atk; const pt=PT(atk);
+    const name = findCardEl(atk)?.dataset.name || atk;
+    const pt   = PT(atk);
+    const akws = Array.from(eff(atk));  // ← attacker effects (normalized)
 
     const buttons = blockersAll.map(b=>{
       const bid = b.dataset.cid;
@@ -593,7 +600,8 @@ async _maybeLocalApply(state, precomputedHash){
     }).join('') + `<button class="blkBtn warn js-none" data-atk="${atk}">No blocks</button>`;
 
     return `<div class="atk-row" data-atk="${atk}" style="margin-bottom:10px">
-      <div style="font-weight:900;margin-bottom:6px">${name} — ${pt.p}/${pt.t}</div>
+      <div style="font-weight:900;margin-bottom:4px">${name} — ${pt.p}/${pt.t}</div>
+      ${akws.length ? `<div class="kw" style="margin:0 0 6px 0">${akws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
       <div class="row" style="gap:6px;flex-wrap:wrap">${buttons}</div>
     </div>`;
   }).join('');
@@ -1077,22 +1085,32 @@ async _apply(state){
   let dmg=0, poison=0, heal=0;
   outcomes.forEach(o=>{ dmg+=o.toPlayer|0; poison+=o.poisonToPlayer|0; heal+=o.lifeGain|0; });
 
+  // Only the apply leader mutates life/poison totals.
+  // This prevents double application when multiple clients reach the 'applying' phase.
+  const iAmLeader = Number(state?.applyBy) === Number(this.seat);
+
   try {
-    if (poison>0){
-      const cur = window.Life.get(defenderSeat);
-      window.Life.set(defenderSeat, { poison: Math.max(0, (cur?.poison||0) + poison) });
-    }
-    if (dmg>0){
-      const cur = window.Life.get(defenderSeat);
-      window.Life.set(defenderSeat, { life: Math.max(0, (cur?.life||0) - dmg) });
-    }
-    if (heal>0){
-      const cur = window.Life.get(attackerSeat);
-      window.Life.set(attackerSeat, { life: (cur?.life||0) + heal });
+    if (iAmLeader) {
+      if (poison>0){
+        const cur = window.Life.get(defenderSeat);
+        window.Life.set(defenderSeat, { poison: Math.max(0, (cur?.poison||0) + poison) });
+      }
+      if (dmg>0){
+        const cur = window.Life.get(defenderSeat);
+        window.Life.set(defenderSeat, { life: Math.max(0, (cur?.life||0) - dmg) });
+      }
+      if (heal>0){
+        const cur = window.Life.get(attackerSeat);
+        window.Life.set(attackerSeat, { life: (cur?.life||0) + heal });
+      }
+      console.log('[Battle][Apply] Leader applied totals', { dmg, poison, heal });
+    } else {
+      console.log('[Battle][Apply] Skipping life/poison (not leader)', { leader: state?.applyBy, me: this.seat });
     }
   } catch (err){
     console.warn('[Battle][Apply] life/poison update error', err);
   }
+
 
   const deadSet = new Set(intendedDeaths.map(String));
   attackersRecorded.forEach(cid=>{
