@@ -3,6 +3,8 @@
 // Overlap detection + seat-aware per-zone state + deck drop choices
 // ================================
 import Overlays from './overlays.js';
+import Stacking, { PAD_Y } from './card.stacking.js';
+
 
 /*
 API:
@@ -26,6 +28,31 @@ API:
 spawnToTable: (card, seat) => window.spawnCardAtViewCenter?.(card, seat),
 
 */
+
+function _mirrorFollowersDuringDrag(el){
+  try{
+    const cid = el?.dataset?.cid;
+    if (!cid || !window.Stacking?.sliceFrom) return;
+    const dir = el.dataset?.stackDir;
+    if (dir !== 'up' && dir !== 'down') return; // only true stacks follow
+
+    const slice = Stacking.sliceFrom(cid);
+    if (!Array.isArray(slice) || slice.length <= 1) return;
+
+    const baseL = parseFloat(el.style.left) || 0;
+    const baseT = parseFloat(el.style.top)  || 0;
+
+    for (let i = 1; i < slice.length; i++){
+      const fcid = slice[i];
+      const fel  = document.querySelector(`.card[data-cid="${CSS.escape(String(fcid))}"]`);
+      if (!fel) continue;
+      const dy = (dir === 'down' ? i * PAD_Y : -i * PAD_Y);
+      fel.style.left = `${baseL}px`;
+      fel.style.top  = `${baseT + dy}px`;
+    }
+  }catch{}
+}
+
 
 const Zones = {
   cfg: null,
@@ -74,12 +101,37 @@ document.addEventListener('pointerup', (e)=>{
   if (cardEl && this.isTableCard(cardEl)) this.handleDrop(cardEl);
 }, { capture:true });
 
+document.addEventListener('pointermove', (e)=>{
+  window._lastPointerX = e.clientX;
+  window._lastPointerY = e.clientY;
+
+  const dragging = document.querySelector('.card[data-dragging="1"]');
+  if (dragging) _mirrorFollowersDuringDrag(dragging);
+});
+
+
+
 document.addEventListener('pointerdown', (e)=>{
   const el = e.target?.closest?.('.card');
   if (!el) return;
 
+  // Record starting position for movedEnough() checks
+  el.dataset.startLeft = parseFloat(el.style.left) || 0;
+  el.dataset.startTop  = parseFloat(el.style.top)  || 0;
+
   // Mark active drag target so pointerup can find it even if the up fires on a zone.
   el.dataset.dragging = '1';
+
+  // 🔻🔻🔻 ADD THIS BLOCK 🔻🔻🔻
+  try {
+    // If we grabbed a non-base card in a vertical stack, split the stack
+    const dir = el.dataset?.stackDir;
+    const idx = Number(el.dataset?.stackIdx || '0');
+    if ((dir === 'up' || dir === 'down') && idx > 0 && window.Stacking?.splitOnDrag) {
+      window.Stacking.splitOnDrag(el.dataset.cid);
+    }
+  } catch {}
+  // 🔺🔺🔺 END ADDITION 🔺🔺🔺
 
   if (el.dataset.inCmd === '1' || el.classList.contains('in-cmd')) {
     el.classList.remove('tapped', 'in-cmd');
@@ -98,6 +150,7 @@ document.addEventListener('pointerdown', (e)=>{
     }catch{}
   }
 }, { capture:true });
+
 
   },
   
@@ -183,33 +236,60 @@ _getWorldZoom(){
   const cx = cardRect.left + cardRect.width  / 2;
   const cy = cardRect.top  + cardRect.height / 2;
 
-  for (const [name, el] of candidates){
-    if (!el) continue;
-    const zr = el.getBoundingClientRect();
+for (const [name, el] of candidates){
+  if (!el) continue;
 
-    // 1) Intersection ratio (area overlap / card area)
-    const left   = Math.max(cardRect.left, zr.left);
-    const top    = Math.max(cardRect.top,  zr.top);
-    const right  = Math.min(cardRect.right,zr.right);
-    const bottom = Math.min(cardRect.bottom,zr.bottom);
-    const w = Math.max(0, right - left);
-    const h = Math.max(0, bottom - top);
-    const inter = w * h;
-    const areaC = Math.max(1, cardRect.width * cardRect.height);
-    const ratio = inter / areaC;
+  // Real DOM rect
+  const zrReal = el.getBoundingClientRect();
 
-    // 2) Center-in-zone gets a small bonus
-    const centerIn =
-      cx >= zr.left && cx <= zr.right && cy >= zr.top && cy <= zr.bottom
-        ? 0.15 : 0; // bonus
+  // For the hand zone ONLY, use a virtual/shrunken rect so accidental 1px overlaps don't trigger.
+  // Visual hand layout remains unchanged; this affects drop detection only.
+  const zr = (name === 'hand')
+    ? (() => {
+        try{
+          const css = getComputedStyle(document.documentElement);
+          const raw = (css.getPropertyValue('--hand-hit-h') || '').trim();
+          const px  = parseFloat(raw) || 40; // fallback if var unset
+          const top = Math.max(zrReal.bottom - px, zrReal.top);
+          return {
+            left: zrReal.left,
+            right: zrReal.right,
+            top,
+            bottom: zrReal.bottom,
+            width: zrReal.width,
+            height: Math.max(0, zrReal.bottom - top)
+          };
+        }catch{
+          // safe fallback if anything goes wrong
+          return zrReal;
+        }
+      })()
+    : zrReal;
 
-    const score = ratio + centerIn;
+  // 1) Intersection ratio (area overlap / card area)
+  const left   = Math.max(cardRect.left, zr.left);
+  const top    = Math.max(cardRect.top,  zr.top);
+  const right  = Math.min(cardRect.right,zr.right);
+  const bottom = Math.min(cardRect.bottom,zr.bottom);
+  const w = Math.max(0, right - left);
+  const h = Math.max(0, bottom - top);
+  const inter = w * h;
+  const areaC = Math.max(1, cardRect.width * cardRect.height);
+  const ratio = inter / areaC;
 
-    if (score > bestScore){
-      bestScore = score;
-      best = [name, el];
-    }
+  // 2) Center-in-zone gets a small bonus
+  const centerIn =
+    cx >= zr.left && cx <= zr.right && cy >= zr.top && cy <= zr.bottom
+      ? 0.15 : 0; // bonus
+
+  const score = ratio + centerIn;
+
+  if (score > bestScore){
+    bestScore = score;
+    best = [name, el];
   }
+}
+
 
   // Require a small threshold so micro overlaps don’t trigger
   return (bestScore >= 0.12) ? best[0] : null;
@@ -217,14 +297,20 @@ _getWorldZoom(){
 
 
 
-  async handleDrop(cardEl){
-    try{
-      const zone = this._detectOverlappingZone(cardEl);
-      if (!zone) return;
+async handleDrop(cardEl){
+  try{
+    // If previous pointerup was a tap (no real drag), ignore drops entirely.
+    if (cardEl?.dataset?.justTapped === '1') return;
 
+    // === ZONE CAPTURE HAS PRIORITY ===
+    const zone = this._detectOverlappingZone(cardEl);
+    if (zone) {
       const cid   = cardEl.dataset?.cid || cardEl.getAttribute('data-cid');
       const owner = Number(cardEl.dataset?.owner || this.getViewSeat()) || this.getViewSeat();
       if (!cid) return;
+
+      // If card belongs to a stack, detach first so internal indices stay correct
+      try { window.Stacking?.detach?.(cardEl); } catch {}
 
       if (zone === 'graveyard' || zone === 'exile'){
         await this._moveBetween(owner, { from:'table', to:zone, cid });
@@ -233,59 +319,101 @@ _getWorldZoom(){
         this.cfg.onMoved?.({ seat: owner, cid, from:'table', to:zone });
         return;
       }
-	  
-	   if (zone === 'cmd'){
-  try {
-    const zr = this.els.cmd.getBoundingClientRect();
-    const cx = zr.left + zr.width  / 2;
-    const cy = zr.top  + zr.height / 2;
 
-    // Card size in WORLD space (screen px divided by zoom)
-    const zoom = this._getWorldZoom();
-    const rect = cardEl.getBoundingClientRect();
-    const cwWorld = rect.width  / Math.max(zoom, 0.0001);
-    const chWorld = rect.height / Math.max(zoom, 0.0001);
+      if (zone === 'cmd'){
+        try {
+          const zr = this.els.cmd.getBoundingClientRect();
+          const cx = zr.left + zr.width  / 2;
+          const cy = zr.top  + zr.height / 2;
 
-    let wx, wy;
+          // Card size in WORLD space (screen px divided by zoom)
+          const zoom = this._getWorldZoom();
+          const rect = cardEl.getBoundingClientRect();
+          const cwWorld = rect.width  / Math.max(zoom, 0.0001);
+          const chWorld = rect.height / Math.max(zoom, 0.0001);
 
-    if (this.screenToWorld){
-      const p = this.screenToWorld(cx, cy); // world center of commander zone
-      wx = p.x - (cwWorld / 2);
-      wy = p.y - (chWorld / 2);
-    } else {
-      // Fallback: approximate world conversion via worldScale rect
-      const ws = document.getElementById('worldScale') || this.els.world?.parentElement || this.els.world;
-      const r  = ws?.getBoundingClientRect?.();
-      const mx = cx - (r?.left || 0);
-      const my = cy - (r?.top  || 0);
-      const wxRaw = (mx) / Math.max(zoom, 0.0001);
-      const wyRaw = (my) / Math.max(zoom, 0.0001);
-      wx = wxRaw - (cwWorld / 2);
-      wy = wyRaw - (chWorld / 2);
+          let wx, wy;
+          if (this.screenToWorld){
+            const p = this.screenToWorld(cx, cy); // world center of commander zone
+            wx = p.x - (cwWorld / 2);
+            wy = p.y - (chWorld / 2);
+          } else {
+            const ws = document.getElementById('worldScale') || this.els.world?.parentElement || this.els.world;
+            const r  = ws?.getBoundingClientRect?.();
+            const mx = cx - (r?.left || 0);
+            const my = cy - (r?.top  || 0);
+            const wxRaw = (mx) / Math.max(zoom, 0.0001);
+            const wyRaw = (my) / Math.max(zoom, 0.0001);
+            wx = wxRaw - (cwWorld / 2);
+            wy = wyRaw - (chWorld / 2);
+          }
+
+          cardEl.style.position = 'absolute';
+          requestAnimationFrame(()=>requestAnimationFrame(()=>{
+            cardEl.style.left = `${wx}px`;
+            cardEl.style.top  = `${wy}px`;
+          }));
+        } catch {}
+
+        cardEl.classList.add('tapped');
+        cardEl.classList.add('in-cmd');
+        cardEl.style.setProperty('--tap-rot', '0deg');
+        cardEl.dataset.inCmd = '1';
+
+        const owner2 = Number(cardEl.dataset?.owner || this.getViewSeat()) || this.getViewSeat();
+        const st = this._ensureSeatState(owner2);
+        if (!Array.isArray(st.cmd)) st.cmd = [];
+        if (cid && !st.cmd.some(x => (x.id||x.cid||x) === cid)) {
+          st.cmd.push({ id: cid });
+          await this._saveSeatState(owner2, st);
+        }
+        return;
+      }
+
+      if (zone === 'hand'){
+        await this._moveBetween(owner, { from:'table', to:'hand', cid });
+        try{ this.cfg.addToHand?.(await this._hydrate(cid), owner); }catch{}
+        try{ this.cfg.removeTableCardDomById?.(cid); }catch{}
+        try{ cardEl.remove(); }catch{}
+        this.cfg.onMoved?.({ seat: owner, cid, from:'table', to:'hand' });
+        return;
+      }
+
+      if (zone === 'deck'){
+        Overlays.openDeckInsertChoice({
+          onTop: async ()=>{
+            await this._moveBetween(owner, { from:'table', to:'deck', cid });
+            try{ this.cfg.addToDeck?.(await this._hydrate(cid), owner, { position:'top' }); }catch{}
+            this._cleanupAfterDeckInsert(cid, cardEl);
+            this.cfg.onMoved?.({ seat: owner, cid, from:'table', to:'deck', position:'top' });
+          },
+          onBottom: async ()=>{
+            await this._moveBetween(owner, { from:'table', to:'deck', cid });
+            try{ this.cfg.addToDeck?.(await this._hydrate(cid), owner, { position:'bottom' }); }catch{}
+            this._cleanupAfterDeckInsert(cid, cardEl);
+            this.cfg.onMoved?.({ seat: owner, cid, from:'table', to:'deck', position:'bottom' });
+          },
+          onShuffle: async ()=>{
+            await this._moveBetween(owner, { from:'table', to:'deck', cid });
+            try{
+              this.cfg.addToDeck?.(await this._hydrate(cid), owner, { position:'shuffle' });
+              this.cfg.shuffleDeck?.(owner);
+            }catch{}
+            this._cleanupAfterDeckInsert(cid, cardEl);
+            this.cfg.onMoved?.({ seat: owner, cid, from:'table', to:'deck', position:'shuffle' });
+          },
+          onCancel: ()=>{ /* no-op */ }
+        });
+        return;
+      }
     }
 
-    cardEl.style.position = 'absolute';
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{
-      cardEl.style.left = `${wx}px`;
-      cardEl.style.top  = `${wy}px`;
-    }));
-  } catch {}
+    // === Only if no zone captured do we let Stacking consume the drop ===
+    if (window.Stacking?.onDrop?.({ draggedEl: cardEl })) {
+      _emitStackSnapshot(cardEl);
+      return; // Skip normal placement
+    }
 
-  cardEl.classList.add('tapped');
-  cardEl.classList.add('in-cmd');
-  cardEl.style.setProperty('--tap-rot', '0deg');
-  cardEl.dataset.inCmd = '1';
-
-  const owner = Number(cardEl.dataset?.owner || this.getViewSeat()) || this.getViewSeat();
-  const st = this._ensureSeatState(owner);
-  if (!Array.isArray(st.cmd)) st.cmd = [];
-  const cid = cardEl.dataset?.cid || cardEl.getAttribute('data-cid');
-  if (cid && !st.cmd.some(x => (x.id||x.cid||x) === cid)) {
-    st.cmd.push({ id: cid });
-    await this._saveSeatState(owner, st);
-  }
-  return;
-}
 
 
 
@@ -523,7 +651,26 @@ _getWorldZoom(){
       deck:      Array.isArray(st.deck)      ? st.deck.slice()      : [],
     });
   }
-};
 
+};
+  function _emitStackSnapshot(anyCardInStackEl){
+  try{
+    const stackId = anyCardInStackEl?.dataset?.stackId;
+    const els = stackId
+      ? Array.from(document.querySelectorAll(`.card[data-stack-id="${CSS.escape(String(stackId))}"]`))
+      : [anyCardInStackEl];
+
+    for (const el of els){
+      if (window.RTC && el?.dataset?.cid){
+        window.RTC.send({
+          type: 'move',
+          cid: el.dataset.cid,
+          x: parseFloat(el.style.left) || 0,
+          y: parseFloat(el.style.top)  || 0
+        });
+      }
+    }
+  }catch(e){ console.warn('[Zones] stack emit fail', e); }
+}
 export default Zones;
 export { Zones };

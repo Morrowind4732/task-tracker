@@ -779,16 +779,113 @@ openCascadeWizard({ seat, onCascade } = {}){
 
     const list = document.createElement('div'); ui.body.appendChild(list);
 
-    async function doSearch(){
-      const s = (q.value||'').trim(); if (!s){ q.focus(); return; }
-      list.innerHTML = '<div style="opacity:.7">Searching…</div>';
-      try{
-        const r = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(s)}`);
-        const j = await r.json();
-        const cards = Array.isArray(j.data) ? j.data : [];
-        render(cards);
-      }catch{ list.innerHTML = '<div style="opacity:.8">Search failed.</div>'; }
+    // REPLACE the existing doSearch() inside Overlays.openAddCard(...)
+async function doSearch(){
+  const s = (q.value||'').trim();
+  if (!s){ q.focus(); return; }
+  list.innerHTML = '<div style="opacity:.7">Searching…</div>';
+
+  // Helpers
+  const enc = encodeURIComponent;
+  const userQ = enc(s);
+
+  const fetchJSON = async (url) => {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`Scryfall ${r.status}`);
+    return r.json();
+  };
+  const dedupeById = (arr) => {
+    const seen = new Set();
+    const out = [];
+    for (const c of arr) {
+      if (!c?.id || seen.has(c.id)) continue;
+      seen.add(c.id);
+      out.push(c);
     }
+    return out;
+  };
+  const isToken = (c) =>
+    c?.layout === 'token' ||
+    (c?.set_type === 'token') ||
+    /\bToken\b/i.test(c?.type_line || '');
+
+  // Build URLs (token-aware)
+  const qCardsBase  = `https://api.scryfall.com/cards/search?q=game%3Apaper+(${userQ})`;
+  const qCreature   = `https://api.scryfall.com/cards/search?q=type%3Acreature+game%3Apaper+(${userQ})`;
+  const qTokensBase = `https://api.scryfall.com/cards/search?q=is%3Atoken+game%3Apaper+(${userQ})`;
+
+  const mode = sel.value; // 'All' | 'Creature' | 'Token' | 'Creature + Token'
+
+  try {
+    let pool = [];
+    if (mode === 'All') {
+      const [cards, tokens] = await Promise.all([ fetchJSON(qCardsBase), fetchJSON(qTokensBase) ]);
+      pool = dedupeById([...(cards.data||[]), ...(tokens.data||[])]);
+    } else if (mode === 'Creature') {
+      const cards = await fetchJSON(qCreature);
+      pool = dedupeById(cards.data || []);
+    } else if (mode === 'Token') {
+      const tokens = await fetchJSON(qTokensBase);
+      pool = dedupeById(tokens.data || []);
+    } else { // 'Creature + Token'
+      const [crea, tokens] = await Promise.all([ fetchJSON(qCreature), fetchJSON(qTokensBase) ]);
+      pool = dedupeById([...(crea.data||[]), ...(tokens.data||[])]);
+    }
+
+    // ---- Partition & order: TOKENS first, then CARDS ----
+    const tokens = pool.filter(isToken);
+    const cards  = pool.filter(c => !isToken(c));
+    const ordered = [...tokens, ...cards];
+
+    // If your results widget is a <select>, render with <optgroup> headers.
+    // Otherwise, just pass the ordered array to the existing renderer.
+    if (list && String(list.tagName).toUpperCase() === 'SELECT') {
+      list.innerHTML = '';
+
+      // TOKENS group
+      if (tokens.length) {
+        const og = document.createElement('optgroup');
+        og.label = 'Tokens';
+        for (const c of tokens){
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = `${c.name} · token`;
+          // Keep any fields your spawn path later reads:
+          opt._card = c; // many overlays stash the object on the option
+          og.appendChild(opt);
+        }
+        list.appendChild(og);
+      }
+
+      // CARDS group
+      if (cards.length) {
+        const og = document.createElement('optgroup');
+        og.label = 'Cards';
+        for (const c of cards){
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name;
+          opt._card = c;
+          og.appendChild(opt);
+        }
+        list.appendChild(og);
+      }
+
+      // Keep previous selection behavior:
+      if (list.options.length) list.selectedIndex = 0;
+
+    } else {
+      // Non-<select> list (tiles/grid/etc.): tokens already on top.
+      // Use your existing renderer, which reads from `ordered`.
+      render(ordered);
+    }
+
+  } catch (e) {
+    console.warn('[AddCard] search failed', e);
+    list.innerHTML = '<div style="opacity:.8">Search failed.</div>';
+  }
+}
+
 	// helper for showing art like the other overlays
 function artFrom(c){
   if (c?.image_uris?.normal) return c.image_uris.normal;

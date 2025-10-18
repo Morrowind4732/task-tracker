@@ -14,6 +14,38 @@ import Zones from './zones.js'; // uses the public API in zones.js
 
 let supabase = null; supaReady.then(c => supabase = c);
 
+// --- Fresh combat-time attributes (DB snapshot) -----------------
+const _battleAttrs = new Map(); // cid -> json snapshot { effects, tempEffects, addedTypes, tempTypes, ptMod, ... }
+
+async function _fetchAttrsRow(room_id, cid){
+  const c = await sb();
+  try{
+    const { data, error } = await c
+      .from('card_attributes')
+      .select('json')
+      .eq('room_id', room_id)
+      .eq('cid', String(cid))
+      .maybeSingle();
+    if (error) { console.warn('[Battle] fetch attrs error', { cid, error }); return null; }
+    return data?.json || null;
+  } catch(e){
+    console.warn('[Battle] fetch attrs exception', { cid, e });
+    return null;
+  }
+}
+
+async function _preloadBattleAttrs(cids){
+  const room_id = BattleUI?.roomId || window.CardAttributes?.roomId || window.ROOM_ID || 'room1';
+  const uniq = Array.from(new Set(cids.map(String)));
+  const rows = await Promise.all(uniq.map(async cid => {
+    const j = await _fetchAttrsRow(room_id, cid);
+    if (j) _battleAttrs.set(String(cid), j);
+    return !!j;
+  }));
+  return rows.some(Boolean);
+}
+
+
 (function injectCss(){
   if (document.getElementById('battle-style')) return;
   const s = document.createElement('style');
@@ -157,12 +189,25 @@ const _hasDS = (s)=> s.has('double strike') || s.has('doublestrike');
 
 
 function PT(cid){
-  const a = CardAttributes.get(cid) || {};
-  const ogP = Number(a?.ptMod?.ogpow ?? findCardEl(cid)?.dataset.baseP ?? 0);
-  const ogT = Number(a?.ptMod?.ogtgh ?? findCardEl(cid)?.dataset.baseT ?? 0);
-  const mP  = Number(a?.ptMod?.pow  ?? 0), mT = Number(a?.ptMod?.tgh ?? 0);
+  const el   = findCardEl(cid);
+  const meta = window.getCardDataById?.(cid) || {};
+  const a    = CardAttributes.get?.(cid) || {};
+
+  const num = (v)=>{
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // Prefer explicit “original” stamps from attributes, then DOM, then meta
+  const ogP = num(a?.ptMod?.ogpow ?? el?.dataset?.baseP ?? meta.baseP ?? meta.power);
+  const ogT = num(a?.ptMod?.ogtgh ?? el?.dataset?.baseT ?? meta.baseT ?? meta.toughness);
+
+  const mP  = num(a?.ptMod?.pow);
+  const mT  = num(a?.ptMod?.tgh);
+
   return { p: ogP + mP, t: ogT + mT };
 }
+
 function eff(cid){
   // accepts array of strings _or_ array of { ability }
   const lower = (arr)=> (arr||[]).map(v => {
@@ -170,17 +215,28 @@ function eff(cid){
     return String(s ?? '').toLowerCase().trim();
   });
 
-  // pull from DOM/v3 cache (our reliable innate source)
+  // Innate from DOM/meta (never changes)
   const innate = lower(getInnateEffects(cid));
 
-  // also merge anything the attributes module might be tracking
+  // Attributes module (may be stale unless CardAttributes re-fetched)
   const a = (CardAttributes.get?.(cid)) || {};
+  const ogEff = lower(a.ogEffects);
+  const perm  = lower(a.effects);
+  const temps = lower(a.tempEffects);
+
+  // Fresh DB snapshot if we preloaded it for combat (takes precedence)
+  const snap = _battleAttrs.get(String(cid)) || {};
+  const permFresh  = lower(snap.effects);
+  const tempsFresh = lower(snap.tempEffects);
+
   const merged = [
     ...innate,
-    ...lower(a.ogEffects),
-    ...lower(a.effects),
-    ...lower(a.tempEffects),   // handles [{ ability:'flying', mode:'EOT' }, ...]
+    ...ogEff,
+    ...perm,  ...permFresh,
+    ...temps, ...tempsFresh,
   ].filter(Boolean);
+
+
 
   // normalize common variants so checks never miss
   // e.g., "FirstStrike", "first-strike", "firststrike" → "first strike"
@@ -231,17 +287,90 @@ function _outcomeHash(outcomes, selected){
 
 
 function types(cid){
-  const list = (CardAttributes.get(cid)?.ogTypes || []).map(s=>String(s).toLowerCase());
-  return new Set(list);
+  const el   = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+  const meta = window.getCardDataById?.(cid) || {};
+  const a    = CardAttributes.get?.(cid) || {};
+  const snap = _battleAttrs.get(String(cid)) || {};
+
+  // 1) DOM data-types (e.g., "Legendary Creature — Elf Druid" might also be split elsewhere)
+  const domTypes = String(el?.dataset?.types || el?.getAttribute?.('data-types') || '')
+    .split(/[ ,/]+/)
+    .filter(Boolean);
+
+  // 2) Parse from type_line ("Legendary Creature — Elf Druid")
+  const typeLine = String(
+    el?.dataset?.type_line ||
+    el?.getAttribute?.('data-type_line') ||
+    meta?.type_line || ''
+  );
+  const parsedTL = (()=> {
+    if (!typeLine) return [];
+    const [left, right] = typeLine.split('—').map(x => (x||'').trim());
+    const supertypesAndTypes = left ? left.split(/\s+/).filter(Boolean) : [];
+    const subtypes           = right ? right.split(/\s+/).filter(Boolean) : [];
+    return [...supertypesAndTypes, ...subtypes];
+  })();
+
+  // 3) Attributes module
+  const og   = Array.isArray(a.ogTypes)   ? a.ogTypes   : [];
+  const cur  = Array.isArray(a.types)     ? a.types     : [];   // if you ever populate it
+  const add  = Array.isArray(a.addedTypes)? a.addedTypes: [];
+  const tmpA = Array.isArray(a.tempTypes) ? a.tempTypes.map(t => t?.type).filter(Boolean) : [];
+
+  // 4) Fresh DB snapshot (combat-time)
+  const addF  = Array.isArray(snap.addedTypes)? snap.addedTypes : [];
+  const tmpF  = Array.isArray(snap.tempTypes) ? snap.tempTypes.map(t => t?.type).filter(Boolean) : [];
+
+  // 5) Meta cache (some lists stamp an array already)
+  const metaArr = Array.isArray(meta.types) ? meta.types : [];
+
+  const all = [
+    ...og, ...cur, ...add, ...tmpA,
+    ...addF, ...tmpF,
+    ...domTypes, ...parsedTL,
+    ...metaArr,
+  ].filter(Boolean).map(s => String(s).toLowerCase());
+
+  return new Set(all);
 }
+
+
+function isCreature(cid){
+  return types(cid).has('creature');
+}
+
+function hasLoyalty(cid){
+  // Checks common stamps; harmless if absent
+  try {
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    if (el && el.dataset && (el.dataset.loyalty != null)) return true;
+
+    const meta = window.getCardDataById?.(cid) || {};
+    if (meta.loyalty != null) return true;
+
+    // Some lists stamp 'planeswalker' types; if you want to allow those, keep this:
+    if (types(cid).has('planeswalker')) return true;
+  } catch {}
+  return false;
+}
+
+
 function canAttack(cid){
   const e = eff(cid);
   const el = findCardEl(cid);
   if (!el || isTapped(el)) return false;
+
+  // Require explicit creature type only (no artifacts, enchantments, etc.)
+  if (!isCreature(cid)) return false;
+
+  // Defender and summoning sickness gates
   if (e.has('defender')) return false;
   if (e.has('summoning sickness') && !e.has('haste')) return false;
+
   return true;
 }
+
+
 function canBlock(blockerCid, attackerCid){
   const ae = eff(attackerCid), be = eff(blockerCid);
   if (ae.has('flying') && !(be.has('flying') || be.has('reach'))) return false;
@@ -466,13 +595,15 @@ async _maybeLocalApply(state, precomputedHash){
 
 
 
-     pickAttackers(){
+async pickAttackers(){
     const mySeat = this.seat;
     const pool = $$(`.card[data-cid]`).filter(el =>
       getCardSeatFromDom(el) === mySeat &&
       !isTapped(el) &&
       canAttack(el.dataset.cid)
     );
+
+await _preloadBattleAttrs(pool.map(el => el.dataset.cid));
 
     if (!pool.length){ Overlays.notify?.('warn','No untapped creatures can attack.'); return; }
 
@@ -559,18 +690,27 @@ async _maybeLocalApply(state, precomputedHash){
   },
 
 
-  pickBlockers(){
-  const attackers = this.attackers.slice();
-  const mySeat = this.seat; // I'm the defender when this UI opens
+async pickBlockers(){
+const attackers = this.attackers.slice();
+const mySeat = this.seat;
 
-  const blockersAll = $$(`.card[data-cid]`).filter(el =>
-    getCardSeatFromDom(el) === mySeat && !isTapped(el)
-  );
+const blockersAll = $$(`.card[data-cid]`).filter(el =>
+  getCardSeatFromDom(el) === mySeat &&
+  !isTapped(el) &&
+  isCreature(el.dataset.cid)
+);
+
+
+// NEW: make sure we read current keywords (e.g., removed Flying) for both sides
+await _preloadBattleAttrs([...attackers, ...blockersAll.map(b => b.dataset.cid)]);
+
+
   const chosen = {}; // atk -> [blk order]
 
 
   const html = attackers.map(atk=>{
-    const name = findCardEl(atk)?.dataset.name || atk;
+    const name = findCardEl(atk)?.dataset?.name || window.getCardDataById?.(atk)?.name || atk;
+
     const pt   = PT(atk);
     const akws = Array.from(eff(atk));  // ← attacker effects (normalized)
 
@@ -592,7 +732,8 @@ async _maybeLocalApply(state, precomputedHash){
           <span class="blkMeta">
             <div class="blkTop">
               <span class="blkPT">${bpt.p}/${bpt.t}</span>
-              <span class="blkName">${b.dataset.name || bid}</span>
+              <span class="blkName">${b.dataset?.name || window.getCardDataById?.(bid)?.name || bid}</span>
+
             </div>
             ${kws.length ? `<div class="kw">${kws.map(k=>`<div>${k}</div>`).join('')}</div>` : ''}
           </span>

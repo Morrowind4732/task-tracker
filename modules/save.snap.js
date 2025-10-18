@@ -93,9 +93,32 @@ export async function loadSnapshot({ id }){
   if (error) throw error;
   const state = data?.state;
   if (!state) throw new Error('No state in snapshot');
+
+  // 1) Apply locally
   window.GameIO?.applyState?.(state);
+
+// 2) Broadcast the shared battlefield to peers
+try{
+  const table = Array.isArray(state?.table) ? state.table : [];
+  if (table && window.RTC?.send) {
+    window.RTC.send({ type: 'state:table', table });
+  }
+  // NEW: also broadcast life for all seats so peers reflect restored totals
+  if (state?.life && window.RTC?.send) {
+    for (const seat of [1,2,3]) {
+      if (state.life[seat]) {
+        window.RTC.send({ type: 'life:update', seat, life: state.life[seat] });
+      }
+    }
+  }
+}catch(e){
+  console.warn('[auto-restore] rtc broadcast failed', e);
+}
+
+
   return data;
 }
+
 
 /* ============================================================================
    AUTOSAVES (every 60s; prune to last ~3 minutes)
@@ -146,9 +169,31 @@ export async function loadAutoSnapshot({ id }){
   if (error) throw error;
   const state = data?.state;
   if (!state) throw new Error('No state in autosave');
+
+  // 1) Apply locally
   window.GameIO?.applyState?.(state);
+
+  // 2) Broadcast the shared battlefield to peers
+try{
+  const table = Array.isArray(state?.table) ? state.table : [];
+  if (table && window.RTC?.send) {
+    window.RTC.send({ type: 'state:table', table });
+  }
+  // NEW: also broadcast life for all seats so peers reflect restored totals
+  if (state?.life && window.RTC?.send) {
+    for (const seat of [1,2,3]) {
+      if (state.life[seat]) {
+        window.RTC.send({ type: 'life:update', seat, life: state.life[seat] });
+      }
+    }
+  }
+}catch(e){
+  console.warn('[auto-restore] rtc broadcast failed', e);
+}
+
   return data;
 }
+
 
 /* ============================================================================
    THREE MANUAL SLOTS (per room)

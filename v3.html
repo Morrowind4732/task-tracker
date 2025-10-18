@@ -23,6 +23,9 @@
   --topbar-h:64px;
   --life-h:40px;
 
+  /* Hand drop hitbox height (visual hand stays the same) */
+  --hand-hit-h: 64px;;
+
   /* === Primary Sizing Constants === */
   --card-w: var(--cardWidth, 223px);
   --card-h: var(--cardHeight, 310px);
@@ -68,7 +71,9 @@ button{ font:inherit; color:inherit; cursor:pointer; background:none; border:0; 
   display:flex; align-items:center;
   justify-content:flex-start;   /* was space-between */
   gap:10px;                     /* adds clear space between “P1” and the life */
+  cursor: pointer;              /* NEW: show it’s clickable */
 }
+
 
 .life-main{ color:#ff6b6b; font-weight:800; }
 .life-cmd{ color:#e7e9ee; background:#000; border-radius:8px; padding:0 6px; margin-left:8px; font-weight:700; }
@@ -203,11 +208,11 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
 
 /* Mobile tweaks */
 @media (max-width: 768px){
-  :root{ --card-w:180px; --card-h:250px; --zone-w:180px; --zone-h:250px; --hand-scale:.86; }
+  :root{ --card-w:180px; --card-h:250px; --zone-w:180px; --zone-h:250px; --handScale:.86; }
   .drawer-wrap.expanded{ max-height:360px; }
 }
 @media (max-width: 420px){
-  :root{ --card-w:160px; --card-h:220px; --zone-w:160px; --zone-h:220px; --hand-scale:.84; }
+  :root{ --card-w:160px; --card-h:220px; --zone-w:160px; --zone-h:220px; --handScale:.84; }
 }
 
 :root{
@@ -694,15 +699,16 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 <script type="module" src="./modules/battle.ui.js"></script>
 
 
-<script type="module"> 
-// NEW: networking + saves
+<script type="module">
+  import Stacking from './modules/card.stacking.js';
+  window.Stacking = Stacking;
 import { createPeerRoom } from './modules/net.rtc.js';
 import { initTooltipSystem, attachTooltip, followTooltip, reflowAll, showCardTooltip, hideCardTooltip, clearSelection, attachHandAutoTooltip } from './modules/tooltip.js';
 import {
   saveAutoSnapshot, listAutoSaves, pruneAutoSaves, loadAutoSnapshot,
   getSlots, saveToSlot, loadSlot
 } from './modules/save.snap.js';
-
+import FieldStats from './modules/field.stats.js'; 
 import Overlays from './modules/overlays.js';
 import { initTurnUpkeep } from './modules/turn.upkeep.js';
 
@@ -712,7 +718,30 @@ import { initTurnUpkeep } from './modules/turn.upkeep.js';
   import Zones from './modules/zones.js';
 window.Zones = Zones;
 
+  /* NEW: Versus Dice RNG */
+  import VersusDice from './modules/versus.dice.js';
+  // Optional: if you have a broadcaster, pass it in; otherwise, local-only
+  VersusDice.init({
+getSeats: ()=>{
+  const n = Number(document.getElementById('playerCount')?.value || 2);
+  return Array.from({ length: Math.max(1, Math.min(3, n)) }, (_, i) => i + 1);
+},
+    getMySeat: ()=> Number(document.getElementById('mySeat')?.value || 1),
+    broadcast: (payload)=>{
+  // Primary: helper exposed by net.rtc.js
+  if (window.RTC?.sendRngRoll?.(payload)) return true;
+  // Fallback: raw send (same as above, just without the helper)
+  if (window.RTC?.send?.(payload)) return true;
+  console.warn('[RNG] no RTC link yet; local-only');
+  return false;
+}
 
+  });
+
+  // If your RTC receive path is centralized, add this single hook there:
+  window.handleRngPacket = (packet)=>{
+    VersusDice.handleRemote(packet);
+  };
 import {
   saveSnapshot,
   listSnapshots,
@@ -748,6 +777,25 @@ const resetBtn    = $('#resetBtn'); // decorative; no-op as requested
 const zoomWrapEl = document.querySelector('.zoomWrap');
 
 const viewEyeBtn = document.getElementById('viewEyeBtn');
+// Monochrome eye icons (SVG) — inherit button color via currentColor
+const EYE_OPEN_SVG = `
+<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+  <path fill="currentColor" d="M12 4.5c5.09 0 9.38 3.16 10.94 7.5-1.56 4.34-5.85 7.5-10.94 7.5S2.62 16.34 1.06 12C2.62 7.66 6.91 4.5 12 4.5Zm0 2c-4.12 0-7.68 2.38-9.1 5.5 1.42 3.12 4.98 5.5 9.1 5.5s7.68-2.38 9.1-5.5c-1.42-3.12-4.98-5.5-9.1-5.5Zm0 2.25A4.75 4.75 0 1 1 12 19.5a4.75 4.75 0 0 1 0-9.5Zm0 2a2.75 2.75 0 1 0 0 5.5 2.75 2.75 0 0 0 0-5.5Z"/>
+</svg>`.trim();
+
+const EYE_OFF_SVG = `
+<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+  <path fill="currentColor" d="M2.1 3.51 3.51 2.1 21.9 20.49 20.49 21.9l-3.2-3.2A11.9 11.9 0 0 1 12 19.5C6.91 19.5 2.62 16.34 1.06 12a13.89 13.89 0 0 1 5.18-6.69L2.1 3.51Zm6.3 6.3 1.46 1.46a2.75 2.75 0 0 0 3.87 3.87l1.46 1.46A4.75 4.75 0 0 1 8.4 9.81Zm7.2 1.88 1.16 1.16a12.32 12.32 0 0 0 2.44-2.85C17.78 7.88 14.22 5.5 10.1 5.5c-.52 0-1.03.03-1.52.09l1.77 1.77A4.75 4.75 0 0 1 15.6 11.69Z"/>
+</svg>`.trim();
+
+// Force monochrome SVG icon (avoid emoji rendering on mobile)
+(function initEyeButton(){
+  if (!viewEyeBtn) return;
+  viewEyeBtn.setAttribute('aria-label', 'Toggle view');
+  viewEyeBtn.innerHTML = EYE_OPEN_SVG; // start with open eye; see filter swap below
+})();
+
+
 const mySeat = () => parseInt(seatSelect.value, 10) || 1;
 
 const viewingChip = document.getElementById('viewingChip');
@@ -818,6 +866,8 @@ const btnHost    = document.getElementById('btnHost');
 const btnJoin    = document.getElementById('btnJoin');
 const btnSave    = document.getElementById('btnSave');
 const btnRestore = document.getElementById('btnRestore');
+
+
 
 let RTC = null;  // { send(), close(), role, seatOk, ... }
 let ROOM_ID = ''; // we’ll prompt once and reuse
@@ -1080,28 +1130,60 @@ worldWrap.addEventListener('pointerdown', (e)=>{
 }, {passive:true});
 
 // === Enable desktop dragging for cards (mouse + touch unified) ===
-// Only drag CARDS ON THE TABLE (inside #world), never the hand.
 document.addEventListener('pointerdown', e => {
-  // If the pointer started in the hand strip, let HandScrub own it.
   if (e.target.closest('#hand') || e.target.closest('.handCard')) return;
 
-  // Only allow dragging for battlefield cards
   const card = e.target.closest('#world .card');
   if (!card) return;
 
   e.preventDefault();
-  const start = { x: e.clientX, y: e.clientY };
-  const orig = {
-    left: parseFloat(card.style.left || 0),
-    top:  parseFloat(card.style.top  || 0)
-  };
+
+  // Build the slice that should travel with this card:
+  // - If card is in a stack, move card..top (so bottom grabs whole stack; middle grabs itself+above)
+  // - If not in a stack, just the card itself
+  const cid   = card.dataset.cid;
+  const slice = (window.Stacking?.sliceFrom?.(cid)) || [cid];
+
+  // Record pointer start
+  const startPointer = { x: e.clientX, y: e.clientY };
+
+  // Record starting world positions for every card in the slice
+  const zoom = (window.Zones?._getWorldZoom?.() || 1);
+  const startPos = new Map();
+  for (const scid of slice) {
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(scid)}"]`);
+    if (!el) continue;
+    el.dataset.dragging = '1'; // mark so pointerup safety-net can find it
+    el.dataset.startLeft = parseFloat(el.style.left) || 0;
+    el.dataset.startTop  = parseFloat(el.style.top)  || 0;
+    startPos.set(scid, {
+      x: parseFloat(el.style.left) || 0,
+      y: parseFloat(el.style.top)  || 0
+    });
+  }
+
+  // Movement tolerance to distinguish a real drag from a tap
+  const MOVE_TOL = 6;
+  let moved = false;
+
   card.setPointerCapture?.(e.pointerId);
 
   const move = ev => {
-    const dx = ev.clientX - start.x;
-    const dy = ev.clientY - start.y;
-    card.style.left = `${orig.left + dx / cam.z}px`;
-    card.style.top  = `${orig.top  + dy / cam.z}px`;
+    const dx = (ev.clientX - startPointer.x) / zoom;
+    const dy = (ev.clientY - startPointer.y) / zoom;
+
+    if (!moved && (Math.abs(dx) > MOVE_TOL || Math.abs(dy) > MOVE_TOL)) {
+      moved = true;
+    }
+
+    // Move all cards in the slice by the same delta
+    for (const scid of slice) {
+      const el = document.querySelector(`.card[data-cid="${CSS.escape(scid)}"]`);
+      const s  = startPos.get(scid);
+      if (!el || !s) continue;
+      el.style.left = `${s.x + dx}px`;
+      el.style.top  = `${s.y + dy}px`;
+    }
   };
 
   const up = () => {
@@ -1109,7 +1191,21 @@ document.addEventListener('pointerdown', e => {
     document.removeEventListener('pointermove', move);
     document.removeEventListener('pointerup', up);
     document.removeEventListener('pointercancel', up);
-    if (window.Zones?.handleDrop) Zones.handleDrop(card);
+
+    if (moved) {
+      // Real drag finished → allow drop/stacking
+      if (window.Zones?.handleDrop) Zones.handleDrop(card);
+    } else {
+      // It was a tap (no real drag) → mark so no stacking runs
+      card.dataset.justTapped = '1';
+      setTimeout(()=>{ delete card.dataset.justTapped; }, 300); // keep in sync with TAP_MS
+    }
+
+    // Clear dragging flags
+    for (const scid of slice) {
+      const el = document.querySelector(`.card[data-cid="${CSS.escape(scid)}"]`);
+      if (el) delete el.dataset.dragging;
+    }
   };
 
   document.addEventListener('pointermove', move, { passive: false });
@@ -1557,6 +1653,23 @@ document.getElementById('lifeEditBtn')?.addEventListener('click', ()=>{
   };
 });
 
+/* NEW: Clicking any life tile opens the same Edit Life overlay.
+   If you click P1/P2/P3’s numbers, we switch #mySeat to that seat first. */
+(function wireLifeStripToEditor(){
+  const lifeStrip = document.querySelector('.life-strip');
+  if (!lifeStrip) return;
+  lifeStrip.addEventListener('click', (e)=>{
+    const seatSpan = e.target.closest('[data-seat]');
+    if (!seatSpan) return;
+    const seat = String(seatSpan.dataset.seat || '1');
+    try { document.getElementById('mySeat').value = seat; } catch {}
+    document.getElementById('lifeEditBtn')?.click();
+  });
+})();
+
+
+
+
 // receive life updates from peers
 function applyLifeFromPeer(seat, lifeObj){ window.Life.setSilent(seat, lifeObj || {}); }
 
@@ -1624,9 +1737,9 @@ if (drawerWrap.classList.contains('expanded')) cogBtn.click();
 if (shouldAskRestoreNext()) {
   markAskRestoreNext(false);
   try {
-    const latest = await getLatestSnapshotForSeat({ roomId: id, seat: seatNum() });
-    if (latest) {
-      await loadSnapshot({ id: latest.id }); // local full restore
+    const autos = await listAutoSaves({ roomId: ROOM_ID, bySeat: seatNum(), limit: 1 });
+    if (autos?.length) {
+      await loadAutoSnapshot({ id: autos[0].id });
       if (RTC) {
         const { table } = window.GameIO.collectState();
         RTC.send({ type:'state:table', table }); // broadcast only table
@@ -1928,32 +2041,122 @@ async function fetchCardByName(name){
   };
 }
 
+// Parse textarea into { mainLines, commanderName }
+// - Uses everything ABOVE "SIDEBOARD" as the main deck
+// - Treats the FINAL non-empty line in the entire input as the Commander
+function _splitDeckInput(rawText){
+  const all = (rawText||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const sbIdx = all.findIndex(l => /^sideboard\b/i.test(l));
+  const lastLine = all[all.length - 1] || '';
+
+  // Commander is the last non-empty line, with or without a leading quantity
+  const m = lastLine.match(/^(\d+)\s+(.+)$/);
+  const commanderName = m ? m[2] : lastLine;
+
+  // Main deck = everything above SIDEBOARD (if present), otherwise all lines
+  const mainLines = (sbIdx >= 0) ? all.slice(0, sbIdx) : all;
+
+  return { mainLines, commanderName };
+}
+
+function placeCommanderInCmd(card, seat){
+  const cmdEl = document.getElementById('cmdZone');
+  if (!cmdEl) { console.warn('[cmd] missing #cmdZone'); return; }
+
+  // screen center of cmd zone
+  const zr = cmdEl.getBoundingClientRect();
+  const cx = zr.left + zr.width  / 2;
+  const cy = zr.top  + zr.height / 2;
+
+  // convert to world coords and nudge to card’s top-left
+  const { x:wx, y:wy } = screenToWorld(cx, cy);
+
+  // spawn on table at cmd center
+  const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
+  spawnTableCard(card, wx, wy, { owner: seat, cid });
+
+  // mark visual command-zone state (like Zones.handleDrop does)
+  const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+  if (el){
+    el.classList.add('in-cmd');
+    el.classList.add('tapped');
+    el.style.setProperty('--tap-rot', '0deg');
+    el.dataset.inCmd = '1';
+  }
+
+  // persist to Zones model so lists/overlays know about it
+  Zones?.addToZone?.({ seat, zoneName: 'cmd', card: { ...card, id: cid } });
+
+  // (optional) broadcast the spawn so peers see the card at the same spot
+  sendRTC?.({
+    type: 'spawn',
+    cid,
+    owner: seat,
+    name: card.name || '',
+    img:  card.img  || '',
+    x: wx, y: wy,
+    ogpower:     Number.isFinite(card?.ogpower) ? card.ogpower : undefined,
+    ogtoughness: Number.isFinite(card?.ogtoughness) ? card.ogtoughness : undefined,
+    ogloyalty:   Number.isFinite(card?.ogloyalty) ? card.ogloyalty : undefined,
+    ogTypes:     Array.isArray(card?.ogTypes) ? card.ogTypes : [],
+    ogEffects:   Array.isArray(card?.ogEffects) ? card.ogEffects : [],
+    type_line:   card.type_line || '',
+    mana_cost:   card.mana_cost || '',
+    oracle_text: card.oracle_text || '',
+    power:       card.power ?? '',
+    toughness:   card.toughness ?? '',
+    loyalty:     card.loyalty ?? ''
+  });
+}
+
 
 
 async function loadDeckFromTextarea(){
-  const lines = (deckIn.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  // Split input into main deck and commander
+  const { mainLines, commanderName } = _splitDeckInput(deckIn.value || '');
 
   // reset all local play zones for this seat's deck/hand
   deck = []; hand = []; focus = 0;
   hasDrawn = false;     // opening hand not drawn yet
   hideMull();           // just in case it was open
 
-  for (const raw of lines){
+  // 1) Load MAIN DECK ONLY (ignore SIDEBOARD section entirely)
+  for (const raw of mainLines){
     const m = raw.match(/^(\d+)\s+(.+)$/);
-    const qty = m ? parseInt(m[1],10) : 1;
-    const name= m ? m[2] : raw;
-    for (let i=0;i<qty;i++){
-      try{ deck.push(await fetchCardByName(name)); }
-      catch{ deck.push({name, img:'https://via.placeholder.com/488x680/191f2b/9fb4d9?text='+encodeURIComponent(name)}); }
+    const qty  = m ? parseInt(m[1], 10) : 1;
+    const name = m ? m[2] : raw;
+
+    for (let i = 0; i < qty; i++){
+      try {
+        deck.push(await fetchCardByName(name));
+      } catch {
+        deck.push({
+          name,
+          img: 'https://via.placeholder.com/488x680/191f2b/9fb4d9?text=' + encodeURIComponent(name)
+        });
+      }
     }
   }
 
-  // Shuffle freshly loaded deck
+  // 2) Fetch the COMMANDER (last entry) and place it in the Commander zone
+try {
+  const commanderCard = await fetchCardByName(commanderName);
+  placeCommanderInCmd(commanderCard, mySeat());
+} catch {
+  placeCommanderInCmd({
+    name: commanderName,
+    img: 'https://via.placeholder.com/488x680/191f2b/ffcc88?text=' + encodeURIComponent(commanderName)
+  }, mySeat());
+}
+
+
+  // 3) Shuffle freshly loaded main deck (commander excluded)
   window.shuffleDeck?.(mySeat());
 
+  // 4) Render hand UI (no auto-draw; clicking deck will do 7 + mull prompt)
   renderHand();
-  // (No auto-draw here; first click on deck will draw 7 + ask Mulligan)
 }
+
 
 
 // Single draw with animation
@@ -2654,12 +2857,14 @@ const end = async (e)=>{
     el._lastTapX  = e.clientX;
     el._lastTapY  = e.clientY;
 
+    // 👉 mark as a tap so any global drop handlers ignore this pointerup
+    el.dataset.justTapped = '1';
+    setTimeout(()=>{ delete el.dataset.justTapped; }, TAP_MS);
+
     if (isDouble){
-      // owner double-tap = tap/untap broadcast
-      if (isOwner) toggleTap(true);
+      if (isOwner) toggleTap(true);   // owner double-tap = tap/untap
     } else {
-      // Single tap: select + tooltip
-      selectCard(el);
+      selectCard(el);                 // single tap: select + tooltip
       await showCardTooltip(el, e.clientX, e.clientY);
     }
   }
@@ -2667,6 +2872,7 @@ const end = async (e)=>{
   dragging = false;
   try{ el.releasePointerCapture?.(e.pointerId); }catch{}
 };
+
 
 
 el.addEventListener('pointerup', end);
@@ -2681,11 +2887,76 @@ el.addEventListener('dblclick', (e)=>{
 
 }
 
+async function resetMySeat(){
+  const seat = mySeat();
+
+  // 0) UI cleanups
+  try { clearSelection?.(); hideCardTooltip?.(); } catch {}
+  try { hideMull?.(); } catch {}
+
+  // 1) Remove my battlefield cards (DOM + CID cache)
+  const removedCids = [];
+  for (const el of world.querySelectorAll(`.card[data-owner="${seat}"]`)) {
+    const cid = el.dataset.cid;
+    if (cid && typeof Zones?.removeTableCardDomById === 'function') {
+      Zones.removeTableCardDomById(cid);
+      removedCids.push(cid);
+    } else {
+      try { el.remove(); } catch {}
+    }
+  }
+  // prune CID cache
+  try {
+    if (removedCids.length && typeof CID_DATA?.delete === 'function') {
+      for (const cid of removedCids) CID_DATA.delete(String(cid));
+    }
+  } catch {}
+
+  // 2) Clear my per-seat zones (graveyard, exile, hand, deck, cmd) in Zones model
+  try {
+    if (typeof Zones?.restoreFromState === 'function') {
+      Zones.restoreFromState(seat, {
+        table: [], graveyard: [], exile: [], hand: [], deck: [], cmd: []
+      });
+    }
+    // optional: let any listeners know
+    Zones?.emitChange?.({ seat, zoneName: 'graveyard' });
+    Zones?.emitChange?.({ seat, zoneName: 'exile' });
+    Zones?.emitChange?.({ seat, zoneName: 'hand' });
+    Zones?.emitChange?.({ seat, zoneName: 'deck' });
+    Zones?.emitChange?.({ seat, zoneName: 'cmd' });
+  } catch (e) {
+    console.warn('[reset] Zones restoreFromState failed', e);
+  }
+
+  // 3) Clear my local deck/hand
+  try {
+    deck = [];
+    hand = [];
+    focus = 0;
+    hasDrawn = false;  // next deck click will draw opening 7 again
+    renderHand();
+  } catch (e) {
+    console.warn('[reset] clearing deck/hand failed', e);
+  }
+
+  // 4) Re-apply current view filter (hide opponent’s cards if needed)
+  try { applyViewFilter?.(); } catch {}
+
+  // 5) Broadcast updated shared table so peers remove my cards too
+  try {
+    const { table } = window.GameIO.collectState();
+    sendRTC?.({ type:'state:table', table });
+  } catch (e) {
+    console.warn('[reset] broadcast failed', e);
+  }
+}
 
 
 // ====== hook up minimal controls ======
 loadBtn?.addEventListener('click', loadDeckFromTextarea);
-resetBtn?.addEventListener('click', ()=>{/* no-op per your request */});
+resetBtn?.addEventListener('click', resetMySeat);
+
 deckZone?.addEventListener('click', ()=>{
   // If Mulligan prompt is visible, block drawing more cards
   if (mullOpen) return;
@@ -2742,6 +3013,9 @@ function applyViewFilter(){
   const seeMine = currentViewSeat === mySeat();
   handEl.style.display = seeMine ? '' : 'none';
   document.body.classList.toggle('viewing-opponent', !seeMine);
+try {
+  if (viewEyeBtn) viewEyeBtn.innerHTML = seeMine ? EYE_OPEN_SVG : EYE_OFF_SVG;
+} catch {}
 
   updateViewingChip();   
 }
@@ -2829,6 +3103,58 @@ deckMoreBtn.addEventListener('click', ()=>{
     onCascade:(opts)=> window.startCascade?.(seat, opts),
     onShuffle:()=> window.shuffleDeck?.(seat)
   });
+});
+
+// Turn Info (ⓘ) — minimal overlay with RNG mount
+const turnInfoBtn = document.getElementById('turnInfoBtn');
+turnInfoBtn?.addEventListener('click', ()=>{
+  // Build overlay using your existing .scrim/.panel styles
+  const scrim = document.createElement('div');
+  scrim.className = 'scrim';
+  const panel = document.createElement('div');
+  panel.className = 'panel';
+  panel.innerHTML = `
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <strong>Turn Info</strong>
+      <button class="pill js-close" type="button">Close</button>
+    </div>
+
+    <div class="row" style="gap:10px;margin-top:10px">
+      <div class="pill">Turn: <strong>${document.querySelector('.turn-count')?.textContent || 1}</strong></div>
+      <div class="pill">Viewing: <strong>${document.getElementById('viewingChip')?.textContent?.replace(/^Viewing:\\s*/,'') || 'P1'}</strong></div>
+      <div class="pill">You are: <strong>P${document.getElementById('mySeat')?.value || 1}</strong></div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div style="font-weight:800;margin-bottom:6px">RNG (broadcast)</div>
+      <div id="rngMount"></div>
+      <div style="opacity:.7;font-size:12px;margin-top:6px">
+        Toggle “VS” to roll for all players at once.
+      </div>
+    </div>
+	
+	  <div style="margin-top:14px">
+    <div style="font-weight:800;margin-bottom:6px">Field Stats</div>
+    <div id="fieldStatsMount"></div>
+  </div>
+
+  `;
+  scrim.appendChild(panel);
+  document.body.appendChild(scrim);
+  scrim.style.display = 'block';
+
+  // Close handlers
+  const close = ()=>{ try{ document.body.removeChild(scrim); }catch{} };
+  panel.querySelector('.js-close')?.addEventListener('click', close);
+  scrim.addEventListener('click', (e)=>{ if (e.target===scrim) close(); });
+
+  // Mount the dice controls from VersusDice
+  const mount = panel.querySelector('#rngMount');
+  try { VersusDice.mountControls(mount); } catch(e){ console.warn('VersusDice mount failed:', e); }
+  // Mount Field Stats
+const fsMount = panel.querySelector('#fieldStatsMount');
+FieldStats.mount(fsMount);
+
 });
 
 
@@ -2954,5 +3280,133 @@ window.startCascade = (seat, opts={ value:0, strictLess:true, ignoreLands:true }
     notify('Cascade revealed the entire deck — no valid hit.');
   }
 };
+
+window.FieldStats = (function(){
+  const CREATURE = 'creature';
+  const PIPS = ['W','U','B','R','G','C'];
+  const $ = (s,r=document)=>r.querySelector(s);
+  const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
+  const tapped = el => el?.dataset?.tapped==='1' || el?.classList?.contains('tapped') || /rotate\(/i.test(el?.style?.transform||'');
+
+  const isType = (el, word) => {
+    const dt = (el.getAttribute('data-types') || el.dataset?.types || '').toLowerCase();
+    if (dt) return dt.includes(word);
+    const tl = el.querySelector?.('.type-line')?.textContent?.toLowerCase() || '';
+    return tl.includes(word);
+  };
+
+  const zoneOf = (el)=>{
+    const z = el.dataset?.zone; if (z) return z;
+    const p = el.closest?.('[data-zone]'); if (p) return p.dataset.zone;
+    if (el.closest?.('.hand, #hand, [data-hand]')) return 'hand';
+    return 'table';
+  };
+
+  const parseTypes = (el)=>{
+    const raw = el.getAttribute('data-types') || el.dataset?.types || el.querySelector?.('.type-line')?.textContent || '';
+    return raw.replace(/—/g,' ').split(/[ /]+/).filter(Boolean).map(s=>s[0]?.toUpperCase()+s.slice(1).toLowerCase());
+  };
+
+  const addsFrom = (el)=>{
+    const out = {W:0,U:0,B:0,R:0,G:0,C:0};
+    const add = s => { const m = s.match(/\{[WUBRGC]\}/g); if (m) m.forEach(p=>{ const k=p[1]; out[k]=(out[k]||0)+1; }); };
+    const adds = el.getAttribute('data-adds') || el.dataset?.adds || '';
+    if (adds) add(adds); else {
+      add((el.querySelector?.('.rules')?.textContent || '').toUpperCase());
+      const name = (el.querySelector?.('.name')?.textContent || el.getAttribute('data-name') || '').toLowerCase();
+      if (isType(el,'land')) {
+        if (/plains/.test(name)) out.W++; else if (/island/.test(name)) out.U++;
+        else if (/swamp/.test(name)) out.B++; else if (/mountain/.test(name)) out.R++;
+        else if (/forest/.test(name)) out.G++; else out.C++;
+      }
+    }
+    return out;
+  };
+
+  function analyzeSeat(seat){
+    seat = String(seat);
+    const cards = $$('.card[data-seat="'+seat+'"]');
+    const table = cards.filter(c => zoneOf(c)==='table');
+    const hand  = cards.filter(c => zoneOf(c)==='hand');
+    const creatures = table.filter(c => isType(c, CREATURE));
+    const tappedC   = creatures.filter(tapped);
+    const untappedC = creatures.filter(c => !tapped(c));
+    const types = {};
+    creatures.forEach(c => parseTypes(c).forEach(t => types[t]=(types[t]||0)+1));
+
+    let mana = {W:0,U:0,B:0,R:0,G:0,C:0};
+    table.filter(c=>{
+      if (tapped(c)) return false;
+      if (isType(c,'land')) return true;
+      const adds = c.getAttribute('data-adds') || c.dataset?.adds || '';
+      const rules = (c.querySelector?.('.rules')?.textContent || '');
+      return /\{[WUBRGC]\}/.test(adds || rules);
+    }).forEach(c=>{
+      const m = addsFrom(c);
+      PIPS.forEach(k => mana[k]+=m[k]||0);
+    });
+
+    return {
+      counts: {
+        table: table.length,
+        creatures: creatures.length,
+        untappedCreatures: untappedC.length,
+        tappedCreatures: tappedC.length,
+        hand: hand.length
+      },
+      types, mana
+    };
+  }
+
+  function mount(container){
+    const n = Math.max(1, Math.min(6, Number(document.getElementById('playerCount')?.value || 2)));
+    container.innerHTML = `
+      <div class="row" style="justify-content:space-between;align-items:center;margin-top:4px">
+        <div style="font-weight:800">Field Stats</div>
+        <div>
+          <label class="pill">Player
+            <select id="fsSeat" style="margin-left:6px">${Array.from({length:n},(_,i)=>`<option value="${i+1}">P${i+1}</option>`).join('')}</select>
+          </label>
+          <button class="pill" id="fsRefresh">Refresh</button>
+        </div>
+      </div>
+      <div id="fsPanel" style="margin-top:8px"></div>
+    `;
+    const sel = container.querySelector('#fsSeat');
+    const panel = container.querySelector('#fsPanel');
+    const render = ()=>{
+      const d = analyzeSeat(Number(sel.value));
+      panel.innerHTML = `
+        <div class="row" style="gap:10px; flex-wrap:wrap">
+          <span class="pill">Table: <strong>${d.counts.table}</strong></span>
+          <span class="pill">Creatures: <strong>${d.counts.creatures}</strong></span>
+          <span class="pill">Untapped: <strong>${d.counts.untappedCreatures}</strong></span>
+          <span class="pill">Tapped: <strong>${d.counts.tappedCreatures}</strong></span>
+          <span class="pill">Hand: <strong>${d.counts.hand}</strong></span>
+        </div>
+        <div style="margin-top:10px">
+          <div style="font-weight:800;margin-bottom:6px">Creatures by Type</div>
+          ${
+            Object.keys(d.types).length
+              ? Object.entries(d.types).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="row" style="justify-content:space-between"><div>${k}</div><div><strong>${v}</strong></div></div>`).join('')
+              : '<div style="opacity:.7">No creatures on the battlefield.</div>'
+          }
+        </div>
+        <div style="margin-top:10px">
+          <div style="font-weight:800;margin-bottom:6px">Theoretical Available Mana</div>
+          <div class="row" style="gap:8px; flex-wrap:wrap">${
+            ['W','U','B','R','G','C'].filter(k=>d.mana[k]>0).map(k=>`<span class="pill">{${k}} × <strong>${d.mana[k]}</strong></span>`).join(' ')
+            || '<span style="opacity:.7">No obvious sources.</span>'
+          }</div>
+        </div>`;
+    };
+    container.querySelector('#fsRefresh').addEventListener('click', render);
+    sel.addEventListener('change', render);
+    render();
+  }
+
+  return { mount };
+})();
+
 
 </script>

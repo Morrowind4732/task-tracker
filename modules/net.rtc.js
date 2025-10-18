@@ -257,7 +257,10 @@ export async function createPeerRoom({
     opened,       // Promise resolves when link is live
     role,
     seat,
-    debug: { channelName: chanName }
+    debug: { channelName: chanName },
+
+  // NEW: sugar for RNG broadcasts
+  sendRngRoll(payload) { return send(payload); }
   };
 }
 
@@ -266,7 +269,17 @@ function wireDC(dc, onMessage) {
   dc.addEventListener('message', (e) => {
     let msg = null;
     try { msg = JSON.parse(e.data); } catch {}
-    if (msg) onMessage(msg);
+    if (!msg) return;
+
+    // Pass to app-level handler (unchanged)
+    onMessage(msg);
+
+    // NEW: RNG packets also emit a global event for overlay modules
+    if (msg.type === 'rng_roll') {
+      try {
+        window.dispatchEvent(new CustomEvent('versus-dice:show', { detail: msg }));
+      } catch {}
+    }
   });
   dc.addEventListener('error', (e) => console.warn('[RTC/DC] error', e));
   dc.addEventListener('close', () => console.log('[RTC/DC] closed'));

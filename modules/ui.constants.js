@@ -17,8 +17,9 @@ const VARS = {
   zoneHeight:      { label: 'Zone Height',        default: 310, min: 180, max: 450, step: 1,   unit: 'px' },
 
   // Hand presentation
-  handScale:       { label: 'Hand Scale',         default: 0.88, min: 0.5, max: 1.5, step: 0.01 },
-  handBottom:      { label: 'Hand Vertical Offset', default: 56,  min: 0,   max: 220, step: 1,  unit: 'px' }, // <- feeds --hand-bottom
+  handScale:       { label: 'Hand Scale',         default: 0.88, min: 0.20, max: 2.0, step: 0.01 },
+  handBottom:      { label: 'Hand Vertical Offset', default: 56,  min: -320, max: 320, step: 1,  unit: 'px' }, // <- feeds --hand-bottom
+  handHitH:        { label: 'Hand Drop Hitbox Height', default: 64, min: 12, max: 250, step: 1, unit: 'px' },   // NEW → feeds --hand-hit-h
 
   // Tooltip / icon sizing
   tooltipFontSize: { label: 'Tooltip Font Size',  default: 13,  min: 10,  max: 24,  step: 1,   unit: 'px' },
@@ -28,12 +29,12 @@ const VARS = {
   ptBadgeScale:    { label: 'P/T Badge Scale',    default: 1.35, min: 0.6, max: 3.5, step: 0.05 },
   
   effectsScale:     { label: 'Ability Badge Scale',   default: 1,    min: 0.6, max: 2.5, step: 0.05 },
-effectsOffsetX:   { label: 'Ability Row Offset X',  default: 0,    min: -40, max:  40, unit: 'px', step: 1 },
-effectsOffsetY:   { label: 'Ability Row Offset Y',  default: 0,    min: -40, max:  40, unit: 'px', step: 1 },
-effectsRightSafe:{ label: 'Ability Right Safe',     default: 0,    min:   0, max: 120, unit: 'px', step: 1 },
-tooltipBadgeScale:{ label: 'Tooltip Badge Scale',   default: 1.6,  min: 0.8, max: 3.0, step: 0.05 },
-
+  effectsOffsetX:   { label: 'Ability Row Offset X',  default: 0,    min: -40, max:  40, unit: 'px', step: 1 },
+  effectsOffsetY:   { label: 'Ability Row Offset Y',  default: 0,    min: -40, max:  40, unit: 'px', step: 1 },
+  effectsRightSafe:{ label: 'Ability Right Safe',     default: 0,    min:   0, max: 120, unit: 'px', step: 1 },
+  tooltipBadgeScale:{ label: 'Tooltip Badge Scale',   default: 1.6,  min: 0.8, max: 3.0, step: 0.05 },
 };
+
 
 // Native card aspect used by your art frames (keeps everything crisp)
 const CARD_ASPECT = VARS.cardHeight.default / VARS.cardWidth.default; // 310 / 223 ≈ 1.390

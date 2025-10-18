@@ -971,9 +971,17 @@ if (!ogTypes || !ogTypes.length){
 }
 
 // Merge OG + user, then de-dupe (case/spacing agnostic, keep first casing)
-const mergedTypes   = dedupeKeepFirst([...(ogTypes || []), ...(Array.isArray(data.types) ? data.types : [])]);
-const mergedEffects = dedupeKeepFirst([...(ogEffects || []), ...(Array.isArray(data.effects) ? data.effects : [])]);
+const mergedTypes = dedupeKeepFirst([
+  ...(ogTypes || []),
+  ...(Array.isArray(data.types) ? data.types : []),
+  ...(Array.isArray(data.addedTypes) ? data.addedTypes : []),   // ← show permanent "Grant type"
+]);
+const mergedEffects = dedupeKeepFirst([
+  ...(ogEffects || []),
+  ...(Array.isArray(data.effects) ? data.effects : []),
+]);
 const allEffects = [...mergedTypes, ...mergedEffects];
+
 
 allEffects.forEach(raw => {
   const n = document.createElement('div');
@@ -1015,6 +1023,20 @@ tempEffects.forEach(eff => {
     : `<span>${eff.ability}</span> <span class="tag">${modeTag}</span>`;
   effWrap.appendChild(n);
 });
+
+// TEMP types (from activation system): same tint + mode label as temp abilities
+const tempTypes = Array.isArray(data.tempTypes) ? data.tempTypes : [];
+tempTypes.forEach(tt => {
+  if (!tt || !tt.type) return;
+  const n = document.createElement('div');
+  n.className = 'cardAttrEffect cardAttrEffect--temp';
+  const modeTag = tt.mode === 'LINKED' ? 'Linked' : (tt.mode === 'EOT' ? 'EOT' : 'Temp');
+
+  // Show a generic “type” chip — keep text visible so players see the exact type
+  n.innerHTML = `<span>${tt.type}</span> <span class="tag">${modeTag}</span>`;
+  effWrap.appendChild(n);
+});
+
 
 // Make counters sit directly below effects
 root.style.setProperty('--effects-h', (effWrap?.offsetHeight || 0) + 'px');
