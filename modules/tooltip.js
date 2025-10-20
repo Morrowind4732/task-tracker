@@ -63,10 +63,15 @@ let cogEl = null;
 // NEW: a mirrored magic-wand button anchored to the left of the card
 let wandEl = null;
 
+const COG_VISIBLE = false; // ← hide cog UI but keep all logic wired
+
+
 
 const VP_MARGIN = 8;     // viewport breathing room
 const TIP_GAP   = 12;    // gap between card and tooltip
-const COG_GAP   = 10;    // gap between card's right edge and cog
+// replace the COG_GAP line with these two constants:
+const BTN_GAP   = 10;    // gap from card edge to button
+const VSTACK_GAP = 8;    // vertical gap between wand and cog buttons    // gap between card's right edge and cog
 
 function ensureTip(){
   if (tipEl) return tipEl;
@@ -132,7 +137,7 @@ function ensureCog(){
   cogEl.className = 'cardCogBtn';
   cogEl.style.position = 'absolute';
   cogEl.style.display = 'none';
-  cogEl.style.zIndex = '10002';  // above tooltip/actions
+  cogEl.style.zIndex = '1000';  // above tooltip/actions
   cogEl.style.width = '42px';
   cogEl.style.height = '42px';
   cogEl.style.borderRadius = '50%';
@@ -180,7 +185,7 @@ function ensureWand(){
   wandEl.className = 'cardActBtn';
   wandEl.style.position = 'absolute';
   wandEl.style.display = 'none';
-  wandEl.style.zIndex = '10002';  // above tooltip/actions
+  wandEl.style.zIndex = '1000';  // above tooltip/actions
   wandEl.style.width = '42px';
   wandEl.style.height = '42px';
   wandEl.style.borderRadius = '50%';
@@ -212,12 +217,13 @@ function ensureWand(){
 function positionWand(targetEl){
   if (!wandEl || !targetEl) return;
   const r = targetEl.getBoundingClientRect();
-  const x = Math.round(r.left - (COG_GAP + 42)); // mirror cog gap; 42 = button width
-  const y = Math.round(r.top + r.height / 2 - 21); // center vertically
+  const x = Math.round(r.left - (BTN_GAP + 42)); // 42 = button width
+  const y = Math.round(r.top);                   // top-aligned
   wandEl.style.left = `${x}px`;
   wandEl.style.top  = `${y}px`;
   wandEl.style.display = 'grid';
 }
+
 
 function hideWand(){
   if (wandEl) wandEl.style.display = 'none';
@@ -227,13 +233,15 @@ function hideWand(){
 // NEW: position the cog relative to the anchored card
 function positionCog(targetEl){
   if (!cogEl || !targetEl) return;
+  if (!COG_VISIBLE) { hideCog(); return; }
   const r = targetEl.getBoundingClientRect();
-  const x = Math.round(r.right + COG_GAP);
-  const y = Math.round(r.top + r.height / 2 - 21); // center vertically (21 = 42/2)
+  const x = Math.round(r.left - (BTN_GAP + 42));
+  const y = Math.round(r.top + 42 + VSTACK_GAP); // wand height (42) + gap
   cogEl.style.left = `${x}px`;
   cogEl.style.top  = `${y}px`;
   cogEl.style.display = 'grid';
 }
+
 
 function hideCog(){
   if (cogEl) cogEl.style.display = 'none';
@@ -341,6 +349,7 @@ export function initTooltipSystem(){
   ensureTip();
 ensureCog();
 ensureWand();
+hideCog();
 cogEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
 wandEl.addEventListener('pointerdown', (e)=> e.stopPropagation());
 
@@ -370,11 +379,11 @@ export function followTooltip(target) {
     const centerX = r.left + (r.width / 2);
     positionTooltip(tipEl, centerX, r.top, r.bottom, /*preferAbove*/ true);
 
-// keep the buttons glued to the card’s edges
-ensureCog(); ensureWand();
-positionCog(anchorEl);
-positionWand(anchorEl);
-return;
+    // keep the buttons glued to the card’s edges
+    ensureCog(); ensureWand();
+    if (COG_VISIBLE) { positionCog(anchorEl); } else { hideCog(); }
+    positionWand(anchorEl);
+    return;
 
   }
 
@@ -552,6 +561,14 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
       if (data.mana_cost)   cardEl.dataset.mana_cost   = data.mana_cost;
       if (data.type_line)   cardEl.dataset.type_line   = data.type_line;
       if (data.oracle_text) cardEl.dataset.oracle_text = data.oracle_text;
+
+// also stamp legacy/fallback attributes so other modules can read it
+cardEl.setAttribute('data-oracle_text', data.oracle_text);
+cardEl.dataset.oracle = data.oracle_text;
+cardEl.setAttribute('data-oracle', data.oracle_text);
+cardEl.dataset.oracleText = data.oracle_text;
+cardEl.setAttribute('data-oracle-text', data.oracle_text);
+
 
       const isCreature = /\bCreature\b/i.test(data.type_line || '');
       const hasPT = (data.power ?? '') !== '' && (data.toughness ?? '') !== '';

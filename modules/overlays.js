@@ -305,7 +305,8 @@ const Overlays = {
     if (this.root) return;
     const root = document.createElement('div');
     root.id = 'overlayRoot';
-    Object.assign(root.style, { position:'fixed', inset:0, pointerEvents:'none', zIndex: 10000 });
+    Object.assign(root.style, { position:'fixed', inset:0, pointerEvents:'none', zIndex: 200000 });
+
     document.body.appendChild(root);
     this.root = root;
   },
@@ -322,9 +323,9 @@ const Overlays = {
   _panel({ title='Overlay', width='min(700px, 96vw)', height='min(88vh, 760px)' } = {}){
     const wrap = document.createElement('div');
     Object.assign(wrap.style, {
-      position:'fixed', inset:0, background:'rgba(0,0,0,.38)',
-      display:'grid', placeItems:'center', pointerEvents:'auto', zIndex: 10001
-    });
+  position:'fixed', inset:0, background:'rgba(0,0,0,.38)',
+  display:'grid', placeItems:'center', pointerEvents:'auto', zIndex: 200001
+});
     const panel = document.createElement('div');
     Object.assign(panel.style, {
       width, height, maxWidth:'96vw', maxHeight:'88vh',

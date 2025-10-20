@@ -175,6 +175,35 @@ function openPanel({ title, html, footer, onAttach }){
   onAttach?.(panel);
   return panel;
 }
+
+// ---------- BIG COMBAT NOTIFICATION (Attacker/Defender) ----------
+/**
+ * Show a prominent combat notification (modal) that auto-closes.
+ * Uses the same openPanel helper above so it matches your UI chrome.
+ * @param {string} message - displayed message
+ * @param {Object} opts
+ * @param {number} opts.timeout - auto-close ms (default 3500)
+ * @returns {HTMLElement} panel
+ */
+function showCombatNotification(message = 'Combat initiated — file your blockers!', { timeout = 3500 } = {}) {
+  const panel = openPanel({
+    title: '⚔️ Combat Initiated',
+    html: `<div style="padding:24px 12px; text-align:center; font-size:20px; font-weight:900;">
+             ${String(message)}
+           </div>`,
+    // no footer; user will dismiss or it auto-closes
+  });
+
+  // Auto-close after timeout but keep idempotent check
+  try {
+    setTimeout(() => {
+      try { panel._close?.(); } catch{} 
+    }, Number(timeout) || 3500);
+  } catch (e){ /* swallow */ }
+  return panel;
+}
+
+
 const closePanel = (p)=>{ try{p?._close?.();}catch{} };
 
 const $$  = (s,r=document)=>Array.from(r.querySelectorAll(s));
@@ -650,9 +679,21 @@ await _preloadBattleAttrs(pool.map(el => el.dataset.cid));
       });
 
       // Heads-up for the other client(s)
-      try { window.RTC?.send?.({ type:'combat_init', bySeat: this.seat, attackers: sel }); } catch {}
+            // Heads-up for the other client(s)
+      try {
+        window.RTC?.send?.({
+          type: 'combat_init',
+          room_id: (window.ROOM_ID || window.CardAttributes?.roomId || null),
+          bySeat: this.seat,
+          attackers: sel
+        });
+      } catch {}
+
+      // Local big notice for the attacker (so they get the same big UX as end-turn)
+      try { showCombatNotification('Combat initiated — file your blockers!', { timeout: 3500 }); } catch(e){}
 
       this.waitForBlocks();
+
     };
   },
 
@@ -664,9 +705,12 @@ await _preloadBattleAttrs(pool.map(el => el.dataset.cid));
       if (s?.phase === 'waiting_for_blocks' && Array.isArray(s.attackers) && s.attackers.length){
         clearInterval(tid);
         this.attackers = s.attackers;
+        // Defender big notice: announce combat arrival before opening blocker UI
+        try { showCombatNotification('Combat initiated — file your blockers!', { timeout: 4000 }); } catch(e){}
         this.pickBlockers();
       }
     }, 1200);
+
   },
 
   // Attacker-side: after choosing attackers, just wait for the defender to assign blocks.

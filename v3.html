@@ -11,6 +11,9 @@
 
 <style>
 :root{
+--deckActionsOffset: 120px; /* increase to move buttons farther left */
+  --deck-left: 24px;          /* matches #deckZone left */
+  --deck-top: 24px; 
   --bg:#0e1015;
   --fg:#e7e9ee;
   --muted:#9aa3b2;
@@ -249,15 +252,15 @@ textarea.deck-in{ width:100%; height:140px; resize:vertical; padding:10px; borde
   display:block; /* centers nicely in the grid container */
 }
 
-/* Buttons to the immediate left of the deck (vertically centered) */
+
 .deck-actions{
   position: absolute;
-  left: calc(var(--DECK_X) - 64px);
-  top:  calc(var(--DECK_TOP) + (var(--ZONE_H) / 2) - 28px);
+  left: calc(var(--deck-left) - var(--deckActionsOffset));
+  top:  calc(var(--deck-top) + (var(--zone-h) / 2) - 22px);
   display: flex;
   flex-direction: column;
   gap: 14px;
-  z-index: var(--z-controls);
+  z-index: var(--z-actions); /* existing z layer */
 }
 /* Only the three buttons next to the deck */
 .deck-actions .sbtn{
@@ -393,8 +396,10 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 }
 
 /* === Player view helpers ============================================== */
-.viewing-opponent .hand { display:none; }
+/* Hand stays visible so we can show opponent card backs */
+.viewing-opponent .hand { display:block; }
 .card.hidden-by-view { display:none !important; }
+
 
 /* Viewing chip (topbar, right side) */
 .viewingChip{
@@ -463,6 +468,14 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 .card img, .handCard img {
   -webkit-user-drag: none;
   user-select: none;
+}
+
+/* Back-only shells displayed in opponent hand fan */
+.card.backOnlyCard .face.back { 
+  transform: none;
+  background: #000 url('https://i.imgur.com/LdOBU1I.jpeg') center/cover no-repeat;
+  border: 1px solid #2b3344;
+  border-radius: 14px;
 }
 
 
@@ -702,6 +715,9 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 <script type="module">
   import Stacking from './modules/card.stacking.js';
   window.Stacking = Stacking;
+  window.spawnTableCard = spawnTableCard;
+window.sendRTC = sendRTC;              // v3’s wrapper that logs/drops if RTC isn’t open
+window.findCardByCid = findCardByCid;  // optional but handy for tooling
 import { createPeerRoom } from './modules/net.rtc.js';
 import { initTooltipSystem, attachTooltip, followTooltip, reflowAll, showCardTooltip, hideCardTooltip, clearSelection, attachHandAutoTooltip } from './modules/tooltip.js';
 import {
@@ -777,6 +793,8 @@ const resetBtn    = $('#resetBtn'); // decorative; no-op as requested
 const zoomWrapEl = document.querySelector('.zoomWrap');
 
 const viewEyeBtn = document.getElementById('viewEyeBtn');
+const HAND_COUNTS = Object.create(null);
+
 // Monochrome eye icons (SVG) — inherit button color via currentColor
 const EYE_OPEN_SVG = `
 <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
@@ -1424,12 +1442,15 @@ function afterYouCreateCardEl(cardEl, meta){
 // ——— Utilities & public API (optional, handy later) ———
 function screenToWorld(sx, sy){
   const r = worldScale.getBoundingClientRect();
-  return { x: (sx - r.left - cam.x)/cam.z, y: (sy - r.top - cam.y)/cam.z };
+  return { x: (sx - r.left) / cam.z, y: (sy - r.top) / cam.z };
 }
+
+
 function worldToScreen(wx, wy){
   const r = worldScale.getBoundingClientRect();
-  return { x: r.left + cam.x + wx*cam.z, y: r.top + cam.y + wy*cam.z };
+  return { x: r.left + wx * cam.z, y: r.top + wy * cam.z };
 }
+
 function centerOn(wx, wy){
   const vr = worldWrap.getBoundingClientRect();
   cam.x = vr.width/2  - wx*cam.z;
@@ -1763,6 +1784,12 @@ if (shouldAskRestoreNext()) {
 function handlePeerMessage(msg){
   if (!msg || typeof msg !== 'object') return;
   switch (msg.type) {
+  case 'card.delete': {
+  // Mirror the hard delete from remote
+  try { window._localDeleteCardByCid?.(msg.cid); } catch {}
+  break;
+}
+
     case 'spawn':
   spawnTableCard({
     name: msg.name || '',
@@ -1854,6 +1881,28 @@ case 'cast:counter': {
   break;
 }
 
+    // 🔔 REALLY NOTICEABLE turn handoff banner
+    case 'turn:end': {
+      // Sender just ended their turn → it's *our* turn now.
+      // Only react if we're in the same room; harmless if ROOM_ID missing.
+      if (!msg.room_id || !window.ROOM_ID || msg.room_id === window.ROOM_ID) {
+        showTurnAlert(); // defined below
+      }
+      break;
+    }
+	
+	
+    // 🔔 REALLY NOTICEABLE combat banner (mirrors end-turn flow)
+    case 'combat_init': {
+      // Only react if we're in the same room and *not* the attacker
+      const sameRoom = !msg.room_id || !window.ROOM_ID || msg.room_id === window.ROOM_ID;
+      const iAmAttacker = Number(msg?.bySeat) === Number(seatNum());
+      if (sameRoom && !iAmAttacker) {
+        showCombatAlert();
+      }
+      break;
+    }
+
     case 'battle:apply': {
       // A peer is telling us to run local, idempotent apply.
       // BattleUI._maybeLocalApply(state, hash) safely no-ops if we already did it.
@@ -1885,6 +1934,105 @@ case 'cast:counter': {
       break;
   }
 }
+
+// ================================
+// BIG "YOUR TURN" splash overlay
+// ================================
+function showCombatAlert() {
+  let el = document.getElementById('combatAlert');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'combatAlert';
+    el.innerHTML = `
+      <div class="ta-scrim" style="
+        position:fixed; inset:0; background:rgba(0,0,0,.65);
+        display:flex; align-items:center; justify-content:center; z-index:99999;">
+        <div class="ta-card" style="
+          background:#111; color:#fff; border-radius:20px; padding:28px 36px;
+          box-shadow:0 12px 40px rgba(0,0,0,.6); text-align:center;
+          transform:scale(.9); opacity:0; transition:transform .25s ease, opacity .25s ease;">
+          <div style="font-size:15px; letter-spacing:.2em; opacity:.7; margin-bottom:4px;">COMBAT</div>
+          <div style="font-size:34px; font-weight:900; line-height:1.1;">INITIATED</div>
+          <div style="font-size:13px; opacity:.8; margin-top:10px">Assign your blockers</div>
+          <div style="font-size:12px; opacity:.6; margin-top:6px">Tap anywhere to dismiss</div>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+    el.addEventListener('click', hideCombatAlert);
+  }
+
+  const card = el.querySelector('.ta-card');
+  el.style.display = 'flex';
+  requestAnimationFrame(() => {
+    card.style.opacity = '1';
+    card.style.transform = 'scale(1)';
+  });
+
+  try { navigator.vibrate && navigator.vibrate([40, 60, 40]); } catch {}
+  clearTimeout(el._auto);
+  el._auto = setTimeout(hideCombatAlert, 10000);
+}
+
+function hideCombatAlert() {
+  const el = document.getElementById('combatAlert');
+  if (!el) return;
+  const card = el.querySelector('.ta-card');
+  card.style.opacity = '0';
+  card.style.transform = 'scale(.9)';
+  setTimeout(() => { if (el.parentNode) el.style.display = 'none'; }, 200);
+}
+
+function showTurnAlert() {
+  // Reuse if present
+  let el = document.getElementById('turnAlert');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'turnAlert';
+    // full-screen scrim + centered card, inline styles to avoid CSS edits
+    el.innerHTML = `
+      <div class="ta-scrim" style="
+        position:fixed; inset:0; background:rgba(0,0,0,.65);
+        display:flex; align-items:center; justify-content:center; z-index:99999;">
+        <div class="ta-card" style="
+          background:#111; color:#fff; border-radius:20px; padding:28px 36px;
+          box-shadow:0 12px 40px rgba(0,0,0,.6); text-align:center;
+          transform:scale(.9); opacity:0; transition:transform .25s ease, opacity .25s ease;">
+          <div style="font-size:15px; letter-spacing:.2em; opacity:.7; margin-bottom:4px;">IT'S</div>
+          <div style="font-size:48px; font-weight:900; line-height:1;">YOUR TURN</div>
+          <div style="font-size:13px; opacity:.7; margin-top:10px">Tap to dismiss</div>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+
+    // click anywhere to dismiss
+    el.addEventListener('click', hideTurnAlert);
+  }
+
+  // tiny pop animation
+  const card = el.querySelector('.ta-card');
+  el.style.display = 'flex';
+  requestAnimationFrame(() => {
+    card.style.opacity = '1';
+    card.style.transform = 'scale(1)';
+  });
+
+  // optional short phone buzz
+  try { navigator.vibrate && navigator.vibrate([40, 60, 40]); } catch {}
+
+  // auto-hide after 2.5s, but leave clickable
+  clearTimeout(el._auto);
+  el._auto = setTimeout(hideTurnAlert, 10000);
+}
+
+function hideTurnAlert() {
+  const el = document.getElementById('turnAlert');
+  if (!el) return;
+  const card = el.querySelector('.ta-card');
+  card.style.opacity = '0';
+  card.style.transform = 'scale(.9)';
+  setTimeout(() => { if (el.parentNode) el.style.display = 'none'; }, 200);
+}
+
 
 
 function findCardByCid(cid){
@@ -2236,6 +2384,8 @@ function handSlotScreenPoint(relFromFocus = 0){
 }
 
 
+
+
 // V2 rolodex layout (fixed)
 function renderHand(){
   handTrack.innerHTML = '';
@@ -2282,9 +2432,12 @@ function renderHand(){
     host.appendChild(shell);
     handTrack.appendChild(host);
 
-    attachHandGestures(host, i);
+      attachHandGestures(host, i);
   }
+  // After re-render, sync my hand length (local + peers)
+  publishHandCount();
 }
+
 
 // ==== Deck → Hand animation ======================================
 const PREFERS_REDUCED_MOTION = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
@@ -2356,69 +2509,134 @@ ghost.remove();
 // swipe L/R is handled by the hand scrubber now.
 // This handler is only for: long-press to play, or vertical swipe-up to play.
 function attachHandGestures(el, index){
-  let down = false, sx = 0, sy = 0, moved = false, hold = null, played = false;
-  const UP_THRESH = 110;   // must swipe this far up to play
-  const HOLD_MS   = 600;   // hold to show tooltip
+  let down = false, sx = 0, sy = 0, moved = false, played = false;
+  const UP_THRESH = 110;   // must swipe this far up to enter drag-to-place
+  const HOLD_MS   = 600;   // long-press → tooltip
   const START_MOVE_TOL = 8;
 
+  // Drag-to-place state
+  let draggingUp = false;
+  let ghost = null;
+  let lastClientX = 0, lastClientY = 0;
+
+  // Cache CSS card size and zoom *once* when drag starts
+  function getCardScreenSize(){
+    const rs = getComputedStyle(document.documentElement);
+    const cw = parseFloat(rs.getPropertyValue('--card-w')) || 223;
+    const ch = parseFloat(rs.getPropertyValue('--card-h')) || 310;
+    const z  = (typeof cam?.z === 'number' ? cam.z : 1);
+    return { w: cw * z, h: ch * z };
+  }
+
+  function makeGhost(){
+    if (ghost) return ghost;
+    const { w, h } = getCardScreenSize();
+    ghost = document.createElement('div');
+    ghost.className = 'hand-drag-ghost';
+    ghost.style.position = 'fixed';
+    ghost.style.left = '0px';
+    ghost.style.top = '0px';
+    ghost.style.width = `${w}px`;
+    ghost.style.height = `${h}px`;
+    ghost.style.transform = 'translate(-50%, -50%)';
+    ghost.style.pointerEvents = 'none';
+    ghost.style.zIndex = '999999';
+    ghost.style.borderRadius = '14px';
+    ghost.style.boxShadow = '0 6px 24px rgba(0,0,0,0.35)';
+    ghost.style.background = '#111';
+    ghost.innerHTML = `
+      <div class="cardInner" style="position:absolute;left:0;top:0;width:100%;height:100%;transform:none">
+        <div class="face front" style="inset:0;border-radius:14px;background:#1a1f2a">
+          <img draggable="false" src="${hand[index]?.img || ''}" alt="${hand[index]?.name || ''}"
+               style="width:100%;height:100%;object-fit:cover;border-radius:14px"/>
+        </div>
+      </div>`;
+    document.body.appendChild(ghost);
+    return ghost;
+  }
+  function moveGhost(cx, cy){
+    if (!ghost) return;
+    ghost.style.left = `${cx}px`;
+    ghost.style.top  = `${cy}px`;
+  }
+  function killGhost(){
+    if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+    ghost = null;
+  }
+
   el.addEventListener('pointerdown', (e)=>{
-    // IMPORTANT: don't let the hand scrubber start on this event
+    // do not let the hand scrubber start on this event
     e.stopPropagation();
 
     down = true; sx = e.clientX; sy = e.clientY; moved = false; played = false;
+    draggingUp = false;
+    lastClientX = e.clientX; lastClientY = e.clientY;
     handTrack.classList.add('swiping');
     el.setPointerCapture?.(e.pointerId);
 
     // Long-press → show tooltip (do NOT play)
-    hold = setTimeout(()=>{
-      if (!moved && !window.HandScrub?.active){
-        const cardEl = el.querySelector('.card');
-        if (cardEl) {
-          selectCard(cardEl, e.clientX, e.clientY);
-          showCardTooltip(cardEl, e.clientX, e.clientY);
+    let hold = setTimeout(()=>{
+      if (!down || moved || played) return;
+      // showCardTooltipFromHand?.(index); // if you have one
+    }, HOLD_MS);
+
+    const onMove = (ev)=>{
+      if (!down) return;
+      lastClientX = ev.clientX; lastClientY = ev.clientY;
+
+      const dx = ev.clientX - sx;
+      const dy = ev.clientY - sy;
+      if (!moved && Math.hypot(dx, dy) > START_MOVE_TOL) moved = true;
+
+      // Enter drag-to-place mode on sufficient upward swipe
+      if (!played && !draggingUp && dy <= -UP_THRESH){
+        draggingUp = true;
+        makeGhost();                     // size locked at drag-start zoom
+        moveGhost(ev.clientX, ev.clientY);
+        console.log('[hand] drag-to-place started');
+      }
+
+      // While dragging, keep ghost under the pointer
+      if (draggingUp && ghost){
+        moveGhost(ev.clientX, ev.clientY);
+        ev.preventDefault(); // stop page scroll while dragging up
+      }
+    };
+
+    const endAll = ()=>{
+      down = false;
+      handTrack.classList.remove('swiping');
+      document.removeEventListener('pointermove', onMove, {passive:false});
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onCancel);
+      clearTimeout(hold);
+
+      // If we were in drag mode, commit a spawn at the pointer location
+      if (!played && draggingUp){
+        try{
+          const p = screenToWorld(lastClientX, lastClientY);
+          console.log('[hand] drop commit → world', p, 'index', index);
+          playFromHandAt(index, p.x, p.y);
+          played = true;
+        } catch(err){
+          console.warn('[hand] drop commit failed', err);
         }
       }
-    }, HOLD_MS);
-  });
 
-  el.addEventListener('pointermove', (e)=>{
-    if (!down) return;
-    // keep the event local to this card
-    e.stopPropagation();
+      draggingUp = false;
+      killGhost();
+    };
 
-    const dx = e.clientX - sx;
-    const dy = sy - e.clientY; // positive = moving up
-    if (!moved && (Math.abs(dx) > START_MOVE_TOL || Math.abs(dy) > START_MOVE_TOL)) moved = true;
+    const onUp = endAll;
+    const onCancel = endAll;
 
-    // If scrubbing had turned on somehow, turn it off for clear vertical intent
-    const verticalDominant = Math.abs(dy) > Math.abs(dx) * 1.3;
-    if (verticalDominant && window.HandScrub?.active){
-      window.HandScrub.active = false;
-    }
-
-    // Cancel the long-press if we’re clearly moving or scrubbing
-    if (window.HandScrub?.active || Math.abs(dx) > Math.abs(dy)){
-      if (hold){ clearTimeout(hold); hold = null; }
-      return;
-    }
-
-    // Strong vertical swipe-up → play
-    if (!played && verticalDominant && dy > UP_THRESH){
-      if (hold){ clearTimeout(hold); hold = null; }
-      playFromHand(index);
-      played = true;
-      down = false;
-    }
+    document.addEventListener('pointermove', onMove, {passive:false});
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onCancel);
   }, {passive:false});
-
-  const end = ()=>{
-    down = false;
-    if (hold){ clearTimeout(hold); hold = null; }
-    handTrack.classList.remove('swiping');
-  };
-  el.addEventListener('pointerup', end);
-  el.addEventListener('pointercancel', end);
 }
+
+
 
 
 
@@ -2492,10 +2710,9 @@ handTrack.addEventListener('pointercancel', endScrub, {capture:true});
 
 //------------------------------------
 
-
 // play from hand → center of view
 function playFromHand(i){
-  if (i<0 || i>=hand.length) return;
+  if (i < 0 || i >= hand.length) return;
   const card = hand.splice(i,1)[0];
   focus = clamp(focus, 0, Math.max(0, hand.length-1));
   renderHand();
@@ -2506,9 +2723,8 @@ function playFromHand(i){
   const cy = vr.top  + vr.height*0.45;
   const p = screenToWorld(cx, cy);
 
-
   // card size from CSS variables (defaults)
-   const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
+  const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
   const ch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
 
   const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
@@ -2518,30 +2734,29 @@ function playFromHand(i){
   // 1) SPAWN NOW (authoritative local + broadcast to peers)
   spawnTableCard(card, x, y, { cid, owner: mySeat() });
   sendRTC({
-  type: 'spawn',
-  cid,
-  owner: mySeat(),
-  name: card.name || '',
-  img:  card.img || '',
-  x, y,
-  ogpower:     Number.isFinite(card?.ogpower)     ? card.ogpower     : (Number.isFinite(+card?.power) ? +card.power : undefined),
-  ogtoughness: Number.isFinite(card?.ogtoughness) ? card.ogtoughness : (Number.isFinite(+card?.toughness) ? +card.toughness : undefined),
-  ogloyalty:   Number.isFinite(card?.ogloyalty)   ? card.ogloyalty   : (Number.isFinite(+card?.loyalty) ? +card.loyalty : undefined),
+    type: 'spawn',
+    cid,
+    owner: mySeat(),
+    name: card.name || '',
+    img:  card.img || '',
+    x, y,
+    ogpower:     Number.isFinite(card?.ogpower)     ? card.ogpower     : (Number.isFinite(+card?.power) ? +card.power : undefined),
+    ogtoughness: Number.isFinite(card?.ogtoughness) ? card.ogtoughness : (Number.isFinite(+card?.toughness) ? +card.toughness : undefined),
+    ogloyalty:   Number.isFinite(card?.ogloyalty)   ? card.ogloyalty   : (Number.isFinite(+card?.loyalty) ? +card.loyalty : undefined),
 
-  // 🔹 NEW: send OG lists so the remote sees badges immediately
-  ogTypes:     Array.isArray(card?.ogTypes)   ? card.ogTypes   : [],
-  ogEffects:   Array.isArray(card?.ogEffects) ? card.ogEffects : [],
+    // 🔹 NEW: send OG lists so the remote sees badges immediately
+    ogTypes:     Array.isArray(card?.ogTypes)   ? card.ogTypes   : [],
+    ogEffects:   Array.isArray(card?.ogEffects) ? card.ogEffects : [],
 
-  type_line:   card.type_line || '',
-  mana_cost:   card.mana_cost || '',
-  oracle_text: card.oracle_text || '',
-  power:       card.power ?? '',
-  toughness:   card.toughness ?? '',
-  loyalty:     card.loyalty ?? ''
-});
+    type_line:   card.type_line || '',
+    mana_cost:   card.mana_cost || '',
+    oracle_text: card.oracle_text || '',
+    power:       card.power ?? '',
+    toughness:   card.toughness ?? '',
+    loyalty:     card.loyalty ?? ''
+  });
 
-
-  // 2) ANNOUNCE (opponent gets the 5s decision overlay; no blocking)
+  // 2) ANNOUNCE (opponent gets the decision overlay)
   const castId = makeCastId();
   sendRTC({
     type: 'cast:announce',
@@ -2557,12 +2772,59 @@ function playFromHand(i){
     toughness:   card.toughness ?? '',
     loyalty:     card.loyalty ?? ''
   });
+} // ← CLOSE playFromHand BEFORE defining playFromHandAt
 
+// play from hand → explicit world position (used by swipe-up drag placement)
+function playFromHandAt(i, worldX, worldY){
+  if (i < 0 || i >= hand.length) {
+    console.warn('[hand] bad index for playFromHandAt', i);
+    return;
+  }
 
+  const card = hand.splice(i, 1)[0];
+  focus = clamp(focus, 0, Math.max(0, hand.length - 1));
+  renderHand();
 
+  // card size from CSS variables (defaults)
+  const rootStyle = getComputedStyle(document.documentElement);
+  const cw = parseFloat(rootStyle.getPropertyValue('--card-w')) || 223;
+  const ch = parseFloat(rootStyle.getPropertyValue('--card-h')) || 310;
 
+  const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
+  rememberCid(cid, card);
+
+  const x = worldX - cw / 2;
+  const y = worldY - ch / 2;
+
+  // SPAWN + broadcast
+  spawnTableCard(card, x, y, { cid, owner: mySeat() });
+  sendRTC({
+    type: 'spawn',
+    cid,
+    owner: mySeat(),
+    name: card.name || '',
+    img:  card.img  || '',
+    x, y,
+    ogpower:     Number.isFinite(card?.ogpower)     ? card.ogpower     : (Number.isFinite(+card?.power) ? +card.power : undefined),
+    ogtoughness: Number.isFinite(card?.ogtoughness) ? card.ogtoughness : (Number.isFinite(+card?.toughness) ? +card.toughness : undefined),
+    ogloyalty:   Number.isFinite(card?.ogloyalty)   ? card.ogloyalty   : (Number.isFinite(+card?.loyalty) ? +card.loyalty : undefined),
+    ogTypes:     Array.isArray(card?.ogTypes)   ? card.ogTypes   : [],
+    ogEffects:   Array.isArray(card?.ogEffects) ? card.ogEffects : [],
+    type_line:   card.type_line || '',
+    mana_cost:   card.mana_cost || '',
+    oracle_text: card.oracle_text || '',
+    power:       card.power ?? '',
+    toughness:   card.toughness ?? '',
+    loyalty:     card.loyalty ?? ''
+  });
+
+  console.log('[hand→table] spawned from drag at', { i, cid, x, y });
 }
 
+// Ensure it’s callable even under module scoping
+window.playFromHandAt = playFromHandAt;
+
+// (your finalizeCast stays below unchanged)
 function finalizeCast(castId){
   const meta = PENDING_CASTS.get(castId);
   if (!meta) return;
@@ -2573,6 +2835,7 @@ function finalizeCast(castId){
   spawnTableCard(card, x, y, { cid, owner: bySeat });
   applyViewFilter?.();
 }
+
 
 
 
@@ -3003,22 +3266,92 @@ Object.defineProperty(window.AppState, 'viewSeat', {
 const otherSeat = () => (mySeat() === 1 ? 2 : 1);
 
 function applyViewFilter(){
-  // table cards
+  // Battlefield: show only cards owned by the viewed seat
   for (const el of world.querySelectorAll('.card')) {
     const owner = parseInt(el.dataset.owner || '0', 10);
     const show = owner === currentViewSeat;
     el.classList.toggle('hidden-by-view', !show);
   }
-  // hand: only show mine
-  const seeMine = currentViewSeat === mySeat();
-  handEl.style.display = seeMine ? '' : 'none';
-  document.body.classList.toggle('viewing-opponent', !seeMine);
-try {
-  if (viewEyeBtn) viewEyeBtn.innerHTML = seeMine ? EYE_OPEN_SVG : EYE_OFF_SVG;
-} catch {}
 
-  updateViewingChip();   
+  const seeMine = currentViewSeat === mySeat();
+
+  // Hand rail always visible; we decide *what* to show inside it
+  handEl.style.display = ''; // important: do NOT hide
+  document.body.classList.toggle('viewing-opponent', !seeMine);
+
+  try {
+    if (viewEyeBtn) viewEyeBtn.innerHTML = seeMine ? EYE_OPEN_SVG : EYE_OFF_SVG;
+  } catch {}
+
+  if (seeMine){
+    renderHand();               // your real hand
+    publishHandCount();         // make sure peers hear about your count
+  } else {
+    renderOpponentHandBacks(currentViewSeat); // backs-only fan
+  }
+
+  updateViewingChip();
 }
+
+
+// --- Shared hand-count cache (per seat) ---
+// We keep our own seat in sync locally; peers announce theirs via RTC (see hook below).
+
+
+// Publish my hand length locally (+ send to peers if RTC available)
+function publishHandCount(){
+  const seat = mySeat();
+  const n = Array.isArray(hand) ? hand.filter(h=>!h?.__ghost).length : 0;
+  HAND_COUNTS[seat] = n;
+  try { sendRTC?.({ type: 'hand:count', seat, n }); } catch {}
+}
+
+// Render a fanned set of "card backs" for a given seat (opponent view)
+function renderOpponentHandBacks(seat){
+  handTrack.innerHTML = '';
+  const n = Math.max(0, Number(HAND_COUNTS[seat] || 0));
+  if (!n) return;
+
+  const gap = 64;
+  const baseSpread = 10;
+  const focus = Math.max(0, Math.min(n - 1, Math.floor(n / 2)));
+
+  for (let i = 0; i < n; i++){
+    const rel = i - focus;
+
+    const host = document.createElement('div');
+    host.className = 'handCard backOnly';
+    if (Math.abs(rel) >= 3) host.classList.add('far');
+    else if (Math.abs(rel) === 2) host.classList.add('mid');
+    if (rel === 0) host.classList.add('focus');
+
+    host.style.setProperty('--dx', `${rel * gap}px`);
+    const taper = 1 - Math.min(0.5, Math.abs(rel) / 10);
+    const rot   = rel * (baseSpread * taper);
+    host.style.setProperty('--rot', `${rot}deg`);
+    host.style.zIndex = String(1000 - Math.abs(rel));
+
+    const shell = document.createElement('div');
+    shell.className = 'card backOnlyCard';
+    shell.innerHTML = `<div class="cardInner"><div class="face back"></div></div>`;
+
+    host.appendChild(shell);
+    handTrack.appendChild(host);
+  }
+
+}
+
+// Receive opponent counts → update cache → re-render if I’m viewing them
+window.addEventListener('opponent-hand:count', (e) => {
+  const { seat, n } = e.detail || {};
+  const count = Math.max(0, Number(n)||0);
+  if (!seat) return;
+  HAND_COUNTS[seat] = count;
+  if (currentViewSeat === seat && currentViewSeat !== mySeat()){
+    renderOpponentHandBacks(seat);
+  }
+});
+
 
 viewEyeBtn?.addEventListener('click', ()=>{
   currentViewSeat = (currentViewSeat === mySeat()) ? otherSeat() : mySeat();

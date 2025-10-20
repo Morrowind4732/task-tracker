@@ -5,7 +5,7 @@
 
 import { supaReady } from './env.supabase.js';
 import * as AD from './ability.detect.js'; // ← uses your 1:1 parser/actions
-
+import { manaToHtml } from './tooltip.js';
 let supabase = null; supaReady.then(c => supabase = c);
 
 // -------------------------------
@@ -28,6 +28,316 @@ const activeSeats = ()=>{
   const n = Number(raw);
   return Array.from({length: (Number.isFinite(n)&&n>=1)?n:2}, (_,i)=>i+1);
 };
+
+// Robust Oracle text getter (supports dash/underscore + cache fallbacks)
+function getOracleForCid(cid){
+  const el = findCardEl(cid);
+  const a =
+    el?.dataset?.oracle_text ||
+    el?.getAttribute?.('data-oracle_text') ||
+    el?.dataset?.oracleText ||
+    el?.getAttribute?.('data-oracle-text') ||
+    el?.dataset?.oracle ||
+    el?.getAttribute?.('data-oracle') ||
+    window.Zones?.getCardDataById?.(cid)?.oracle_text ||
+    window.Zones?.getCardDataById?.(cid)?.oracle ||
+    window.getCardDataById?.(cid)?.oracle_text ||
+    window.getCardDataById?.(cid)?.oracle ||
+    '';
+  const s = String(a || '').trim();
+  if (!s) console.warn('[Scan] No oracle text resolved for cid', cid, 'element:', el);
+  return s;
+}
+
+
+
+
+// === Apply-tab prefill (radio + field, then switch to Apply tab) =======
+function prefillApply(
+  { mode = 'ability', value = '', camt = 1, dp = 0, dt = 0 },
+  root = document
+){
+  // 1) switch to Apply tab
+  const applyTabBtn = root.querySelector('.js-tab[data-tab="apply"]');
+  applyTabBtn?.click?.();
+
+  // 2) scope everything to the Apply pane
+  const pane = root.querySelector('.pane-apply') || root;
+
+  // 3) flip the Effect radio
+  const radio = pane.querySelector(`input[name="mode"][value="${mode}"]`);
+  if (radio){
+    radio.checked = true;
+    radio.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // 4) prefill fields per mode
+  if (mode === 'ability'){
+    const input = pane.querySelector('.js-abil');
+    if (input){
+      input.value = String(value || '').trim();
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  if (mode === 'type'){
+    const input = pane.querySelector('.js-typegrant-input');
+    if (input){
+      input.value = String(value || '').trim();
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  if (mode === 'counter'){
+    const kIn = pane.querySelector('.js-ckind');
+    const nIn = pane.querySelector('.js-camt');
+    if (kIn) kIn.value = String(value || '+1/+1').trim();
+    if (nIn) nIn.value = String(Number.isFinite(+camt) ? +camt : 1);
+
+    // ensure only the counter section is visible
+    const show = sel => { const el = pane.querySelector(sel); if (el) el.style.display = '';   };
+    const hide = sel => { const el = pane.querySelector(sel); if (el) el.style.display = 'none';};
+    show('.js-counter'); hide('.js-pt'); hide('.js-ability'); hide('.js-typegrant');
+  }
+
+  if (mode === 'pt'){
+    const pIn = pane.querySelector('.js-dp');
+    const tIn = pane.querySelector('.js-dt');
+    if (pIn) pIn.value = String(Number.isFinite(+dp) ? +dp : 0);
+    if (tIn) tIn.value = String(Number.isFinite(+dt) ? +dt : 0);
+
+    const show = sel => { const el = pane.querySelector(sel); if (el) el.style.display = '';   };
+    const hide = sel => { const el = pane.querySelector(sel); if (el) el.style.display = 'none';};
+    show('.js-pt'); hide('.js-counter'); hide('.js-ability'); hide('.js-typegrant');
+  }
+}
+
+
+// === Token spawn shim (uses your normal V3 spawn path) =================
+// NOTE: V3 already spawns to table via window.spawnCardAtViewCenter(card, seat)
+//       We build a minimal "token card" payload with just a name. Replace
+//       art/type fields later if you want full token art.
+async function spawnTokenOnTable(tokenName, seat = mySeat()){
+  const card = {
+    id: `token:${tokenName}:${Date.now()}`,
+    name: String(tokenName),          // ← no " Token" suffix
+    type_line: 'Token',
+    mana_cost: '',
+    oracle_text: '',
+    img: ''
+  };
+  window.spawnCardAtViewCenter?.(card, Number(seat) || 1);
+}
+
+
+// Search helpers: look up cards by an exact name, WITHOUT adding "token"
+async function findCardCandidatesByName(raw){
+  const q = String(raw||'').trim();
+  if (!q) return [];
+  const nameEq = (c)=> String(c?.name||'').toLowerCase() === q.toLowerCase();
+  let res = [];
+
+  // A) Zones-backed indices (prefer primary source if you have one)
+  try{
+    const Z = window.Zones;
+    if (Z?.searchByName){
+      const out = await Z.searchByName(q);
+      if (Array.isArray(out)) res = out.slice();
+    } else if (Z?.cardIndex?.byName && Z?.getCardDataById){
+      const ids = Z.cardIndex.byName[q.toLowerCase()] || [];
+      res = ids.map(id => Z.getCardDataById(id)).filter(Boolean);
+    }
+  }catch{}
+
+  // B) Fallback pools (arrays or object maps)
+  if (!res.length){
+    try{
+      const pools = [window.AllCards, window.CardDB, window.CARDS, window.Pool].filter(Boolean);
+      for (const pool of pools){
+        const arr = Array.isArray(pool) ? pool : Object.values(pool||{});
+        res.push(...arr.filter(nameEq));
+      }
+    }catch{}
+  }
+
+  // C) If still nothing, query Scryfall (exact name + include tokens/extras)
+  if (!res.length){
+    try{
+      // Prefer /cards/search with exact operator and token allowance
+      const qstr =
+        `!"${q}" (is:token or t:token) lang:en`; // exact name; make sure tokens are eligible
+      const url =
+        `https://api.scryfall.com/cards/search?order=set&dir=desc&include_extras=true&q=${encodeURIComponent(qstr)}`;
+      const r = await fetch(url);
+      if (r.ok){
+        const j = await r.json();
+        const data = Array.isArray(j.data) ? j.data : [];
+
+        // Normalize to the shape your spawners expect
+        const toPayload = (c)=>({
+          id: c.id,
+          name: c.name,
+          set: c.set,
+          collector_number: c.collector_number,
+          type_line: c.type_line,
+          mana_cost: c.mana_cost || '',
+          oracle_text: c.oracle_text || '',
+          image_uris: c.image_uris,
+          img: (c.image_uris?.normal) ||
+               (Array.isArray(c.card_faces) && c.card_faces[0]?.image_uris?.normal) || ''
+        });
+
+        res = data.map(toPayload);
+      }
+    }catch(e){
+      console.warn('[Scryfall] search failed for', q, e);
+    }
+  }
+
+  // D) De-dupe by (name|set|collector|id)
+  const seen = new Set();
+  res = res.filter(c=>{
+    const key = [c?.name, c?.set, c?.collector_number, c?.id].filter(Boolean).join('|').toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+
+  return res;
+}
+
+// Lightweight picker overlay for found cards
+function openNamePickOverlay({ query, candidates, copies=1, seat = mySeat(), onPick }){
+  const grid = candidates.map((c,i)=>{
+    const img = c.image_uris?.normal || c.img || c.image || '';
+    const set = c.set?.toUpperCase?.() || '';
+    const num = c.collector_number || '';
+    return `
+      <button class="cardpick" data-i="${i}" style="
+        text-align:left; border:1px solid #2b3f63; border-radius:12px; padding:8px; background:#0f1829; color:#e7f0ff;
+        display:grid; grid-template-columns:48px 1fr; gap:10px; cursor:pointer;">
+        <span style="width:48px;height:64px;background:${img?`url('${img}') center/cover`:'#222'};border-radius:6px"></span>
+        <span>
+          <div style="font-weight:900">${c.name||'Card'}</div>
+          <div style="opacity:.8;font-size:12px">${[set,num].filter(Boolean).join(' • ')}</div>
+        </span>
+      </button>`;
+  }).join('');
+
+  const html = `
+    <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+      <div>Results for “${query}”</div>
+      <div class="pill" title="How many to create" style="display:flex;gap:6px;align-items:center">
+        × <input type="number" class="js-copies" value="${copies}" min="1" style="width:70px">
+      </div>
+    </div>
+    <div class="grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin-top:8px">
+      ${grid || '<div style="opacity:.8">No results.</div>'}
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:8px">
+      <button class="pill js-fallback" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">
+        Use simple “${query}”
+      </button>
+    </div>`;
+
+  const panel = openPanel({
+    title: `Choose “${query}”`,
+    html,
+    onAttach: (pnl)=>{
+      const copiesInput = pnl.querySelector('.js-copies');
+      pnl.querySelectorAll('.cardpick').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const idx = Number(btn.dataset.i||0);
+          const n = Math.max(1, Number(copiesInput?.value||1)|0);
+          const chosen = candidates[idx];
+          try{
+            for (let i=0;i<n;i++){
+              if (typeof window.spawnCardAtViewCenter === 'function'){
+                window.spawnCardAtViewCenter(chosen, Number(seat)||1);
+              } else if (window.Zones?.spawnToTable){
+                window.Zones.spawnToTable(chosen, Number(seat)||1);
+              }
+            }
+          } finally {
+            onPick?.(chosen, n);
+            pnl._close?.();
+          }
+        });
+      });
+      pnl.querySelector('.js-fallback')?.addEventListener('click', ()=>{
+        const n = Math.max(1, Number(copiesInput?.value||1)|0);
+        for (let i=0;i<n;i++){
+          spawnTokenOnTable(query, Number(seat)||1); // fallback stub
+        }
+        onPick?.(null, n);
+        pnl._close?.();
+      });
+    }
+  });
+
+  return panel;
+}
+
+
+// === Health fallback UI (heal/hurt any seat with one amount picker) ====
+function renderHealthFallback({ host, seats = activeSeats(), defaultAmount = 1 }){
+  if (!host) return;
+  // prevent duplicates if re-rendered
+  if (host.querySelector('[data-health-fallback="1"]')) return;
+
+  const wrap = document.createElement('div');
+  wrap.dataset.healthFallback = '1';
+  Object.assign(wrap.style, { display:'grid', gap:'8px', marginTop:'8px' });
+
+  const title = document.createElement('div');
+  title.textContent = 'Health Controls';
+  Object.assign(title.style, { fontWeight: 900, opacity:.9 });
+  wrap.appendChild(title);
+
+  // single amount input (+ quick bumps) — keyboardless friendly
+  const row = document.createElement('div');
+  Object.assign(row.style, { display:'grid', gridTemplateColumns:'1fr auto auto', gap:'8px', alignItems:'center' });
+  const amt = document.createElement('input'); amt.type='number'; amt.min='1'; amt.value=String(defaultAmount);
+  Object.assign(amt.style, { background:'#0f1829', color:'#e7f0ff', border:'1px solid #2b3f63', borderRadius:'10px', padding:'8px' });
+  const plus1 = document.createElement('button'); plus1.textContent = '+1';
+  const plus5 = document.createElement('button'); plus5.textContent = '+5';
+  [plus1, plus5].forEach(b=>{
+    Object.assign(b.style, { background:'#1a2a45', color:'#cfe1ff', border:'1px solid #2b3f63', borderRadius:'10px', padding:'6px 10px', fontWeight:900, cursor:'pointer' });
+  });
+  plus1.onclick = ()=> amt.value = String((Number(amt.value||0)|0) + 1);
+  plus5.onclick = ()=> amt.value = String((Number(amt.value||0)|0) + 5);
+  row.append(amt, plus1, plus5);
+  wrap.appendChild(row);
+
+  const grid = document.createElement('div');
+  Object.assign(grid.style, { display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:'8px' });
+  wrap.appendChild(grid);
+
+  const applyDelta = (seat, deltaSign)=>{
+    const v = Math.max(1, Number(amt.value||0) | 0);
+    const delta = deltaSign > 0 ? v : -v;
+    // Use your existing adjuster if present; otherwise broadcast
+    if (typeof window.adjustHealth === 'function'){
+      window.adjustHealth(seat, delta);
+    } else {
+      window.sendRTC?.({ type:'health_delta', seat, delta });
+    }
+  };
+
+  seats.forEach(s=>{
+    const heal = document.createElement('button'); heal.textContent = `Heal P${s}`;
+    const hurt = document.createElement('button'); hurt.textContent = `Hurt P${s}`;
+    [heal,hurt].forEach(b=>{
+      Object.assign(b.style, { background:'#1a2a45', color:'#cfe1ff', border:'1px solid #2b3f63', borderRadius:'10px', padding:'6px 10px', fontWeight:900, cursor:'pointer' });
+    });
+    heal.onclick = ()=> applyDelta(s, +1);
+    hurt.onclick = ()=> applyDelta(s, -1);
+    grid.append(heal, hurt);
+  });
+
+  host.appendChild(wrap);
+  return wrap;
+}
+
 
 // -------------------------------
 // Supabase row helpers
@@ -276,6 +586,23 @@ function ensureLinkedWatcher(room_id, sourceCid){
 }
 
 
+function openCardAttributesFor(cid){
+  const el  = findCardEl(cid);
+  // try an on-card cog/button if present
+  const cog = el?.querySelector?.(
+    '.js-attrs, .btn-attrs, [data-action="attributes"], [data-action="attrs"], [title*="Attributes" i]'
+  );
+  if (cog) { cog.click?.(); return true; }
+
+  // fallbacks people often expose:
+  if (window.CardAttributes?.open) { window.CardAttributes.open(cid); return true; }
+  if (window.CardAttributes?.openPanelForCard) { window.CardAttributes.openPanelForCard(cid); return true; }
+  if (window.openCardAttributes) { window.openCardAttributes(cid); return true; }
+  return false;
+}
+
+
+
 const ActivatedAbilities = {
   open({ cid, seat, anchorEl }){
     const me = Number(seat)||mySeat();
@@ -287,6 +614,9 @@ const ActivatedAbilities = {
     <button title="Scan" class="pill js-tab active" data-tab="scan"   style="border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 10px">🔎 Scan</button>
     <button class="pill js-tab"        data-tab="apply"  style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">Apply</button>
     <button class="pill js-tab"        data-tab="active" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">Active</button>
+	<button class="pill js-tab" data-tab="settings"
+  style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">⚙️</button>
+
   </div>
 
   <style>
@@ -399,18 +729,23 @@ const ActivatedAbilities = {
 
   <div class="pane pane-scan" style="margin-top:10px">
     <div class="box" style="border:1px solid #2b3f63;border-radius:10px;padding:10px">
-      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
-        <div style="font-weight:900">Scanned abilities from Oracle</div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <label class="pill" style="display:flex;gap:6px;align-items:center">
-            X: <input type="number" class="js-xval" value="1" min="0" style="width:70px">
-          </label>
-          <label class="pill" style="display:flex;gap:6px;align-items:center">
-            Pay life: <input type="number" class="js-xlife" value="0" min="0" style="width:70px">
-          </label>
-          <button class="pill js-rescan" title="Re-scan Oracle">Rescan</button>
-        </div>
-      </div>
+<div style="display:flex;align-items:flex-start;gap:8px;justify-content:space-between">
+  <div style="font-weight:900;flex:0 0 auto">Scanned Oracle text</div>
+
+  <!-- Oracle text grows as needed; no 'Oracle:' label -->
+  <div style="display:flex;align-items:flex-start;gap:8px;flex:1 1 auto;max-width:100%">
+    <div class="pill"
+         style="flex:1 1 auto;max-width:100%;
+                white-space:normal;overflow:visible;text-overflow:clip;
+                word-break:break-word;display:block">
+      <span class="js-oracle" style="font-weight:700;white-space:normal"></span>
+    </div>
+    <button class="pill js-rescan" title="Re-scan Oracle" style="flex:0 0 auto">Rescan</button>
+  </div>
+</div>
+
+</div>
+
       <div class="scanWrap" style="margin-top:8px;display:grid;gap:8px"></div>
       <div class="note" style="opacity:.8;margin-top:6px">
         Honor system on mana. Will auto-tap if the ability requires tapping.
@@ -579,6 +914,70 @@ const ActivatedAbilities = {
       <div class="activeWrap" style="display:grid;gap:8px"></div>
     </div>
   </div>
+    <!-- NEW: Settings (⚙️) — full in-pane tab, Layout A -->
+  <div class="pane pane-settings" style="display:none; margin-top:10px">
+    <div class="box" style="border:1px solid #2b3f63;border-radius:10px;padding:10px; display:grid; gap:12px">
+      
+      <!-- Force Types -->
+      <div style="display:grid; gap:6px">
+        <div style="font-weight:900; opacity:.9">Force Types</div>
+        <div style="display:flex; gap:6px; align-items:center">
+          <input class="js-set-type input" type="text" placeholder="Type (e.g., Elf)" style="flex:1; padding:8px 10px; border:1px solid #2b3f63; border-radius:8px; background:#0f1829; color:#cfe1ff">
+          <button type="button" class="pill js-set-type-plus"  title="Radial picker (+)" style="border:1px solid #2b3f63;border-radius:999px;background:#142039;color:#cfe1ff;padding:6px 10px">＋</button>
+          <button type="button" class="pill js-set-type-minus" title="Remove last token" style="border:1px solid #2b3f63;border-radius:999px;background:#142039;color:#cfe1ff;padding:6px 10px">—</button>
+        </div>
+        <div style="display:flex; gap:8px">
+          <button type="button" class="pill js-set-type-add"    style="border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 12px">Add</button>
+          <button type="button" class="pill js-set-type-remove" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 12px">Remove</button>
+        </div>
+      </div>
+
+      <!-- Force Effects / Abilities -->
+      <div style="display:grid; gap:6px">
+        <div style="font-weight:900; opacity:.9">Force Effects / Abilities</div>
+        <div style="display:flex; gap:6px; align-items:center">
+          <input class="js-set-abil input" type="text" placeholder="Ability (e.g., Flying)" style="flex:1; padding:8px 10px; border:1px solid #2b3f63; border-radius:8px; background:#0f1829; color:#cfe1ff">
+          <button type="button" class="pill js-set-abil-plus"  title="Radial picker (+)" style="border:1px solid #2b3f63;border-radius:999px;background:#142039;color:#cfe1ff;padding:6px 10px">＋</button>
+          <button type="button" class="pill js-set-abil-minus" title="Remove last token" style="border:1px solid #2b3f63;border-radius:999px;background:#142039;color:#cfe1ff;padding:6px 10px">—</button>
+        </div>
+        <div style="display:flex; gap:8px">
+          <button type="button" class="pill js-set-abil-add"    style="border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 12px">Add</button>
+          <button type="button" class="pill js-set-abil-remove" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 12px">Remove</button>
+        </div>
+      </div>
+
+      <!-- Force Counters -->
+      <div style="display:grid; gap:6px">
+        <div style="font-weight:900; opacity:.9">Force Counters</div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
+          <input class="js-set-ckind input" type="text" placeholder="Counter kind (e.g., +1/+1)" style="flex:1; min-width:220px; padding:8px 10px; border:1px solid #2b3f63; border-radius:8px; background:#0f1829; color:#cfe1ff">
+          <button type="button" class="pill js-set-ckind-plus"  title="Radial picker (+)" style="border:1px solid #2b3f63;border-radius:999px;background:#142039;color:#cfe1ff;padding:6px 10px">＋</button>
+          <button type="button" class="pill js-set-ckind-minus" title="Clear kind"       style="border:1px solid #2b3f63;border-radius:999px;background:#142039;color:#cfe1ff;padding:6px 10px">—</button>
+
+<!-- quantity box -->
+<div class="nspin js-set-qty" data-field="setqty" style="margin-left:auto">
+  <button type="button" class="nbtn nsub" aria-label="decrease">−</button>
+  <input type="number" class="nspin-input js-set-qty-input" value="1" inputmode="numeric" readonly />
+  <button type="button" class="nbtn nadd" aria-label="increase">+</button>
+</div>
+
+        </div>
+        <div style="display:flex; gap:8px">
+          <button type="button" class="pill js-set-ctr-add"    style="border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 12px">Add</button>
+          <button type="button" class="pill js-set-ctr-remove" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 12px">Remove</button>
+        </div>
+      </div>
+
+      <!-- Bottom row buttons: Delete • Repair • Save (no Clear) -->
+      <div style="display:flex; gap:8px; justify-content:flex-end; border-top:1px solid #22385c; padding-top:10px; margin-top:4px">
+        <button type="button" class="pill js-cs-delete" style="border:1px solid #854040;border-radius:999px;background:#2b0f14;color:#ffd7d7;padding:6px 12px">Delete</button>
+        <button type="button" class="pill js-cs-repair" style="border:1px solid #355a2f;border-radius:999px;background:#12240f;color:#d7ffd7;padding:6px 12px">Repair</button>
+        <button type="button" class="pill js-cs-save"   style="border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 12px">Save</button>
+      </div>
+
+    </div>
+  </div>
+
 `;
 
 
@@ -597,6 +996,19 @@ const ActivatedAbilities = {
 // ensure default is ON even if browser restores form state
 const incSrc = bySel('.js-include-source', p);
 if (incSrc) incSrc.checked = true;
+// Mount universal Health controls into the Scan pane
+const scanWrap = bySel('.scanWrap', p);
+try { renderHealthFallback({ host: scanWrap, seats: activeSeats(), defaultAmount: 1 }); } catch {}
+
+// Prefill delegator (for buttons we render that carry data-prefill-*)
+p.addEventListener?.('click', (ev)=>{
+
+  const btn = ev.target?.closest?.('[data-prefill-mode]');
+  if (!btn) return;
+  const mode  = btn.getAttribute('data-prefill-mode');   // 'ability' | 'type'
+  const value = btn.getAttribute('data-prefill-value')||'';
+  prefillApply({ mode, value }, p);
+});
 
         function refreshTargets(scope){
           const meCards = listCardsForSeat(me);
@@ -827,6 +1239,140 @@ bySel('.js-typegrant-minus', p)?.addEventListener('click', (ev)=>{
 });
 
 
+// ===== SETTINGS (⚙️) tab — radial (+/−) wiring =====
+// Reuse the same CREATURE_TYPES / ABILITIES_LIST / COUNTER_TYPES and helpers
+
+// Force Types
+const setTypeInput = bySel('.js-set-type', p);
+bySel('.js-set-type-plus', p)?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  makeRadialPicker(ev.currentTarget, CREATURE_TYPES, 'Add type', (picked)=>{
+    addTokenToInput(setTypeInput, picked); // CSV-style (can add multiple)
+  });
+});
+bySel('.js-set-type-minus', p)?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  removeLastTokenFromInput(setTypeInput);
+});
+
+// Force Abilities / Effects
+const setAbilInput = bySel('.js-set-abil', p);
+bySel('.js-set-abil-plus', p)?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  makeRadialPicker(ev.currentTarget, ABILITIES_LIST, 'Add ability', (picked)=>{
+    addTokenToInput(setAbilInput, picked); // CSV-style (can add multiple)
+  });
+});
+bySel('.js-set-abil-minus', p)?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  removeLastTokenFromInput(setAbilInput);
+});
+
+// Force Counters
+const setCkindInput = bySel('.js-set-ckind', p);
+bySel('.js-set-ckind-plus', p)?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  makeRadialPicker(ev.currentTarget, COUNTER_TYPES, 'Pick counter kind', (picked)=>{
+    // single-value field (not CSV)
+    setCkindInput.value = picked;
+    setCkindInput.dispatchEvent(new Event('input', { bubbles:true }));
+  });
+});
+bySel('.js-set-ckind-minus', p)?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  setCkindInput.value = '';
+  setCkindInput.dispatchEvent(new Event('input', { bubbles:true }));
+});
+
+// NOTE: the quantity spinner in Settings uses .nspin and is already wired by wireNumberSpinner(p)
+// ===== SETTINGS (⚙️) Add/Remove persistence =====
+(function wireSettingsPersist(){
+  const room_id   = currentRoom();
+  const ownerSeat = me;              // same as other writes in this panel
+  const refreshSelf = async ()=>{
+    try{
+      await window.CardAttributes?.fetchIfMissing?.(cid);
+      window.CardAttributes?.applyToDom?.(cid);
+      window.CardAttributes?.refreshPT?.(cid);
+    }catch{}
+  };
+
+  // --- Force Types ---
+  bySel('.js-set-type-add', p)?.addEventListener('click', async ()=>{
+    const types = tokenizeCSV(bySel('.js-set-type', p)?.value || '');
+    if (!types.length) return;
+    await upsertRow(room_id, cid, ownerSeat, (json)=>{
+      types.forEach(t => addPermanentType(json, t));
+      return json;
+    });
+    await refreshSelf();
+  });
+
+  bySel('.js-set-type-remove', p)?.addEventListener('click', async ()=>{
+    const types = tokenizeCSV(bySel('.js-set-type', p)?.value || '');
+    if (!types.length) return;
+    await upsertRow(room_id, cid, ownerSeat, (json)=>{
+      types.forEach(t => removePermanentType(json, t));
+      return json;
+    });
+    await refreshSelf();
+  });
+
+  // --- Force Effects / Abilities ---
+  bySel('.js-set-abil-add', p)?.addEventListener('click', async ()=>{
+    const abil = tokenizeCSV(bySel('.js-set-abil', p)?.value || '');
+    if (!abil.length) return;
+    await upsertRow(room_id, cid, ownerSeat, (json)=>{
+      abil.forEach(a => addPermanentAbility(json, a));
+      return json;
+    });
+    await refreshSelf();
+  });
+
+  bySel('.js-set-abil-remove', p)?.addEventListener('click', async ()=>{
+    const abil = tokenizeCSV(bySel('.js-set-abil', p)?.value || '');
+    if (!abil.length) return;
+    await upsertRow(room_id, cid, ownerSeat, (json)=>{
+      abil.forEach(a => removePermanentAbility(json, a));
+      return json;
+    });
+    await refreshSelf();
+  });
+
+  // --- Force Counters (accumulate / decrement; delete at zero) ---
+  function getSetQty(){
+    const raw = bySel('.js-set-qty-input', p)?.value || '1';
+    const n = Number(raw); return Number.isFinite(n) ? Math.max(1, n|0) : 1;
+  }
+
+  bySel('.js-set-ctr-add', p)?.addEventListener('click', async ()=>{
+    const kind = (bySel('.js-set-ckind', p)?.value || '+1/+1').trim();
+    const qty  = getSetQty();
+    await upsertRow(room_id, cid, ownerSeat, (json)=>{
+      addPermanentCounter(json, kind, +qty);   // accumulate
+      return json;
+    });
+    await refreshSelf();
+  });
+
+  bySel('.js-set-ctr-remove', p)?.addEventListener('click', async ()=>{
+    const kind = (bySel('.js-set-ckind', p)?.value || '+1/+1').trim();
+    const qty  = getSetQty();
+    await upsertRow(room_id, cid, ownerSeat, (json)=>{
+      addPermanentCounter(json, kind, -qty);   // decrement (helper prunes <=0)
+      return json;
+    });
+    await refreshSelf();
+  });
+
+  // --- Bottom "Save" just ensures DOM is refreshed now; changes are already saved by upserts above ---
+  bySel('.js-cs-save', p)?.addEventListener('click', async ()=>{
+    await refreshSelf();
+    try { window.Overlays?.notify?.('ok', 'Saved.'); } catch {}
+  });
+})();
+
+
           // Optional type filter (matches current DOM types + card data if available)
           function cardMatchesType(cid, typeNorm){
             if (!typeNorm) return true;
@@ -996,6 +1542,15 @@ function addPermanentType(json, type){
   if (cap && !has) arr.push(cap);
 }
 
+function removePermanentType(json, type){
+  Object.assign(json, ensurePlainObject(json));
+  const arr = ensure(json, 'addedTypes', ()=>[]);
+  const norm = String(type||'').toLowerCase();
+  const i = arr.findIndex(v => String(v).toLowerCase() === norm);
+  if (i >= 0) arr.splice(i, 1);
+}
+
+
 
 
         function setMode(m){
@@ -1107,26 +1662,450 @@ const paneActive = bySel('.pane-active', p);
 
 
 function switchTab(which){
-  tabBtns.forEach(b=>{
-    const on = b.dataset.tab === which;
+  // Highlight the active tab button
+  tabBtns.forEach(b => {
+    const on = (b.dataset.tab === which);
     b.classList.toggle('active', on);
     b.style.background = on ? '#18304f' : '#0f1829';
   });
-if (which === 'apply' || which === 'scan') shieldTextInputsFromGlobalClicks(p);
 
-  paneScan.style.display   = (which === 'scan')   ? '' : 'none';
-  paneApply.style.display  = (which === 'apply')  ? '' : 'none';
-  paneActive.style.display = (which === 'active') ? '' : 'none';
+  // Show exactly one pane; reuse existing pane refs to avoid scope issues
+  if (paneScan)     paneScan.style.display     = (which === 'scan')     ? '' : 'none';
+  if (paneApply)    paneApply.style.display    = (which === 'apply')    ? '' : 'none';
+  if (paneActive)   paneActive.style.display   = (which === 'active')   ? '' : 'none';
 
-  // 👇 Add these calls to auto-refresh on tab swap
-  if (which === 'scan')    renderScan();
-  if (which === 'active')  renderActive();
+  // Settings pane is optional (new fourth pane living inside the wand)
+  const paneSettings = bySel('.pane-settings', p);
+  if (paneSettings) paneSettings.style.display = (which === 'settings') ? '' : 'none';
+
+  // Ensure typing works normally inside textboxes on these tabs
+  if (which === 'apply' || which === 'scan' || which === 'settings'){
+    shieldTextInputsFromGlobalClicks(p);
+  }
+
+  // Per-tab refresh hooks (unchanged behavior)
+  if (which === 'scan')   { try { renderScan();   } catch(e){ console.warn('[Scan] render failed', e); } }
+  if (which === 'active') { try { renderActive(); } catch(e){ console.warn('[Active] render failed', e); } }
+
+  // Nice-to-have: focus first input when opening Settings
+  if (which === 'settings'){
+    const firstInput =
+      bySel('.pane-settings input[type="text"]', p) ||
+      bySel('.pane-settings input[type="number"]', p) ||
+      bySel('.pane-settings textarea', p);
+    try { firstInput?.focus?.(); } catch {}
+  }
 }
+
 
 
 tabBtns.forEach(b => b.onclick = ()=> switchTab(b.dataset.tab));
 switchTab('scan');
+
+// Run one automatic scan the first time this overlay mounts
+if (!p.dataset.scanInit) {
+  p.dataset.scanInit = '1';
+  queueMicrotask(() => {
+	  // SETTINGS (⚙️) actions — mirror cog overlay Repair/Delete behavior 1:1
+// Source parity: tooltip.cog.patch.js  (performDelete / performRepair and helpers)
+
+(function wireSettingsActions(){
+  const btnRepair = bySel('.js-cs-repair', p);
+  const btnDelete = bySel('.js-cs-delete', p);
+  if (!btnRepair && !btnDelete) return;
+
+  const sendRTC = (msg) => (window.RTC?.send?.(msg) ?? window.sendRTC?.(msg));
+
+  const getEl = () => {
+    const sel = `.card[data-cid="${CSS.escape(String(cid))}"]`;
+    return document.querySelector(sel) || null;
+  };
+
+  function scryPayloadFromEl(el){
+    const tcid = el?.dataset?.cid || '';
+    const og   = (typeof window.getCardDataById === 'function' && tcid)
+      ? (window.getCardDataById(tcid) || {})
+      : {};
+    return {
+      cid: tcid,
+      name:        og.name        ?? el?.dataset?.name        ?? '',
+      img:         og.img         ?? el?.dataset?.img         ?? (el?.querySelector('img')?.src || ''),
+      type_line:   og.type_line   ?? el?.dataset?.type_line   ?? '',
+      mana_cost:   og.mana_cost   ?? el?.dataset?.mana_cost   ?? '',
+      oracle_text: og.oracle_text ?? el?.dataset?.oracle_text ?? '',
+      ogpower:     og.baseP ?? og.power ?? el?.dataset?.baseP ?? el?.dataset?.ogpower ?? '',
+      ogtoughness: og.baseT ?? og.toughness ?? el?.dataset?.baseT ?? el?.dataset?.ogtoughness ?? '',
+      ogTypes:     Array.isArray(og.ogTypes)   ? og.ogTypes   : tryJson(el?.dataset?.ogTypes)   || [],
+      ogEffects:   Array.isArray(og.ogEffects) ? og.ogEffects : tryJson(el?.dataset?.ogEffects) || []
+    };
+  }
+  function tryJson(s){ try{ return JSON.parse(s || ''); }catch{ return null; } }
+
+  function hydrateCardNode(node, seat, payload){
+    if (!node) return;
+    if (Number.isFinite(+payload.ogpower))     node.dataset.baseP = String(+payload.ogpower);
+    if (Number.isFinite(+payload.ogtoughness)) node.dataset.baseT = String(+payload.ogtoughness);
+    if (payload.ogEffects) node.dataset.ogEffects = JSON.stringify(payload.ogEffects || []);
+    if (payload.ogTypes)   node.dataset.ogTypes   = JSON.stringify(payload.ogTypes   || []);
+    node.dataset.name      = payload.name        || node.dataset.name || '';
+    node.dataset.type_line = payload.type_line   || node.dataset.type_line || '';
+    node.dataset.typeLine  = payload.type_line   || node.dataset.typeLine  || '';
+    if (payload.mana_cost)   node.dataset.mana_cost = String(payload.mana_cost);
+    if (payload.oracle_text) node.dataset.oracle    = String(payload.oracle_text);
+    if (!node.dataset.owner && seat != null) node.dataset.owner = String(seat);
+
+    try {
+      if (typeof attachTooltip === 'function') {
+        attachTooltip(node, {
+          name: node.dataset.name || '',
+          typeLine: node.dataset.type_line || '',
+          costHTML: '',
+          oracle: node.dataset.oracle || ''
+        });
+      }
+    } catch {}
+
+    try {
+      window.CardAttributes?.applyToDom?.(cid);
+      window.CardAttributes?.refreshPT?.(cid);
+      requestAnimationFrame(() => window.CardAttributes?.refreshPT?.(cid));
+    } catch {}
+
+    try { window.reflowAll?.(); } catch {}
+  }
+
+  function respawnAt({ cid, seat, x, y, payload }){
+    const cardObj = {
+      name: payload.name || '',
+      img:  payload.img  || '',
+      type_line:   payload.type_line   || '',
+      mana_cost:   payload.mana_cost   || '',
+      oracle_text: payload.oracle_text || '',
+      ogpower:     Number.isFinite(+payload.ogpower)     ? (+payload.ogpower)     : undefined,
+      ogtoughness: Number.isFinite(+payload.ogtoughness) ? (+payload.ogtoughness) : undefined,
+      ogTypes:     Array.isArray(payload.ogTypes)   ? payload.ogTypes   : [],
+      ogEffects:   Array.isArray(payload.ogEffects) ? payload.ogEffects : [],
+      power:'', toughness:'', loyalty:''
+    };
+
+    let node = null;
+    if (typeof window.spawnTableCard === 'function'){
+      node = window.spawnTableCard(cardObj, x, y, { cid, owner: seat }) || null;
+      if (!node){
+        node = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`) || null;
+      }
+    } else if (typeof window.Zones?.spawnToTable === 'function'){
+      window.Zones.spawnToTable({ ...cardObj, cid }, seat);
+      const sel = `.card[data-cid="${CSS.escape(String(cid))}"]`;
+      requestAnimationFrame(() => {
+        const n = document.querySelector(sel);
+        if (n){ n.style.left = `${x}px`; n.style.top = `${y}px`; }
+      });
+    }
+
+    try {
+      sendRTC?.({
+        type: 'spawn',
+        cid, owner: seat,
+        name: cardObj.name, img: cardObj.img,
+        x, y,
+        ogpower: cardObj.ogpower, ogtoughness: cardObj.ogtoughness,
+        ogTypes: cardObj.ogTypes, ogEffects: cardObj.ogEffects,
+        type_line: cardObj.type_line, mana_cost: cardObj.mana_cost, oracle_text: cardObj.oracle_text,
+        power:'', toughness:'', loyalty:''
+      });
+    } catch(e){ console.warn('[SETTINGS][NET] spawn failed', e); }
+
+    if (node) hydrateCardNode(node, seat, payload);
+    else {
+      const sel = `.card[data-cid="${CSS.escape(String(cid))}"]`;
+      requestAnimationFrame(() => {
+        const n = document.querySelector(sel);
+        if (n){ n.style.left = `${x}px`; n.style.top = `${y}px`; }
+        hydrateCardNode(n, seat, payload);
+      });
+    }
+  }
+
+  async function performDelete(el){
+    if (!el) return;
+    const dcid = el.dataset.cid; if (!dcid) return;
+
+    try { window.Stacking?.detach?.(el); } catch {}
+
+    try {
+      const kill = document.querySelector(`.card[data-cid="${CSS.escape(dcid)}"]`);
+      kill?.remove();
+      window.Zones?.cfg?.removeTableCardDomById?.(dcid);
+    } catch(e){ console.warn('local hard delete failed', e); }
+
+    try { sendRTC?.({ type:'card:delete', cid: dcid }); } catch(e){
+      console.warn('[SETTINGS][NET] delete failed', e);
+    }
+  }
+
+  async function fetchCardFromScryfallByName(name){
+    const base = 'https://api.scryfall.com/cards/named?exact=';
+    const url  = base + encodeURIComponent(String(name || '').trim());
+    const res  = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error('Scryfall lookup failed: ' + res.status);
+    const j = await res.json();
+
+    const face = Array.isArray(j.card_faces) && j.card_faces.length ? j.card_faces[0] : j;
+    let img = j.image_uris?.normal || j.image_uris?.png ||
+              face.image_uris?.normal || face.image_uris?.png || '';
+
+    return {
+      cid: '',
+      name:        j.name || face.name || '',
+      type_line:   j.type_line || face.type_line || '',
+      mana_cost:   j.mana_cost || face.mana_cost || '',
+      oracle_text: j.oracle_text || face.oracle_text || '',
+      ogpower:     Number.isFinite(+j.power) ? +j.power :
+                   (Number.isFinite(+face.power) ? +face.power : undefined),
+      ogtoughness: Number.isFinite(+j.toughness) ? +j.toughness :
+                   (Number.isFinite(+face.toughness) ? +face.toughness : undefined),
+      ogTypes:     [],
+      ogEffects:   [],
+      img
+    };
+  }
+
+  async function performRepair(el){
+    if (!el) return;
+
+    const rcid  = el.dataset?.cid || '';
+    const seat  = Number(el.dataset?.owner || mySeat());
+    const left  = parseFloat(el.style.left || '0');
+    const top   = parseFloat(el.style.top  || '0');
+    const fromDom = scryPayloadFromEl(el) || {};
+    const name    = (fromDom.name || el.dataset?.name || '').trim();
+    if (!rcid) return;
+
+    await performDelete(el);
+
+    let payload = fromDom;
+    if (name) {
+      try {
+        const sc = await fetchCardFromScryfallByName(name);
+        payload = { ...sc, img: sc.img || fromDom.img || '' };
+      } catch (e) {
+        console.warn('[Repair] Scryfall lookup failed; using DOM payload', e);
+      }
+    }
+
+    try {
+      document.querySelectorAll(`.card[data-cid="${CSS.escape(rcid)}"]`).forEach(n => n.remove());
+      window.Zones?.cfg?.removeTableCardDomById?.(rcid);
+    } catch {}
+
+    respawnAt({ cid: rcid, seat, x:left, y:top, payload });
+
+    try { window.Overlays?.notify?.('ok', 'Card repaired.'); } catch {}
+  }
+
+  // Wire the two buttons
+  btnDelete?.addEventListener('click', ()=>{
+    const el = getEl(); if (!el) return;
+    performDelete(el);
+  });
+  btnRepair?.addEventListener('click', ()=>{
+    const el = getEl(); if (!el) return;
+    performRepair(el);
+  });
+})();
+
+// =============================
+// SETTINGS: Add / Remove (Types, Abilities, Counters) with suppression
+// =============================
+(function wireSettingsAddRemove(){
+  const room_id = currentRoom();
+  const sourceEl = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+  const targetCid = sourceEl?.dataset?.cid || cid;
+  if (!targetCid) return;
+
+  // helpers
+  const norm = s => String(s||'').trim().toLowerCase();
+  const cap  = s => String(s||'')
+    .trim()
+    .split(/\s+/).map(w => w ? (w[0].toUpperCase()+w.slice(1).toLowerCase()) : '').join(' ');
+
+  const ensureObj = v => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
+  const ensureArr = v => Array.isArray(v) ? v : [];
+
+  async function writeJson(updater){
+    await ensureSupabase();
+    await upsertRow(room_id, targetCid, mySeat(), (json) => {
+      const j = ensureObj(json);
+      j.suppress = ensureObj(j.suppress);
+      j.suppress.types   = ensureArr(j.suppress.types);
+      j.suppress.effects = ensureArr(j.suppress.effects);
+      j.suppress.counters= ensureArr(j.suppress.counters);
+      return updater(j) || j;
+    });
+    // repaint
+    try{
+      await window.CardAttributes?.fetchIfMissing?.(targetCid);
+      window.CardAttributes?.applyToDom?.(targetCid);
+      window.CardAttributes?.refreshPT?.(targetCid);
+      postFilterDomBySuppression(targetCid); // immediate visual parity
+    }catch{}
+  }
+
+  // Remove badges/icons that are suppressed (in case applyToDom doesn't yet know)
+  function postFilterDomBySuppression(cid){
+    try{
+      const row = window.CardAttributes?.get?.(cid) || {};
+      const sup = ensureObj(row.suppress);
+      const sTypes   = new Set(ensureArr(sup.types  ).map(norm));
+      const sEffects = new Set(ensureArr(sup.effects).map(norm));
+      const host = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+      if (!host) return;
+
+      // types: look for badges with text content
+      host.querySelectorAll('[data-badge="type"], .badge.type, .type-badge').forEach(b=>{
+        const t = norm(b.textContent);
+        if (sTypes.has(t)) b.remove();
+      });
+
+      // effects: ability badges/keywords
+      host.querySelectorAll('[data-badge="effect"], .badge.effect, .badge.keyword').forEach(b=>{
+        const t = norm(b.textContent);
+        if (sEffects.has(t)) b.remove();
+      });
+    }catch{}
+  }
+
+  // ---------- TYPE add/remove ----------
+  const typeInput  = bySel('.js-set-type', p);
+  const btnTypeAdd = bySel('.js-set-type-add', p);
+  const btnTypeRem = bySel('.js-set-type-remove', p);
+
+  btnTypeAdd?.addEventListener('click', () => {
+    const raw = typeInput?.value || '';
+    const val = cap(raw); const key = norm(raw);
+    if (!val) return;
+
+    writeJson(j => {
+      // clear suppression first
+      j.suppress.types = ensureArr(j.suppress.types).filter(x => norm(x) !== key);
+      // add to permanent list if not already present
+      j.addedTypes = ensureArr(j.addedTypes);
+      const has = j.addedTypes.some(x => norm(x) === key);
+      if (!has) j.addedTypes.push(val);
+      return j;
+    });
+  });
+
+  btnTypeRem?.addEventListener('click', () => {
+    const raw = typeInput?.value || '';
+    const val = cap(raw); const key = norm(raw);
+    if (!val) return;
+
+    writeJson(j => {
+      // try remove from addedTypes first
+      j.addedTypes = ensureArr(j.addedTypes).filter(x => norm(x) !== key);
+      // if it wasn’t an added type, suppress the innate one
+      const s = new Set(ensureArr(j.suppress.types).map(norm));
+      if (!s.has(key)) j.suppress.types.push(val);
+      return j;
+    });
+  });
+
+  // ---------- ABILITY add/remove ----------
+  const abilInput  = bySel('.js-set-abil', p);
+  const btnAbAdd   = bySel('.js-set-abil-add', p);
+  const btnAbRem   = bySel('.js-set-abil-remove', p);
+
+  btnAbAdd?.addEventListener('click', () => {
+    const raw = abilInput?.value || '';
+    const val = cap(raw); const key = norm(raw);
+    if (!val) return;
+
+    writeJson(j => {
+      j.suppress.effects = ensureArr(j.suppress.effects).filter(x => norm(x) !== key);
+      j.effects = ensureArr(j.effects);
+      const has = j.effects.some(x => norm(x) === key);
+      if (!has) j.effects.push(val);
+      return j;
+    });
+  });
+
+  btnAbRem?.addEventListener('click', () => {
+    const raw = abilInput?.value || '';
+    const val = cap(raw); const key = norm(raw);
+    if (!val) return;
+
+    writeJson(j => {
+      j.effects = ensureArr(j.effects).filter(x => norm(x) !== key);
+      const s = new Set(ensureArr(j.suppress.effects).map(norm));
+      if (!s.has(key)) j.suppress.effects.push(val);
+      return j;
+    });
+  });
+
+  // ---------- COUNTERS add/remove ----------
+  const ckindInput = bySel('.js-set-ckind', p);
+  const qtyEl      = bySel('.js-set-qty-input', p);
+  const btnCtrAdd  = bySel('.js-set-ctr-add', p);
+  const btnCtrRem  = bySel('.js-set-ctr-remove', p);
+
+  function setCounter(json, name, delta){
+    const arr = Array.isArray(json.counters) ? json.counters
+      : (json.counters && typeof json.counters==='object'
+         ? Object.entries(json.counters).map(([n,q])=>({name:n, qty:+q||0}))
+         : []);
+    const key = norm(name);
+    const idx = arr.findIndex(c => norm(c.name) === key);
+    if (idx >= 0){
+      arr[idx].qty = Math.max(0, (Number(arr[idx].qty)||0) + delta);
+    } else if (delta > 0){
+      arr.push({ name: cap(name), qty: delta });
+    }
+    json.counters = arr.filter(c => Number(c.qty) > 0);
+  }
+
+  btnCtrAdd?.addEventListener('click', () => {
+    const raw = ckindInput?.value || '+1/+1';
+    const n   = Math.max(1, Number(qtyEl?.value || 1)|0);
+    if (!raw) return;
+
+    writeJson(j => {
+      // counters rarely have “innate” baselines, but support suppression parity anyway
+      j.suppress.counters = ensureArr(j.suppress.counters).filter(x => norm(x) !== norm(raw));
+      setCounter(j, raw, +n);
+      return j;
+    });
+  });
+
+  btnCtrRem?.addEventListener('click', () => {
+    const raw = ckindInput?.value || '+1/+1';
+    const n   = Math.max(1, Number(qtyEl?.value || 1)|0);
+    if (!raw) return;
+
+    writeJson(j => {
+      setCounter(j, raw, -n);
+      // if nothing left and you want to *hide* default/baseline counters that may appear elsewhere:
+      if (!ensureArr(j.counters).some(c => norm(c.name) === norm(raw))) {
+        const s = new Set(ensureArr(j.suppress.counters).map(norm));
+        if (!s.has(norm(raw))) j.suppress.counters.push(cap(raw));
+      }
+      return j;
+    });
+  });
+
+  // initial post-filter pass for the card visible right now
+  try { postFilterDomBySuppression(targetCid); } catch {}
+})();
+
+
+    try { renderScan(); }
+    catch (e) { console.error('[Scan] autoscan failed:', e); }
+  });
+}
+
 bySel('.js-rescan', p)?.addEventListener('click', renderScan);
+
 
 
 // ACTIVE tab controls
@@ -1380,27 +2359,226 @@ return { el, cid: tcid, json };
   } catch {}
 })(currentRoom(), '<THE_BAD_CID>', mySeat());
 
-function getOracleForCid(cid){
-  const el = findCardEl(cid);
-  const txt = el?.dataset?.oracle_text || el?.dataset?.oracle || '';
-  return String(txt || '').trim();
-}
+
 function needsTap(text){
   return /\btap(?: this| it)?\:|^tap[, ]/i.test(text) || /\btap this\b/i.test(text);
 }
 
+function addCreateTokenFallback(actions, fullOracle){
+  // If we already have a create_tokens action, don’t duplicate
+  const hasCreate = actions.some(a => a.kind === 'create_tokens');
+  if (hasCreate) return actions;
+
+  // Look for literal “Create a/an/1 … token” anywhere in the oracle (incl. reminder () text)
+  const m = fullOracle.match(/\bcreate\b[^.]*?\b(?:a|an|one|1|\d+|X)?\s*([A-Z][A-Za-z-]*(?:\s+[A-Z][A-Za-z-]*)*)\s+token\b/i);
+  if (!m) return actions;
+
+  const tok = (m[1] || '').replace(/\s+tokens?$/i,'').trim();
+  const amtMatch = fullOracle.match(/\bcreate\s+(X|a|an|one|1|\d+)\b/i);
+  let n = 1;
+  if (amtMatch) {
+    const t = amtMatch[1];
+    n = /^x$/i.test(t) ? 'X' : (isNaN(+t) ? 1 : +t);
+  }
+  actions = actions.concat([{ kind:'create_tokens', amount:n, token:tok, controller:'you' }]);
+  return actions;
+}
+
+
 function renderScan(){
- const host = bySel('.scanWrap', p);
+  // ---------- Resolve card + oracle FIRST (avoid TDZ on `oracle`) ----------
+  const cardEl = anchorEl || findCardEl(cid);
+  const name   = cardEl?.dataset?.name || cid;
+  const oracle = getOracleForCid(cid);
+
+  // Show the Oracle text (pretty if manaToHtml is available)
+  const oracleEl = bySel('.js-oracle', p);
+// inside renderScan(), where you populate .js-oracle
+if (oracleEl){
+  try { oracleEl.innerHTML = manaToHtml(oracle, { colored: true }); }
+  catch { oracleEl.textContent = oracle; }
+}
+
+
+  const host = bySel('.scanWrap', p);
+  if (!host) return;
+
+  // If no oracle, bail early with a friendly message
+  if (!oracle){
+    host.innerHTML = `<div style="opacity:.8">No Oracle text available for ${name}.</div>`;
+    return;
+  }
+
+  // ---------- Helpers local to renderScan ----------
+  function escapeHtml(s){ return String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;', "'":'&#39;'}[m])); }
+
+ // Render a quick one-off option button (used inside choice rows)
+function optionBtnHtml(opt){
+  if (opt.kind === 'pt_mod'){
+    const label = `${opt.power>=0?'+':''}${opt.power}/${opt.toughness>=0?'+':''}${opt.toughness}${opt.untilEOT?' (EOT)':''}`;
+    const eot = opt.untilEOT ? 1 : 0;
+    return `<button type="button" class="pill" data-act="pt_mod" data-dp="${opt.power}" data-dt="${opt.toughness}" data-eot="${eot}">${label}</button>`;
+  }
+  if (opt.kind === 'create_tokens'){
+    const n = opt.amount ?? 1;
+    const lab = `Create ${n} ${opt.token}${n===1?'':'s'}`;
+    return `<button type="button" class="pill" data-act="create_tokens" data-n="${n}" data-token="${opt.token}">${lab}</button>`;
+  }
+// in optionBtnHtml
+if (opt.kind === 'add_mana'){
+  const syms = opt.symbols || [];
+  const manaHtml = syms.length
+    ? syms.map(s => manaToHtml(`{${s}}`, { colored:true })).join(' ')
+    : manaToHtml('{?}', { colored:true });
+  return `<button type="button" class="pill" data-act="add_mana" data-symbols="${syms.join(',')}">Add ${manaHtml}</button>`;
+}
+
+// Search buttons for choice options
+if (opt.kind === 'open_zone_filter') {
+  const z = String(opt.zone || 'library').toLowerCase();
+  const nice = z.charAt(0).toUpperCase() + z.slice(1); // Library/Graveyard/Exile/Hand/Deck
+  const q = String(opt.query || '').trim();
+  const label = q ? `Search your ${nice} for ${escapeHtml(q)}` : `Search your ${nice}`;
+  return `<button type="button" class="pill" data-act="open_zone_filter" data-zone="${escapeHtml(z)}" data-q="${escapeHtml(q)}">${label}</button>`;
+}
+
+// Fallback for plain 'search_library' actions that may show up as options
+if (opt.kind === 'search_library') {
+  // treat as "open zone filter: library" with no query (generic 'a card')
+  return `<button type="button" class="pill" data-act="open_zone_filter" data-zone="library" data-q="">Search your Library</button>`;
+}
+
+
+  if (opt.kind === 'grant_keyword'){
+    const lab = `Prefill: ${opt.keyword}${opt.untilEOT?' (EOT)':''}`;
+    return `<button type="button" class="pill" data-prefill-mode="ability" data-prefill-value="${escapeHtml(opt.keyword||'')}">${lab}</button>`;
+  }
+  return `<button type="button" class="pill" disabled>${opt.kind}</button>`;
+}
+
+// Render a concrete action row button
+function actionRow(a){
+  const pill = (attrs, label) => `<button type="button" class="pill" ${attrs}>${label}</button>`;
+  const num  = v => Number(v ?? 0);
+
+  switch (a.kind) {
+
+
+
+	  
+    case 'gain_life': {
+      const n = num(a.amount || 1);
+      return pill(`data-act="gain_life" data-n="${n}"`, `Gain ${n} life`);
+    }
+    case 'lose_life': {
+      const n = num(a.amount || 1);
+      return pill(`data-act="lose_life" data-n="${n}"`, `Lose ${n} life`);
+    }
+	
+case 'open_zone_filter': {
+  const z = String(a.zone || 'graveyard');
+  const nice = z.charAt(0).toUpperCase() + z.slice(1);
+  const q = String(a.query || '').trim();
+  const label = q ? `Search your ${nice} for ${escapeHtml(q)}` : `Search your ${nice}`;
+  return `<button type="button" class="pill" data-act="open_zone_filter" data-zone="${escapeHtml(z)}" data-q="${escapeHtml(q)}">${label}</button>`;
+}
+
+
+    case 'draw_cards': {
+      const n = num(a.amount || 1);
+      return pill(`data-act="draw_cards" data-n="${n}"`, `Draw ${n}`);
+    }
+    case 'deal_damage': {
+      const n = num(a.amount || 1);
+      return pill(`data-act="deal_damage" data-n="${n}"`, `Deal ${n} damage`);
+    }
+    case 'put_counters': {
+      const n    = num(a.amount || 1);
+      const kind = a.counter || '+1/+1';
+      const s    = n === 1 ? '' : 's';
+      return pill(
+        `data-prefill-mode="counter" data-prefill-ckind="${escapeHtml(kind)}" data-prefill-camt="${n}"`,
+        `Prefill ${n} ${kind} counter${s}`
+      );
+    }
+    case 'pt_mod': {
+      const dp  = num(a.power);
+      const dt  = num(a.toughness);
+      const lab = `${dp>=0?'+':''}${dp}/${dt>=0?'+':''}${dt}${a.untilEOT?' (EOT)':''}`;
+      return pill(
+        `data-prefill-mode="pt" data-prefill-dp="${dp}" data-prefill-dt="${dt}" data-prefill-eot="${a.untilEOT?1:0}"`,
+        `Prefill ${lab}`
+      );
+    }
+case 'add_mana': {
+  const syms = a.symbols || [];
+  const manaHtml = syms.length
+    ? syms.map(s => manaToHtml(`{${s}}`, { colored:true })).join(' ')
+    : manaToHtml('{?}', { colored:true });
+  return pill(`data-act="add_mana" data-symbols="${syms.join(',')}"`, `Add ${manaHtml}`);
+}
+    case 'create_tokens': {
+      const n = num(a.amount || 1);
+      const lab = `Create ${n} ${a.token}${n===1?'':'s'}`;
+      return `<button type="button" class="pill" data-act="create_tokens" data-n="${n}" data-token="${a.token}">${lab}</button>`;
+    }
+    case 'grant_keyword': {
+      const kw = a.keyword || '';
+      const eot = a.untilEOT ? ' (EOT)' : '';
+      return `<button type="button" class="pill" data-prefill-mode="ability" data-prefill-value="${escapeHtml(kw)}">Prefill: ${escapeHtml(kw)}${eot}</button>`;
+    }
+    case 'set_color': {
+      const eot = a.untilEOT ? 1 : 0;
+      const cs  = (a.colors || []).join(',');
+      return pill(`data-act="set_color" data-colors="${cs}" data-eot="${eot}"`, `Set color`);
+    }
+    case 'set_creature_type': {
+      const t = a.type || '';
+      return `<button type="button" class="pill" data-prefill-mode="type" data-prefill-value="${escapeHtml(t)}">Prefill: type = ${escapeHtml(t)}</button>`;
+    }
+    case 'choice':
+      return ''; // expanded elsewhere
+    default:
+      return `<div class="pill gray" title="Unknown action">${a.kind || 'unknown'}</div>`;
+  }
+}
+
+
+function choiceRow(choice){
+  const label = choice.label ? `Choose one — ${choice.label}` : 'Choose one';
+  const buttons = (choice.options || []).map(optionBtnHtml).join(' ');
+  return `
+    <div style="border:1px dashed #2a375a;border-radius:10px;padding:10px;margin:6px 0">
+      <div class="pill gray" style="margin-bottom:8px">${label}</div>
+      <div class="row" style="display:flex;flex-wrap:wrap;gap:8px">${buttons}</div>
+    </div>
+  `;
+}
+
+ 
   if (!host) return;
   // One delegated handler; bind once
   if (!host._bound) {
    host._bound = true;
    host.addEventListener('click', (ev) => {
-  const btn = ev.target.closest('button[data-act]');
-  if (!btn || !host.contains(btn)) return;
-  ev.preventDefault();
-  ev.stopPropagation();
-  performActionFor(btn);        // uses the same logic as your old wireActionButton
+      const actBtn = ev.target.closest('button[data-act]');
+     const pfBtn  = ev.target.closest('button[data-prefill-mode]');
+     if (pfBtn && host.contains(pfBtn)) {
+       ev.preventDefault(); ev.stopPropagation();
+       const mode   = pfBtn.dataset.prefillMode;
+       // counters
+       if (mode === 'counter') {
+         prefillApply({ mode: 'counter',
+                        value: pfBtn.dataset.prefillCkind || '+1/+1',
+                        camt:  Number(pfBtn.dataset.prefillCamt || 1) });
+         switchTab('apply');
+         return;
+       }
+       // ability/type are already supported below; keep working:
+     }
+     if (!actBtn || !host.contains(actBtn)) return;
+     ev.preventDefault(); ev.stopPropagation();
+     performActionFor(actBtn);    // uses the same logic as your old wireActionButton
 });
  }
 
@@ -1408,66 +2586,129 @@ function renderScan(){
   host.innerHTML = '<div style="opacity:.85">Scanning…</div>';
 
   // inputs from the mini controls in the Scan tab header
-  const xVal  = Number(bySel('.js-xval',  p)?.value || 1);
 
-  // get oracle text from the focused card
-  const cardEl = anchorEl || findCardEl(cid);
-  const name   = cardEl?.dataset?.name || cid;
-  const oracle = String(cardEl?.dataset?.oracle_text || cardEl?.dataset?.oracle || '').trim();
+const xVal = 1; // silent default; we still concretize X=1 for actionable buttons
+const resolveX = (n) => (n === 'X' ? xVal : n);
+
+
+
+console.log('[Scan] cardEl?', !!cardEl, 'cid:', cid, 'dataset:', cardEl?.dataset);
+console.log('[Scan] oracle for', cid, ':', (oracle||'').slice(0,120));
+
+
   if (!oracle){
     host.innerHTML = `<div style="opacity:.8">No Oracle text available for ${name}.</div>`;
     return;
   }
 
   // === Use your parser ===
-  const { abilitiesOnly, innateTokens } = AD.detectAll(oracle);  // heads + split chain steps
-  // helper: resolve "X" to UI value for concrete buttons
-  const resolveX = (n) => (n === 'X' ? xVal : n);
+const { abilitiesOnly, innateTokens } = AD.detectAll(oracle);  // heads + split chain steps
 
-  // build UI (one block per ability)
-  const rows = abilitiesOnly.map((ab, i) => {
-    const id = `scan-steps-${i}`;
-    const reqId = `scan-req-${i}`;
-    return `
-      <div style="border:1px solid #2b3f63;border-radius:10px;padding:10px">
-        <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px">
-          <div>
-            <span class="pill gray" style="margin-right:6px">${ab.type.toUpperCase()}</span>
-            <span style="opacity:.92">${escapeHtml(ab.raw)}</span>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <button id="${reqId}" class="togglebtn" aria-pressed="false">
-              <span class="dot"></span><span>${escapeHtml(ab.cost ? `Pay cost: ${ab.cost}` : (ab.type==='activated' ? 'Pay activation cost' : 'Trigger happened'))}</span>
-            </button>
-            <button class="pill js-activate" data-i="${i}" disabled>Activate</button>
-          </div>
-        </div>
-        <div id="${id}" class="steps" style="display:none"></div>
-      </div>
-    `;
-  }).join('') || `<div style="opacity:.8">No activated/triggered abilities detected.</div>`;
+// --- NEW: coalesce trailing “note-only” lines into the previous ability ---
+function isNoteOnly(item){
+  // If inferActionsFromText returns at least one action and all are 'note', treat as note-only
+  const acts = AD.inferActionsFromText(item.effect ?? item.raw);
+  return acts.length > 0 && acts.every(a => a?.kind === 'note');
+}
 
-  // optional: show innate token abilities (Food/Treasure/Clue etc.) under the list
+// Produce a grouped list where note-only items are appended to the last non-note ability
+const grouped = [];
+for (const item of abilitiesOnly){
+  if (grouped.length && isNoteOnly(item)) {
+    const prev = grouped[grouped.length - 1];
+    const joiner = /[.?!:]$/.test((prev.effect ?? prev.raw ?? '').trim()) ? ' ' : '. ';
+    const noteText = (item.raw || '').trim();
+
+    if (prev.effect) prev.effect = (prev.effect || '') + joiner + noteText;
+    else             prev.raw    = (prev.raw    || '') + joiner + noteText;
+
+    // keep a list of merged notes (optional UI below)
+    prev._notes = (prev._notes || []).concat(noteText);
+    continue;
+  }
+  grouped.push({ ...item });
+}
+
+// helper: resolve "X" to UI value for concrete buttons
+// build UI (one block per ability) — always expanded, no toggles/buttons
+const rows = grouped.map((ab, i) => {
+  // ---- Infer concrete actions right away ----
+  let actions = AD.inferActionsFromText(ab.effect ?? ab.raw)
+    .map(a => {
+      if (a.kind === 'deal_damage' || a.kind === 'draw_cards' || a.kind === 'gain_life' ||
+          a.kind === 'lose_life'   || a.kind === 'put_counters' || a.kind === 'scry' || a.kind === 'surveil') {
+        if (a.amount === 'X') a.amount = resolveX(a.amount);
+      }
+      if (a.kind === 'pt_mod') {
+        if (a.power === 'X')     a.power = resolveX(a.power);
+        if (a.toughness === 'X') a.toughness = resolveX(a.toughness);
+      }
+      if (a.kind === 'create_tokens' && a.amount === 'X') a.amount = resolveX(a.amount);
+      return a;
+    });
+
+  // ---- Fallback: if reminder text said “Create a <Token> token”, add it ----
+  actions = addCreateTokenFallback(actions, oracle);
+
+  const stepsHtml = actions
+    .map(a => (a.kind === 'choice' ? choiceRow(a) : actionRow(a)))
+    .join('') || '<div style="opacity:.8">No concrete actions.</div>';
+
+  // Optional: show the appended note(s) as muted subtext (useful for debugging/visibility)
+  const notesHtml = (ab._notes && ab._notes.length)
+    ? `<div style="margin-top:6px;opacity:.75;font-size:.92em">${ab._notes.map(n=>escapeHtml(n)).join(' ')}</div>`
+    : '';
+
+  return `
+  <div style="border:1px solid #2b3f63;border-radius:10px;padding:10px">
+    <div style="margin-bottom:6px">
+      <span style="opacity:.92">${manaToHtml(ab.raw, { asCost: true, colored: true })}</span>
+    </div>
+    <div class="steps">${stepsHtml}</div>
+    ${notesHtml}
+  </div>
+`;
+}).join('') || `<div style="opacity:.8">No activated/triggered abilities detected.</div>`;
+
+
+
+  // Innate token abilities (Food/Treasure/Clue etc.) — auto-expanded, no toggles
   const innate = innateTokens.map((ta, j) => {
-    const id = `scan-innate-${j}`;
+    // Precompute concrete actions (resolve X the same way as for heads)
+    let actions = AD.inferActionsFromText(ta.effect).map(a => {
+      if (a?.amount === 'X') a.amount = resolveX(a.amount);
+      return a;
+    });
+    const stepsHtml = actions.map(a => actionRow(a)).join('')
+                     || '<div style="opacity:.8">No concrete actions.</div>';
+
     return `
       <div style="border:1px dashed #2a375a;border-radius:10px;padding:10px">
-        <div>
+        <div style="margin-bottom:6px">
           <span class="pill gray" style="margin-right:6px">INNATE</span>
           A ${escapeHtml(ta.token)} token is an artifact with “${escapeHtml(ta.cost)}: ${escapeHtml(ta.effect)}”
         </div>
-        <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px">
-          <button class="togglebtn js-inn-cost" data-j="${j}" aria-pressed="false">
-            <span class="dot"></span><span>Pay cost: ${escapeHtml(ta.cost)}</span>
-          </button>
-          <button class="pill js-inn-activate" data-j="${j}" disabled>Activate</button>
-        </div>
-        <div id="${id}" class="steps" style="display:none"></div>
+        <div class="steps">${stepsHtml}</div>
       </div>
     `;
   }).join('');
 
   host.innerHTML = rows + (innate ? `<div style="margin-top:8px">${innate}</div>` : '');
+
+// After: host.innerHTML = rows + (innate ? `<div style="margin-top:8px">${innate}</div>` : '');
+abilitiesOnly.forEach((ab, i) => {
+  // 1) Pretend the requirement happened (for triggered) / cost acknowledged (for activated)
+  const req = bySel(`#scan-req-${i}`, host);
+  if (req) req.setAttribute('aria-pressed', 'true');
+
+  // 2) Enable "Activate" and auto-open the action steps
+  const act = host.querySelector(`.js-activate[data-i="${i}"]`);
+  if (act) {
+    act.disabled = false;
+    act.click(); // auto-expand immediately
+  }
+});
+
 
   // requirement toggles enable each Activate
   abilitiesOnly.forEach((ab, i) => {
@@ -1504,117 +2745,25 @@ function renderScan(){
           if (a.kind === 'create_tokens' && a.amount === 'X') a.amount = resolveX(a.amount);
           return a;
         });
-// Turn a single choice option into a <button> that your existing
-// wireActionButton() can execute (by setting data-* the same way
-// actionRow() does for non-choice actions).
-function optionBtnHtml(opt){
-  if (opt.kind === 'pt_mod'){
-    const label = `${opt.power>=0?'+':''}${opt.power}/${opt.toughness>=0?'+':''}${opt.toughness}${opt.untilEOT?' (EOT)':''}`;
-    const eot = opt.untilEOT ? 1 : 0;
-    return `<button type="button" class="pill" data-act="pt_mod" data-dp="${opt.power}" data-dt="${opt.toughness}" data-eot="${eot}">${label}</button>`;
-  }
-  if (opt.kind === 'create_tokens'){
-    const n = opt.amount ?? 1;
-    const lab = `Create ${n} ${opt.token}${n===1?'':'s'}`;
-    return `<button type="button" class="pill" data-act="create_tokens" data-n="${n}" data-token="${opt.token}">${lab}</button>`;
-  }
-  if (opt.kind === 'add_mana'){
-    const sym = (opt.symbols && opt.symbols[0]) ? opt.symbols[0] : '?';
-    return `<button type="button" class="pill" data-act="add_mana" data-symbols="${opt.symbols.join(',')}">Add {${sym}}</button>`;
-  }
-  if (opt.kind === 'grant_keyword'){
-    const lab = `Grant ${opt.keyword}${opt.untilEOT?' (EOT)':''}`;
-    return `<button type="button" class="pill" disabled title="Handled via Apply tab">${lab}</button>`;
-  }
-  return `<button type="button" class="pill" disabled>${opt.kind}</button>`;
-}
-
-// ADD directly below optionBtnHtml(opt){...}
-
-function actionRow(a){
-  const pill = (attrs, label) => `<button type="button" class="pill" ${attrs}>${label}</button>`;
-  const num  = v => Number(v ?? 0);
-
-  switch (a.kind) {
-    case 'gain_life': {
-      const n = num(a.amount || 1);
-      return pill(`data-act="gain_life" data-n="${n}"`, `Gain ${n} life`);
-    }
-    case 'lose_life': {
-      const n = num(a.amount || 1);
-      return pill(`data-act="lose_life" data-n="${n}"`, `Lose ${n} life`);
-    }
-    case 'draw_cards': {
-      const n = num(a.amount || 1);
-      return pill(`data-act="draw_cards" data-n="${n}"`, `Draw ${n}`);
-    }
-    case 'deal_damage': {
-      const n = num(a.amount || 1);
-      return pill(`data-act="deal_damage" data-n="${n}"`, `Deal ${n} damage`);
-    }
-    case 'put_counters': {
-      const n = num(a.amount || 1);
-      const kind = a.counter || '+1/+1';
-      const s = n === 1 ? '' : 's';
-      return pill(`data-act="put_counters" data-n="${n}" data-counter="${kind}"`, `Put ${n} ${kind} counter${s}`);
-    }
-    case 'pt_mod': {
-      const dp  = num(a.power);
-      const dt  = num(a.toughness);
-      const eot = a.untilEOT ? 1 : 0;
-      const lab = `${dp>=0?'+':''}${dp}/${dt>=0?'+':''}${dt}${eot?' (EOT)':''}`;
-      return pill(`data-act="pt_mod" data-dp="${dp}" data-dt="${dt}" data-eot="${eot}"`, lab);
-    }
-    case 'add_mana': {
-      const syms = a.symbols || [];
-      const sym  = syms[0] || '?';
-      return pill(`data-act="add_mana" data-symbols="${syms.join(',')}"`, `Add {${sym}}`);
-    }
-    case 'grant_keyword': {
-      const eot = a.untilEOT ? 1 : 0;
-      const kw  = a.keyword || '';
-      return pill(`data-act="grant_keyword" data-keyword="${kw}" data-eot="${eot}"`, `Grant ${kw}${eot?' (EOT)':''}`);
-    }
-    case 'set_color': {
-      const eot = a.untilEOT ? 1 : 0;
-      const cs  = (a.colors || []).join(',');
-      return pill(`data-act="set_color" data-colors="${cs}" data-eot="${eot}"`, `Set color`);
-    }
-    case 'set_creature_type': {
-      const eot = a.untilEOT ? 1 : 0;
-      const t   = a.type || '';
-      return pill(`data-act="set_creature_type" data-type="${t}" data-eot="${eot}"`, `Set creature type`);
-    }
-    case 'bounce':        return pill(`data-act="bounce"`,        `Return target to hand`);
-    case 'reanimate':     return pill(`data-act="reanimate"`,     `Return target from graveyard`);
-    case 'exile':         return pill(`data-act="exile"`,         `Exile target`);
-    case 'sacrifice': {
-      const n = num(a.amount || 1);
-      return pill(`data-act="sacrifice" data-n="${n}"`, `Sacrifice ${n}`);
-    }
-    case 'destroy':       return pill(`data-act="destroy"`,       `Destroy target`);
-    case 'gain_control':  return pill(`data-act="gain_control"`,  `Gain control`);
-    case 'fight':         return pill(`data-act="fight"`,         `Fight`);
-    case 'choice':        // choices are expanded elsewhere
-      return '';
-    default:
-      return `<div class="pill gray" title="Unknown action">${a.kind || 'unknown'}</div>`;
-  }
-}
+		
+		// --- Token booster: add a create_tokens action if the text clearly says so ---
+(function addTokenFallback(){
+  const raw = String(ab.effect ?? ab.raw ?? '');
+  // common tokens people expect to “just work”
+  const TOKENS = ['Food','Blood','Treasure','Clue','Map','Powerstone','Gold','Clue Artifact','Food Artifact'];
+  // regex: create (a|one|1) <token> token
+  const m = raw.match(/\bcreate\b[^.]*?\b(?:a|one|1)?\s*(food|blood|treasure|clue|map|powerstone|gold)\s+token\b/i);
+  if (!m) return;
+  const tokenCap = m[1][0].toUpperCase()+m[1].slice(1).toLowerCase(); // Food, Blood, etc.
+  const already = actions.some(x => x.kind==='create_tokens' && String(x.token||'').toLowerCase()===tokenCap.toLowerCase());
+  if (!already) actions.push({ kind:'create_tokens', amount: 1, token: tokenCap });
+})();
 
 
 
-// Render a whole "choice" row: label + option buttons
-function choiceRow(choice){
-  const label = choice.label ? `Choose one — ${choice.label}` : 'Choose one';
-  const buttons = (choice.options || []).map(optionBtnHtml).join(' ');
-  return `
-    <div style="border:1px dashed #2a375a;border-radius:10px;padding:10px;margin:6px 0">
-      <div class="pill gray" style="margin-bottom:8px">${label}</div>
-      <div class="row" style="display:flex;flex-wrap:wrap;gap:8px">${buttons}</div>
-    </div>
-  `;
-}
+
+
+
 
 box.innerHTML = actions.map(a => {
   if (a.kind === 'choice') return choiceRow(a);       // ← expand choices into concrete buttons
@@ -1628,31 +2777,7 @@ box.innerHTML = actions.map(a => {
     });
   });
 
-  // Innate: same flow, but we only parse the token effect text
-  host.querySelectorAll('.js-inn-cost').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const on = btn.getAttribute('aria-pressed') === 'true';
-      btn.setAttribute('aria-pressed', String(!on));
-      const j = Number(btn.dataset.j);
-      const act = host.querySelector(`.js-inn-activate[data-j="${j}"]`);
-      if (act) act.disabled = on;
-    });
-  });
-  host.querySelectorAll('.js-inn-activate').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const j = Number(btn.dataset.j);
-      const ta = innateTokens[j];
-      const box = bySel(`#scan-innate-${j}`, host);
-      const steps = bySel(`#scan-innate-${j}`, host).parentElement.querySelector('.steps');
-      steps.style.display = 'block';
-      const actions = AD.inferActionsFromText(ta.effect).map(a => {
-        if (a.amount === 'X') a.amount = resolveX(a.amount);
-        return a;
-      });
-      steps.innerHTML = actions.map(a => actionRow(a)).join('') || '<div style="opacity:.8">No concrete actions.</div>';
-      
-    });
-  });
+
   
   async function performActionFor(btn){
   const kind   = btn.dataset.act;
@@ -1663,6 +2788,52 @@ box.innerHTML = actions.map(a => {
   const room_id = currentRoom();
 
   try{
+	  if (kind === 'open_zone_filter'){
+  const zone = (btn.dataset.zone || 'graveyard').toLowerCase();
+  const query = (btn.dataset.q || '').trim();
+  const targetSeat = Number(seat) || mySeat();
+
+  try {
+    // 1) Open the appropriate UI
+    if (zone === 'graveyard' || zone === 'exile'){
+      Zones?.openZone?.(zone, targetSeat); // built-in API supports these zones
+      // 2) After the overlay mounts, try to set its filter input
+      setTimeout(() => {
+        // Be flexible about selector names so we don't have to touch Overlays.js
+        const overlay = document.querySelector('.overlays, .overlay, .panel, .zone-overlay') || document;
+        const sels = [
+          '.js-zone-filter input',
+          'input.js-zone-filter',
+          'input[name="zoneFilter"]',
+          '.zone-filter input',
+          'input[placeholder*="filter" i]',
+          'input[placeholder*="search" i]'
+        ];
+        for (const s of sels){
+          const el = overlay.querySelector(s);
+          if (el){
+            el.value = query;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            break;
+          }
+        }
+      }, 80);
+    } else if (zone === 'library' || zone === 'deck'){
+      // Prefer your deck search overlay if available
+      if (window.Overlays?.openDeckSearch){
+        window.Overlays.openDeckSearch({ initialQuery: query });
+      } else {
+        console.warn('[Scan] Deck/library search UI not available');
+      }
+    } else if (zone === 'hand'){
+      // Optional: wire a hand overlay if/when you add one
+      console.warn('[Scan] Hand search UI not available');
+    }
+  } catch(e){
+    console.warn('[Scan] open_zone_filter failed', e);
+  }
+}
+
     if (kind === 'gain_life'){
       const n = Number(btn.dataset.n||1);
       window.Life?.set(meSeat, { life: window.Life.get(meSeat).life + n });
@@ -1680,10 +2851,37 @@ box.innerHTML = actions.map(a => {
       window.Life?.set(opp, { life: window.Life.get(opp).life - n });
     }
     if (kind === 'create_tokens'){
-      const n = Number(btn.dataset.n||1);
-      const label = btn.dataset.token || 'Token';
-      for (let i=0;i<n;i++) Zones?.spawnToTable?.({ name: label, img: '' }, meSeat);
+  const n = Number(btn.dataset.n||1);
+  const label = btn.dataset.token || 'Token'; // e.g., "Clue" / "Food" / "Treasure"
+
+  // 1) Try to find exact-name matches (WITHOUT adding "token")
+  const hits = await findCardCandidatesByName(label);
+
+  // 2) If there is exactly one hit, spawn it n times
+  if (hits.length === 1){
+    const card = hits[0];
+    for (let i = 0; i < n; i++){
+      if (typeof window.spawnCardAtViewCenter === 'function'){
+        window.spawnCardAtViewCenter(card, meSeat);
+      } else if (Zones?.spawnToTable){
+        Zones.spawnToTable(card, meSeat);
+      }
     }
+    return;
+  }
+
+  // 3) If multiple (or 0) results, pop an overlay to choose or fallback
+  openNamePickOverlay({
+    query: label,
+    candidates: hits,
+    copies: n,
+    seat: meSeat,
+    onPick(){ /* no-op; we already spawned in the overlay */ }
+  });
+  return;
+}
+
+
     if (kind === 'put_counters' || kind === 'pt_mod'){
       await ensureSupabase();
       await upsertRow(room_id, String(targetCid), meSeat, (json)=>{

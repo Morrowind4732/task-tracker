@@ -402,6 +402,58 @@ export function inferActionsFromText(text){
     const amt = extractNumberAfter('put', t) ?? 1;
     actions.push({kind:'put_counters', counter:'loyalty', amount:amt, target:tgt.scope});
   }
+    // Named counters (e.g., "Void counter", "Shield counter", etc.)
+  {
+    // capture the word(s) immediately before "counter"
+    const mNamed = t.match(/\bput\b[^.]*?\b(?:X|a|an|one|1|\d+)?\s*([A-Za-z+\/-]+)\s+counter\b/i);
+    if (mNamed && !/\+1\/\+1|loyalty/i.test(mNamed[1])) {
+      const amt = extractNumberAfter('put', t) ?? 1;
+      const name = mNamed[1].trim();
+      actions.push({ kind:'put_counters', counter:name, amount:amt, target:tgt.scope });
+    }
+  }
+  
+  // (A) Named counter in a "put … counter(s)" phrasing
+  // e.g., "Put a Void counter on it", "Put two Shield counters on target creature"
+  {
+    const m = t.match(
+      /\bput\b[^.]*?\b(?:X|a|an|one|1|\d+)?\s*([A-Za-z][A-Za-z+\/-]*(?:\s+[A-Za-z][A-Za-z+\/-]*)*)\s+counters?\b/i
+    );
+    if (m && !/\+1\/\+1|loyalty/i.test(m[1])) {
+      const amt = extractNumberAfter('put', t) ?? 1;
+      const name = m[1].trim();
+      actions.push({ kind:'put_counters', counter:name, amount:amt, target:tgt.scope });
+    }
+  }
+
+  // (B) Mentioned counters in "with … counter(s) on …" phrasing (no explicit "put")
+  // e.g., "… with a Void counter on it", "… with two stun counters on that permanent"
+  {
+    const m = t.match(
+      /\bwith\b\s+(X|a|an|one|1|\d+)?\s*([A-Za-z][A-Za-z+\/-]*(?:\s+[A-Za-z][A-Za-z+\/-]*)*)\s+counters?\s+on\b/i
+    );
+    if (m && !/\+1\/\+1|loyalty/i.test(m[2])) {
+      const tok = m[1];
+      let amt = 1;
+if (tok) {
+  if (/^x$/i.test(tok)) {
+    amt = 'X';
+  } else {
+    const nWord = numFromToken(tok);
+    if (Number.isFinite(nWord)) {
+      amt = nWord;
+    } else {
+      const n = parseInt(tok, 10);
+      amt = Number.isFinite(n) ? n : 1;
+    }
+  }
+}
+
+      const name = m[2].trim();
+      actions.push({ kind:'put_counters', counter:name, amount:amt, target:tgt.scope });
+    }
+  }
+  
   if (/\b(counter|counters) on (?:it|this|that|enchanted|equipped|target)\b/i.test(t) && !/\+1\/\+1|loyalty/i.test(t)){
     const amt = extractNumberAfter('put', t) ?? 1;
     actions.push({kind:'put_counters', counter:'unspecified', amount:amt, target:tgt.scope});
@@ -420,6 +472,59 @@ export function inferActionsFromText(text){
     actions.push({kind:'add_mana', symbols});
   }
   if (/\bsearch your library\b/i.test(t)) actions.push({kind:'search_library', target:'you', note:'perform search + shuffle as specified'});
+// Fallback: "Search your <zone>" even without a specific "for <term>".
+// This guarantees a pill like "Search your Library" appears.
+{
+  const m = t.match(/\bsearch\s+your\s+(library|deck|graveyard|exile|hand)\b/i);
+  if (m) {
+    actions.push({ kind:'open_zone_filter', zone: m[1].toLowerCase(), query: '' });
+  }
+}
+
+// --- Custom: "Search your XYZ for ABC" (graveyard/exile/deck/library/hand) ---
+{
+  const zonePart = '(library|deck|graveyard|exile|hand)(?:\\s+and\\/or\\s+(library|deck|graveyard|exile|hand))?';
+  const boundary = '(?:\\.|,|;|\\bthen\\b|\\band\\b|\\bwhere\\b|\\breveal\\b|\\bshuffle\\b|$)';
+
+  // Pass 1: “a card named <X>”
+  {
+    const reNamed = new RegExp(
+      `\\bsearch\\s+your\\s+${zonePart}[^.]*?\\bfor\\b\\s+a\\s+card\\s+named\\s+([^]+?)\\s*(?=${boundary})`,
+      'i'
+    );
+    const m = t.match(reNamed);
+    if (m){
+      const zone = (m[1] || m[2] || '').toLowerCase();   // prefer first zone
+      let term   = (m[3] || '').trim();
+      if (zone) actions.push({ kind:'open_zone_filter', zone, query: term });
+    }
+  }
+
+  // Pass 2: generic “for <phrase>” (e.g., “for a card”, “for creature”, etc.)
+  {
+    const reGeneric = new RegExp(
+      `\\bsearch\\s+your\\s+${zonePart}[^.]*?\\bfor\\b\\s+([^]+?)\\s*(?=${boundary})`,
+      'i'
+    );
+    const m = t.match(reGeneric);
+    if (m){
+      const zone = (m[1] || m[2] || '').toLowerCase();
+      let term   = (m[3] || '').trim();
+
+      // Normalize super-generic phrases to empty query: “a card”, “any card”, “cards”, “card …”
+      if (/^(?:a|an|any)?\s*cards?\b/i.test(term)) term = '';
+
+      // Just in case: strip trailing clause starters
+      term = term.replace(/\s+(?:then|and|where|reveal|shuffle)\b[\s\S]*$/i, '')
+                 .replace(/[.,;]\s*$/, '');
+
+      if (zone) actions.push({ kind:'open_zone_filter', zone, query: term });
+    }
+  }
+}
+
+
+
   if ((n = extractNumberAfter('scry', t))) actions.push({kind:'scry', amount:n, target:'you'});
   if ((n = extractNumberAfter('surveil', t))) actions.push({kind:'surveil', amount:n, target:'you'});
   if (/\breturn target .* to (?:its|their) owner'?s hand\b/i.test(t)) actions.push({kind:'return_to_hand', target:tgt.scope});

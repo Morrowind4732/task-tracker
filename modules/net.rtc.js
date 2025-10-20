@@ -280,7 +280,91 @@ function wireDC(dc, onMessage) {
         window.dispatchEvent(new CustomEvent('versus-dice:show', { detail: msg }));
       } catch {}
     }
+
+    // NEW: Opponent hand count → broadcast DOM event so table can update the backs fan
+    if (msg.type === 'hand:count') {
+      try {
+        window.dispatchEvent(new CustomEvent('opponent-hand:count', { detail: msg }));
+      } catch {}
+    }
+
+    // NEW: Dedicated delete event (pure visual destroy; no zone writes)
+    if (msg.type === 'card:delete') {
+  const cid = msg.cid;
+  if (!cid) return;
+  try { window.Stacking?.detach?.(document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)); } catch{}
+  try { window.Zones?.cfg?.removeTableCardDomById?.(cid); } catch{}
+  try {
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+    el?.remove?.();
+  } catch {}
+}
+
+    // NEW: Spawn event for repaired cards (delete → respawn → hydrate)
+    if (msg.type === 'spawn') {
+      const cid = msg.cid;
+      if (!cid) return;
+
+      // 1) Remove stale DOM
+      try { window.Stacking?.detach?.(document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)); } catch{}
+      try { window.Zones?.cfg?.removeTableCardDomById?.(cid); } catch{}
+      try {
+        document.querySelectorAll(`.card[data-cid="${CSS.escape(cid)}"]`).forEach(n => n.remove());
+      } catch {}
+
+      // 2) Spawn new card at exact x,y
+      let el = null;
+      const cardObj = {
+        name: msg.name || '',
+        img:  msg.img  || '',
+        type_line:   msg.type_line   || '',
+        mana_cost:   msg.mana_cost   || '',
+        oracle_text: msg.oracle_text || '',
+        ogpower:     msg.ogpower,
+        ogtoughness: msg.ogtoughness,
+        ogTypes:     msg.ogTypes || [],
+        ogEffects:   msg.ogEffects || [],
+        power:'', toughness:'', loyalty:''
+      };
+
+      if (typeof window.spawnTableCard === 'function') {
+        el = window.spawnTableCard(cardObj, msg.x, msg.y, { cid: msg.cid, owner: msg.owner });
+      } else if (typeof window.Zones?.spawnToTable === 'function') {
+        Zones.spawnToTable({ ...cardObj, cid: msg.cid }, msg.owner);
+        el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+        if (el){
+          el.style.left = `${msg.x}px`;
+          el.style.top  = `${msg.y}px`;
+        }
+      }
+
+      // 3) Hydrate + badges + tooltip
+      requestAnimationFrame(() => {
+        const node = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+        if (node) {
+          try {
+            window.CardAttributes?.applyToDom?.(cid);
+            window.CardAttributes?.refreshPT?.(cid);
+            attachTooltip?.(node, {
+              name: msg.name || '',
+              typeLine: msg.type_line || '',
+              costHTML: '',
+              oracle: msg.oracle_text || ''
+            });
+            window.reflowAll?.();
+          } catch (e) {
+            console.warn('spawn hydration failed', e);
+          }
+        }
+      });
+
+      return;
+    }
+
+
   });
   dc.addEventListener('error', (e) => console.warn('[RTC/DC] error', e));
   dc.addEventListener('close', () => console.log('[RTC/DC] closed'));
 }
+
+
