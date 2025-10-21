@@ -254,6 +254,38 @@ export function inferActionsFromText(text){
   const untilEOT = hasEOT(t);
   const actions = [];
 
+// --- Search your {zone} for ...  → open_zone_filter -------------------------
+{
+  const ZONE_MAP = {
+    library: 'library',
+    deck: 'library',    // treat "deck" as library search UI
+    graveyard: 'graveyard',
+    exile: 'exile',
+    hand: 'hand'
+  };
+
+  // examples caught:
+  // "Search your library for a card, then shuffle."
+  // "Search your library for an instant or sorcery card, reveal it…"
+  // "Search your graveyard for a creature card…"
+  // "Search your library for up to two Forest cards…"
+  const m = String(t).match(/\bsearch your (library|deck|graveyard|exile|hand)\b[^.]*?\bfor\b\s+([^.,;:]+?)(?=(?:,|\.\s| and | then |$))/i);
+  if (m) {
+    const zone = ZONE_MAP[m[1].toLowerCase()] || 'library';
+    // keep the user-facing snippet (e.g. "a card", "up to two Forest cards")
+    const query = m[2].trim().replace(/\s+/g, ' ');
+    actions.push({ kind: 'open_zone_filter', zone, query });
+  } else {
+    // very generic: "Search your library." (no 'for' phrase)
+    const m2 = String(t).match(/\bsearch your (library|deck|graveyard|exile|hand)\b/i);
+    if (m2) {
+      const zone = ZONE_MAP[m2[1].toLowerCase()] || 'library';
+      actions.push({ kind: 'open_zone_filter', zone, query: '' });
+    }
+  }
+}
+
+
   // Choose a creature type (global choice setter)
   if (/\bchoose a creature type\b/i.test(t)){
     actions.push({ kind:'choice', label:'Choose a creature type', options:[{ kind:'set_type_choice', target:'this_creature', untilEOT:false }] });

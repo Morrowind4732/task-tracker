@@ -483,22 +483,60 @@ async handleDrop(cardEl){
       seat: s,
       zoneName,
       cards: list,
-	  fetchCards: () => this.getZoneCards({ seat: s, zoneName }),
+      fetchCards: () => this.getZoneCards({ seat: s, zoneName }),
       onMove: async (card, dest)=>{
         const cid = card.id || card.cid || cardElId(card);
+        const me  = Number(window.AppState?.mySeat || 1) || 1;
+
+        // If we’re viewing someone else’s yard but want the card on OUR table,
+        // do a cross-seat transfer: remove from P{s}’s zone, add/spawn to P{me}.
+        if (dest === 'table' && s !== me) {
+          try {
+            // 1) Remove from the viewed player’s zone state
+            const stOpp = this._ensureSeatState(s);
+            stOpp[zoneName] = Array.isArray(stOpp[zoneName])
+              ? stOpp[zoneName].filter(x => (x?.id||x?.cid||x) !== cid)
+              : [];
+            try { await this._saveSeatState?.(s, stOpp); } catch {}
+
+            // 2) Add to MY table state
+            const stMe = this._ensureSeatState(me);
+            if (!Array.isArray(stMe.table)) stMe.table = [];
+            if (!stMe.table.some(x => (x?.id||x?.cid||x) === cid)) {
+              stMe.table.push({ id: cid });
+            }
+            try { await this._saveSeatState?.(me, stMe); } catch {}
+
+            // 3) Spawn for me
+            try { this.cfg.spawnToTable?.(await this._hydrate(cid, card), me); } catch {}
+
+            // 4) Let listeners know about the cross-seat move (include source seat in meta)
+            this.cfg.onMoved?.({ seat: me, cid, from: `${zoneName}@P${s}`, to: 'table' });
+          } catch (e) {
+            console.warn('[Zones] cross-seat move failed; falling back to same-seat table', e);
+            // Fallback: original single-seat behavior
+            await this._moveBetween(s, { from: zoneName, to: 'table', cid, hydrate: card });
+            try { this.cfg.spawnToTable?.(await this._hydrate(cid, card), s); } catch {}
+            this.cfg.onMoved?.({ seat: s, cid, from: zoneName, to: 'table' });
+          }
+          return;
+        }
+
+        // Original single-seat behavior (your own yard, or non-table destinations)
         await this._moveBetween(s, { from: zoneName, to: dest, cid, hydrate: card });
 
         if (dest === 'table'){
-          try{ this.cfg.spawnToTable?.(await this._hydrate(cid, card), s); }catch{}
+          try { this.cfg.spawnToTable?.(await this._hydrate(cid, card), s); } catch {}
         } else if (dest === 'hand'){
-          try{ this.cfg.addToHand?.(await this._hydrate(cid, card), s); }catch{}
+          try { this.cfg.addToHand?.(await this._hydrate(cid, card), s); } catch {}
         } else if (dest === 'deck'){
-          try{ this.cfg.addToDeck?.(await this._hydrate(cid, card), s, { position:'top' }); }catch{}
+          try { this.cfg.addToDeck?.(await this._hydrate(cid, card), s, { position:'top' }); } catch {}
         }
 
         this.cfg.onMoved?.({ seat: s, cid, from: zoneName, to: dest });
       }
     });
+
 
     function cardElId(c){ return c?.id || c?.cid || c?.name || ''; }
   },

@@ -163,11 +163,14 @@ export function initTurnUpkeep({ endTurnBtnSelector = '#endTurnBtn' } = {}) {
   btn.dataset.turnUpkeepBound = '1';
 
   // Append behavior after your existing click handlers
-  btn.addEventListener('click', async () => {
-    try { runAutoUntapOpponent(); } catch (e) { console.error('[turn.upkeep] run failed', e); }
-    // ✨ ADDED: clear all EOT effects for BOTH players (entire room)
-    try { await endTurnEOTCleanup(); } catch (e) { console.error('[turn.upkeep] EOT cleanup failed', e); }
-  });
+  // [END TURN HANDLER]
+btn.addEventListener('click', async () => {
+  try { runAutoUntapOpponent(); } catch (e) { console.error('[turn.upkeep] run failed', e); }
+  // ✨ ADDED: clear all EOT effects for BOTH players (entire room)
+  try { await endTurnEOTCleanup(); } catch (e) { console.error('[turn.upkeep] EOT cleanup failed', e); }
+  try { ActivatedAbilities?.resetDrawCounters?.(); } catch {}    // NEW: reset per-turn draw counters
+});
+
 }
 
 export default { initTurnUpkeep, runAutoUntapOpponent };

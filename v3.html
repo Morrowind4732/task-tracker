@@ -478,6 +478,84 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
   border-radius: 14px;
 }
 
+:root{
+  /* Compass layout knobs */
+  --deckCompassRadius: 48px;      /* distance from center to each button */
+  --deckCompassBtnSize: 44px;     /* base size for circular buttons (matches old .sbtn) */
+  --deckCompassZ: 48;             /* z-layer above board */
+  --deckCompassOffsetX: 0px;      /* nudge whole cluster horizontally */
+  --deckCompassOffsetY: -6px;     /* nudge whole cluster vertically */
+}
+
+/* Compass wrapper positions around deck midline */
+.deck-compass{
+  position: absolute;
+  z-index: var(--deckCompassZ);
+  left: calc(var(--deck-left) - var(--deckActionsOffset) + var(--deckCompassOffsetX));
+  top:  calc(var(--deck-top) + (var(--zone-h) / 2) + var(--deckCompassOffsetY));
+  width: 0; height: 0;
+  pointer-events: none;            /* only buttons get events */
+}
+.deck-compass .compass-core{ position: relative; width: 0; height: 0; }
+
+.deck-compass .compass-btn{
+  pointer-events: auto;
+  position: absolute;
+  min-width: var(--deckCompassBtnSize);
+  height: var(--deckCompassBtnSize);
+  padding: 0 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 600 12px/1 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,.35);
+  background: rgba(255,255,255,.92);
+  color: #0f1220;
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  user-select: none;
+  cursor: pointer;
+  /* No scale transforms → no “run away” hover */
+  transition: box-shadow .12s ease, background .12s ease;
+}
+.deck-compass .compass-btn:hover{ box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+.deck-compass .compass-btn:active{ box-shadow: 0 2px 6px rgba(0,0,0,.25); }
+
+/* Polar placement */
+.deck-compass .btn-north{
+  left: 0; top: calc(var(--deckCompassRadius) * -1);
+  transform: translate(-50%, -50%);
+  min-width: 84px;  /* text chip */
+}
+.deck-compass .btn-east{
+  left: var(--deckCompassRadius); top: 0;
+  transform: translate(-50%, -50%);
+  min-width: var(--deckCompassBtnSize); /* icon circle */
+  font-size: 18px;
+}
+.deck-compass .btn-south{
+  left: 0; top: var(--deckCompassRadius);
+  transform: translate(-50%, -50%);
+  min-width: 92px;  /* text chip */
+}
+.deck-compass .btn-west{
+  left: calc(var(--deckCompassRadius) * -1); top: 0;
+  transform: translate(-50%, -50%);
+  min-width: var(--deckCompassBtnSize); /* icon circle */
+  font-size: 18px;
+}
+
+/* Optional subtle role colors */
+.deck-compass .btn-north{ background: rgba(245, 248, 255, .95); }
+.deck-compass .btn-east { background: rgba(235, 248, 255, .95); }
+.deck-compass .btn-south{ background: rgba(238, 255, 240, .95); }
+.deck-compass .btn-west { background: rgba(255, 245, 238, .95); }
+
+:root{
+  --deckCompassBtnSize: 44px; /* both icon circles use this */
+}
+.deck-compass .btn-east,
+.deck-compass .btn-west{ min-width: var(--deckCompassBtnSize); font-size: 18px; }
+
 
 </style>
 </head>
@@ -561,11 +639,16 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
       <div class="world" id="world">
         <div class="zone" id="deckZone"><div class="label">Deck</div></div>
 		<!-- Left-of-deck actions (🔍 ＋ …) -->
-<div class="deck-actions" id="deckActions">
-  <button class="sbtn" id="deckSearchBtn" title="Search Deck">🔍</button>
-  <button class="sbtn" id="deckAddBtn"    title="Add card / token">＋</button>
-  <button class="sbtn" id="deckMoreBtn"   title="Deck Tools">…</button>
+<!-- Deck Compass (N/E/S/W) -->
+<div class="deck-compass" id="deckCompass" role="group" aria-label="Deck controls">
+  <div class="compass-core">
+    <button class="compass-btn btn-north" id="deckDrawXBtn"   type="button" aria-label="Draw X">Draw&nbsp;X</button>
+    <button class="compass-btn btn-east"  id="deckSearchBtn"  type="button" aria-label="Search Deck" title="Search Deck">🔍</button>
+    <button class="compass-btn btn-south" id="deckCascadeBtn" type="button" aria-label="Cascade Setup">Cascade</button>
+    <button class="compass-btn btn-west"  id="deckAddBtn"     type="button" aria-label="Add Any Card" title="Add Any Card">＋</button>
+  </div>
 </div>
+
 
         <div class="zone" id="cmdZone"><div class="label">Commander</div></div>
         <div class="zone" id="graveyard"><div class="label">Graveyard</div></div>
@@ -710,9 +793,11 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 <script type="module" src="./modules/tooltip.activate.patch.js"></script>
 
 <script type="module" src="./modules/battle.ui.js"></script>
-
+<script src="./modules/cascade.logic.js"></script>
+<script src="./modules/draw.rules.overlay.js"></script>
 
 <script type="module">
+
   import Stacking from './modules/card.stacking.js';
   window.Stacking = Stacking;
   window.spawnTableCard = spawnTableCard;
@@ -727,7 +812,9 @@ import {
 import FieldStats from './modules/field.stats.js'; 
 import Overlays from './modules/overlays.js';
 import { initTurnUpkeep } from './modules/turn.upkeep.js';
-
+window.Overlays = Overlays;
+  try { Overlays.init?.(); } catch {}
+  console.log('[BOOT] Overlays bound to window →', !!window.Overlays);
   import UIConstants from './modules/ui.constants.js';
   UIConstants.apply();
 
@@ -1477,6 +1564,16 @@ window.Camera = { cam, applyCam, screenToWorld, worldToScreen, centerOn, setZoom
 
 
 // ====== deck / hand (V2 fan, minimal features) ======
+// --- Deck accessor for external modules (e.g. cascade.logic.js) ---
+window.DeckAPI = {
+  /** return the LIVE deck array (same reference used here) */
+  get(){ return deck; },
+  /** convenience: current length */
+  length(){ return Array.isArray(deck) ? deck.length : 0; }
+};
+console.log('[DeckAPI] ready (module deck is now externally readable)');
+
+
 // === GameIO adapter (Save/Restore uses this) ===
 window.GameIO = {
   collectState(){
@@ -2112,6 +2209,106 @@ let deck = [];           // [{name,img}]
 let hand = [];
 let focus = 0;
 
+// ==== Scryfall search helpers (Add Any Card) ====
+// Robust “All” search + typo-tolerant single fetch
+
+// 1) Normalize one Scryfall result into your card shape
+function normalizeScryResult(data){
+  const face = Array.isArray(data.card_faces) && data.card_faces.length ? data.card_faces[0] : data;
+
+  const img =
+    (data.image_uris && (data.image_uris.normal || data.image_uris.large || data.image_uris.png)) ||
+    (face.image_uris && (face.image_uris.normal || face.image_uris.large || face.image_uris.png));
+  if (!img) throw new Error('No image for '+(data?.name||'card'));
+
+  const toNum = (v) => { const n = Number(v); return Number.isFinite(n) ? n : undefined; };
+
+  const basePower   = face.power     ?? data.power     ?? null;
+  const baseTough   = face.toughness ?? data.toughness ?? null;
+  const baseLoyalty = face.loyalty   ?? data.loyalty   ?? null;
+
+  const tlRaw = (data.type_line || face.type_line || '').trim();
+  const [left, right] = tlRaw.split('—').map(s => (s||'').trim());
+  const leftParts  = left ? left.split(/\s+/).filter(Boolean) : [];
+  const supertypes = leftParts.filter(x => /^(Basic|Legendary|Ongoing|Snow|World)$/i.test(x));
+  const cardTypes  = leftParts.filter(x => /^(Artifact|Battle|Creature|Conspiracy|Dungeon|Enchantment|Instant|Land|Monster|Phenomenon|Plane|Planeswalker|Scheme|Sorcery|Tribal|Vanguard)$/i.test(x));
+  const subtypes   = (right ? right.split(/\s+/).filter(Boolean) : []);
+  const ogTypes    = [...supertypes, ...cardTypes, ...subtypes];
+
+  const ogEffects = Array.isArray(data.keywords) ? data.keywords.slice() : [];
+
+  return {
+    name: data.name,
+    img,
+    type_line: tlRaw,
+    power: basePower,
+    toughness: baseTough,
+    loyalty: baseLoyalty,
+    ogpower:     toNum(basePower),
+    ogtoughness: toNum(baseTough),
+    ogloyalty:   toNum(baseLoyalty),
+    ogTypes,
+    ogEffects,
+    mana_cost:   data.mana_cost || face.mana_cost || '',
+    oracle_text: data.oracle_text || face.oracle_text || ''
+  };
+}
+
+// 2) Broad “All” search (multi-result). Good for vague inputs like "dictate".
+async function searchCards(q, { take = 24 } = {}){
+  // Bias toward exact/near-name matches first, but still allow broad text matches
+  const advanced = `name:${JSON.stringify(q)} OR ${q}`;
+  const params = new URLSearchParams({
+    q: advanced,
+    order: 'relevance',
+    unique: 'cards',
+    include_extras: 'true',
+    include_multilingual: 'true'
+  });
+  const res = await fetch(`${SCRY}/cards/search?${params.toString()}`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  const arr = Array.isArray(data?.data) ? data.data : [];
+  // Prefer non-token, non-emblem first; you’ve said tokens list separately
+  const preferred = arr.sort((a, b) => {
+    const aTok = /token|emblem/i.test(a.type_line || '');
+    const bTok = /token|emblem/i.test(b.type_line || '');
+    return (aTok === bTok) ? 0 : (aTok ? 1 : -1);
+  });
+  return preferred.slice(0, Math.max(1, take));
+}
+
+// 3) Single fetch with typo recovery + final search fallback
+async function fetchCardByName(name){
+  // Try fuzzy by name
+  let res = await fetch(`${SCRY}/cards/named?fuzzy=${encodeURIComponent(name)}`);
+
+  if (!res.ok) {
+    // If Scryfall suggests a correction, retry once
+    try {
+      const err = await res.json();
+      if (err?.did_you_mean) {
+        res = await fetch(`${SCRY}/cards/named?fuzzy=${encodeURIComponent(err.did_you_mean)}`);
+      }
+    } catch {} // ignore parse errors
+  }
+
+  if (!res.ok) {
+    // Final fallback: run a general search and take the best result
+    const found = await searchCards(name, { take: 1 });
+    if (!found.length) throw new Error('No match for '+name);
+    return normalizeScryResult(found[0]);
+  }
+
+  const data = await res.json();
+  return normalizeScryResult(data);
+}
+
+// 4) Expose to overlays / other modules
+window.searchCards     = searchCards;
+window.fetchCardByName = fetchCardByName;
+
+
 // ==== Mulligan state ====
 let hasDrawn = true;        // false until we accept our opening hand
 let mullOpen  = false;       // true while the "Mulligan?" overlay is up
@@ -2128,66 +2325,20 @@ const PENDING_CASTS = new Map(); // castId -> { bySeat, cid, card, x, y }
 function makeCastId(){ return (crypto?.randomUUID?.() || (Date.now()+'-'+Math.random())).slice(0,18); }
 
 
-async function fetchCardByName(name){
-  const res = await fetch(`${SCRY}/cards/named?fuzzy=${encodeURIComponent(name)}`);
-  if (!res.ok) throw new Error('Scryfall error for '+name);
-  const data = await res.json();
+// Robust Scryfall helpers for “Add any card”
+// 1) fuzzy → retry with did_you_mean if available
+// 2) fallback to /cards/search?q= for short/partial queries (e.g., “dictate”)
 
-  const face = Array.isArray(data.card_faces) && data.card_faces.length
-    ? data.card_faces[0]
-    : data;
 
-  const img =
-    (data.image_uris && (data.image_uris.normal || data.image_uris.large || data.image_uris.png)) ||
-    (face.image_uris && (face.image_uris.normal || face.image_uris.large || face.image_uris.png));
-  if (!img) throw new Error('No image for '+name);
 
-  const toNum = (v) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : undefined;
-  };
 
-  const basePower   = face.power     ?? data.power     ?? null; // may be "*"
-  const baseTough   = face.toughness ?? data.toughness ?? null;
-  const baseLoyalty = face.loyalty   ?? data.loyalty   ?? null;
 
-  // ---- OG TYPES (split type_line) ----
-  const tlRaw = (data.type_line || face.type_line || '').trim();
-  // type_line looks like "Legendary Creature — Elf Druid"
-  const [left, right] = tlRaw.split('—').map(s => (s||'').trim());
-  const leftParts  = left ? left.split(/\s+/).filter(Boolean) : [];
-  // Split into buckets if you ever need them; for now we only care about a single combined list
-  const supertypes = leftParts.filter(x => /^(Basic|Legendary|Ongoing|Snow|World)$/i.test(x));
-  const cardTypes  = leftParts.filter(x => /^(Artifact|Battle|Creature|Conspiracy|Dungeon|Enchantment|Instant|Land|Monster|Phenomenon|Plane|Planeswalker|Scheme|Sorcery|Tribal|Vanguard)$/i.test(x));
-  const subtypes   = (right ? right.split(/\s+/).filter(Boolean) : []);
-  const ogTypes    = [...supertypes, ...cardTypes, ...subtypes];
 
-  // ---- OG EFFECTS (innate keywords only) ----
-  // Scryfall's `keywords` is exactly what we want (Flying, Lifelink, Deathtouch, etc)
-  const ogEffects = Array.isArray(data.keywords) ? data.keywords.slice() : [];
 
-  return {
-    name: data.name,
-    img,
-    type_line: tlRaw,
-    power: basePower,
-    toughness: baseTough,
-    loyalty: baseLoyalty,
+// Expose helpers in case Overlays reuses them
+window.fetchCardByName = fetchCardByName;
+window.searchCards     = searchCards;
 
-    // ← numeric OGs (as you already had)
-    ogpower:     toNum(basePower),
-    ogtoughness: toNum(baseTough),
-    ogloyalty:   toNum(baseLoyalty),
-
-    // ← NEW: always-on printed stuff
-    ogTypes,
-    ogEffects,
-
-    // (optional helpers you may want later)
-    mana_cost: data.mana_cost || face.mana_cost || '',
-    oracle_text: data.oracle_text || face.oracle_text || ''
-  };
-}
 
 // Parse textarea into { mainLines, commanderName }
 // - Uses everything ABOVE "SIDEBOARD" as the main deck
@@ -2337,21 +2488,46 @@ async function drawOneAnimated(seat, {stagger=0, duration=420} = {}){
   return true;
 }
 
+// ===============================
+// [DrawCounter BOOT] (Ctrl+F tag)
+// ===============================
+// Minimal per-seat, per-turn counter. No side-effects outside this file.
+(() => {
+  const C = (window.DrawCounter = window.DrawCounter || { perSeat: Object.create(null) });
+
+  C.get   = (seat = mySeat()) => Number(C.perSeat[seat] || 0);
+  C.inc = (seat = mySeat(), n = 1) => {
+  const next = C.get(seat) + Number(n || 0);
+  C.perSeat[seat] = next;
+  try { window.DrawRulesEval?.onDraw?.(seat, next); } catch {}
+  return next;
+};
+
+  C.reset = (seat = mySeat()) => { C.perSeat[seat] = 0; return 0; };
+
+  // Handy console helper (so you can check quickly):
+  window.getDrawCount = (seat = mySeat()) => C.get(seat);
+})();
+
+
 
 // Replace previous click-draw handler call-sites to use this:
 function drawOne(){ drawOneAnimated(mySeat()); }
 
 // Animated batch draw (sequential)
+// [DRAW ANIMATED LOOP]
 async function drawXAnimated(seat, n, { gap=60, firstDelay=0, duration=300 } = {}){
   let count = 0;
   for (let i=0; i<n; i++){
     const ok = await drawOneAnimated(seat, { stagger: (i===0? firstDelay : i*gap), duration });
     if (!ok) break;
     count++;
+    try { window.ActivatedAbilities?.onDraw?.(seat, 1); } catch {}   // NEW: tick per-card draw
   }
   if (count > 0) notify(`Drew ${count} card${count!==1?'s':''}.`);
   return count;
 }
+
 
 
 // Override global drawXCards to use fast timings
@@ -2611,17 +2787,36 @@ function attachHandGestures(el, index){
       document.removeEventListener('pointercancel', onCancel);
       clearTimeout(hold);
 
-      // If we were in drag mode, commit a spawn at the pointer location
-      if (!played && draggingUp){
-        try{
-          const p = screenToWorld(lastClientX, lastClientY);
-          console.log('[hand] drop commit → world', p, 'index', index);
-          playFromHandAt(index, p.x, p.y);
-          played = true;
-        } catch(err){
-          console.warn('[hand] drop commit failed', err);
-        }
-      }
+      // If we were in drag mode, only commit if we are NOT still over the hand hitbox
+if (!played && draggingUp){
+  try{
+    // Read virtual hand hit height (matches Zones' approach)
+    const handHit = (()=>{
+      const v = getComputedStyle(document.documentElement)
+        .getPropertyValue('--hand-hit-h').trim();
+      const n = parseFloat(v);
+      return Number.isFinite(n) ? n : 64; // fallback
+    })();
+
+    const hr = handEl.getBoundingClientRect();
+    const stillOverHand = lastClientY >= (hr.bottom - handHit);
+
+    if (stillOverHand){
+      // Cancel: treat as "put it back in hand" (no spawn)
+      console.log('[hand] drop canceled → still over hand area');
+      // (optional) haptic / tiny flash here
+    }else{
+      // Commit: spawn at world coords
+      const p = screenToWorld(lastClientX, lastClientY);
+      console.log('[hand] drop commit → world', p, 'index', index);
+      playFromHandAt(index, p.x, p.y);
+      played = true;
+    }
+  } catch(err){
+    console.warn('[hand] drop commit failed', err);
+  }
+}
+
 
       draggingUp = false;
       killGhost();
@@ -3220,16 +3415,26 @@ async function resetMySeat(){
 loadBtn?.addEventListener('click', loadDeckFromTextarea);
 resetBtn?.addEventListener('click', resetMySeat);
 
-deckZone?.addEventListener('click', ()=>{
-  // If Mulligan prompt is visible, block drawing more cards
-  if (mullOpen) return;
+// [DRAW: deck click handler]  // <- Ctrl+F anchor stays the same
+deckZone?.addEventListener('click', () => {
+  if (!Array.isArray(deck) || deck.length === 0) return;
 
-  if (!hasDrawn){
+  const seat = mySeat();
+  const hasDrawn = Array.isArray(hand) && hand.some(h => !h?.__ghost);
+
+  if (!hasDrawn) {
+    // Initial 7
     initialDraw7();
+    try { window.DrawCounter?.inc(seat, 7); } catch {}
   } else {
-    drawOne(); // normal single-card draw after mulligan is accepted
+    drawOne();
+    try { window.DrawCounter?.inc(seat, 1); } catch {}
   }
+
+  // Optional: quick debug ping so you can see it move while testing
+  try { console.log('[DrawCounter]', 'seat', seat, '→', window.DrawCounter?.get(seat)); } catch {}
 });
+
 
 mullYesBtn?.addEventListener('click', ()=>{
   // Friendly mulligan: always redraw 7; keep asking until "No"
@@ -3390,53 +3595,312 @@ cogBtn.addEventListener('click', ()=>{
   zoomWrapEl.style.display = open ? 'none' : 'flex';
 });
 
-// --- Wire deck action buttons (🔍, ＋, …) ---
-const deckSearchBtn = document.getElementById('deckSearchBtn');
-const deckAddBtn    = document.getElementById('deckAddBtn');
-const deckMoreBtn   = document.getElementById('deckMoreBtn');
+// -------------------------------
+// Deck Compass wiring (Draw X / Search / Cascade / Add)
+// -------------------------------
+(function initDeckCompass(){
+  const byId = (id)=>document.getElementById(id);
+  const drawBtn    = byId('deckDrawXBtn');    // North
+  const searchBtn  = byId('deckSearchBtn');   // East (🔍)
+  const cascadeBtn = byId('deckCascadeBtn');  // South
+  const addBtn     = byId('deckAddBtn');      // West (＋)
 
-// 🔍 Search deck — unchanged
-deckSearchBtn.addEventListener('click', async ()=>{
-  const seat = mySeat();
-  const deckCards = await window.getDeckCardsForSeat?.(seat) || [];
-  Overlays.openDeckSearch({
-    seat,
-    deckCards,
-    onMove:(card,dest)=>{
-  if (dest==='table')   window.spawnCardAtViewCenter?.(card, seat);
-  if (dest==='hand')    window.addToHand?.(card, seat);
-  if (dest==='graveyard'||dest==='exile')
-    window.moveCardToZone?.(card, dest, seat);
-},
-    onCloseAskShuffle:(doShuffle)=>{ if (doShuffle) window.shuffleDeck?.(seat); }
-  });
-});
+  const mySeat = ()=> (window.AppState?.mySeat) || (typeof window.mySeat === 'function' ? window.mySeat() : 1);
 
-// ＋ Add any card — UPDATED to use onMove
-deckAddBtn.addEventListener('click', ()=>{
-  const seat = mySeat();
-  Overlays.openAddCard({
-    seat,
-    onMove:(card,dest)=>{
-  if (dest==='table')   window.spawnCardAtViewCenter?.(card, seat);
-  if (dest==='hand')    window.addToHand?.(card, seat);
-  if (dest==='graveyard'||dest==='exile')
-    window.moveCardToZone?.(card, dest, seat);
-}
-  });
-});
+  async function fetchDeckCards(seat){
+    const fromZones = await window.Zones?.getZoneCards?.({ seat, zoneName:'deck' });
+    if (Array.isArray(fromZones)) return fromZones;
+    const legacy = await window.getDeckCardsForSeat?.(seat);
+    if (Array.isArray(legacy)) return legacy;
+    return [];
+  }
 
-// … Deck tools — unchanged
-deckMoreBtn.addEventListener('click', ()=>{
-  const seat = mySeat();
-  Overlays.openDeckOptions({
-    seat,
-    onDrawX:(n)=> window.drawXCards?.(seat,n),
-    onMillX:(n)=> window.millXCards?.(seat,n),
-    onCascade:(opts)=> window.startCascade?.(seat, opts),
-    onShuffle:()=> window.shuffleDeck?.(seat)
-  });
-});
+  // ---- Draw X (unchanged prompt, kept for the “X” in quick pad)
+  function drawXPrompt(){
+    let raw = prompt('Draw how many?', '1');
+    if (raw == null) return;
+    const n = Math.max(0, Math.floor(Number(raw)));
+    if (!Number.isFinite(n) || n <= 0) return;
+    drawNSmart(n);
+  }
+
+  // ---- Use the SAME path as your “Draw 7” control
+  // Prefer Zones.drawFromDeck (what Draw7 normally uses), then compatible fallbacks.
+  async function drawNSmart(n){
+    const seat = (typeof mySeat === 'function' ? mySeat() : window.mySeat?.()) || 1;
+
+    try {
+      // 1) Primary: same route as Draw7 (Zones API)
+      if (window.Zones?.drawFromDeck) {
+        await window.Zones.drawFromDeck(n);
+        return;
+      }
+      // 2) Legacy helper (if present)
+      if (typeof window.drawFromDeck === 'function') {
+        await window.drawFromDeck(n);
+        return;
+      }
+      // 3) Your animated drawer (already async in your build)
+      if (typeof window.drawXAnimated === 'function') {
+        await window.drawXAnimated(seat, n, { announce:true, slow:false });
+        return;
+      }
+      // 4) Fallback: manual pop → hand
+      const deck = await fetchDeckCards(seat);
+      if (!deck.length) { Overlays?.notify?.('info','Deck is empty.'); return; }
+      const take = Math.min(n, deck.length);
+      for (let i=0; i<take; i++){
+        const c = deck.pop();
+        // Try zone move first
+        if (window.moveCardToZone) {
+          await window.moveCardToZone(c, 'hand', seat);
+        } else if (window.addToHand) {
+          await window.addToHand(c, seat);
+        }
+      }
+      Overlays?.notify?.('info', `Drew ${take}.`);
+    } catch (e){
+      console.warn('[DrawPad] drawNSmart error', e);
+      Overlays?.notify?.('warn', 'Draw failed; check console.');
+    }
+  }
+
+  // ---- 🔍 Deck Search (unchanged)
+  async function openDeckSearch(){
+    const seat = (typeof mySeat === 'function' ? mySeat() : window.mySeat?.()) || 1;
+    const deckCards = await window.getDeckCardsForSeat?.(seat) || [];
+    Overlays.openDeckSearch({
+      seat,
+      deckCards,
+      onMove:(card, dest)=>{
+        if (dest==='table')   return window.spawnCardAtViewCenter?.(card, seat);
+        if (dest==='hand')    return window.addToHand?.(card, seat);
+        if (dest==='graveyard'||dest==='exile') return window.moveCardToZone?.(card, dest, seat);
+      },
+      onCloseAskShuffle:(doShuffle)=>{ if (doShuffle) window.shuffleDeck?.(seat); }
+    });
+  }
+
+  // ---- Cascade quick pad (unchanged from your working version)
+  let pad; // lazy-created
+  let padDocHandler;
+
+  function ensureCascadePad(){
+    if (pad) return pad;
+
+    pad = document.createElement('div');
+    pad.id = 'cascadeQuickPad';
+    Object.assign(pad.style, {
+      position:'fixed',
+      top:'0px', left:'0px',
+      transform:'translate(-9999px,-9999px)',
+      display:'grid',
+      gridTemplateColumns:'repeat(5, auto)',
+      gap:'6px',
+      padding:'6px',
+      background:'rgba(13,20,36,.98)',
+      border:'1px solid rgba(255,255,255,.18)',
+      borderRadius:'10px',
+      boxShadow:'0 10px 28px rgba(0,0,0,.6)',
+      zIndex:'999999',
+      pointerEvents:'auto'
+    });
+
+    const labels = ['1','2','3','4','5','6','7','8','9','X'];
+    labels.forEach(lbl=>{
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = lbl;
+      Object.assign(b.style, {
+        minWidth:'34px', height:'32px',
+        padding:'0 10px',
+        background:'#142039', color:'#cfe1ff',
+        border:'1px solid #2b3f63',
+        borderRadius:'10px',
+        fontWeight:'900', cursor:'pointer'
+      });
+      b.addEventListener('pointerdown', (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        hidePad();
+
+        const seat = (typeof mySeat === 'function' ? mySeat() : window.mySeat?.()) || 1;
+        if (lbl === 'X'){
+          Overlays.openCascadeWizard({
+            seat,
+            onCascade:(opts)=>{
+              if (window.CascadeLogic?.start) {
+                window.CascadeLogic.start(seat, opts);
+              } else {
+                const rtc = window.RTC || window.net?.rtc || window.AppRTC || window.P2P || window.rtc;
+                rtc?.broadcast?.('cascade:start', { seat, ...opts });
+                rtc?.emit?.('cascade:start', { seat, ...opts });
+              }
+            }
+          });
+        } else {
+          const N = Number(lbl)|0;
+          const opts = { value:N, strictLess:true, ignoreLands:true };
+          if (window.CascadeLogic?.start) {
+            window.CascadeLogic.start(seat, opts);
+          } else {
+            const rtc = window.RTC || window.net?.rtc || window.AppRTC || window.P2P || window.rtc;
+            rtc?.broadcast?.('cascade:start', { seat, ...opts });
+            rtc?.emit?.('cascade:start', { seat, ...opts });
+          }
+        }
+      });
+
+      pad.appendChild(b);
+    });
+
+    document.body.appendChild(pad);
+
+    padDocHandler = (e)=>{
+      if (!pad) return;
+      if (pad.contains(e.target) || e.target === cascadeBtn) return;
+      hidePad();
+    };
+    document.addEventListener('pointerdown', padDocHandler, { capture:true });
+    pad.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); });
+    return pad;
+  }
+
+  function showPad(){
+    const p = ensureCascadePad();
+    const btnRect = cascadeBtn.getBoundingClientRect();
+    const x = Math.round(btnRect.left + btnRect.width/2);
+    const y = Math.round(btnRect.bottom + 6);
+    p.style.transform = `translate(${x}px, ${y}px)`;
+    p.style.display = 'grid';
+    p.style.translate = '-50% 0';
+  }
+
+  function hidePad(){
+    if (!pad) return;
+    pad.style.display = 'none';
+    pad.style.transform = 'translate(-9999px,-9999px)';
+  }
+
+  function togglePad(){
+    if (!pad || pad.style.display === 'none' || !pad.style.display){
+      showPad();
+    } else {
+      hidePad();
+    }
+  }
+
+  // ---- Draw quick pad (NEW) — appears ABOVE Draw X
+  let drawPad;
+  let drawPadDocHandler;
+
+  function ensureDrawPad(){
+    if (drawPad) return drawPad;
+
+    drawPad = document.createElement('div');
+    drawPad.id = 'drawQuickPad';
+    Object.assign(drawPad.style, {
+      position:'fixed',
+      top:'0px', left:'0px',
+      transform:'translate(-9999px,-9999px)',
+      display:'grid',
+      gridTemplateColumns:'repeat(5, auto)',
+      gap:'6px',
+      padding:'6px',
+      background:'rgba(13,20,36,.98)',
+      border:'1px solid rgba(255,255,255,.18)',
+      borderRadius:'10px',
+      boxShadow:'0 10px 28px rgba(0,0,0,.6)',
+      zIndex:'999999',
+      pointerEvents:'auto'
+    });
+
+    const labels = ['1','2','3','4','5','6','7','8','9','X'];
+    labels.forEach(lbl=>{
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = lbl;
+      Object.assign(b.style, {
+        minWidth:'34px', height:'32px',
+        padding:'0 10px',
+        background:'#142039', color:'#cfe1ff',
+        border:'1px solid #2b3f63',
+        borderRadius:'10px',
+        fontWeight:'900', cursor:'pointer'
+      });
+      b.addEventListener('pointerdown', async (e)=>{
+        e.preventDefault(); e.stopPropagation();
+        hideDrawPad();
+
+        if (lbl === 'X'){
+          drawXPrompt(); // ask for any number
+        } else {
+          const N = Number(lbl)|0;
+          await drawNSmart(N); // same route as Draw7
+        }
+      });
+      drawPad.appendChild(b);
+    });
+
+    document.body.appendChild(drawPad);
+
+    drawPadDocHandler = (e)=>{
+      if (!drawPad) return;
+      if (drawPad.contains(e.target) || e.target === drawBtn) return;
+      hideDrawPad();
+    };
+    document.addEventListener('pointerdown', drawPadDocHandler, { capture:true });
+    drawPad.addEventListener('pointerdown', (e)=>{ e.stopPropagation(); });
+    return drawPad;
+  }
+
+  function showDrawPad(){
+    const p = ensureDrawPad();
+    const r = drawBtn.getBoundingClientRect();
+    const x = Math.round(r.left + r.width/2);
+    const y = Math.round(r.top - 6); // above the button
+    p.style.transform = `translate(${x}px, ${y}px)`;
+    p.style.display = 'grid';
+    p.style.translate = '-50% -100%'; // center horizontally, above vertically
+  }
+
+  function hideDrawPad(){
+    if (!drawPad) return;
+    drawPad.style.display = 'none';
+    drawPad.style.transform = 'translate(-9999px,-9999px)';
+  }
+
+  function toggleDrawPad(){
+    if (!drawPad || drawPad.style.display === 'none' || !drawPad.style.display){
+      showDrawPad();
+    } else {
+      hideDrawPad();
+    }
+  }
+
+  // ---- ＋ Add Any Card (unchanged)
+  function openAddAnyCard(){
+    const seat = (typeof mySeat === 'function' ? mySeat() : window.mySeat?.()) || 1;
+    Overlays.openAddCard({
+      seat,
+      onMove:(card, dest)=>{
+        if (dest==='table')   return window.spawnCardAtViewCenter?.(card, seat);
+        if (dest==='hand')    return window.addToHand?.(card, seat);
+        if (dest==='graveyard'||dest==='exile') return window.moveCardToZone?.(card, dest, seat);
+      }
+    });
+  }
+
+  // Wire up
+  drawBtn   && drawBtn.addEventListener('click', toggleDrawPad);  // ← quick pad above Draw
+  searchBtn && searchBtn.addEventListener('click', openDeckSearch);
+  cascadeBtn&& cascadeBtn.addEventListener('click', togglePad);   // ← quick pad below Cascade
+  addBtn    && addBtn.addEventListener('click', openAddAnyCard);
+})();
+
+
+
+
+
 
 // Turn Info (ⓘ) — minimal overlay with RNG mount
 const turnInfoBtn = document.getElementById('turnInfoBtn');
@@ -3489,6 +3953,7 @@ const fsMount = panel.querySelector('#fieldStatsMount');
 FieldStats.mount(fsMount);
 
 });
+
 
 
 window.getDeckCardsForSeat = async (seat)=>{
@@ -3547,72 +4012,28 @@ window.millXCards = (seat, n)=>{
   Zones?.emitChange?.({ seat, zoneName:'graveyard' });
 };
 
+// after drawOneAnimated / drawXAnimated definitions
+window.drawOneAnimated ??= drawOneAnimated;
+window.drawXAnimated  ??= drawXAnimated;
 
 
 
-// CASCADE (reveal until hit, cast for free, bottom the rest randomly)
-window.startCascade = (seat, opts={ value:0, strictLess:true, ignoreLands:true })=>{
-  const N = Math.max(0, Number(opts.value||0)|0);
-  const strict = !!opts.strictLess;       // true => < N, false => ≤ N
-  const ignoreLands = !!opts.ignoreLands; // true => skip lands as candidates
 
-  if (!Array.isArray(deck) || !deck.length){
-    notify('Deck is empty.');
-    return;
+// CASCADE (reveal until hit, cast for free, bottom the rest randomly) — delegated to shared overlay module
+window.startCascade = (seat, opts = { value: 0, strictLess: true, ignoreLands: true }) => {
+  if (window.CascadeLogic && typeof window.CascadeLogic.start === 'function') {
+    return window.CascadeLogic.start(seat, opts);
   }
-
-  const revealed = [];
-  let hit = null;
-
-  // Helper to read mana value (fall back across common fields)
-  const mvOf = (c)=>{
-  if (Number.isFinite(c?.mana_value)) return c.mana_value|0;
-  if (Number.isFinite(c?.cmc))        return c.cmc|0;
-  if (Number.isFinite(c?.converted_mana_cost)) return c.converted_mana_cost|0;
-  return 0; // treat missing as 0 (lands typically)
-};
-
-  const isLand = (c)=>{
-  const tl = (c?.type_line || c?.type || '').toLowerCase();
-  if (tl.includes('land')) return true;
-  if (Array.isArray(c?.types)      && c.types.some(t => String(t).toLowerCase()==='land')) return true;
-  if (Array.isArray(c?.supertypes) && c.supertypes.some(t => String(t).toLowerCase()==='land')) return true;
-  return false;
-};
-
-
-  // Reveal from the top until we find a candidate
-  while (deck.length){
-    const c = deck.pop();            // reveal
-    revealed.push(c);
-
-    const mv = mvOf(c);
-    const mvOk = strict ? (mv < N) : (mv <= N);
-    const landOk = ignoreLands ? !isLand(c) : true;
-
-    if (landOk && mvOk){
-      hit = c;
-      break;
+  console.warn('[Cascade] CascadeLogic module not loaded.');
+  try {
+    if (window.Overlays && typeof Overlays.notify === 'function') {
+      Overlays.notify('warn', 'Cascade module not loaded');
+    } else if (typeof notify === 'function') {
+      notify('Cascade module not loaded');
     }
-  }
-
-  // Bottom the rest in random order (top is array end ⇒ bottom is array start)
-  const toBottom = revealed.filter(c => c !== hit);
-  for (let i = toBottom.length - 1; i > 0; i--){
-    const j = (Math.random()* (i+1))|0;
-    [toBottom[i], toBottom[j]] = [toBottom[j], toBottom[i]];
-  }
-  // Put on bottom (front)
-  deck.unshift(...toBottom);
-
-  // If we found a hit, “cast” it (spawn to table center for now)
-  if (hit){
-    window.spawnCardAtViewCenter?.(hit, seat);
-    notify(`Cascade hit: ${hit.name || 'card'}`);
-  } else {
-    notify('Cascade revealed the entire deck — no valid hit.');
-  }
+  } catch (e) {}
 };
+
 
 window.FieldStats = (function(){
   const CREATURE = 'creature';

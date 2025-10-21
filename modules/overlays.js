@@ -2,300 +2,19 @@
 // FILE: modules/overlays.js
 // Unified overlay manager (mobile-first) + combat scaffolds + tiny prompts
 // ================================
-/*
-Public API:
-  Overlays.init();
-  Overlays.notify(type, msg, { timeoutMs });
 
-  // Zones
-  Overlays.openZoneList({
-  title: 'Graveyard',
-  seat,
-  zoneName: 'graveyard',
-  cards: graveyardArray,
-  onMove: (card, dest) => Zones.moveFromZone({ seat, from: 'graveyard', to: dest, card }),
-  fetchCards: () => Zones.getZoneCards({ seat, zoneName: 'graveyard' }) // optional but recommended
-});
-
-
-// ---------- Deck: search (art grid) ----------
-openDeckSearch({
-  seat,
-  deckCards = [],
-  filterTypes = ['All','Creature','Instant','Sorcery','Artifact','Enchantment','Planeswalker','Land','Token','Battle'],
-  onMove,
-  onCloseAskShuffle
-}){
-  const ui = this._panel({ title:`Deck — P${seat}` });
-
-  // controls
-  const top = document.createElement('div');
-  Object.assign(top.style, { display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px' });
-
-  const q = this._input(); q.placeholder = 'Search name or text…';
-
-  const sel = document.createElement('select');
-  Object.assign(sel.style, { background:'#0a0f16', color:'#e7efff', border:`1px solid ${THEME.border}`, borderRadius:'10px', padding:'8px' });
-  filterTypes.forEach(t => { const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
-
-  top.appendChild(q); top.appendChild(sel); ui.body.appendChild(top);
-
-  // grid
-  const grid = document.createElement('div');
-  Object.assign(grid.style, {
-    display:'grid',
-    gridTemplateColumns:'repeat(auto-fill, minmax(140px, 1fr))',
-    gap:'10px'
-  });
-  ui.body.appendChild(grid);
-
-  // helpers
-  const typeBucket = (typeLine='')=>{
-    const tl = String(typeLine).toLowerCase();
-    if (tl.includes('creature')) return 'Creature';
-    if (tl.includes('artifact')) return 'Artifact';
-    if (tl.includes('instant')) return 'Instant';
-    if (tl.includes('sorcery')) return 'Sorcery';
-    if (tl.includes('enchantment')) return 'Enchantment';
-    if (tl.includes('planeswalker')) return 'Planeswalker';
-    if (tl.includes('land')) return 'Land';
-    if (tl.includes('token')) return 'Token';
-    if (tl.includes('battle')) return 'Battle';
-    return 'Other';
-  };
-
-  const artFrom = (c)=>{
-    // Prefer pre-stored image on your card objects, then fall back to scryfall id
-    const img = c?.img || c?.image || '';
-    if (img) return img;
-    const sid = c?.id || c?.scryfall_id || '';
-    return sid ? `https://api.scryfall.com/cards/${encodeURIComponent(String(sid))}?format=image&version=normal`
-               : '';
-  };
-
-  const makeTile = (c)=>{
-    const border = (window.THEME?.border) || 'rgba(255,255,255,.08)';
-    const tile = document.createElement('div');
-    Object.assign(tile.style, {
-      background:'#1a1f2a', border:`1px solid ${border}`, borderRadius:'10px',
-      overflow:'hidden', display:'grid', gridTemplateRows:'auto auto auto'
-    });
-
-    const thumb = document.createElement('div');
-    Object.assign(thumb.style, {
-      width:'100%', paddingTop:'140%', background:'#111',
-      backgroundSize:'cover', backgroundPosition:'center'
-    });
-    const artUrl = artFrom(c) || `https://via.placeholder.com/200x280/111826/9fb4d9?text=${encodeURIComponent(c?.name||'Unknown')}`;
-    thumb.style.backgroundImage = `url("${artUrl}")`;
-    tile.appendChild(thumb);
-
-    const name = document.createElement('div');
-    name.textContent = c?.name || '(unknown)';
-    Object.assign(name.style, {
-      padding:'8px', fontWeight:800, fontSize:'12px', whiteSpace:'nowrap',
-      textOverflow:'ellipsis', overflow:'hidden', borderTop:`1px solid ${border}`
-    });
-    tile.appendChild(name);
-
-    const actions = document.createElement('div');
-    Object.assign(actions.style, {
-      display:'flex', gap:'6px', padding:'8px', borderTop:`1px solid ${border}`,
-      background:'#0b1220', flexWrap:'wrap'
-    });
-
-    const addBtn = (label, dest) => {
-      const b = this._btn(label, (e)=>{ e.stopPropagation(); onMove?.(c, dest); });
-      Object.assign(b.style, { padding:'6px 8px' });
-      actions.appendChild(b);
-    };
-
-    // no "Add to Deck" here by request
-    addBtn('Table','table');
-    addBtn('Hand','hand');
-    addBtn('Graveyard','graveyard');
-    addBtn('Exile','exile');
-
-    tile.appendChild(actions);
-    return tile;
-  };
-
-  const render = ()=>{
-    grid.innerHTML = '';
-    const query = (q.value||'').toLowerCase();
-    const ft = sel.value;
-    const items = (Array.isArray(deckCards) ? deckCards : []).filter(c=>{
-      const n = (c?.name||'').toLowerCase();
-      const text = (c?.oracle_text||c?.text||'').toLowerCase();
-      const okN = !query || n.includes(query) || text.includes(query);
-      const okT = (ft==='All') ? true : (typeBucket(c?.type_line||'') === ft);
-      return okN && okT;
-    });
-    if (!items.length){
-      const d=document.createElement('div'); d.textContent='No matches.'; d.style.opacity='.8';
-      grid.appendChild(d);
-      return;
-    }
-    items.forEach(c => grid.appendChild(makeTile(c)));
-  };
-
-  q.addEventListener('input', render);
-  sel.addEventListener('change', render);
-  render();
-
-  const askClose = ()=>{
-    if (!onCloseAskShuffle) return this._pop(ui.wrap);
-    const ans = confirm('Shuffle deck now?');
-    try { onCloseAskShuffle(!!ans); } finally { this._pop(ui.wrap); }
-  };
-  ui.close.addEventListener('click', askClose);
-  ui.wrap.addEventListener('pointerdown', (e)=>{ if (e.target === ui.wrap) askClose(); });
-
-  this._push(ui.wrap);
-},
-
-// ---------- Add Any Card (Scryfall) as art grid ----------
-openAddCard({ seat, onMove, onSpawnToTable }){
-  const ui = this._panel({ title:`Add Card / Token — P${seat}` });
-
-  const q = this._input(); q.placeholder = 'Search (e.g. "zombie", "Sol Ring")';
-  const go = this._btn('Search', doSearch);
-
-  const top = document.createElement('div');
-  Object.assign(top.style, { display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px' });
-  top.appendChild(q); top.appendChild(go);
-  ui.body.appendChild(top);
-
-  const grid = document.createElement('div');
-  Object.assign(grid.style, {
-    display:'grid',
-    gridTemplateColumns:'repeat(auto-fill, minmax(140px, 1fr))',
-    gap:'10px'
-  });
-  ui.body.appendChild(grid);
-
-  const escapeHtml = (s)=> String(s||'').replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-
-  function artFromScry(c){
-    // handle single-face and MDFC
-    if (c?.image_uris?.normal) return c.image_uris.normal;
-    if (Array.isArray(c?.card_faces) && c.card_faces[0]?.image_uris?.normal) return c.card_faces[0].image_uris.normal;
-    return '';
-  }
-
-  async function doSearch(){
-    const s = (q.value||'').trim(); if (!s){ q.focus(); return; }
-    grid.innerHTML = '<div style="opacity:.7">Searching…</div>';
-    try{
-      const r = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(s)}`);
-      const j = await r.json();
-      const cards = Array.isArray(j.data) ? j.data : [];
-      render(cards);
-    }catch{
-      grid.innerHTML = '<div style="opacity:.8">Search failed.</div>';
-    }
-  }
-
-  function render(cards){
-    grid.innerHTML = '';
-    if (!cards.length){
-      const d=document.createElement('div'); d.textContent='No matches.'; d.style.opacity='.8'; grid.appendChild(d); return;
-    }
-
-    const border = (window.THEME?.border) || 'rgba(255,255,255,.08)';
-    cards.forEach(c=>{
-      const tile = document.createElement('div');
-      Object.assign(tile.style, {
-        background:'#1a1f2a', border:`1px solid ${border}`, borderRadius:'10px',
-        overflow:'hidden', display:'grid', gridTemplateRows:'auto auto auto'
-      });
-
-      const thumb = document.createElement('div');
-      Object.assign(thumb.style, {
-        width:'100%', paddingTop:'140%', background:'#111',
-        backgroundSize:'cover', backgroundPosition:'center'
-      });
-      const artUrl = artFromScry(c) || `https://via.placeholder.com/200x280/111826/9fb4d9?text=${encodeURIComponent(c?.name||'Unknown')}`;
-      thumb.style.backgroundImage = `url("${artUrl}")`;
-      tile.appendChild(thumb);
-
-      const name = document.createElement('div');
-      name.innerHTML = `
-        <div style="font-weight:800">${escapeHtml(c?.name||'')}</div>
-        <div style="opacity:.85; font-size:12px">${escapeHtml(c?.type_line||'')}</div>
-        <div style="opacity:.85; font-size:12px">${escapeHtml(c?.mana_cost||'')}</div>`;
-      Object.assign(name.style, {
-        padding:'8px', fontSize:'12px', borderTop:`1px solid ${border}`
-      });
-      tile.appendChild(name);
-
-      const actions = document.createElement('div');
-      Object.assign(actions.style, {
-        display:'flex', gap:'6px', padding:'8px', borderTop:`1px solid ${border}`,
-        background:'#0b1220', flexWrap:'wrap'
-      });
-
-      const payload = {
-        id: c.id,
-        name: c.name,
-        type_line: c.type_line,
-        mana_cost: c.mana_cost,
-        oracle_text: c.oracle_text,
-        img: artFromScry(c)
-      };
-
-      const send = (dest)=>{
-        if (typeof onMove === 'function'){
-          onMove(payload, dest);
-        } else if (dest === 'table' && typeof onSpawnToTable === 'function'){
-          onSpawnToTable(payload);
-        } else {
-          // convenience fallbacks if no callbacks provided
-          const seatNow = (window.AppState?.mySeat) || 1;
-          if (dest === 'table') window.spawnTableCard?.(payload, seatNow);
-          if (dest === 'hand')  window.addToHand?.(payload, seatNow);
-          if (dest === 'graveyard' || dest === 'exile') window.moveCardToZone?.(payload, dest, seatNow);
-        }
-      };
-
-      const addBtn = (label, dest)=>{
-        const b = this._btn(label, (e)=>{ e.stopPropagation(); send(dest); });
-        Object.assign(b.style, { padding:'6px 8px' });
-        actions.appendChild(b);
-      };
-
-      // No "Add to Deck" here by request
-      addBtn('Table','table');
-      addBtn('Hand','hand');
-      addBtn('Graveyard','graveyard');
-      addBtn('Exile','exile');
-
-      tile.appendChild(actions);
-      grid.appendChild(tile);
-    });
-  }
-
-  this._push(ui.wrap);
-},
-
-  Overlays.openDeckOptions({ seat, onDrawX, onMillX, onCascade, onShuffle });
-
-  Overlays.openDeckInsertChoice({ onTop, onBottom, onShuffle, onCancel });
-
-  // Combat scaffolds (V2-inspired)
-  Overlays.openCombatAttackers(opts);
-  Overlays.openCombatDefenders(opts);
-  Overlays.openCombatOutcome(opts);
-
-  // Activation scaffold
-  Overlays.openActivation({ card, abilities, onPayCheck, onActivate });
-*/
 const THEME = {
   panelBg:   '#0b1220',
   panelHdr:  '#1a1f2b',
   text:      '#e7e9ee',
   border:    'rgba(255,255,255,0.08)',
 };
+
+function debounce(fn, ms){
+  let t = 0;
+  return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
+}
+
 
 const Overlays = {
   root: null,
@@ -542,7 +261,16 @@ const Overlays = {
     filterTypes.forEach(t => { const o = document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
 
     top.appendChild(q); top.appendChild(sel); ui.body.appendChild(top);
+	// Deck list search uses the local render(); keep it lightweight
+q.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') render(); });
+q.addEventListener('input', debounce(()=>render(), 150));
+
+
     const list = document.createElement('div'); ui.body.appendChild(list);
+
+
+// Back-compat: some old code still calls doSearch(); keep it mapped
+const doSearch = () => render();
 
     const render = ()=>{
   list.innerHTML = '';
@@ -700,192 +428,367 @@ openCascadeWizard({ seat, onCascade } = {}){
   const wrap = document.createElement('div');
   Object.assign(wrap.style, { display:'grid', gap:'10px' });
 
-  // Inputs
-  const nInput = this._input({ width:'120px' }); nInput.type='number'; nInput.min='0'; nInput.placeholder='Cascade value (N)';
-  const cbLess   = document.createElement('label');
-  const cbLand   = document.createElement('label');
-  cbLess.innerHTML = `<input type="checkbox" checked> Hit must have mana value < N (rules default)`;
-  cbLand.innerHTML = `<input type="checkbox" checked> Ignore lands (rules default)`;
+  // === Minimal UI: N spinner + 2 checkboxes ===
+  // nspin (modern number picker like counters / P/T)
+  function makeNumberSpinner({ value = 0 } = {}){
+    const sp = document.createElement('div');
+    sp.className = 'nspin';
+    const btnSub = document.createElement('button');
+    const input  = document.createElement('input');
+    const btnAdd = document.createElement('button');
 
+    btnSub.type='button'; btnAdd.type='button';
+    btnSub.className='nbtn nsub'; btnAdd.className='nbtn nadd';
+    btnSub.textContent = '−'; btnAdd.textContent = '+';
+    input.type='number'; input.className='nspin-input'; input.value = String(value);
+    input.readOnly = true; input.inputMode = 'numeric';
+
+    // compact, pill-ish look (inline styles keep it self-contained)
+    Object.assign(sp.style,  { display:'inline-flex', alignItems:'center', gap:'6px',
+      border:`1px solid ${THEME?.border||'#2b3f63'}`, borderRadius:'999px',
+      background:'#0f1829', color:'#cfe1ff', padding:'4px 8px' });
+    const bStyle = { border:'0', borderRadius:'10px', width:'28px', height:'28px',
+      fontWeight:900, background:'#142039', color:'#cfe1ff', cursor:'pointer' };
+    Object.assign(btnSub.style,bStyle); Object.assign(btnAdd.style,bStyle);
+    Object.assign(input.style,{ width:'64px', background:'transparent', color:'#cfe1ff',
+      border:'0', textAlign:'center', fontWeight:900 });
+
+    sp.appendChild(btnSub); sp.appendChild(input); sp.appendChild(btnAdd);
+
+    // wiring (mirrors your attributes panel spinners) :contentReference[oaicite:3]{index=3}
+    const get = ()=> Number(input.value || 0);
+    const set = (v)=>{ input.value = String(v|0); input.dispatchEvent(new Event('input', {bubbles:true})); };
+    const step = (d)=> set(get() + d);
+
+    btnAdd.addEventListener('click', e=>{ e.stopPropagation(); step(+1); });
+    btnSub.addEventListener('click', e=>{ e.stopPropagation(); step(-1); });
+
+    // long-press repeat
+    function autoRepeat(btn, dir){
+      let t=null, rep=null;
+      const start = (e)=>{ e.preventDefault(); e.stopPropagation(); step(dir); t=setTimeout(()=>rep=setInterval(()=>step(dir), 60), 350); };
+      const stop  = ()=>{ clearTimeout(t); clearInterval(rep); t=null; rep=null; };
+      ['mousedown','touchstart'].forEach(ev=>btn.addEventListener(ev,start,{passive:false}));
+      ['mouseup','mouseleave','touchend','touchcancel'].forEach(ev=>btn.addEventListener(ev,stop));
+    }
+    autoRepeat(btnAdd, +1); autoRepeat(btnSub, -1);
+
+    // wheel + scrub
+    sp.addEventListener('wheel', (e)=>{ e.preventDefault(); step(e.deltaY>0 ? -1*(e.shiftKey?5:1) : +1*(e.shiftKey?5:1)); }, {passive:false});
+    let dragging=false,lastY=0;
+    sp.addEventListener('pointerdown',(e)=>{ dragging=true; lastY=e.clientY; sp.setPointerCapture?.(e.pointerId); });
+    sp.addEventListener('pointerup',()=>{ dragging=false; });
+    sp.addEventListener('pointercancel',()=>{ dragging=false; });
+    sp.addEventListener('pointermove',(e)=>{ if(!dragging) return; const dy=e.clientY-lastY; if(Math.abs(dy)>=10){ step(dy>0?-1:+1); lastY=e.clientY; } });
+
+    return { el: sp, getValue: ()=> get() };
+  }
+
+  // Row layout: [N spinner]  [toggles]
   const line1 = document.createElement('div');
   Object.assign(line1.style, { display:'grid', gridTemplateColumns:'160px 1fr', gap:'8px', alignItems:'center' });
-  line1.appendChild(nInput);
-  const toggles = document.createElement('div'); Object.assign(toggles.style,{ display:'grid', gap:'6px' });
+
+  const nSpin = makeNumberSpinner({ value: 0 });
+  line1.appendChild(nSpin.el);
+
+  const cbLess   = document.createElement('label');
+  const cbLand   = document.createElement('label');
+  cbLess.innerHTML = `<input type="checkbox" checked> Hit must have mana value &lt; N`;
+  cbLand.innerHTML = `<input type="checkbox" checked> Ignore lands`;
+  const toggles = document.createElement('div');
+  Object.assign(toggles.style,{ display:'grid', gap:'6px' });
   toggles.appendChild(cbLess); toggles.appendChild(cbLand);
   line1.appendChild(toggles);
 
-  // Help text
-  const help = document.createElement('div');
-  help.innerHTML = `
-    <div style="opacity:.9">
-      When you cascade, reveal cards from the top of your library until you reveal a <b>nonland</b> card with mana value
-      <span style="white-space:nowrap">&lt; N</span>. You may cast that card without paying its mana cost. Put the other revealed cards
-      on the bottom of your library in a random order.
-    </div>`;
-  Object.assign(help.style, { fontSize:'12px', lineHeight:'1.4', background:'#0b1220', border:`1px solid ${THEME.border}`, borderRadius:'10px', padding:'8px' });
-
-  // Start button
+  // Start only (no help text / no footer) :contentReference[oaicite:4]{index=4}
   const start = this._btn('Start Cascade', ()=>{
-    const N = Math.max(0, Number(nInput.value||0)|0);
-    const strictLess = cbLess.querySelector('input').checked;
+    const N = Math.max(0, Number(nSpin.getValue()||0)|0);
+    const strictLess  = cbLess.querySelector('input').checked;
     const ignoreLands = cbLand.querySelector('input').checked;
 
     if (typeof onCascade === 'function'){
-      // Caller performs the actual reveal/cast/bottoming with these settings.
-      // We pass a clean options object and close.
       onCascade({ value: N, strictLess, ignoreLands, seat });
       this._pop(ui.wrap);
       this.notify('info', `Cascade: N=${N} • ${ignoreLands?'ignore lands':'include lands'} • ${strictLess?'<' : '≤' } N`);
     } else {
-      // No handler wired — just explain next steps.
       this.notify('warn', 'No cascade handler wired. Provide onCascade in Overlays.openDeckOptions.');
     }
   });
   Object.assign(start.style, { fontSize:'14px', padding:'8px 12px', fontWeight:900 });
 
   wrap.appendChild(line1);
-  wrap.appendChild(help);
   wrap.appendChild(start);
-
-  // Bonus: tiny footer describing what your game engine should implement.
-  const api = document.createElement('div');
-  api.innerHTML = `
-    <div style="opacity:.7; font-size:11px">
-      Your game logic should handle: reveal until hit (per settings), optionally cast the hit for free,
-      then bottom the rest in random order. This wizard just collects the settings and calls <code>onCascade(opts)</code>.
-    </div>`;
-  wrap.appendChild(api);
 
   ui.body.appendChild(wrap);
   this._push(ui.wrap);
 },
 
 
-  openAddCard({ seat, onSpawnToTable }){
-    const ui = this._panel({ title:`Add Card / Token — P${seat}` });
-    const q = this._input(); q.placeholder = 'Search (e.g. "zombie", "Sol Ring")';
-    const sel = document.createElement('select');
-    Object.assign(sel.style, { background:'#0a0f16', color:'#e7efff', border:`1px solid ${THEME.border}`, borderRadius:'10px', padding:'8px' });
-    ['All','Creature','Token','Creature + Token'].forEach(t => {
-      const o = document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o);
-    });
+
+// ---------- Add Any Card (Scryfall) as art grid ----------
+openAddCard({
+  seat,
+  onSpawnToTable,
+
+  // NEW: optional presets for external callers (e.g., Draw-Rule token)
+  presetQuery = '',     // e.g., "Food", "Clue", "Zombie"
+  presetType  = '',     // e.g., "Token", "Creature", "All"
+  autoSearch  = false   // if true, immediately run a search with presets
+}){
+  const ui = this._panel({ title:`Add Card / Token — P${seat}` });
+    console.log('[PROBE C] openAddCard seat=', seat, 'presetQuery=', presetQuery, 'presetType=', presetType, 'autoSearch=', autoSearch);
+
+
+  // ── Search input
+  const q = this._input();
+  q.placeholder = 'Search (e.g. "Lightning Bolt", type: instant burn)';
+
+      // ── Type bucket
+  const selType = document.createElement('select');
+  Object.assign(selType.style, { background:'#0a0f16', color:'#e7efff', border:`1px solid ${THEME.border}`, borderRadius:'10px', padding:'8px' });
+  ['All','Creature','Instant','Sorcery','Artifact','Enchantment','Planeswalker','Land','Battle','Token','Non-token']
+    .forEach(t => { const o=document.createElement('option'); o.value=t; o.textContent=t; selType.appendChild(o); });
+
+  // --- NEW: apply presets (type + query) ---
+  if (presetType){
+    const opt = Array.from(selType.options).find(o =>
+      String(o.value).toLowerCase() === String(presetType).toLowerCase()
+    );
+    if (opt) selType.value = opt.value;
+  }
+  if (presetQuery) q.value = String(presetQuery);
+
+  // ── Rarity
+  const selRarity = document.createElement('select');
+
+    Object.assign(selRarity.style, { background:'#0a0f16', color:'#e7efff', border:`1px solid ${THEME.border}`, borderRadius:'10px', padding:'8px' });
+    [['','Any rarity'],['c','Common'],['u','Uncommon'],['r','Rare'],['m','Mythic']]
+      .forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; selRarity.appendChild(o); });
+
+    // ── Legality (common quick picks)
+    const selLegal = document.createElement('select');
+    Object.assign(selLegal.style, { background:'#0a0f16', color:'#e7efff', border:`1px solid ${THEME.border}`, borderRadius:'10px', padding:'8px' });
+    [['','Any format'],['commander','Commander-legal'],['modern','Modern-legal'],['pioneer','Pioneer-legal'],['standard','Standard-legal']]
+      .forEach(([v,l])=>{ const o=document.createElement('option'); o.value=v; o.textContent=l; selLegal.appendChild(o); });
+
+    // ── Color chips (W U B R G) with visible ON state
+const colors = ['W','U','B','R','G'];
+const colorWrap = document.createElement('div');
+Object.assign(colorWrap.style, { display:'flex', gap:'6px', alignItems:'center', flexWrap:'wrap' });
+
+const colorBtns = new Map();
+
+// tiny helper to style ON/OFF
+function styleColorChip(btn, on){
+  btn.classList.toggle('is-on', !!on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  Object.assign(btn.style, {
+    padding:'4px 8px',
+    border:`1px solid ${on ? '#6da7ff' : '#2b3f63'}`,
+    background: on ? '#213656' : '#1a2a45',
+    color:'#cfe1ff',
+    borderRadius:'10px',
+    fontWeight:900,
+    cursor:'pointer',
+    boxShadow: on ? 'inset 0 0 0 1px rgba(173,208,255,.35), 0 0 0 2px rgba(77,139,255,.18)' : 'none',
+    transform: on ? 'translateY(-1px)' : 'none'
+  });
+}
+
+colors.forEach(C=>{
+  // use a plain button so we fully control styles
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = C;
+  b.classList.add('ci-chip');
+  b.setAttribute('aria-pressed', 'false');
+
+  // initial OFF visuals
+  styleColorChip(b, false);
+
+  // toggle on click (and let the existing debounced search fire)
+  b.addEventListener('click', (e)=>{
+    e.preventDefault();
+    const on = !b.classList.contains('is-on');
+    styleColorChip(b, on);
+    // trigger the existing debounced() if you added it below
+    try { debounced?.(); } catch {}
+  });
+
+  // keyboard toggle (Space / Enter)
+  b.addEventListener('keydown', (e)=>{
+    if (e.key === ' ' || e.key === 'Enter'){ e.preventDefault(); b.click(); }
+  });
+
+  colorWrap.appendChild(b);
+  colorBtns.set(C, b);
+});
+
+
+// “Exact” now applies to whichever mode (card color OR color identity)
+const exactChk = document.createElement('label');
+exactChk.innerHTML = `<input type="checkbox" class="js-ci-exact"> Exact`;
+Object.assign(exactChk.style, { fontSize:'12px', opacity:.9 });
+
+// New: choose card color (c) vs color identity (id). Default: card color.
+const useIdChk = document.createElement('label');
+useIdChk.innerHTML = `<input type="checkbox" class="js-ci-useid"> Use color identity`;
+Object.assign(useIdChk.style, { fontSize:'12px', opacity:.9 });
+
+// ── Mana value range
+const mvMin = this._input({ width:'80px' }); mvMin.type='number'; mvMin.placeholder='MV min';
+const mvMax = this._input({ width:'80px' }); mvMax.type='number'; mvMax.placeholder='MV max';
+
+
+    // ── Go button
     const go = this._btn('Search', doSearch);
-    const top = document.createElement('div');
-    Object.assign(top.style, { display:'grid', gridTemplateColumns:'1fr auto', gap:'8px', marginBottom:'8px' });
-    const right = document.createElement('div');
-    Object.assign(right.style, { display:'grid', gridTemplateColumns:'1fr auto', gap:'8px' });
-    right.appendChild(sel); right.appendChild(go);
-    top.appendChild(q); top.appendChild(right);
-    ui.body.appendChild(top);
 
-    const list = document.createElement('div'); ui.body.appendChild(list);
+    // ── Layout rows
+    const row1 = document.createElement('div');
+    Object.assign(row1.style, { display:'grid', gridTemplateColumns:'1fr auto auto auto', gap:'8px', marginBottom:'8px' });
+    row1.append(q, selType, selRarity, selLegal);
 
-    // REPLACE the existing doSearch() inside Overlays.openAddCard(...)
-async function doSearch(){
-  const s = (q.value||'').trim();
-  if (!s){ q.focus(); return; }
-  list.innerHTML = '<div style="opacity:.7">Searching…</div>';
+    const row2 = document.createElement('div');
+    Object.assign(row2.style, { display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:'8px', alignItems:'center', marginBottom:'8px' });
+const mvBox = document.createElement('div'); Object.assign(mvBox.style, { display:'flex', gap:'6px', alignItems:'center' });
+mvBox.append(mvMin, mvMax);
+row2.append(colorWrap, exactChk, useIdChk, mvBox, go);
 
-  // Helpers
-  const enc = encodeURIComponent;
-  const userQ = enc(s);
 
-  const fetchJSON = async (url) => {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`Scryfall ${r.status}`);
-    return r.json();
-  };
-  const dedupeById = (arr) => {
-    const seen = new Set();
-    const out = [];
-    for (const c of arr) {
-      if (!c?.id || seen.has(c.id)) continue;
-      seen.add(c.id);
-      out.push(c);
-    }
-    return out;
-  };
-  const isToken = (c) =>
-    c?.layout === 'token' ||
-    (c?.set_type === 'token') ||
-    /\bToken\b/i.test(c?.type_line || '');
+    ui.body.append(row1, row2);
 
-  // Build URLs (token-aware)
-  const qCardsBase  = `https://api.scryfall.com/cards/search?q=game%3Apaper+(${userQ})`;
-  const qCreature   = `https://api.scryfall.com/cards/search?q=type%3Acreature+game%3Apaper+(${userQ})`;
-  const qTokensBase = `https://api.scryfall.com/cards/search?q=is%3Atoken+game%3Apaper+(${userQ})`;
+  const list = document.createElement('div'); ui.body.appendChild(list);
 
-  const mode = sel.value; // 'All' | 'Creature' | 'Token' | 'Creature + Token'
+  // Quick UX hooks
+  q.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') doSearch(); });
+  [selType, selRarity, selLegal].forEach(el => el.addEventListener('change', ()=>doSearch()));
+  [mvMin, mvMax].forEach(el => el.addEventListener('keydown', (e)=>{ if (e.key === 'Enter') doSearch(); }));
+  // tap chips to toggle; pressing any chip triggers a debounced search
+  const debounced = debounce(()=>doSearch(), 250);
+  colorWrap.addEventListener('click', debounced);
+  exactChk.querySelector('input')?.addEventListener('change', debounced);
+  useIdChk.querySelector('input')?.addEventListener('change', debounced);
+  if (autoSearch){
+    console.log('[PROBE C] autoSearch → clicking Search');
+    setTimeout(()=>{ try{ go.click(); }catch(e){ console.warn('[PROBE C] autoSearch click failed', e); } }, 0);
+  }
 
-  try {
-    let pool = [];
-    if (mode === 'All') {
-      const [cards, tokens] = await Promise.all([ fetchJSON(qCardsBase), fetchJSON(qTokensBase) ]);
-      pool = dedupeById([...(cards.data||[]), ...(tokens.data||[])]);
-    } else if (mode === 'Creature') {
-      const cards = await fetchJSON(qCreature);
-      pool = dedupeById(cards.data || []);
-    } else if (mode === 'Token') {
-      const tokens = await fetchJSON(qTokensBase);
-      pool = dedupeById(tokens.data || []);
-    } else { // 'Creature + Token'
-      const [crea, tokens] = await Promise.all([ fetchJSON(qCreature), fetchJSON(qTokensBase) ]);
-      pool = dedupeById([...(crea.data||[]), ...(tokens.data||[])]);
-    }
+  // --- NEW: auto-search when requested (after DOM is mounted) ---
+  if (autoSearch){
+    setTimeout(()=>{ try{ go.click(); }catch{} }, 0);
+  }
 
-    // ---- Partition & order: TOKENS first, then CARDS ----
-    const tokens = pool.filter(isToken);
-    const cards  = pool.filter(c => !isToken(c));
-    const ordered = [...tokens, ...cards];
 
-    // If your results widget is a <select>, render with <optgroup> headers.
-    // Otherwise, just pass the ordered array to the existing renderer.
-    if (list && String(list.tagName).toUpperCase() === 'SELECT') {
-      list.innerHTML = '';
 
-      // TOKENS group
-      if (tokens.length) {
-        const og = document.createElement('optgroup');
-        og.label = 'Tokens';
-        for (const c of tokens){
-          const opt = document.createElement('option');
-          opt.value = c.id;
-          opt.textContent = `${c.name} · token`;
-          // Keep any fields your spawn path later reads:
-          opt._card = c; // many overlays stash the object on the option
-          og.appendChild(opt);
-        }
-        list.appendChild(og);
+
+// --- fast search helpers (scoped to this overlay) ---
+let _abort = null;
+const _cache = new Map(); // key: `${mode}|${s}` → array of cards
+
+function debounce(fn, ms){
+  let t = 0;
+  return (...args)=>{ clearTimeout(t); t = setTimeout(()=>fn(...args), ms); };
+}
+
+function artFromSmall(card){
+  const face = Array.isArray(card?.card_faces) && card.card_faces[0] ? card.card_faces[0] : card;
+  return (card?.image_uris?.small || face?.image_uris?.small ||
+          card?.image_uris?.normal || face?.image_uris?.normal || '');
+}
+
+
+      // Advanced Scryfall builder honoring all filters above
+    async function doSearch(){
+      // cancel any previous in-flight request
+      if (_abort) _abort.abort();
+      _abort = new AbortController();
+
+      const s = (q.value||'').trim();
+      if (!s){ q.focus(); return; }
+
+      list.innerHTML = '<div style="opacity:.7">Searching…</div>';
+
+      // --- Build Scryfall query ---
+      const parts = [];
+
+      // name-biased: prefer exact/name matches but still allow full text
+      // e.g., name:"Lightning Bolt" OR lightning burn
+      // name-biased: prefer exact/name matches but still allow full text
+// IMPORTANT: Wrap OR group in parentheses so other filters still apply!
+parts.push(`(name:${JSON.stringify(s)} OR ${s})`);
+
+
+      // game
+      parts.push('game:paper');
+
+      // type bucket
+      const t = selType.value;
+      if (t && t !== 'All'){
+        if (t === 'Token') parts.push('is:token');
+        else if (t === 'Non-token') parts.push('-is:token');
+        else parts.push(`type:${t.toLowerCase()}`);
       }
 
-      // CARDS group
-      if (cards.length) {
-        const og = document.createElement('optgroup');
-        og.label = 'Cards';
-        for (const c of cards){
-          const opt = document.createElement('option');
-          opt.value = c.id;
-          opt.textContent = c.name;
-          opt._card = c;
-          og.appendChild(opt);
-        }
-        list.appendChild(og);
-      }
+      // rarity
+      const r = selRarity.value; // c|u|r|m
+      if (r) parts.push(`r:${r}`);
 
-      // Keep previous selection behavior:
-      if (list.options.length) list.selectedIndex = 0;
+      // legality quick pick
+      const lg = selLegal.value;
+      if (lg) parts.push(`legal:${lg}`);
 
-    } else {
-      // Non-<select> list (tiles/grid/etc.): tokens already on top.
-      // Use your existing renderer, which reads from `ordered`.
-      render(ordered);
-    }
-
-  } catch (e) {
-    console.warn('[AddCard] search failed', e);
-    list.innerHTML = '<div style="opacity:.8">Search failed.</div>';
+      // colors (card colors by default, color identity if toggle is on)
+const chosen = ['W','U','B','R','G'].filter(C => colorBtns.get(C)?.classList.contains('is-on'));
+if (chosen.length){
+  const exact = !!ui.body.querySelector('.js-ci-exact')?.checked;
+  const useId = !!ui.body.querySelector('.js-ci-useid')?.checked; // new toggle
+  const slug = chosen.join('');                                  // e.g., "WU"
+  if (useId){
+    parts.push(exact ? `id=${slug}` : `id<=${slug}`);
+  } else {
+    parts.push(exact ? `c=${slug}` : `c<=${slug}`);
   }
 }
+
+
+      // mana value range
+      // mana value range (only apply if the field is non-empty)
+const minStr = (mvMin.value ?? '').trim();
+if (minStr !== '') {
+  const min = Number(minStr);
+  if (Number.isFinite(min)) parts.push(`mv>=${min}`);
+}
+
+const maxStr = (mvMax.value ?? '').trim();
+if (maxStr !== '') {
+  const max = Number(maxStr);
+  if (Number.isFinite(max)) parts.push(`mv<=${max}`);
+}
+
+
+      // final
+      const adv = parts.join(' ').replace(/\s+/g,' ').trim();
+const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(adv)}&order=relevance&unique=cards&include_extras=false&include_multilingual=false`;
+console.debug('[AddCard] Scryfall Q=', adv);
+
+      try{
+        const r = await fetch(url, { signal:_abort.signal });
+        if (!r.ok) throw new Error(`Scryfall ${r.status}`);
+        const j = await r.json();
+        const cards = Array.isArray(j.data) ? j.data : [];
+        // prefer small thumbs for speed
+        for (const c of cards){ c.__thumbSmall = artFromSmall(c); }
+        render(cards);
+      }catch(e){
+        if (e?.name === 'AbortError') return;
+        console.warn('[AddCard] search failed', e);
+        list.innerHTML = '<div style="opacity:.8">Search failed.</div>';
+      }finally{
+        _abort = null;
+      }
+    }
+
+
 
 	// helper for showing art like the other overlays
 function artFrom(c){

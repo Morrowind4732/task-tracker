@@ -7,6 +7,7 @@ import { supaReady } from './env.supabase.js';
 import * as AD from './ability.detect.js'; // ← uses your 1:1 parser/actions
 import { manaToHtml } from './tooltip.js';
 let supabase = null; supaReady.then(c => supabase = c);
+import './draw.rules.overlay.js';
 
 // -------------------------------
 // Small DOM helpers
@@ -28,6 +29,8 @@ const activeSeats = ()=>{
   const n = Number(raw);
   return Array.from({length: (Number.isFinite(n)&&n>=1)?n:2}, (_,i)=>i+1);
 };
+
+
 
 // Robust Oracle text getter (supports dash/underscore + cache fallbacks)
 function getOracleForCid(cid){
@@ -614,10 +617,16 @@ const ActivatedAbilities = {
     <button title="Scan" class="pill js-tab active" data-tab="scan"   style="border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 10px">🔎 Scan</button>
     <button class="pill js-tab"        data-tab="apply"  style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">Apply</button>
     <button class="pill js-tab"        data-tab="active" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">Active</button>
-	<button class="pill js-tab" data-tab="settings"
-  style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">⚙️</button>
+    <button class="pill js-tab" data-tab="settings"
+      style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">⚙️</button>
 
+    <!-- NEW: right-aligned Send to... -->
+    <button class="pill js-sendto"
+      style="margin-left:auto;border:1px solid #2b3f63;border-radius:999px;background:#12240f;color:#d7ffd7;padding:6px 10px">
+      Send to…
+    </button>
   </div>
+
 
   <style>
     /* Scoped to THIS ability panel only */
@@ -757,13 +766,16 @@ const ActivatedAbilities = {
     <div class="grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <!-- Targets -->
       <div class="box box-apply-targets" style="border:1px solid #2b3f63;border-radius:10px;padding:10px">
-        <div style="font-weight:900;margin-bottom:6px">Targets</div>
-        <div class="row" style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-          <button class="pill js-scope" data-scope="mine" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:4px 10px">My Cards</button>
-          <button class="pill js-scope" data-scope="opponent" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:4px 10px">Opponent</button>
-          <button class="pill js-scope" data-scope="both" style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:4px 10px">Both</button>
-        </div>
-        <div class="tgtWrap" style="display:grid;gap:6px"></div>
+        <!-- [TARGET BUTTONS] -->
+<div style="font-weight:900;margin-bottom:6px">Targets</div>
+<div class="row" style="display:flex;gap:6px;flex-wrap:wrap">
+  <button class="pill js-scope" data-scope="mine">My cards</button>
+  <button class="pill js-scope" data-scope="opponent">Opponent</button>
+  <button class="pill js-scope" data-scope="both">Both</button>
+  <button class="pill js-scope" data-scope="deck">Deck</button> <!-- NEW -->
+</div>
+<div class="tgtWrap" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap"></div>
+
 
 <!-- Target by creature type (filters the pool before applying) -->
 <div class="box" style="margin-top:10px;border:1px dashed #2b3f63;border-radius:10px;padding:10px">
@@ -1010,15 +1022,23 @@ p.addEventListener?.('click', (ev)=>{
   prefillApply({ mode, value }, p);
 });
 
-        function refreshTargets(scope){
-          const meCards = listCardsForSeat(me);
-          const opCards = listCardsForSeat(opp);
-          let list = [];
-          if (scope==='mine') list = meCards;
-          else if (scope==='opponent') list = opCards;
-          else list = meCards.concat(opCards);
-          tgtWrap.innerHTML = list.map(cardChipHtml).join('');
-        }
+function refreshTargets(scope){
+  if (scope === 'deck'){
+    try { p?._close?.(); } catch {}
+    window.DrawRules?.open?.();
+    return;
+  }
+
+  const meCards = listCardsForSeat(me);
+  const opCards = listCardsForSeat(opp);
+  let list = [];
+  if (scope==='mine') list = meCards;
+  else if (scope==='opponent') list = opCards;
+  else list = meCards.concat(opCards);
+  tgtWrap.innerHTML = list.map(cardChipHtml).join('');
+}
+
+
         scopeBtns.forEach(b => b.onclick = ()=>{
           scopeBtns.forEach(x=>{
             x.classList.toggle('active', x===b);
@@ -1701,6 +1721,116 @@ function switchTab(which){
 
 tabBtns.forEach(b => b.onclick = ()=> switchTab(b.dataset.tab));
 switchTab('scan');
+
+// --- Send to... (radial 1/2/3) -------------------------------------------
+const sendBtn = bySel('.js-sendto', p);
+
+function openSendRadial(anchorBtn){
+  // Simple radial with 3 seats; reuse your radial styles already in this file
+  const scrim = document.createElement('div');
+  scrim.className = 'radial-scrim';
+
+  const r = document.createElement('div');
+  r.className = 'radial';
+
+  const ring  = document.createElement('div'); ring.className = 'ring';
+  const alpha = document.createElement('div'); alpha.className = 'alpha';
+  r.append(ring, alpha);
+  scrim.appendChild(r);
+  document.body.appendChild(scrim);
+
+  // geometry (same as your other radial)
+  const SIZE = 560, HALF = SIZE/2, BTN_OFFSET = 86, RADIUS = HALF - BTN_OFFSET;
+  const rect = anchorBtn.getBoundingClientRect();
+  const vw = Math.max(document.documentElement.clientWidth,  window.innerWidth  || 0);
+  const vh = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+  const pad = 20;
+  let cx = Math.min(Math.max(rect.left + rect.width/2,  HALF + pad), vw - HALF - pad);
+  let cy = Math.min(Math.max(rect.top  + rect.height/2, HALF + pad), vh - HALF - pad);
+  Object.assign(r.style, { left:(cx-HALF)+'px', top:(cy-HALF)+'px' });
+
+  const seats = activeSeats(); // e.g., [1,2] or [1,2,3,4]; we only render 1..3 per request
+  [1,2,3].forEach((s, idx)=>{
+    if (!seats.includes(s)) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = String(s);
+    b.style.position = 'absolute';
+    b.style.width = b.style.height = '64px';
+    b.style.borderRadius = '50%';
+    b.style.border = '1px solid #2b3f63';
+    b.style.background = '#142039';
+    b.style.color = '#cfe1ff';
+    b.style.fontWeight = '900';
+    b.style.lineHeight = '64px';
+    b.style.textAlign = 'center';
+    const angle = (idx / 3) * Math.PI*2 - Math.PI/2; // 3 buttons
+    const x = HALF + Math.cos(angle)*RADIUS;
+    const y = HALF + Math.sin(angle)*RADIUS;
+    b.style.left = x + 'px';
+    b.style.top  = y + 'px';
+
+    b.addEventListener('click', ()=>{
+  try {
+    // Resolve source card (this panel’s card)
+    const cid = String(anchorEl?.dataset?.cid || bySel('[data-cid]', p)?.dataset?.cid || '').trim();
+
+    // Prefer Zones → then dataset fallback
+    const el = cid ? findCardEl(cid) : null;
+    const zc = window.Zones?.getCardDataById?.(cid) || null;
+    const cardData = zc || (el ? {
+      id:           el.dataset.id || cid,
+      name:         el.dataset.name || 'Card',
+      type_line:    el.dataset.type_line || el.dataset.type || '',
+      mana_cost:    el.dataset.mana_cost || '',
+      oracle_text:  el.dataset.oracle_text || '',
+      img:          el.querySelector('.face.front img')?.src || ''
+    } : null) || { id:`copy:${Date.now()}`, name:'Card', type_line:'', mana_cost:'', oracle_text:'', img:'' };
+
+    // Unique cid for the spawned copy
+    const newCid = (crypto?.randomUUID?.() || Math.random().toString(36)).slice(0,12);
+
+    // Pick a sensible drop point (center of current viewport)
+    const vr = document.querySelector('#worldWrap, #table, body').getBoundingClientRect?.() || { left:0, top:0, width:window.innerWidth||800, height:window.innerHeight||600 };
+    const cx = vr.left + vr.width  * 0.5;
+    const cy = vr.top  + vr.height * 0.45; // slightly high so hands don’t cover
+    // If you have a screen→world helper, prefer it; else send screen coords (receiver sets style.left/top)
+    const x = Math.round(cx);
+    const y = Math.round(cy);
+
+    // RTC packet that your net.rtc.js expects (msg.type === 'spawn')
+    const msg = {
+      type:        'spawn',
+      owner:       Number(s),           // seat to spawn for
+      cid:         newCid,              // unique cid
+      name:        cardData.name || '',
+      img:         cardData.img  || cardData.image || '',
+      type_line:   cardData.type_line   || '',
+      mana_cost:   cardData.mana_cost   || '',
+      oracle_text: cardData.oracle_text || '',
+      x, y
+    };
+
+    // Send via DC (drops gracefully if DC not open)
+    (window.RTC?.send?.(msg) ?? window.sendRTC?.(msg));
+
+  } finally {
+    try { document.body.removeChild(scrim); } catch {}
+  }
+});
+
+
+    alpha.appendChild(b);
+  });
+
+  scrim.addEventListener('click', (e)=>{ if (e.target === scrim) try { document.body.removeChild(scrim); } catch{}; }, {capture:true});
+}
+
+sendBtn?.addEventListener('click', (ev)=>{
+  ev.stopPropagation();
+  openSendRadial(ev.currentTarget);
+});
+
 
 // Run one automatic scan the first time this overlay mounts
 if (!p.dataset.scanInit) {
@@ -2436,15 +2566,14 @@ if (opt.kind === 'add_mana'){
 // Search buttons for choice options
 if (opt.kind === 'open_zone_filter') {
   const z = String(opt.zone || 'library').toLowerCase();
-  const nice = z.charAt(0).toUpperCase() + z.slice(1); // Library/Graveyard/Exile/Hand/Deck
+  const nice = z.charAt(0).toUpperCase() + z.slice(1);
   const q = String(opt.query || '').trim();
   const label = q ? `Search your ${nice} for ${escapeHtml(q)}` : `Search your ${nice}`;
   return `<button type="button" class="pill" data-act="open_zone_filter" data-zone="${escapeHtml(z)}" data-q="${escapeHtml(q)}">${label}</button>`;
 }
 
-// Fallback for plain 'search_library' actions that may show up as options
+// Legacy fallback some detectors may produce
 if (opt.kind === 'search_library') {
-  // treat as "open zone filter: library" with no query (generic 'a card')
   return `<button type="button" class="pill" data-act="open_zone_filter" data-zone="library" data-q="">Search your Library</button>`;
 }
 
@@ -2476,12 +2605,13 @@ function actionRow(a){
     }
 	
 case 'open_zone_filter': {
-  const z = String(a.zone || 'graveyard');
+  const z = String(a.zone || 'library');
   const nice = z.charAt(0).toUpperCase() + z.slice(1);
   const q = String(a.query || '').trim();
   const label = q ? `Search your ${nice} for ${escapeHtml(q)}` : `Search your ${nice}`;
-  return `<button type="button" class="pill" data-act="open_zone_filter" data-zone="${escapeHtml(z)}" data-q="${escapeHtml(q)}">${label}</button>`;
+  return pill(`data-act="open_zone_filter" data-zone="${escapeHtml(z)}" data-q="${escapeHtml(q)}"`, label);
 }
+
 
 
     case 'draw_cards': {
@@ -2788,51 +2918,44 @@ box.innerHTML = actions.map(a => {
   const room_id = currentRoom();
 
   try{
-	  if (kind === 'open_zone_filter'){
-  const zone = (btn.dataset.zone || 'graveyard').toLowerCase();
+	  if (kind === 'open_zone_filter') {
+  const zone = (btn.dataset.zone || 'library').toLowerCase();
   const query = (btn.dataset.q || '').trim();
   const targetSeat = Number(seat) || mySeat();
 
   try {
-    // 1) Open the appropriate UI
-    if (zone === 'graveyard' || zone === 'exile'){
-      Zones?.openZone?.(zone, targetSeat); // built-in API supports these zones
-      // 2) After the overlay mounts, try to set its filter input
+    if (zone === 'graveyard' || zone === 'exile') {
+      // open your existing zone overlay
+      Zones?.openZone?.(zone, targetSeat);
+      // try to fill its filter box shortly after it mounts
       setTimeout(() => {
-        // Be flexible about selector names so we don't have to touch Overlays.js
         const overlay = document.querySelector('.overlays, .overlay, .panel, .zone-overlay') || document;
         const sels = [
-          '.js-zone-filter input',
-          'input.js-zone-filter',
-          'input[name="zoneFilter"]',
-          '.zone-filter input',
-          'input[placeholder*="filter" i]',
-          'input[placeholder*="search" i]'
+          '.js-zone-filter input','input.js-zone-filter','input[name="zoneFilter"]',
+          '.zone-filter input','input[placeholder*="filter" i]','input[placeholder*="search" i]'
         ];
-        for (const s of sels){
+        for (const s of sels) {
           const el = overlay.querySelector(s);
-          if (el){
-            el.value = query;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            break;
-          }
+          if (el) { el.value = query; el.dispatchEvent(new Event('input', { bubbles: true })); break; }
         }
       }, 80);
-    } else if (zone === 'library' || zone === 'deck'){
-      // Prefer your deck search overlay if available
-      if (window.Overlays?.openDeckSearch){
+    } else if (zone === 'library' || zone === 'deck') {
+      // prefer a deck/library search overlay if you have one
+      if (window.Overlays?.openDeckSearch) {
         window.Overlays.openDeckSearch({ initialQuery: query });
       } else {
         console.warn('[Scan] Deck/library search UI not available');
       }
-    } else if (zone === 'hand'){
-      // Optional: wire a hand overlay if/when you add one
+    } else if (zone === 'hand') {
+      // stub: wire up when you add a hand overlay
       console.warn('[Scan] Hand search UI not available');
     }
-  } catch(e){
+  } catch (e) {
     console.warn('[Scan] open_zone_filter failed', e);
   }
+  return;
 }
+
 
     if (kind === 'gain_life'){
       const n = Number(btn.dataset.n||1);

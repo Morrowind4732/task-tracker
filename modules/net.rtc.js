@@ -273,6 +273,21 @@ function wireDC(dc, onMessage) {
 
     // Pass to app-level handler (unchanged)
     onMessage(msg);
+if (msg.type === 'spawn_table_card') {
+  // normalize old payload → new spawn
+  const c = msg.card || {};
+  msg = {
+    type: 'spawn',
+    owner: Number(msg.seat || msg.owner || 1),
+    cid: msg.cid,
+    name: c.name || '',
+    img:  c.img  || c.image || (c.image_uris?.normal) || '',
+    type_line:   c.type_line   || '',
+    mana_cost:   c.mana_cost   || '',
+    oracle_text: c.oracle_text || '',
+    x: msg.x ?? 0, y: msg.y ?? 0
+  };
+}
 
     // NEW: RNG packets also emit a global event for overlay modules
     if (msg.type === 'rng_roll') {
@@ -345,12 +360,13 @@ function wireDC(dc, onMessage) {
           try {
             window.CardAttributes?.applyToDom?.(cid);
             window.CardAttributes?.refreshPT?.(cid);
-            attachTooltip?.(node, {
-              name: msg.name || '',
-              typeLine: msg.type_line || '',
-              costHTML: '',
-              oracle: msg.oracle_text || ''
-            });
+            window.attachTooltip?.(node, {
+  name: msg.name || '',
+  typeLine: msg.type_line || '',
+  costHTML: '',
+  oracle: msg.oracle_text || ''
+});
+
             window.reflowAll?.();
           } catch (e) {
             console.warn('spawn hydration failed', e);
