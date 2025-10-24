@@ -762,12 +762,25 @@ detectManaVariant();
 ensureOverlayRoot(el);
 
 // NEW: seed missing info so PT can render without interaction
-autoSeedMissingPT(el, cid).finally(()=>{
+// Skip auto-hydrate for flip-spawned cards
+// HYDRATE_MINIMAL rules:
+// - If flip-spawned (data-skipHydrate), DO NOT auto-hydrate attributes
+// - Still allow PT refresh for base stats
+if (el.hasAttribute('data-skipHydrate')) {
+  // Minimal hydration: only refresh PT to show base P/T
   this.refreshPT(cid);
   requestAnimationFrame(()=> this.refreshPT(cid));
-  this.applyToDom(cid);
-  this._pending.delete(cid);
-});
+} else {
+  // Normal behavior for real spawns
+  autoSeedMissingPT(el, cid).finally(()=>{
+    this.refreshPT(cid);
+    requestAnimationFrame(()=> this.refreshPT(cid));
+    this.applyToDom(cid);
+    this._pending.delete(cid);
+  });
+}
+
+
 
 
           }

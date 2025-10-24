@@ -102,6 +102,30 @@ function ensureTip(){
       }
       .cardTooltip .typeLine{ opacity:.9; margin:6px 0; }
       .cardTooltip .oracle{ white-space:pre-wrap; }
+	  .tip-btn {
+  background: rgba(20,25,35,0.92);
+  color: #e6eefc;
+  border: 1px solid rgba(110,140,180,0.35);
+  border-radius: 8px;
+  font: 600 14px/1 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tip-btn:hover { filter: brightness(1.1); }
+.tip-btn:active { transform: translateY(1px); }
+
+#tip-flip { /* middle slot icon */
+  letter-spacing: 0.02em;
+}
+
+#tip-tap .tap-glyph {
+  display: inline-block;
+  transform: translateY(1px);
+  font-weight: 700;
+}
+
     `;
     document.head.appendChild(s);
   }
@@ -228,6 +252,240 @@ function positionWand(targetEl){
 function hideWand(){
   if (wandEl) wandEl.style.display = 'none';
 }
+
+// --- button singletons
+let tipFlipBtn = null;
+let tipTapBtn  = null;
+
+function applyActionBtnStyle(b){
+  // match the wand look 1:1
+  Object.assign(b.style, {
+    position: 'fixed',
+    display: 'none',
+    zIndex: '3000',
+    width: '42px',
+    height: '42px',
+    borderRadius: '50%',
+    background: '#0f1725',
+    color: '#cfe1ff',
+    border: '1px solid #2b3f63',
+    boxShadow: '0 8px 20px rgba(106,169,255,.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer'
+  });
+  // keep pointer events from bubbling into the card drag handlers
+  b.addEventListener('pointerdown', e => e.stopPropagation());
+}
+
+function ensureFlipButton(){
+  if (tipFlipBtn) return tipFlipBtn;
+  const b = document.createElement('button');
+  b.id = 'tip-flip';
+  b.type = 'button';
+  b.setAttribute('aria-label', 'Flip');
+  b.textContent = '⇄'; // simple, clear flip icon
+  applyActionBtnStyle(b);
+  b.addEventListener('click', ()=>{
+    try {
+      const el = anchorEl;
+      const cid = el?.dataset?.cid;
+      if (cid) flipCard(cid);
+    } catch(e){ console.warn('[flipBtn]', e); }
+  });
+  document.body.appendChild(b);
+  tipFlipBtn = b;
+  return b;
+}
+
+function ensureTapButton(){
+  if (tipTapBtn) return tipTapBtn;
+  const b = document.createElement('button');
+  b.id = 'tip-tap';
+  b.type = 'button';
+  b.setAttribute('aria-label', 'Tap / Untap');
+
+  // ManaMaster {T} glyph
+  b.innerHTML = '<i class="ms ms-tap"></i>';
+  applyActionBtnStyle(b);
+
+  // SINGLE handler → one source of truth
+  b.addEventListener('click', ()=>{
+    try {
+      const el = anchorEl;
+      const cid = el?.dataset?.cid;
+      if (!cid) return;
+      toggleTap(cid);   // ← only this
+    } catch (e) {
+      console.warn('[tapBtn]', e);
+    }
+  });
+
+  document.body.appendChild(b);
+  tipTapBtn = b;
+  return b;
+}
+
+
+
+
+// Toggle a card's tapped state. If your engine provides an official method,
+// we call that. Otherwise we do a safe, networked fallback.
+// Toggle a card's tapped state (DOM + RTC) with safe fallbacks
+export function toggleTap(cid, force /* true|false|null */){
+  try {
+    // Prefer engine helpers if you have them
+    if (typeof Zones?.toggleTap === 'function') { Zones.toggleTap(cid, force); return; }
+    if (typeof Zones?.tapCard === 'function') {
+      const el0 = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+      const wantTap = (force == null) ? (el0?.getAttribute('data-tapped') !== '1') : !!force;
+      Zones.tapCard(cid, wantTap);
+      return;
+    }
+
+    // ---- v3-style local toggle (matches turn.upkeep.js) ----
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    if (!el) return console.warn('[tap] no card element for', cid);
+
+    const nextTapped = (force == null)
+      ? (el.getAttribute('data-tapped') !== '1')
+      : !!force;
+
+    // 1) Update DOM state (class + css var used by table CSS)
+    el.setAttribute('data-tapped', nextTapped ? '1' : '0');
+    el.classList.toggle('tapped', nextTapped);
+    el.style.setProperty('--tap-rot', nextTapped ? '90deg' : '0deg');
+
+    // 2) (Optional) keep a tiny local cache
+    if (!(window.CID_DATA instanceof Map)) window.CID_DATA = new Map();
+    const rec = window.CID_DATA.get(String(cid)) || { id: String(cid) };
+    rec.tapped = nextTapped ? 1 : 0;
+    window.CID_DATA.set(String(cid), rec);
+
+    // 3) (Optional) persist into seat state if your engine supports it
+    try {
+      const seat = Zones?.getViewSeat?.() ?? (typeof mySeat === 'function' ? mySeat() : 1);
+      const st   = Zones?._ensureSeatState?.(seat);
+      if (typeof Zones?.setCardAttr === 'function') {
+        Zones.setCardAttr(cid, 'tapped', nextTapped ? 1 : 0);
+      } else if (st && Array.isArray(st.table)) {
+        const row = st.table.find(c => String(c?.cid) === String(cid));
+        if (row) row.tapped = nextTapped ? 1 : 0;
+        Zones?._saveSeatState?.(seat, st);
+      }
+    } catch {}
+
+    // 4) Broadcast so peers mirror the tap (matches v3)
+    try { window.RTC?.send?.({ type: 'tap', cid, tapped: nextTapped ? 1 : 0 }); } catch {}
+
+    // 5) Light repaint (no CardAttributes.refreshPT — that’s what crashed)
+    (window.applyToDom || window.Zones?.applyToDom)?.(cid);
+
+    console.log('[tap] toggled', cid, '→', nextTapped ? 'tapped' : 'untapped');
+  } catch (e) {
+    console.warn('[tap] error', e);
+  }
+}
+
+
+
+
+
+
+export function hideFlip(){ if (tipFlipBtn){ tipFlipBtn.style.display = 'none'; } }
+export function hideTap(){  if (tipTapBtn){  tipTapBtn.style.display  = 'none'; } }
+
+function renderFlipButton(cardEl, flippable){
+  const b = ensureFlipButton();
+  positionFlip(cardEl);               // always position (reserves space)
+  b.style.display = flippable ? 'flex' : 'none';
+}
+
+// Build fast-lookup maps from st.flip / st.flipDeck
+function _ensureFlipIndices(st){
+  if (!st) return;
+  if (!Array.isArray(st.flipDeck)) {
+    // prefer flipDeck if you already wrote it; else use legacy st.flip
+    st.flipDeck = Array.isArray(st.flip) ? st.flip.slice() : [];
+  }
+  if (!st.flipDeckByFrontKey) st.flipDeckByFrontKey = Object.create(null);
+  if (!st.flipDeckByFront)    st.flipDeckByFront    = Object.create(null);
+
+  // rebuild by frontKey
+  st.flipDeckByFrontKey = Object.create(null);
+  for (const b of st.flipDeck) {
+    const fk = b.link_front_key || b.frontKey || b._frontKey || null;
+    if (fk) st.flipDeckByFrontKey[fk] = b;
+  }
+}
+
+// Re-link backs to CURRENT front CIDs by walking the DOM
+export function rehydrateFlipDeckForSeat(seat){
+  try {
+    const st = Zones?._ensureSeatState?.(seat);
+    if (!st) return;
+
+    _ensureFlipIndices(st);
+
+    // clear cid map; we'll repopulate from DOM
+    st.flipDeckByFront = Object.create(null);
+
+    // any card elements for this seat that have frontKey → link
+    const cards = document.querySelectorAll(`.card[data-owner="${seat}"]`);
+    for (const el of cards) {
+      const fk  = el.dataset.frontKey;
+      const cid = el.dataset.cid;
+      if (!fk || !cid) continue;
+
+      const back = st.flipDeckByFrontKey[fk];
+      if (back) {
+        back.link_front_id = cid;               // persist link
+        st.flipDeckByFront[cid] = back;         // quick lookup by cid
+      }
+    }
+
+    Zones?._saveSeatState?.(seat, st); // persist for next reload too
+    console.info('[flip] rehydrated', Object.keys(st.flipDeckByFront).length, 'front->back links');
+  } catch(e){
+    console.warn('[flip] rehydrate failed', e);
+  }
+}
+
+
+function renderTapButton(cardEl){
+  const b = ensureTapButton();
+  positionTap(cardEl);
+  b.style.display = 'flex';
+}
+
+// S2 spacing layout: top(wand) / middle(flip slot) / bottom(tap)
+export function positionFlip(cardEl){
+  if (!tipFlipBtn) return;
+  const r = cardEl.getBoundingClientRect();
+  const BTN = 28;         // size
+  const GAP = 10;         // S2 medium feel
+  const left = Math.max(4, r.left - BTN - 8); // left outside of card
+  const top  = r.top + (r.height/2) - (BTN/2); // middle slot (reserved even if hidden)
+  Object.assign(tipFlipBtn.style, {
+    position:'fixed', left:`${left}px`, top:`${top}px`,
+    width:`${BTN}px`, height:`${BTN}px`, display:'flex',
+    alignItems:'center', justifyContent:'center', zIndex: 3000
+  });
+}
+
+export function positionTap(cardEl){
+  if (!tipTapBtn) return;
+  const r = cardEl.getBoundingClientRect();
+  const BTN = 28;
+  const left = Math.max(4, r.left - BTN - 8);
+  const top  = r.bottom - BTN - 8; // bottom slot; spacing remains even if flip hidden
+  Object.assign(tipTapBtn.style, {
+    position:'fixed', left:`${left}px`, top:`${top}px`,
+    width:`${BTN}px`, height:`${BTN}px`, display:'flex',
+    alignItems:'center', justifyContent:'center', zIndex: 3000
+  });
+}
+
 
 
 // NEW: position the cog relative to the anchored card
@@ -365,7 +623,9 @@ document.addEventListener('pointerdown', (e)=>{
 });
 
 
-
+const seat = Zones?.getViewSeat?.() ?? (typeof mySeat === 'function' ? mySeat() : 1);
+  // defer to let the table render first
+  setTimeout(()=> rehydrateFlipDeckForSeat(seat), 0);
   window.addEventListener('resize', ()=> reflowAll());
 }
 
@@ -379,10 +639,13 @@ export function followTooltip(target) {
     const centerX = r.left + (r.width / 2);
     positionTooltip(tipEl, centerX, r.top, r.bottom, /*preferAbove*/ true);
 
-    // keep the buttons glued to the card’s edges
-    ensureCog(); ensureWand();
-    if (COG_VISIBLE) { positionCog(anchorEl); } else { hideCog(); }
-    positionWand(anchorEl);
+// keep the buttons glued to the card’s edges
+ensureCog(); ensureWand();
+if (COG_VISIBLE) { positionCog(anchorEl); } else { hideCog(); }
+positionWand(anchorEl);
+positionFlip(anchorEl);   // <-- add
+positionTap(anchorEl);    // <-- add
+
     return;
 
   }
@@ -401,13 +664,15 @@ hideCog(); hideWand();
 export function reflowAll(){
   if (!tipEl || tipEl.style.display === 'none') return;
   if (anchorEl && document.body.contains(anchorEl)) {
-    followTooltip(anchorEl);
-  } else {
-    // re-place around last center
-positionTooltip(tipEl, lastPos.x, lastPos.y - 1, lastPos.y + 1, true);
-hideCog(); hideWand();
+  followTooltip(anchorEl);
+  positionFlip(anchorEl);   // <-- add
+  positionTap(anchorEl);    // <-- add
+} else {
+  positionTooltip(tipEl, lastPos.x, lastPos.y - 1, lastPos.y + 1, true);
+  hideCog(); hideWand();
+  hideFlip(); hideTap();
+}
 
-  }
 }
 
 /* -----------------------------
@@ -416,7 +681,11 @@ hideCog(); hideWand();
 export function clearSelection(){
   document.querySelectorAll('.card.selected').forEach(n => n.classList.remove('selected'));
 }
-export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; hideCog(); hideWand(); }
+export function hideTooltip(){
+  if (tipEl) tipEl.style.display = 'none';
+  hideCog(); hideWand(); hideFlip(); hideTap();
+}
+
 
 
 /* -----------------------------
@@ -424,7 +693,47 @@ export function hideTooltip(){ if (tipEl) tipEl.style.display = 'none'; hideCog(
 ----------------------------- */
 export async function showCardTooltip(cardOrEl, screenX, screenY){
   const el = ensureTip();
-  ensureCog();
+  ensureCog(); // your existing gear/wand infra
+
+  // --- local helper: fetch the *back* face by the exact name we have
+  async function fetchBackFaceFieldsByName(exactName){
+    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(exactName)}`;
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const faces = Array.isArray(json?.card_faces) ? json.card_faces : null;
+    const face  = faces ? (faces.find(f => norm(f?.name) === norm(exactName)) || faces[1] || null) : null;
+    if (!face) return null;
+
+    return {
+      name:        face.name || exactName,
+      type_line:   face.type_line   ?? '',
+      oracle_text: face.oracle_text ?? '',
+      mana_cost:   face.mana_cost   ?? '',
+      power:       face.power != null ? String(face.power) : '',
+      toughness:   face.toughness != null ? String(face.toughness) : '',
+      loyalty:     face.loyalty != null ? String(face.loyalty) : '',
+      img:         face.image_uris?.large || face.image_uris?.normal || '',
+    };
+  }
+
+  // --- helper: can this card flip?
+  function isFlippableElement(elm){
+    try {
+      const cid = elm?.dataset?.cid;
+      const seat = (typeof Zones?.getViewSeat === 'function') ? Zones.getViewSeat()
+                  : (typeof mySeat === 'function') ? mySeat()
+                  : (Number.isFinite(+window.mySeat) ? +window.mySeat : 1);
+      const st = Zones?._ensureSeatState?.(seat);
+      const hasBackByCid      = cid && st?.flipDeckByFront?.[cid];
+      const hasBackByFrontKey = elm?.dataset?.frontKey && st?.flipDeckByFrontKey?.[elm.dataset.frontKey];
+      const nameHasSlash      = String(elm?.dataset?.name || '').includes('//');
+      const facesLen          = (window.CID_DATA instanceof Map && CID_DATA.get(String(cid))?.card_faces?.length) || 0;
+      return !!(hasBackByCid || hasBackByFrontKey || nameHasSlash || facesLen >= 2);
+    } catch { return false; }
+  }
 
   // A) DOM element path (preferred)
   if (cardOrEl instanceof Element) {
@@ -434,30 +743,58 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
     // Read everything we can from dataset first (incl. P/T & loyalty)
     let data = {
       name:        cardOrEl.dataset?.name        || cardOrEl.querySelector('img')?.alt || '',
-      mana_cost:   cardOrEl.dataset?.mana_cost   || '',
-      type_line:   cardOrEl.dataset?.type_line   || '',
-      oracle_text: cardOrEl.dataset?.oracle_text || '',
-      power:       cardOrEl.dataset?.power       || '',
-      toughness:   cardOrEl.dataset?.toughness   || '',
-      loyalty:     cardOrEl.dataset?.loyalty     || '',
+      mana_cost:   cardOrEl.dataset?.mana_cost   || cardOrEl.dataset?.mana || '',
+      type_line:   cardOrEl.dataset?.type_line   || cardOrEl.dataset?.type || '',
+      oracle_text: cardOrEl.dataset?.oracle_text || cardOrEl.dataset?.oracle || '',
+      power:       cardOrEl.dataset?.power       ?? '',
+      toughness:   cardOrEl.dataset?.toughness   ?? '',
+      loyalty:     cardOrEl.dataset?.loyalty     ?? '',
     };
 
-    // Fetch if ANY key field is missing (incl. P/T unless loyalty exists)
+    const isBackFace = cardOrEl.dataset.face === 'back';
     const needsFill =
       !data.mana_cost || !data.type_line || !data.oracle_text ||
       (!data.loyalty && (data.power === '' || data.toughness === ''));
 
     if (data.name && needsFill) {
       try {
-        const filled = await fetchMissingFieldsByName(data.name);
-        data = { ...data, ...filled };
+        if (isBackFace) {
+          // SMART back-face fetch (Option B)
+          const backFilled = await fetchBackFaceFieldsByName(data.name);
+          if (backFilled) {
+            if (!data.type_line)   data.type_line   = backFilled.type_line;
+            if (!data.oracle_text) data.oracle_text = backFilled.oracle_text;
+            if (!data.mana_cost)   data.mana_cost   = backFilled.mana_cost;
+            if (data.power === '')     data.power     = backFilled.power;
+            if (data.toughness === '') data.toughness = backFilled.toughness;
+            if (!data.loyalty)     data.loyalty     = backFilled.loyalty;
+            if (!cardOrEl.dataset?.img && backFilled.img){
+              cardOrEl.dataset.img = backFilled.img;
+            }
+          }
+        } else {
+          // Front/unknown face → original front-face fetch
+          const filled = await fetchMissingFieldsByName?.(data.name);
+          if (filled) {
+            if (!data.type_line)   data.type_line   = filled.type_line;
+            if (!data.oracle_text) data.oracle_text = filled.oracle_text;
+            if (!data.mana_cost)   data.mana_cost   = filled.mana_cost;
+            if (data.power === '')     data.power     = filled.power ?? '';
+            if (data.toughness === '') data.toughness = filled.toughness ?? '';
+            if (!data.loyalty)     data.loyalty     = filled.loyalty ?? '';
+          }
+        }
 
         // cache everything back onto the element
         cardOrEl.dataset.mana_cost   = data.mana_cost   || '';
         cardOrEl.dataset.type_line   = data.type_line   || '';
         cardOrEl.dataset.oracle_text = data.oracle_text || '';
+        // legacy aliases
+        cardOrEl.dataset.mana   = data.mana_cost   || '';
+        cardOrEl.dataset.type   = data.type_line   || '';
+        cardOrEl.dataset.oracle = data.oracle_text || '';
 
-        // Only stamp P/T for REAL creatures (not vehicles/auras/etc)
+        // Only stamp P/T for REAL creatures
         const isCreature = /\bCreature\b/i.test(data.type_line || '');
         const hasPT = (data.power ?? '') !== '' && (data.toughness ?? '') !== '';
         if (isCreature && hasPT) {
@@ -468,22 +805,29 @@ export async function showCardTooltip(cardOrEl, screenX, screenY){
           delete cardOrEl.dataset.toughness;
         }
 
-        // Loyalty (planeswalkers) may exist without P/T
         cardOrEl.dataset.loyalty = (data.loyalty ?? '') + '';
-
       } catch {}
     }
 
+    // render tooltip html
     el.innerHTML = renderTooltipHtml(data);
     el.style.display = 'block';
     anchorEl = cardOrEl;
     positionTooltip(el, centerX, r.top, r.bottom, true);
 
-    // show/position the buttons next to the card
-positionCog(anchorEl);
-positionWand(anchorEl);
-return;
+    // === BUTTONS: wand (existing), flip (⇄), tap ({T}) =======================
+    // wand stays as-is in your code:
+    positionCog(anchorEl);
+    positionWand(anchorEl);
 
+const flippable = isFlippableElement(cardOrEl);
+ensureFlipButton();
+ensureTapButton();
+renderFlipButton(anchorEl, flippable);  // positions the middle slot, shows only if flippable
+renderTapButton(anchorEl);              // positions bottom slot (always shown)
+
+
+    return;
   }
 
   // B) Data object path (legacy)
@@ -505,9 +849,11 @@ return;
   positionTooltip(el, cx, cy - 1, cy + 1, true);
 
   // no DOM anchor → hide the buttons
-hideCog(); hideWand();
-
+  hideCog(); hideWand();
+  hideFlip(); hideTap();
 }
+
+
 
 export function hideCardTooltip(){ hideTooltip(); }
 
@@ -519,6 +865,30 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
   const moveTol   = opts.moveTol ?? 6;
   const singleTap = opts.singleTap !== false; // default true
 
+  // --- local helper: fetch the *back* face by the exact name we have
+  async function fetchBackFaceFieldsByName(exactName){
+    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(exactName)}`;
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+
+    const norm = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const faces = Array.isArray(json?.card_faces) ? json.card_faces : null;
+    const face  = faces ? (faces.find(f => norm(f?.name) === norm(exactName)) || faces[1] || null) : null;
+    if (!face) return null;
+
+    return {
+      name:        face.name || exactName,
+      type_line:   face.type_line   ?? '',
+      oracle_text: face.oracle_text ?? '',
+      mana_cost:   face.mana_cost   ?? '',
+      power:       face.power != null ? String(face.power) : '',
+      toughness:   face.toughness != null ? String(face.toughness) : '',
+      loyalty:     face.loyalty != null ? String(face.loyalty) : '',
+      img:         face.image_uris?.large || face.image_uris?.normal || '',
+    };
+  }
+
   async function resolveData(){
     // function OR object; else fall back to dataset name
     let base =
@@ -526,26 +896,41 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
        (getCardData && typeof getCardData === 'object' ? getCardData :
         { name: cardEl?.dataset?.name || '' })) || {};
 
-    // normalize legacy + include P/T/loyalty (respect existing dataset caches)
+    // normalize + include P/T/loyalty (respect existing dataset caches)
     const normalized = {
       name:        base.name || '',
-      mana_cost:   base.mana_cost || base.cost || '',
-      type_line:   base.type_line || base.typeLine || '',
-      oracle_text: base.oracle_text || base.oracle || '',
+      mana_cost:   base.mana_cost || base.cost || cardEl.dataset?.mana_cost || cardEl.dataset?.mana || '',
+      type_line:   base.type_line || base.typeLine || cardEl.dataset?.type_line || cardEl.dataset?.type || '',
+      oracle_text: base.oracle_text || base.oracle || cardEl.dataset?.oracle_text || cardEl.dataset?.oracle || '',
       power:       base.power ?? cardEl.dataset?.power ?? '',
       toughness:   base.toughness ?? cardEl.dataset?.toughness ?? '',
       loyalty:     base.loyalty ?? cardEl.dataset?.loyalty ?? '',
     };
 
-    // fill via Scryfall if ANY core field missing (incl. P/T unless loyalty exists)
+    const isBackFace = cardEl.dataset?.face === 'back';
     const needsFill =
-      !normalized.mana_cost || !normalized.oracle_text || !normalized.type_line ||
+      !normalized.mana_cost || !normalized.type_line || !normalized.oracle_text ||
       (!normalized.loyalty && (normalized.power === '' || normalized.toughness === ''));
 
     if (needsFill && normalized.name){
       try {
-        const filled = await fetchMissingFieldsByName(normalized.name);
-        return { ...normalized, ...filled };
+        if (isBackFace) {
+          const backFilled = await fetchBackFaceFieldsByName(normalized.name);
+          if (backFilled) {
+            return {
+              ...normalized,
+              type_line:   normalized.type_line   || backFilled.type_line,
+              oracle_text: normalized.oracle_text || backFilled.oracle_text,
+              mana_cost:   normalized.mana_cost   || backFilled.mana_cost,
+              power:       normalized.power       !== '' ? normalized.power       : backFilled.power,
+              toughness:   normalized.toughness   !== '' ? normalized.toughness   : backFilled.toughness,
+              loyalty:     normalized.loyalty     || backFilled.loyalty,
+            };
+          }
+        } else {
+          const filled = await fetchMissingFieldsByName?.(normalized.name);
+          if (filled) return { ...normalized, ...filled };
+        }
       } catch { /* ignore */ }
     }
     return normalized;
@@ -562,13 +947,13 @@ export function attachTooltip(cardEl, getCardData, opts = {}){
       if (data.type_line)   cardEl.dataset.type_line   = data.type_line;
       if (data.oracle_text) cardEl.dataset.oracle_text = data.oracle_text;
 
-// also stamp legacy/fallback attributes so other modules can read it
-cardEl.setAttribute('data-oracle_text', data.oracle_text);
-cardEl.dataset.oracle = data.oracle_text;
-cardEl.setAttribute('data-oracle', data.oracle_text);
-cardEl.dataset.oracleText = data.oracle_text;
-cardEl.setAttribute('data-oracle-text', data.oracle_text);
-
+      // legacy aliases so other modules can read it
+      cardEl.dataset.mana   = data.mana_cost   || '';
+      cardEl.dataset.type   = data.type_line   || '';
+      cardEl.dataset.oracle = data.oracle_text || '';
+      cardEl.setAttribute('data-oracle_text', data.oracle_text || '');
+      cardEl.setAttribute('data-oracle',      data.oracle_text || '');
+      cardEl.setAttribute('data-oracle-text', data.oracle_text || '');
 
       const isCreature = /\bCreature\b/i.test(data.type_line || '');
       const hasPT = (data.power ?? '') !== '' && (data.toughness ?? '') !== '';
@@ -582,7 +967,6 @@ cardEl.setAttribute('data-oracle-text', data.oracle_text);
 
       cardEl.dataset.loyalty = (data.loyalty ?? '') + '';
     }
-
 
     // show anchored to the element (top-center, non-overlapping)
     showCardTooltip(cardEl);
@@ -626,6 +1010,171 @@ cardEl.setAttribute('data-oracle-text', data.oracle_text);
     cardEl.addEventListener('pointerup', (e)=>{ if (!moved) showFromPoint(); });
   }
 } // end attachTooltip
+
+// Fetch the *other* face for a double-faced/transform card by name.
+// If the card has faces A/B and you pass A, you’ll get B (and vice-versa).
+async function fetchOppositeFaceByName(exactName){
+  const url = `${SCRY}/cards/named?exact=${encodeURIComponent(exactName)}`;
+  const res = await fetch(url, { mode: 'cors' });
+  if (!res.ok) throw new Error(`Scryfall HTTP ${res.status} for ${exactName}`);
+  const d = await res.json();
+
+  // If the single-face card comes back, there is no opposite face.
+  const faces = Array.isArray(d.card_faces) ? d.card_faces : null;
+  if (!faces || faces.length < 2) return null;
+
+  // Normalize and pick "the other face" compared to the name we asked for.
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const idx  = faces.findIndex(f => norm(f?.name) === norm(exactName));
+  const other = (idx === 0) ? faces[1] : (idx > 0 ? faces[0] : faces[1]);
+
+  if (!other) return null;
+
+  return {
+    name:        other.name || '',
+    type_line:   other.type_line   || '',
+    oracle_text: other.oracle_text || '',
+    mana_cost:   other.mana_cost   || '',
+    power:       other.power != null ? String(other.power) : '',
+    toughness:   other.toughness != null ? String(other.toughness) : '',
+    loyalty:     other.loyalty != null ? String(other.loyalty) : '',
+    img:         other.image_uris?.large || other.image_uris?.normal || ''
+  };
+}
+
+export async function flipCard(cid){
+  try {
+    const seat = (typeof Zones?.getViewSeat === 'function') ? Zones.getViewSeat()
+                : (typeof mySeat === 'function') ? mySeat()
+                : (Number.isFinite(+window.mySeat) ? +window.mySeat : 1);
+    const st = Zones?._ensureSeatState?.(seat);
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(String(cid))}"]`);
+    if (!el) return console.warn('[flipCard] missing card element for', cid);
+
+    // ensure a cache entry for this cid
+    if (!(window.CID_DATA instanceof Map)) window.CID_DATA = new Map();
+    const rec = window.CID_DATA.get(String(cid)) || {
+      id: String(cid),
+      name: el.dataset.name || '',
+      img:  el.querySelector('img')?.src || el.style.backgroundImage?.replace(/^url\(|\)$/g,'') || '',
+      type_line: el.dataset.type || el.dataset.type_line || '',
+      mana_cost: el.dataset.mana || el.dataset.mana_cost || '',
+      oracle_text: el.dataset.oracle || el.dataset.oracle_text || '',
+      power: el.dataset.power ?? '',
+      toughness: el.dataset.toughness ?? '',
+      loyalty: el.dataset.loyalty ?? ''
+    };
+
+    const isCurrentlyBack = (el.dataset.face === 'back');
+
+    // Try prebuilt mapping first…
+    let back = st?.flipDeckByFront?.[cid] ||
+               (st?.flipDeck || []).find(b => b.link_front_id === String(cid));
+
+    // …if none, build it via Scryfall using the *current* visible face’s name.
+    if (!back) {
+      const currentName = el.dataset?.name || rec.name;
+      if (currentName) {
+        const scryBack = await fetchOppositeFaceByName(currentName).catch(()=>null);
+        if (scryBack) {
+          back = {
+            name: scryBack.name,
+            img:  scryBack.img,
+            type_line: scryBack.type_line,
+            mana_cost: scryBack.mana_cost,
+            oracle_text: scryBack.oracle_text,
+            power: scryBack.power,
+            toughness: scryBack.toughness,
+            loyalty: scryBack.loyalty,
+            // record linkage so the rest of the session (and reloads) work
+            link_front_id: String(cid),
+            link_front_key: el.dataset?.frontKey || null
+          };
+
+          // Persist into seat state for future fast flips
+          if (st) {
+            if (!Array.isArray(st.flipDeck)) st.flipDeck = [];
+            st.flipDeck.push(back);
+            if (!st.flipDeckByFront)    st.flipDeckByFront    = Object.create(null);
+            if (!st.flipDeckByFrontKey) st.flipDeckByFrontKey = Object.create(null);
+            st.flipDeckByFront[String(cid)] = back;
+            if (el.dataset?.frontKey) st.flipDeckByFrontKey[el.dataset.frontKey] = back;
+            Zones?._saveSeatState?.(seat, st);
+          }
+        }
+      }
+    }
+
+    if (!back){
+      console.warn('[flipCard] no back face found (even after Scryfall) for', cid);
+      return;
+    }
+
+    if (!isCurrentlyBack){
+      // cache "front" once so we can return later
+      if (!rec.__frontCache){
+        rec.__frontCache = {
+          name: rec.name, img: rec.img, type_line: rec.type_line, mana_cost: rec.mana_cost,
+          oracle_text: rec.oracle_text, power: rec.power, toughness: rec.toughness, loyalty: rec.loyalty
+        };
+      }
+
+      // apply BACK face
+      Object.assign(rec, {
+        name: back.name || '', img: back.img || '',
+        type_line: back.type_line || '', mana_cost: back.mana_cost || '',
+        oracle_text: back.oracle_text || '',
+        power: back.power ?? '', toughness: back.toughness ?? '', loyalty: back.loyalty ?? ''
+      });
+      window.CID_DATA.set(String(cid), rec);
+
+      // DOM updates
+      const imgEl = el.querySelector('img, .card-img, .img');
+      if (imgEl && rec.img && imgEl.src !== rec.img) imgEl.src = rec.img;
+      el.dataset.name   = rec.name || '';
+      el.dataset.type   = rec.type_line || '';
+      el.dataset.mana   = rec.mana_cost || '';
+      el.dataset.oracle = rec.oracle_text || '';
+      if (rec.power !== '')     el.dataset.power     = String(rec.power);
+      if (rec.toughness !== '') el.dataset.toughness = String(rec.toughness);
+      if (rec.loyalty !== '')   el.dataset.loyalty   = String(rec.loyalty);
+      el.setAttribute('data-face', 'back');
+    } else {
+      // return to FRONT (from cache if available)
+      const front = rec.__frontCache || null;
+      if (!front){
+        console.warn('[flipCard] no front cache; staying on back');
+        return;
+      }
+      Object.assign(rec, front);
+      window.CID_DATA.set(String(cid), rec);
+
+      const imgEl = el.querySelector('img, .card-img, .img');
+      if (imgEl && rec.img && imgEl.src !== rec.img) imgEl.src = rec.img;
+      el.dataset.name   = rec.name || '';
+      el.dataset.type   = rec.type_line || '';
+      el.dataset.mana   = rec.mana_cost || '';
+      el.dataset.oracle = rec.oracle_text || '';
+      if (rec.power !== '')     el.dataset.power     = String(rec.power);
+      if (rec.toughness !== '') el.dataset.toughness = String(rec.toughness);
+      if (rec.loyalty !== '')   el.dataset.loyalty   = String(rec.loyalty);
+      el.setAttribute('data-face', 'front');
+    }
+
+    // repaint + re-show tooltip
+    (window.applyToDom || window.Zones?.applyToDom)?.(cid);
+    try { showCardTooltip(el); } catch {}
+
+    // broadcast flip to peers
+    sendRTC?.({ type:'flip', cid, face: el.dataset.face });
+
+    console.log('[flipCard] flipped', cid, '→', el.dataset.face);
+  } catch(e){
+    console.warn('[flipCard] error', e);
+  }
+}
+
+
 
 /* -------------------------------------------
    Auto-tooltip for the hand carousel

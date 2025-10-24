@@ -621,10 +621,16 @@ const ActivatedAbilities = {
       style="border:1px solid #2b3f63;border-radius:999px;background:#0f1829;color:#cfe1ff;padding:6px 10px">⚙️</button>
 
     <!-- NEW: right-aligned Send to... -->
-    <button class="pill js-sendto"
-      style="margin-left:auto;border:1px solid #2b3f63;border-radius:999px;background:#12240f;color:#d7ffd7;padding:6px 10px">
-      Send to…
-    </button>
+    <!-- NEW: right-aligned Flip + Send to… -->
+<button class="pill js-flip"
+  style="margin-left:auto;border:1px solid #2b3f63;border-radius:999px;background:#18304f;color:#e7f0ff;padding:6px 10px;margin-right:6px">
+  Flip
+</button>
+<button class="pill js-sendto"
+  style="border:1px solid #2b3f63;border-radius:999px;background:#12240f;color:#d7ffd7;padding:6px 10px">
+  Send to…
+</button>
+
   </div>
 
 

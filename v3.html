@@ -556,6 +556,147 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 .deck-compass .btn-east,
 .deck-compass .btn-west{ min-width: var(--deckCompassBtnSize); font-size: 18px; }
 
+:root{
+  /* Compass layout knobs */
+  --deckCompassRadiusPx: 96px;    /* ← SINGLE KNOB. Set your “2 units” distance here */
+  --deckCompassRadius: var(--deckCompassRadiusPx);
+
+  --deckCompassBtnSize: 44px;
+  --deckCompassZ: 48;
+  --deckCompassOffsetX: 0px;
+  --deckCompassOffsetY: -6px;
+
+  /* Anchor the EAST (🔍) button so it does not move when radius changes.
+     1 = anchor east; 0 = normal centered compass */
+  --deckAnchorEast: 1;
+}
+
+/* Shift the compass “center” left by the current radius so EAST stays put */
+.deck-compass .compass-core{
+  position: relative;
+  left: calc(var(--deckAnchorEast, 0) * var(--deckCompassRadius) * -1);
+}
+
+/* Existing polar placement remains the same … (your file already has these) */
+/* .deck-compass .btn-north { left:0; top:calc(var(--deckCompassRadius)*-1); … } */
+/* .deck-compass .btn-east  { left:var(--deckCompassRadius); top:0; … }        */
+/* .deck-compass .btn-south { left:0; top:var(--deckCompassRadius); … }        */
+/* .deck-compass .btn-west  { left:calc(var(--deckCompassRadius)*-1); top:0;… } */
+
+/* New center button */
+.deck-compass .btn-center{
+  left: 0; top: 0;
+  transform: translate(-50%, -50%);
+  min-width: var(--deckCompassBtnSize);
+  font-size: 18px;
+}
+
+/* --- Deck Compass Theming (Blue + White) --- */
+:root{
+  /* tweak these if you want to nudge the palette later */
+  --dc-bg:        #18304f;   /* base button bg */
+  --dc-bg-hover:  #1f3d66;   /* hover */
+  --dc-bg-active: #254a7f;   /* active/pressed */
+  --dc-fg:        #e7f0ff;   /* text/icon */
+  --dc-border:    #2b3f63;   /* outline border */
+  --dc-ring:      #3d6df0;   /* focus ring */
+  --dc-shadow:    0 4px 14px rgba(0,0,0,.35);
+}
+
+/* shared button look */
+.deck-compass .compass-btn{
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-width: var(--deckCompassBtnSize);
+  min-height: var(--deckCompassBtnSize);
+  padding: 8px 12px;
+
+  font-weight: 900;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--dc-fg);
+
+  background: var(--dc-bg);
+  border: 1px solid var(--dc-border);
+  border-radius: 999px;                 /* pill by default */
+  box-shadow: var(--dc-shadow);
+  cursor: pointer;
+
+  user-select: none;
+  transition: transform .06s ease, background .12s ease, box-shadow .12s ease, color .12s ease;
+}
+
+/* hover / active / focus */
+.deck-compass .compass-btn:hover{
+  background: var(--dc-bg-hover);
+}
+.deck-compass .compass-btn:active{
+  background: var(--dc-bg-active);
+  transform: translate(-50%, -50%) scale(.98);
+}
+.deck-compass .compass-btn:focus-visible{
+  outline: 0;
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,.25),
+    0 0 0 4px var(--dc-ring);
+}
+
+/* ensure our translate is always applied (N/E/S/W/C use translate centers) */
+.deck-compass .compass-btn{
+  transform: translate(-50%, -50%);
+}
+
+/* Direction-specific shapes: 
+   - North/South: keep pill (labels like "Draw X", "Cascade")
+   - East/West/Center: make circular (iconography) */
+.deck-compass .btn-east,
+.deck-compass .btn-west,
+.deck-compass .btn-center{
+  width: var(--deckCompassBtnSize);
+  height: var(--deckCompassBtnSize);
+  min-width: 0;
+  min-height: 0;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 20px;        /* 🔍, ＋, ⚙️ look nice a bit larger */
+  line-height: 1;
+}
+
+/* Optional: make the text pills a little wider for readability */
+.deck-compass .btn-north,
+.deck-compass .btn-south{
+  min-width: calc(var(--deckCompassBtnSize) * 2.1);
+  font-size: 15px;
+  padding: 10px 14px;
+  white-space: nowrap;
+}
+
+/* Subtle “lift” on hover for all */
+.deck-compass .compass-btn:hover{
+  box-shadow: 0 6px 18px rgba(0,0,0,.45);
+}
+
+/* Mobile/touch targets slightly larger */
+@media (pointer:coarse){
+  :root{
+    --deckCompassBtnSize: 52px; /* you can keep your original if you prefer */
+  }
+  .deck-compass .btn-north,
+  .deck-compass .btn-south{
+    min-width: calc(var(--deckCompassBtnSize) * 2.3);
+    font-size: 16px;
+  }
+  .deck-compass .btn-east,
+  .deck-compass .btn-west,
+  .deck-compass .btn-center{
+    font-size: 22px;
+  }
+}
+
+
 
 </style>
 </head>
@@ -642,12 +783,16 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 <!-- Deck Compass (N/E/S/W) -->
 <div class="deck-compass" id="deckCompass" role="group" aria-label="Deck controls">
   <div class="compass-core">
-    <button class="compass-btn btn-north" id="deckDrawXBtn"   type="button" aria-label="Draw X">Draw&nbsp;X</button>
-    <button class="compass-btn btn-east"  id="deckSearchBtn"  type="button" aria-label="Search Deck" title="Search Deck">🔍</button>
-    <button class="compass-btn btn-south" id="deckCascadeBtn" type="button" aria-label="Cascade Setup">Cascade</button>
-    <button class="compass-btn btn-west"  id="deckAddBtn"     type="button" aria-label="Add Any Card" title="Add Any Card">＋</button>
+    <button class="compass-btn btn-north"  id="deckDrawXBtn"   type="button" aria-label="Draw X">Draw&nbsp;X</button>
+    <button class="compass-btn btn-east"   id="deckSearchBtn"  type="button" aria-label="Search Deck" title="Search Deck">🔍</button>
+    <button class="compass-btn btn-south"  id="deckCascadeBtn" type="button" aria-label="Cascade Setup">Cascade</button>
+    <button class="compass-btn btn-west"   id="deckAddBtn"     type="button" aria-label="Add Any Card" title="Add Any Card">＋</button>
+
+    <!-- NEW: center cog (at the shifted center) -->
+    <button class="compass-btn btn-center" id="deckCogBtn"     type="button" aria-label="Draw Rules">⚙️</button>
   </div>
 </div>
+
 
 
         <div class="zone" id="cmdZone"><div class="label">Commander</div></div>
@@ -797,7 +942,7 @@ transform: translate(-50%, 0) scale(calc((1 / var(--world-zoom)) * var(--badgeBo
 <script src="./modules/draw.rules.overlay.js"></script>
 
 <script type="module">
-
+import './modules/deck.load.js';
   import Stacking from './modules/card.stacking.js';
   window.Stacking = Stacking;
   window.spawnTableCard = spawnTableCard;
@@ -820,6 +965,10 @@ window.Overlays = Overlays;
 
   import Zones from './modules/zones.js';
 window.Zones = Zones;
+
+import ActivatedAbilities from './modules/activated.abilities.js';
+window.ActivatedAbilities = ActivatedAbilities;
+
 
   /* NEW: Versus Dice RNG */
   import VersusDice from './modules/versus.dice.js';
@@ -1611,6 +1760,7 @@ const table = Array.from(world.querySelectorAll('.card')).map(el => ({
       exile:     Array.isArray(st?.exile)     ? st.exile     : [],
       hand:      Array.isArray(st?.hand)      ? st.hand      : [],
       deck:      Array.isArray(st?.deck)      ? st.deck      : [],
+      flip:      Array.isArray(st?.flip)      ? st.flip      : [],   // 👈 NEW
     });
 
     try {
@@ -1835,6 +1985,12 @@ async function startRTC(role) {
     onMessage: handlePeerMessage,
     onSeatConflict
   });
+// ===== DEBUG ROOM SOLO MODE =====
+if (ROOM_ID?.toLowerCase() === 'debug') {
+  console.warn('[RTC] debug room detected — skipping wait for peer');
+  // Immediately mark opened
+  RTC.opened = Promise.resolve();
+}
 
   // expose + when datachannel/ICE is live
   window.RTC = RTC;
@@ -2364,29 +2520,39 @@ function placeCommanderInCmd(card, seat){
 
   // screen center of cmd zone
   const zr = cmdEl.getBoundingClientRect();
-  const cx = zr.left + zr.width  / 2;
+  const cx = zr.left + zr.width / 2;
   const cy = zr.top  + zr.height / 2;
 
-  // convert to world coords and nudge to card’s top-left
-  const { x:wx, y:wy } = screenToWorld(cx, cy);
+  // get zoom level
+  const zoom = (window?.worldZoom?.()) || 1;
+  const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
+  const ch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
+  const cwWorld = cw / Math.max(zoom, 0.0001);
+  const chWorld = ch / Math.max(zoom, 0.0001);
 
-  // spawn on table at cmd center
+  // convert center to world coords and nudge for card top-left
+  const { x:cxw, y:cyw } = screenToWorld(cx, cy);
+  const wx = cxw - (cwWorld / 2);
+  const wy = cyw - (chWorld / 2);
+
   const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0,12);
   spawnTableCard(card, wx, wy, { owner: seat, cid });
 
-  // mark visual command-zone state (like Zones.handleDrop does)
-  const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-  if (el){
-    el.classList.add('in-cmd');
-    el.classList.add('tapped');
-    el.style.setProperty('--tap-rot', '0deg');
-    el.dataset.inCmd = '1';
-  }
+  // mark card visually as commander
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+    if (el){
+      el.classList.add('tapped');
+      el.classList.add('in-cmd');
+      el.style.setProperty('--tap-rot', '0deg');
+      el.dataset.inCmd = '1';
+    }
+  }));
 
-  // persist to Zones model so lists/overlays know about it
+  // register zone data
   Zones?.addToZone?.({ seat, zoneName: 'cmd', card: { ...card, id: cid } });
 
-  // (optional) broadcast the spawn so peers see the card at the same spot
+  // broadcast spawn to peers
   sendRTC?.({
     type: 'spawn',
     cid,
@@ -2404,57 +2570,416 @@ function placeCommanderInCmd(card, seat){
     oracle_text: card.oracle_text || '',
     power:       card.power ?? '',
     toughness:   card.toughness ?? '',
+  frontKey: card._frontKey || card.frontKey || null,
     loyalty:     card.loyalty ?? ''
   });
 }
 
+// --- helper: build a back-face card in the same shape as your normal card ---
+// Back-face extractor for DFC/Adventure/etc. (uses Scryfall-like shape)
+function _extractBackFace(card){
+  const faces = Array.isArray(card?.card_faces) ? card.card_faces : null;
+  if (!faces || faces.length < 2) return null;
+
+  const back = faces[1];
+  const img =
+    back?.image_uris?.large  || back?.image_uris?.normal ||
+    card?.image_uris?.large  || card?.image_uris?.normal ||
+    card?.img || '';
+
+  // derive some og/aux fields with safe defaults
+  const type_line   = back?.type_line   ?? card?.type_line   ?? '';
+  const oracle_text = back?.oracle_text ?? card?.oracle_text ?? '';
+  const mana_cost   = back?.mana_cost   ?? card?.mana_cost   ?? '';
+  const power       = back?.power ?? null;
+  const toughness   = back?.toughness ?? null;
+  const loyalty     = back?.loyalty ?? null;
+
+  // Try to get types/effects similarly to what you already store
+  const ogTypes   = Array.isArray(card?.ogTypes) ? card.ogTypes.slice()
+                    : (type_line ? type_line.split(/[\s—–-]+| \/\/ /).filter(Boolean) : []);
+  const ogEffects = Array.isArray(card?.keywords) ? card.keywords.slice()
+                    : Array.isArray(back?.keywords) ? back.keywords.slice()
+                    : [];
+
+  return {
+    name: back?.name ?? card?.name ?? '',
+    img,
+    image_uris: back?.image_uris ?? card?.image_uris ?? null,
+    type_line,
+    oracle_text,
+    mana_cost,
+    power: power != null ? String(power) : null,
+    toughness: toughness != null ? String(toughness) : null,
+    loyalty: loyalty != null ? String(loyalty) : null,
+    ogTypes,
+    ogEffects,
+    ogpower: Number.isFinite(+power) ? +power : 0,
+    ogtoughness: Number.isFinite(+toughness) ? +toughness : 0,
+    ogloyalty: Number.isFinite(+loyalty) ? +loyalty : 0,
+  };
+}
 
 
-async function loadDeckFromTextarea(){
+
+
+
+
+
+
+// --- helpers (add once, above/before loadDeckFromTextarea) ------------------
+
+// Returns [frontName, backName] for "X // Y"
+function _splitFacesFromName(n){
+  const s = String(n || '');
+  if (!s.includes('//')) return [s.trim(), ''];
+  const parts = s.split('//').map(x => x.trim());
+  return [parts[0] || '', parts[1] || ''];
+}
+
+// Pull a face object from a scryfall-like card by matching name
+function _getFaceByName(raw, faceName){
+  const faces = Array.isArray(raw?.card_faces) ? raw.card_faces : null;
+  if (!faces) return null;
+
+  const normalize = str => String(str || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const target = faces.find(f => normalize(f?.name) === normalize(faceName));
+
+  return target || faces[1] || null;
+}
+
+
+
+// Fallback: fetch raw Scryfall JSON for the *combined* name, then pick face by backName
+async function _fetchBackFaceViaScryfall(combinedName, backName){
+  try {
+    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(combinedName)}`;
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+
+    // Use improved _getFaceByName() to locate back face
+    const face = _getFaceByName(json, backName);
+    if (!face) return null;
+
+    return {
+      name:        face.name || backName,
+      img:         face.image_uris?.large || face.image_uris?.normal || '',
+      type_line:   face.type_line   ?? '',
+      oracle_text: face.oracle_text ?? '',
+      mana_cost:   face.mana_cost   ?? '',
+      power:       face.power != null ? String(face.power) : null,
+      toughness:   face.toughness != null ? String(face.toughness) : null,
+      loyalty:     face.loyalty != null ? String(face.loyalty) : null,
+      ogEffects:   Array.isArray(face.keywords) ? face.keywords.slice() : [],
+      ogTypes:     (face.type_line ? face.type_line.split(/[\s—–-]+| \/\/ /).filter(Boolean) : []),
+      ogpower:     Number.isFinite(+face.power) ? +face.power : 0,
+      ogtoughness: Number.isFinite(+face.toughness) ? +face.toughness : 0,
+      ogloyalty:   Number.isFinite(+face.loyalty) ? +face.loyalty : 0,
+    };
+  } catch (e){
+    console.warn('[DECK PARSE] scryfall fallback failed for', combinedName, e);
+    return null;
+  }
+}
+
+// ==== HIDDEN FLIP DECK HELPERS ============================================
+// Build a normalized "card-like" object for the hidden flip deck.
+// Mirrors fields you populate for normal deck cards.
+function _normalizeFlipBackToCard(backData, linkFrontId = null){
+  const card = {
+    // identity
+    name:        backData.name || '',
+    img:         backData.img || '',
+    // rules + typing
+    type_line:   backData.type_line   ?? '',
+    oracle_text: backData.oracle_text ?? '',
+    mana_cost:   backData.mana_cost   ?? '',
+    // stats (string + numeric mirrors, like your existing shape)
+    power:       backData.power != null ? String(backData.power) : null,
+    toughness:   backData.toughness != null ? String(backData.toughness) : null,
+    loyalty:     backData.loyalty != null ? String(backData.loyalty) : null,
+    ogEffects:   Array.isArray(backData.ogEffects) ? backData.ogEffects.slice() : [],
+    ogTypes:     Array.isArray(backData.ogTypes)   ? backData.ogTypes.slice()   : [],
+    ogpower:     Number.isFinite(+backData.ogpower)     ? +backData.ogpower     : 0,
+    ogtoughness: Number.isFinite(+backData.ogtoughness) ? +backData.ogtoughness : 0,
+    ogloyalty:   Number.isFinite(+backData.ogloyalty)   ? +backData.ogloyalty   : 0,
+
+    // optional link back to its front face (cid/id) if known
+    link_front_id: linkFrontId || null,
+
+    // future-proof shape parity with front cards (common flags / attrs)
+    // You can extend this to include any computed “data-*” at spawn time if desired.
+  };
+  return card;
+}
+
+// Rebuild the hidden flip deck array on seat state from st.flip[]
+async function _rebuildHiddenFlipDeck(st){
+  if (!st) return { flipDeck: [] };
+  if (!Array.isArray(st.flip)) st.flip = [];
+
+  // always fresh
+  st.flipDeck = [];
+st.flipDeckByFrontKey = Object.create(null);
+
+for (const entry of st.flip){
+  const linkId   = entry?.cid || entry?.id || null;  // usually null at parse time
+  const frontKey = entry?.link_front_key || null;
+
+  const backCard = _normalizeFlipBackToCard(entry, linkId);
+  backCard.link_front_key = frontKey;
+
+  st.flipDeck.push(backCard);
+  if (frontKey) st.flipDeckByFrontKey[frontKey] = backCard;
+}
+
+  return { flipDeck: st.flipDeck };
+}
+
+
+// Debug helpers
+function _hasBackFace(card){
+  return !!(card && (String(card.name || '').includes('//') ||
+         (Array.isArray(card.card_faces) && card.card_faces.length >= 2)));
+}
+function _faceNames(card){
+  const n = String(card?.name || '');
+  if (n.includes('//')) return n.split('//').map(s => s.trim());
+  const faces = Array.isArray(card?.card_faces) ? card.card_faces : [];
+  return [faces[0]?.name || n, faces[1]?.name || ''];
+}
+
+// --- main: unchanged behavior + extra flip capture --------------------------------
+
+async function loadDeckFromTextarea() {
+  // Start animation overlay immediately
+  DeckAnimator?.startSilhouette?.();
+
   // Split input into main deck and commander
   const { mainLines, commanderName } = _splitDeckInput(deckIn.value || '');
 
   // reset all local play zones for this seat's deck/hand
   deck = []; hand = []; focus = 0;
-  hasDrawn = false;     // opening hand not drawn yet
-  hideMull();           // just in case it was open
+  hasDrawn = false;
+  hideMull?.();
+  
+  // Track per-name counts so duplicates get unique keys
+const _nameCounts = Object.create(null);
+function _nextFrontKeyFor(name){
+  const n = String(name || '');
+  _nameCounts[n] = (_nameCounts[n] || 0) + 1;
+  return `${n}::${_nameCounts[n]}`;  // e.g., "Nicol Bolas, the Ravager::2"
+}
 
-  // 1) Load MAIN DECK ONLY (ignore SIDEBOARD section entirely)
-  for (const raw of mainLines){
+
+  // 👇 ensure the seat has a flip bucket (in-memory only)
+  let seat = 1;
+  try { seat = Zones?.getViewSeat?.() ?? (typeof mySeat === 'function' ? mySeat() : 1); } catch {}
+  let st = null;
+  try {
+    st = Zones?._ensureSeatState?.(seat);
+if (st && !Array.isArray(st.flip)) st.flip = [];
+if (st) st.flip.length = 0;
+
+if (st && !Array.isArray(st.flipDeck)) st.flipDeck = [];
+if (st) st.flipDeck.length = 0; // hidden flip deck gets rebuilt fresh
+
+  } catch {}
+
+  // Load MAIN DECK ONLY (ignore sideboard)
+  for (const raw of mainLines) {
     const m = raw.match(/^(\d+)\s+(.+)$/);
-    const qty  = m ? parseInt(m[1], 10) : 1;
+    const qty = m ? parseInt(m[1], 10) : 1;
     const name = m ? m[2] : raw;
 
-    for (let i = 0; i < qty; i++){
+    for (let i = 0; i < qty; i++) {
+      let card;
       try {
-        deck.push(await fetchCardByName(name));
+        card = await fetchCardByName(name);
+		// assign a stable key to the FRONT instance now
+		card._frontKey = _nextFrontKeyFor(card?.name || name);
+		
+
       } catch {
-        deck.push({
+        card = {
           name,
-          img: 'https://via.placeholder.com/488x680/191f2b/9fb4d9?text=' + encodeURIComponent(name)
-        });
+          img: 'https://via.placeholder.com/488x680/191f2b/9fb4d9?text=' + encodeURIComponent(name),
+		  //card._frontKey = _nextFrontKeyFor(card.name || name);
+        };
+		card._frontKey = _nextFrontKeyFor(card.name || name);
       }
+
+      // existing behavior
+      deck.push(card);
+      DeckAnimator?.addCardToFan(card);
+
+      // === DEBUG: flip detection log ===
+      try {
+        if (_hasBackFace(card)) {
+          const [frontName, backName] = _faceNames(card);
+          const seatForLog = (()=>{ try { return Zones?.getViewSeat?.() ?? mySeat?.() ?? 1; } catch { return 1; } })();
+          const linkId = card?.cid || card?.id || '(no-id)';
+          console.groupCollapsed(
+            `%c[DECK PARSE] Flip detected%c  seat=${seatForLog}  cid=${linkId}`,
+            'color:#0bf;font-weight:600', 'color:inherit'
+          );
+          console.log('front:', frontName);
+          console.log('back :', backName);
+          console.log('name :', card?.name);
+          console.log('type :', card?.type_line);
+          console.log('faces:', Array.isArray(card?.card_faces) ? card.card_faces : '(none)');
+          console.groupEnd();
+        }
+      } catch {}
+	  
+	  
+
+
+      // === POPULATE FLIP DATA IF PRESENT ===
+      try {
+        const combined = String(card?.name || '');
+        const looksFlip = combined.includes('//') || (Array.isArray(card?.card_faces) && card.card_faces.length >= 2);
+        if (!looksFlip || !st) continue;
+
+        const [frontName, backName] = _splitFacesFromName(combined);
+        let backData = null;
+
+        // 1) Prefer embedded faces
+        if (Array.isArray(card?.card_faces) && card.card_faces.length >= 2) {
+          const face = _getFaceByName(card, backName) || card.card_faces[1];
+          if (face) {
+            backData = {
+              name:        face.name || backName,
+              img:         face.image_uris?.large || face.image_uris?.normal || card?.image_uris?.large || card?.image_uris?.normal || card?.img || '',
+              type_line:   face.type_line   ?? '',
+              oracle_text: face.oracle_text ?? '',
+              mana_cost:   face.mana_cost   ?? '',
+              power:       face.power != null ? String(face.power) : null,
+              toughness:   face.toughness != null ? String(face.toughness) : null,
+              loyalty:     face.loyalty != null ? String(face.loyalty) : null,
+              ogEffects:   Array.isArray(face.keywords) ? face.keywords.slice() : [],
+              ogTypes:     (face.type_line ? face.type_line.split(/[\s—–-]+| \/\/ /).filter(Boolean) : []),
+              ogpower:     Number.isFinite(+face.power) ? +face.power : 0,
+              ogtoughness: Number.isFinite(+face.toughness) ? +face.toughness : 0,
+              ogloyalty:   Number.isFinite(+face.loyalty) ? +face.loyalty : 0,
+            };
+          }
+        }
+
+        // 2) Otherwise fetch by backName (may still be flattened; we only accept if we can find a face)
+        if (!backData && backName) {
+          try {
+            const fb = await fetchCardByName(backName);
+            const face = _getFaceByName(fb, backName);
+            if (face) {
+              backData = {
+                name:        face.name || backName,
+                img:         face.image_uris?.large || face.image_uris?.normal || fb?.image_uris?.large || fb?.image_uris?.normal || fb?.img || '',
+                type_line:   face.type_line   ?? '',
+                oracle_text: face.oracle_text ?? '',
+                mana_cost:   face.mana_cost   ?? '',
+                power:       face.power != null ? String(face.power) : null,
+                toughness:   face.toughness != null ? String(face.toughness) : null,
+                loyalty:     face.loyalty != null ? String(face.loyalty) : null,
+                ogEffects:   Array.isArray(face.keywords) ? face.keywords.slice() : [],
+                ogTypes:     (face.type_line ? face.type_line.split(/[\s—–-]+| \/\/ /).filter(Boolean) : []),
+                ogpower:     Number.isFinite(+face.power) ? +face.power : 0,
+                ogtoughness: Number.isFinite(+face.toughness) ? +face.toughness : 0,
+                ogloyalty:   Number.isFinite(+face.loyalty) ? +face.loyalty : 0,
+              };
+              console.info('[DECK PARSE] fetched back face via fetchCardByName:', backName);
+            }
+          } catch (e) {
+            console.warn('[DECK PARSE] fetchCardByName(back) failed for', backName, e);
+          }
+        }
+
+        // 3) Final fallback: raw Scryfall for the combined name → take face by backName
+        if (!backData && backName) {
+          backData = await _fetchBackFaceViaScryfall(combined, backName);
+          if (backData) console.info('[DECK PARSE] back-face via Scryfall:', backName);
+        }
+
+        // 4) Save entry if we resolved a true back face
+        if (backData) {
+          const linkId = card?.cid || card?.id; // might not exist yet; ok
+          const flipEntry = {
+    ...(linkId ? { id: String(linkId), cid: String(linkId) } : {}),
+    img: backData.img,
+    name: backData.name,
+    power: backData.power,
+    loyalty: backData.loyalty,
+    ogTypes: backData.ogTypes,
+    ogpower: backData.ogpower,
+    mana_cost: backData.mana_cost,
+    ogEffects: backData.ogEffects,
+    ogloyalty: backData.ogloyalty,
+    toughness: backData.toughness,
+    type_line: backData.type_line,
+    ogtoughness: backData.ogtoughness,
+    oracle_text: backData.oracle_text,
+
+    // NEW: stable link to its front instance
+    link_front_key: card._frontKey
+  };
+  st.flip.push(flipEntry);
+  console.debug('[DECK PARSE] flip saved entry:', flipEntry);
+} else {
+  console.warn('[DECK PARSE] looks like flip but no back face resolved:', combined);
+}
+      } catch {}
     }
   }
-
-  // 2) Fetch the COMMANDER (last entry) and place it in the Commander zone
+  
+  // === Build/refresh the hidden Flip Deck from the captured back-face entries ===
 try {
-  const commanderCard = await fetchCardByName(commanderName);
-  placeCommanderInCmd(commanderCard, mySeat());
-} catch {
-  placeCommanderInCmd({
-    name: commanderName,
-    img: 'https://via.placeholder.com/488x680/191f2b/ffcc88?text=' + encodeURIComponent(commanderName)
-  }, mySeat());
+  const { flipDeck } = await _rebuildHiddenFlipDeck(st);
+  console.info('[FLIP DECK] built', flipDeck.length, 'hidden back-face cards');
+  try { await Zones?._saveSeatState?.(seat, st); } catch(e) {
+    console.warn('[FLIP DECK] persist failed', e?.message || e);
+  }
+} catch(e){
+  console.warn('[FLIP DECK] build failed', e?.message || e);
 }
 
 
-  // 3) Shuffle freshly loaded main deck (commander excluded)
+  // Fetch the commander and place it (unchanged)
+  try {
+    const commanderCard = await fetchCardByName(commanderName);
+    placeCommanderInCmd(commanderCard, mySeat());
+  } catch {
+    placeCommanderInCmd({
+      name: commanderName,
+      img: 'https://via.placeholder.com/488x680/191f2b/ffcc88?text=' + encodeURIComponent(commanderName)
+    }, mySeat());
+  }
+
+  // (Optional) commit once so autosave/snapshot already has flip; harmless no-op otherwise
+  try { if (st) { await Zones?._saveSeatState?.(seat, st); } } catch {}
+
+  // Wait a moment after last card loads (optional)
+  await new Promise(r => setTimeout(r, 400));
+
+  // Collapse → flip → slide deck animation
+  await DeckAnimator?.finalizeDeckAnimation(deck);
+
+  // Shuffle deck and render hand (no auto-draw)
   window.shuffleDeck?.(mySeat());
+  renderHand?.();
 
-  // 4) Render hand UI (no auto-draw; clicking deck will do 7 + mull prompt)
-  renderHand();
+  // Summary log
+  try {
+    const seatForLog = (()=>{ try { return Zones?.getViewSeat?.() ?? mySeat?.() ?? 1; } catch { return 1; } })();
+    const flipCount = deck.reduce((n, c) => n + (_hasBackFace(c) ? 1 : 0), 0);
+    console.info(`[DECK PARSE] Finished. seat=${seatForLog} total cards=${deck.length} flip-like cards=${flipCount}`);
+  } catch {}
+
+  return { deck, commanderName };
 }
+
+
+
 
 
 
@@ -2518,12 +3043,13 @@ function drawOne(){ drawOneAnimated(mySeat()); }
 // [DRAW ANIMATED LOOP]
 async function drawXAnimated(seat, n, { gap=60, firstDelay=0, duration=300 } = {}){
   let count = 0;
-  for (let i=0; i<n; i++){
-    const ok = await drawOneAnimated(seat, { stagger: (i===0? firstDelay : i*gap), duration });
-    if (!ok) break;
-    count++;
-    try { window.ActivatedAbilities?.onDraw?.(seat, 1); } catch {}   // NEW: tick per-card draw
-  }
+  for (let i = 0; i < n; i++) {
+  count++
+  const ok = await drawOneAnimated(mySeat(), { stagger: (i === 0 ? 0 : i * 30), duration });
+  if (!ok) break;
+  try { window.ActivatedAbilities?.onDraw?.(mySeat(), 1); } catch {}
+}
+
   if (count > 0) notify(`Drew ${count} card${count!==1?'s':''}.`);
   return count;
 }
@@ -2922,8 +3448,10 @@ function playFromHand(i){
   const cw = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 223;
   const ch = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--card-h')) || 310;
 
-  const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
-  rememberCid(cid, card);
+const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
+rememberCid(cid, card);
+linkFlipBackToCid(card, cid);        // ← NEW: bind hidden back to this front cid
+
   const x = p.x - cw/2, y = p.y - ch/2;
 
   // 1) SPAWN NOW (authoritative local + broadcast to peers)
@@ -2948,6 +3476,7 @@ function playFromHand(i){
     oracle_text: card.oracle_text || '',
     power:       card.power ?? '',
     toughness:   card.toughness ?? '',
+  frontKey: card._frontKey || card.frontKey || null,
     loyalty:     card.loyalty ?? ''
   });
 
@@ -2985,8 +3514,10 @@ function playFromHandAt(i, worldX, worldY){
   const cw = parseFloat(rootStyle.getPropertyValue('--card-w')) || 223;
   const ch = parseFloat(rootStyle.getPropertyValue('--card-h')) || 310;
 
-  const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
-  rememberCid(cid, card);
+const cid = (crypto?.randomUUID?.() || String(Math.random())).slice(0, 12);
+rememberCid(cid, card);
+linkFlipBackToCid(card, cid);        // ← NEW: bind hidden back to this front cid
+
 
   const x = worldX - cw / 2;
   const y = worldY - ch / 2;
@@ -3010,6 +3541,7 @@ function playFromHandAt(i, worldX, worldY){
     oracle_text: card.oracle_text || '',
     power:       card.power ?? '',
     toughness:   card.toughness ?? '',
+  frontKey: card._frontKey || card.frontKey || null,
     loyalty:     card.loyalty ?? ''
   });
 
@@ -3050,22 +3582,47 @@ const CID_DATA = new Map();
 function rememberCid(cid, card) {
   if (!cid || !card) return;
   CID_DATA.set(String(cid), {
-    id: String(cid),
-    name: card.name || '',
-    img:  card.img  || '',
-    type_line: card.type_line || '',
-    mana_cost: card.mana_cost || '',
-    oracle_text: card.oracle_text || '',           // ← add this
-    power: card.power ?? null,
-    toughness: card.toughness ?? null,
-    loyalty: card.loyalty ?? null,
-    ogpower: card.ogpower,
-    ogtoughness: card.ogtoughness,
-    ogloyalty: card.ogloyalty,
-    ogTypes: Array.isArray(card.ogTypes) ? card.ogTypes.slice() : [],
-    ogEffects: Array.isArray(card.ogEffects) ? card.ogEffects.slice() : []
-  });
+  id: String(cid),
+  name: card.name || '',
+  img:  card.img  || '',
+  type_line: card.type_line || '',
+  mana_cost: card.mana_cost || '',
+  oracle_text: card.oracle_text || '',
+  power: card.power ?? null,
+  toughness: card.toughness ?? null,
+  loyalty: card.loyalty ?? null,
+  ogpower: card.ogpower,
+  ogtoughness: card.ogtoughness,
+  ogloyalty: card.ogloyalty,
+  ogTypes: Array.isArray(card.ogTypes) ? card.ogTypes.slice() : [],
+  ogEffects: Array.isArray(card.ogEffects) ? card.ogEffects.slice() : [],
+  // NEW:
+  frontKey: card._frontKey || card.frontKey || null,
+});
 }
+
+function linkFlipBackToCid(card, cid){
+  try{
+    const seat = Zones.getViewSeat?.() ?? mySeat?.() ?? 1;
+    const st   = Zones._ensureSeatState(seat);
+    if (!st) return;
+
+    const k = card?._frontKey || null;
+    let back = k ? st.flipDeckByFrontKey?.[k] : null;
+    if (!back){
+      const nm = String(card?.name || '');
+      back = (st.flipDeck || []).find(b => b.name === nm && !b.link_front_id);
+    }
+    if (back){
+      back.link_front_id = String(cid);
+      (st.flipDeckByFront || (st.flipDeckByFront = Object.create(null)))[String(cid)] = back;
+      try { Zones?._saveSeatState?.(seat, st); } catch {}
+      console.debug('[FLIP DECK] linked', { name: back.name, cid: String(cid) });
+    }
+  }catch(e){ console.warn('[FLIP DECK] link failed', e); }
+}
+
+
 
 
 
@@ -3180,6 +3737,7 @@ if (card?.type_line) {
   el.dataset.owner = String(owner);
   el.dataset.cid   = String(cid);
   el.dataset.name  = card.name || '';
+
   // Stamp base P/T/L if we have numeric OGs (for overlays and snapshot)
 if (Number.isFinite(card?.ogpower))   el.dataset.baseP = String(card.ogpower);
 if (Number.isFinite(card?.ogtoughness)) el.dataset.baseT = String(card.ogtoughness);
@@ -3194,15 +3752,19 @@ if (Number.isFinite(card?.ogloyalty)) el.dataset.baseL = String(card.ogloyalty);
       </div>
     </div>`;
 	
-  world.appendChild(el);
+   world.appendChild(el);
 
- // NEW: attach tooltip for this card (fill real type/cost/oracle if you have it)
-  attachTooltip(el, {
-  name: card.name || '',
-  typeLine: '',
-  costHTML: '',
-  oracle: card.oracle_text || ''
-});
+  // Optional guard: skip auto tooltip if requested
+  const skipTip = opts?.skipTooltip || el.hasAttribute('data-noTooltip');
+  if (!skipTip && typeof attachTooltip === 'function') {
+    attachTooltip(el, {
+      name: card.name || '',
+      typeLine: card.type_line || '',   // use the structured field if present
+      costHTML: '',
+      oracle: card.oracle_text || ''
+    });
+  }
+
 
 // Also stamp directly on the node so other modules can read it fast
 if (card.oracle_text) {
@@ -3412,7 +3974,18 @@ async function resetMySeat(){
 
 
 // ====== hook up minimal controls ======
-loadBtn?.addEventListener('click', loadDeckFromTextarea);
+loadBtn?.addEventListener('click', async () => {
+  // Step 1: Instantly show loading overlay with placeholder cards
+  DeckAnimator?.showPlaceholder?.();  // We’ll define this shortly
+
+  // Step 2: Load deck (this takes time)
+  const { deck } = await loadDeckFromTextarea();
+
+  // Step 3: Animate now that deck is ready
+  await DeckAnimator?.show?.();
+});
+
+
 resetBtn?.addEventListener('click', resetMySeat);
 
 // [DRAW: deck click handler]  // <- Ctrl+F anchor stays the same
@@ -3633,16 +4206,19 @@ cogBtn.addEventListener('click', ()=>{
       // 1) Primary: same route as Draw7 (Zones API)
       if (window.Zones?.drawFromDeck) {
         await window.Zones.drawFromDeck(n);
+  try { window.DrawCounter?.inc(seat, n); } catch {}
         return;
       }
       // 2) Legacy helper (if present)
       if (typeof window.drawFromDeck === 'function') {
         await window.drawFromDeck(n);
+  try { window.DrawCounter?.inc(seat, n); } catch {}
         return;
       }
       // 3) Your animated drawer (already async in your build)
       if (typeof window.drawXAnimated === 'function') {
         await window.drawXAnimated(seat, n, { announce:true, slow:false });
+  try { window.DrawCounter?.inc(seat, n); } catch {}
         return;
       }
       // 4) Fallback: manual pop → hand
@@ -4162,5 +4738,11 @@ window.FieldStats = (function(){
   return { mount };
 })();
 
+(function(){
+    const cog = document.getElementById('deckCogBtn');
+    cog?.addEventListener('click', ()=> {
+      try { window.DrawRules?.open?.(); } catch {}
+    });
+  })();
 
 </script>

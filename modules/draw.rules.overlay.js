@@ -488,35 +488,85 @@ E.onDraw = function(seat, count){
     catch{ return []; }
   }
 
- /** Apply one rule’s effect to the board (uses v3 Life API) */
-function apply(rule, seat){
-  if (!rule) return;
+  /** Apply one rule’s effect to the board (uses v3 Life API) */
+  function apply(rule, seat){
+    if (!rule) return;
 
-  if (rule.kind === 'heal'){
-    const cur = window.Life?.get?.(seat);
-    if (!cur) return;
-    const next = (cur.life||0) + (Number(rule.qty)||0);
-    window.Life?.set?.(seat, { life: next });     // realtime, broadcasts to peers
-    console.log('[PROBE B-apply] HEAL +', rule.qty, '→ P'+seat);
-    return;
-  }
-
-  if (rule.kind === 'token'){
-    const name = String(rule.tokenName || 'Token').trim();
-    console.log('[PROBE B-apply] TOKEN open overlay name=', name, 'seat=', seat);
-    try {
-      window.Overlays?.openAddCard?.({
-        seat: Number(seat)||1,
-        presetQuery: name,
-        presetType: 'Token',
-        autoSearch: true
-      });
-    } catch(e){
-      console.warn('[PROBE B-apply] openAddCard fail', e);
+    if (rule.kind === 'heal'){
+      const cur = window.Life?.get?.(seat);
+      if (!cur) return;
+      const next = (cur.life||0) + (Number(rule.qty)||0);
+      window.Life?.set?.(seat, { life: next });
+      console.log('[PROBE B-apply] HEAL +', rule.qty, '→ P'+seat);
+      return;
     }
-    return;
+
+    if (rule.kind === 'token'){
+      const name = String(rule.tokenName || 'Token').trim();
+      console.log('[PROBE B-apply] TOKEN open overlay name=', name, 'seat=', seat);
+      try {
+        window.Overlays?.openAddCard?.({
+          seat: Number(seat)||1,
+          presetQuery: name,
+          presetType: 'Token',
+          autoSearch: true
+        });
+      } catch(e){
+        console.warn('[PROBE B-apply] openAddCard fail', e);
+      }
+      return;
+    }
+
+    // --- NEW: Counter rule → open Activated Abilities (Apply tab), select "Counters", prefill
+    if (rule.kind === 'counter'){
+      const seatNow = Number(seat)||1;
+      const k   = String(rule.ckind || rule.counterName || '+1/+1');
+      const qty = Number(rule.cqty || rule.qty || 1) || 1;
+      console.log('[PROBE B-apply] COUNTER open overlay kind=', k, 'qty=', qty, 'seat=', seatNow);
+
+      try { window.ActivatedAbilities?.open?.({ seat: seatNow }); } catch(e){ console.warn('[PROBE B-apply] AA open fail', e); }
+      setTimeout(()=>{
+        document.querySelector('.js-tab[data-tab="apply"]')?.click();
+        const pane  = document.querySelector('.pane-apply') || document;
+        const radio = pane.querySelector('input[name="mode"][value="counter"]');
+        if (radio){
+          radio.checked = true;
+          radio.dispatchEvent(new Event('change', { bubbles:true }));
+        }
+        const kin = pane.querySelector('.js-ckind');
+        const nin = pane.querySelector('.js-camt');
+        if (kin){ kin.value = k;   kin.dispatchEvent(new Event('input', { bubbles:true })); }
+        if (nin){ nin.value = qty; nin.dispatchEvent(new Event('input', { bubbles:true })); }
+      }, 0);
+      return;
+    }
+
+    // --- NEW: P/T rule → open Activated Abilities (Apply tab), select "P/T", prefill
+    if (rule.kind === 'pt'){
+      const seatNow = Number(seat)||1;
+      const dp = Number(rule.dp || 0) || 0;
+      const dt = Number(rule.dt || 0) || 0;
+      console.log('[PROBE B-apply] PT open overlay dp=', dp, 'dt=', dt, 'seat=', seatNow);
+
+      try { window.ActivatedAbilities?.open?.({ seat: seatNow }); } catch(e){ console.warn('[PROBE B-apply] AA open fail', e); }
+      setTimeout(()=>{
+        document.querySelector('.js-tab[data-tab="apply"]')?.click();
+        const pane  = document.querySelector('.pane-apply') || document;
+        const radio = pane.querySelector('input[name="mode"][value="pt"]');
+        if (radio){
+          radio.checked = true;
+          radio.dispatchEvent(new Event('change', { bubbles:true }));
+        }
+        const pIn = pane.querySelector('.js-dp');
+        const tIn = pane.querySelector('.js-dt');
+        if (pIn){ pIn.value = dp; pIn.dispatchEvent(new Event('input', { bubbles:true })); }
+        if (tIn){ tIn.value = dt; tIn.dispatchEvent(new Event('input', { bubbles:true })); }
+      }, 0);
+      return;
+    }
   }
-}
+
+
 
 
   /** Evaluate saved rules for seat at current draw count */
@@ -536,5 +586,25 @@ function apply(rule, seat){
   window.DrawRulesEval = { save, load, onDraw };
 })();
 
+function _aaPrefillApply({ mode, value='', camt=1, dp=0, dt=0 }){
+  document.querySelector('.js-tab[data-tab="apply"]')?.click();
+  const pane = document.querySelector('.pane-apply') || document;
+
+  const radio = pane.querySelector(`input[name="mode"][value="${mode}"]`);
+  if (radio){ radio.checked = true; radio.dispatchEvent(new Event('change', { bubbles:true })); }
+
+  if (mode === 'counter'){
+    const k = pane.querySelector('.js-ckind');
+    const n = pane.querySelector('.js-camt');
+    if (k){ k.value = value; k.dispatchEvent(new Event('input', { bubbles:true })); }
+    if (n){ n.value = camt;  n.dispatchEvent(new Event('input', { bubbles:true })); }
+  }
+  if (mode === 'pt'){
+    const p = pane.querySelector('.js-dp');
+    const t = pane.querySelector('.js-dt');
+    if (p){ p.value = dp; p.dispatchEvent(new Event('input', { bubbles:true })); }
+    if (t){ t.value = dt; t.dispatchEvent(new Event('input', { bubbles:true })); }
+  }
+}
 
 window.DrawRules = { open, close };

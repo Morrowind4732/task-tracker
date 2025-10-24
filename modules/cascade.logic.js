@@ -24,7 +24,7 @@
   const AUTO_CLOSE_MS  = null;       // e.g. 1200 to auto-remove the stage after finishing; null = stay (testing)
 
   // Reject stack origin (new)
-  const REJECT_STACK_MARGIN_PX = 12;   // how far above the deck to start the pile
+  const REJECT_STACK_MARGIN_PX = 22;   // how far above the deck to start the pile
   const REJECT_STACK_ALIGN     = 'center'; // 'center' | 'left' | 'right'
 
   // Animation tuning

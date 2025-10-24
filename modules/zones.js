@@ -53,11 +53,41 @@ function _mirrorFollowersDuringDrag(el){
   }catch{}
 }
 
+// --- seat state helpers (ADD) ---
+const EMPTY_SEAT_STATE = Object.freeze({
+  table:     [],
+  graveyard: [],
+  exile:     [],
+  hand:      [],
+  deck:      [],
+  flip:      [],   // NEW
+  cmd:       []    // keep cmd present; you already use it elsewhere
+});
+
+// Coerce anything we load/receive into the canonical shape.
+// - preserves unknown props (future-proof)
+// - guarantees arrays exist (incl. flip & cmd)
+function normalizeSeatState(st) {
+  const src = st || {};
+  return {
+    ...src,
+    table:     Array.isArray(src.table)     ? src.table.slice()     : [],
+    graveyard: Array.isArray(src.graveyard) ? src.graveyard.slice() : [],
+    exile:     Array.isArray(src.exile)     ? src.exile.slice()     : [],
+    hand:      Array.isArray(src.hand)      ? src.hand.slice()      : [],
+    deck:      Array.isArray(src.deck)      ? src.deck.slice()      : [],
+    flip:      Array.isArray(src.flip)      ? src.flip.slice()      : [], // NEW
+    cmd:       Array.isArray(src.cmd)       ? src.cmd.slice()       : []  // ensure present
+  };
+}
+// --- /seat state helpers ---
+
+
 
 const Zones = {
   cfg: null,
   els: { graveyard:null, exile:null, deck:null, hand:null, world:null },
-  zoneState: new Map(), // seat -> { table:[], graveyard:[], exile:[], hand:[], deck:[] }
+  zoneState: new Map(), // seat -> { table:[], graveyard:[], exile:[], hand:[], deck:[], flip:[], cmd:[] }
 
   applyRemoteMove(seat, meta = {}){
     const s   = Number(seat || this.getViewSeat()) || 1;
@@ -544,10 +574,17 @@ async handleDrop(cardEl){
   // ---- state/persistence ----
   _ensureSeatState(seat){
   if (!this.zoneState.has(seat)){
-    this.zoneState.set(seat, { table:[], graveyard:[], exile:[], hand:[], deck:[], cmd:[] });
+    this.zoneState.set(seat, {
+      table:[], graveyard:[], exile:[], hand:[], deck:[], flip:[], cmd:[]    });
+  } else {
+    // Backfill if old entries don’t have flip/cmd yet
+    const st = this.zoneState.get(seat);
+    if (!Array.isArray(st.flip)) st.flip = [];
+    if (!Array.isArray(st.cmd))  st.cmd  = [];
   }
   return this.zoneState.get(seat);
 },
+
 
 
   async _hydrate(cid, fallback){
@@ -637,58 +674,86 @@ async handleDrop(cardEl){
   },
 
   async _saveSeatState(seat, state){
-    // Prefer your StorageAPI if available
-    if (window.StorageAPI?.savePlayerState){
-      const gameId = this.getGameId();
-      return await window.StorageAPI.savePlayerState(gameId, seat, { state });
-    }
+  if (!state || typeof state !== 'object') {
+    console.warn('[Zones] save skipped: invalid state', state);
+    return;
+  }
+  // Soft-validate required arrays to avoid clobbering previous data
+  for (const k of ['table','graveyard','exile','hand','deck']) {
+    if (!Array.isArray(state[k])) state[k] = []; // keep your current behavior
+  }
+  if (!Array.isArray(state.flip)) state.flip = []; // harmless if you haven’t added flip yet
+  if (!Array.isArray(state.cmd))  state.cmd  = [];
 
-    // Otherwise, if Supabase is present and you have a table
-    const SB = window.supabase;
-    if (!SB || typeof SB.from !== 'function') return;  // ← guard
+  // Debug: see what we’re saving
+  try {
+    console.debug('[Zones] saving seat', seat, {
+      counts: {
+        table: state.table.length, graveyard: state.graveyard.length,
+        exile: state.exile.length, hand: state.hand.length,
+        deck: state.deck.length, flip: state.flip.length, cmd: state.cmd.length
+      }
+    });
+  } catch {}
 
+  if (window.StorageAPI?.savePlayerState){
     const gameId = this.getGameId();
-    const payload = { game_id: gameId, seat, state };
-    const { error } = await SB.from('player_states').upsert(payload, { onConflict: 'game_id,seat' });
-    if (error) console.warn('[Zones] save error', error);
-  },
+    return await window.StorageAPI.savePlayerState(gameId, seat, { state });
+  }
+
+  const SB = window.supabase;
+  if (!SB || typeof SB.from !== 'function') return;
+
+  const gameId = this.getGameId();
+  const payload = { game_id: gameId, seat, state };
+  const { error } = await SB.from('player_states').upsert(payload, { onConflict: 'game_id,seat' });
+  if (error) console.warn('[Zones] save error', error);
+},
+
+
 
   async _loadSeatState(seat){
-    if (window.StorageAPI?.loadPlayerState){
-      const gameId = this.getGameId();
-      const snap = await window.StorageAPI.loadPlayerState(gameId, seat);
-      return snap?.state || { table:[], graveyard:[], exile:[], hand:[], deck:[] };
-    }
-
-    const SB = window.supabase;
-    if (!SB || typeof SB.from !== 'function')
-      return { table:[], graveyard:[], exile:[], hand:[], deck:[] };
-
+  // StorageAPI path
+  if (window.StorageAPI?.loadPlayerState){
     const gameId = this.getGameId();
-    const { data, error } = await SB
-      .from('player_states')
-      .select('state')
-      .eq('game_id', gameId)
-      .eq('seat', seat)
-      .maybeSingle();
+    const snap = await window.StorageAPI.loadPlayerState(gameId, seat);
+    return normalizeSeatState(snap?.state || EMPTY_SEAT_STATE);
+  }
 
-    if (error) {
-      console.warn('[Zones] load error', error);
-      return { table:[], graveyard:[], exile:[], hand:[], deck:[] };
-    }
-    return data?.state || { table:[], graveyard:[], exile:[], hand:[], deck:[] };
-  },
+  // Supabase path
+  const SB = window.supabase;
+  if (!SB || typeof SB.from !== 'function')
+    return normalizeSeatState(EMPTY_SEAT_STATE);
+
+  const gameId = this.getGameId();
+  const { data, error } = await SB
+    .from('player_states')
+    .select('state')
+    .eq('game_id', gameId)
+    .eq('seat', seat)
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[Zones] load error', error);
+    return normalizeSeatState(EMPTY_SEAT_STATE);
+  }
+  return normalizeSeatState(data?.state || EMPTY_SEAT_STATE);
+},
+
 
   async restoreFromState(seat, state){
-    const st = state || await this._loadSeatState(seat);
-    this.zoneState.set(seat, {
-      table:     Array.isArray(st.table)     ? st.table.slice()     : [],
-      graveyard: Array.isArray(st.graveyard) ? st.graveyard.slice() : [],
-      exile:     Array.isArray(st.exile)     ? st.exile.slice()     : [],
-      hand:      Array.isArray(st.hand)      ? st.hand.slice()      : [],
-      deck:      Array.isArray(st.deck)      ? st.deck.slice()      : [],
-    });
-  }
+  const st = normalizeSeatState(state || await this._loadSeatState(seat));
+  this.zoneState.set(seat, {
+    table:     st.table,
+    graveyard: st.graveyard,
+    exile:     st.exile,
+    hand:      st.hand,
+    deck:      st.deck,
+    flip:      st.flip,   // NEW
+    cmd:       st.cmd     // keep cmd in-memory as before
+  });
+}
+
 
 };
   function _emitStackSnapshot(anyCardInStackEl){
