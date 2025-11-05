@@ -621,33 +621,30 @@ function bindDeckUI(){
       deckZone.style.position = 'relative';
     }
 
-    // swallow helper: kill all propagation so deck click never fires
-    const swallow = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
-    };
+// ⬇️ Remove the capture-phase shield entirely. We already guard deckZone's
+// click with `if (e.target.closest('.deck-cluster')) return;` so no shield needed.
+// (Nothing here.)
 
-    // cluster shell
-    const cluster = document.createElement('div');
-    Object.assign(cluster.style, {
+
+// cluster shell
+const cluster = document.createElement('div');
+cluster.classList.add('deck-cluster'); // ← give it a selector we can guard on
+Object.assign(cluster.style, {
   position: 'absolute',
-  left: '-150px',     // ⬅️ more offset so it’s not on top of the deck
-  top: '50%',        // vertically centered on the deck box
+  left: '-150px',
+  top: '50%',
   transform: 'translateY(-50%)',
   display: 'grid',
   gridTemplateAreas: `"north" "center" "south"`,
-  placeItems: 'center',   // ⬅️ horizontally center each button in the column
+  placeItems: 'center',
   gap: '6px',
   pointerEvents: 'auto',
   zIndex: 9_999
 });
 
 
- // let button clicks run, but stop the bubble before reaching the deck
-cluster.addEventListener('click', (e) => e.stopPropagation()); // bubble-phase only
-cluster.addEventListener('pointerdown', swallow, true);
-cluster.addEventListener('pointerup', swallow, true);
+
+
 
 // Tweakables for cluster feel
 const BTN_SIZE = 60;   // ⬅️ ALL buttons (Draw/Cascade/🃏/+/🔍) are 60×60
@@ -681,8 +678,9 @@ function makeDeckBtn(label, area, extraStyle = {}) {
     boxShadow: '0 4px 12px rgba(0,0,0,.6), inset 0 0 4px rgba(255,255,255,.2)',
     ...extraStyle
   });
-  b.addEventListener('pointerdown', swallow);
-  b.addEventListener('pointerup', swallow);
+  
+
+
   cluster.appendChild(b);
   return b;
 }
@@ -733,12 +731,21 @@ const btnAdd     = makeDeckBtn('➕', 'west',  { position:'absolute', left:  SID
       dim.appendChild(pad);
     }
 
-    // wire actions (placeholders for now; replace with your real flows)
-    btnDraw.onclick    = () => openNumberPad('Draw X',    n => console.log('[Deck] Draw', n));
-    btnCascade.onclick = () => openNumberPad('Cascade X', n => console.log('[Deck] Cascade', n));
-    btnCenter.onclick  = () => console.log('[Deck] Center action');
-    btnSearch.onclick  = () => openDeckSearchOverlay();
-btnAdd.onclick     = () => openAddAnyCardOverlay();
+    // Helper to keep clicks from bubbling to the deck zone
+const onClick = (btn, fn) => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();                 // <-- critical: let the target fire, don't bubble
+    try { fn(e); } catch (err) { console.warn('[Deck btn error]', err); }
+  });
+};
+
+// wire actions (placeholders for now; replace with your real flows)
+onClick(btnDraw,    () => openNumberPad('Draw X',    n => console.log('[Deck] Draw', n)));
+onClick(btnCascade, () => openNumberPad('Cascade X', n => console.log('[Deck] Cascade', n)));
+onClick(btnCenter,  () => console.log('[Deck] Center action'));
+onClick(btnSearch,  () => { console.log('[Deck] 🔍 open'); openDeckSearchOverlay(); });
+onClick(btnAdd,     () => { console.log('[Deck] ➕ open'); openAddAnyCardOverlay(); });
+
 
 
     deckZone.appendChild(cluster);
@@ -798,13 +805,16 @@ _currentDeckList = lib.map(c => ({
   };
 
   // Click/touch: if empty -> open loader, else -> draw
-  deckZone.addEventListener('click', () => {
-    (deckZone.dataset.hasDeck === '1') ? drawOne() : openLoader();
-  });
-  deckZone.addEventListener('touchstart', (e)=>{
-    e.preventDefault();
-    (deckZone.dataset.hasDeck === '1') ? drawOne() : openLoader();
-  }, { passive:false });
+  deckZone.addEventListener('click', (e) => {
+  if (e.target.closest('.deck-cluster')) return; // ignore compass taps
+  (deckZone.dataset.hasDeck === '1') ? drawOne() : openLoader();
+});
+deckZone.addEventListener('touchstart', (e)=>{
+  if (e.target.closest('.deck-cluster')) return; // ignore compass taps
+  e.preventDefault();
+  (deckZone.dataset.hasDeck === '1') ? drawOne() : openLoader();
+}, { passive:false });
+
 }
 
 

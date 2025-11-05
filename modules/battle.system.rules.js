@@ -110,22 +110,51 @@
   }
 
   // parse raw abilities text out of oracle/granted (mirrors badges.js logic)
-  function _parseOracleAbilities(tx=''){
-    const s = ` ${String(tx).replace(/\W+/g,' ').toLowerCase()} `;
-    const keys = [
-      'flying','deathtouch','trample','vigilance','haste','lifelink','menace','reach',
-      'first strike','double strike','hexproof','indestructible','shroud','ward',
-      'prowess','defender'
-    ];
-    const found = new Set();
-    for (const k of keys){
-      if (s.includes(` ${k} `)) {
-        // Capitalize each word so it matches panel look
-        found.add(k.replace(/\b\w/g, m => m.toUpperCase()));
-      }
+  function _parseOracleAbilities(tx = '') {
+  const RAW_KEYS = [
+    'flying','first strike','double strike','vigilance','lifelink','deathtouch',
+    'trample','haste','hexproof','indestructible','menace','reach','defender',
+    'ward','protection from white','protection from blue','protection from black',
+    'protection from red','protection from green'
+  ];
+
+  // Build a regex that matches a whole line composed of comma-separated keywords.
+  // Example lines that should match:
+  //   "Flying"
+  //   "Flying, vigilance"
+  //   "Defender, reach"
+  const kw = RAW_KEYS.map(k => k.replace(/\s+/g, '\\s+'));
+  const headRe = new RegExp(
+    `^(?:${kw.join('|')})(?:\\s*,\\s*(?:${kw.join('|')}))*\\.?$`,
+    'i'
+  );
+
+  // Lines we should ignore entirely (instructions / triggers / conditional wordings)
+  const skipLineRe = /^(?:when|whenever|at the beginning|as long as|until end of turn|equip|equipped|enchant|enchanted|target|create|choose|activate|this spell|other|each|learn|scry|adventure)\b/i;
+
+  // Strip reminder text in parentheses; split into lines to mimic oracle formatting.
+  const cleaned = String(tx || '')
+    .replace(/\([^)]*\)/g, '')
+    .split(/\r?\n+/)
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const out = new Set();
+  for (const line of cleaned) {
+    if (skipLineRe.test(line)) continue;
+    if (!headRe.test(line)) continue;
+
+    // Split comma list, normalize, and add
+    for (const part of line.split(',')) {
+      const p = part.trim().toLowerCase();
+      if (!p) continue;
+      // Normalize capitalization to match rest of system
+      out.add(p.replace(/\b\w/g, c => c.toUpperCase()));
     }
-    return found;
   }
+  return out;
+}
+
 
   // simple helper to check if a profile "has ability X"
   function _hasAbility(prof, needle){
@@ -164,179 +193,186 @@
 
   // Build the merged combat profile for a cid.
   // This is our truth snapshot for logic.
-  function _buildProfile(info){
-    if (!info || !info.anchor) return null;
-    const el = info.anchor;
+  // REPLACE the whole function _buildProfile(info) with this version
+function _buildProfile(info){
+  if (!info || !info.anchor) return null;
+  const el = info.anchor;
 
-    const cid   = el.dataset.cid || null;
-    const name  = el.dataset.name || el.title || el.alt || '';
+  const cid   = el.dataset.cid || null;
+  const name  = el.dataset.name || el.title || el.alt || '';
 
-    // ownership info
-    const seatGuess = _ownerSeatForCard(el);  // numeric if we can parse it
-    const { ownerCurrent, ownerOriginal } = _ownerStrings(el);
+  // ownership info
+  const seatGuess = _ownerSeatForCard(el);  // numeric if we can parse it
+  const { ownerCurrent, ownerOriginal } = _ownerStrings(el);
 
-    // color info
-    const colorsArr    = _extractColors(el);          // ["U","B","R"] etc.
-    const manaCostRaw  = el.dataset.manaCost || '';   // keep raw too
+  // color info
+  const colorsArr    = _extractColors(el);          // ["U","B","R"] etc.
+  const manaCostRaw  = el.dataset.manaCost || '';   // keep raw too
 
-    // base from dataset
-    const baseTypeLine = el.dataset.typeLine || '';
-    const baseOracle   = el.dataset.oracle   || '';
+  // base from dataset
+  const baseTypeLine = el.dataset.typeLine || '';
+  const baseOracle   = el.dataset.oracle   || '';
 
-    // parse base keywords
-    const baseTypes = _parseTypeBadges(baseTypeLine);      // ["Legendary","Creature","Goblin",...]
-    const abilSet   = _parseOracleAbilities(baseOracle);   // Set("Flying","Trample","Defender",...)
+  // --- BASE PARSE (fallback) ---
+  const baseTypes = _parseTypeBadges(baseTypeLine);   // ["Legendary","Creature","Goblin",...]
+  const abilSet   = _parseOracleAbilities(baseOracle); // Set("Flying","Trample","Defender",...)
 
-    // granted (CardAttributes / remoteAttrs)
-    const grant = info.__grant || { abilities: [], types: [] };
+  // --- GRANTED (CardAttributes / remoteAttrs mirrored by badges.js) ---
+  const grant = info.__grant || { abilities: [], types: [] };
 
-    // merge in granted TYPES
-    const mergedTypes = baseTypes.slice();
-    const typeSeen = new Set(baseTypes.map(t => String(t)));
-    for (const t of (grant.types || [])) {
-      const k = String(t).trim();
-      if (k && !typeSeen.has(k)) {
-        typeSeen.add(k);
-        mergedTypes.push(k);
-      }
+  // Merge in granted TYPES
+  const mergedTypes = baseTypes.slice();
+  const typeSeen = new Set(baseTypes.map(t => String(t)));
+  for (const t of (grant.types || [])) {
+    const k = String(t).trim();
+    if (k && !typeSeen.has(k)) {
+      typeSeen.add(k);
+      mergedTypes.push(k);
     }
-
-    // merge in granted ABILITIES
-    for (const a of (grant.abilities || [])) {
-      const k = String(a).trim();
-      if (k) {
-        abilSet.add(k.replace(/\b\w/g, m => m.toUpperCase()));
-      }
-    }
-
-    // temp buffs/debuffs (RulesStore tempBuffs in badges.js)
-    // info.__rulesBuffs is an array of objects with .text like:
-    // "+1/+1 EOT", "🛡️Red PERM", "🚩Artifact PERM"
-    const buffsRaw = Array.isArray(info.__rulesBuffs)
-      ? info.__rulesBuffs.slice()
-      : [];
-    const buffsPretty = [];
-    for (const b of buffsRaw){
-      const txt = String(b?.text || '').trim();
-      if (!txt) continue;
-      buffsPretty.push(txt);
-
-      // take text, strip trailing " PERM", " EOT", etc.,
-      // push cleaned into abilities so stuff like 🛡️Red and 🚩Artifact
-      // lives in p.abilities for our combat logic.
-      const cleaned = txt.replace(/\s+(PERM|EOT|EOY|EOC|EoT|Until EOT)$/i, '').trim();
-      if (cleaned) {
-        abilSet.add(cleaned);
-      }
-    }
-
-    // final PT that badges sticker would show
-    let ptFinal = '';
-
-    if (info.__rulesPT
-        && Number.isFinite(info.__rulesPT.powFinal)
-        && Number.isFinite(info.__rulesPT.touFinal)) {
-      ptFinal = `${info.__rulesPT.powFinal|0}/${info.__rulesPT.touFinal|0}`;
-    }
-
-    if (!ptFinal && Number.isFinite(info.__grant?._pow) && Number.isFinite(info.__grant?._tou)) {
-      ptFinal = `${info.__grant._pow|0}/${info.__grant._tou|0}`;
-    }
-
-    if (!ptFinal && info.anchor.dataset.ptCurrent) {
-      ptFinal = info.anchor.dataset.ptCurrent;
-    }
-
-    if (!ptFinal &&
-        el.dataset.power !== undefined && el.dataset.power !== '' &&
-        el.dataset.toughness !== undefined && el.dataset.toughness !== '') {
-      ptFinal = `${el.dataset.power|0}/${el.dataset.toughness|0}`;
-    }
-
-    // parse PT numbers out of ptFinal like "5/5"
-    let powNum = null;
-    let touNum = null;
-    if (ptFinal && ptFinal.includes('/')) {
-      const [pStr,tStr] = ptFinal.split('/');
-      const pVal = parseInt(pStr,10);
-      const tVal = parseInt(tStr,10);
-      if (Number.isFinite(pVal)) powNum = pVal;
-      if (Number.isFinite(tVal)) touNum = tVal;
-    }
-
-    // ORIGINAL printed/base PT for this face (pre-buffs)
-    let powBase = null;
-    let touBase = null;
-    if (el.dataset.power !== undefined && el.dataset.power !== '') {
-      const p0 = parseInt(el.dataset.power,10);
-      if (Number.isFinite(p0)) powBase = p0;
-    }
-    if (el.dataset.toughness !== undefined && el.dataset.toughness !== '') {
-      const t0 = parseInt(el.dataset.toughness,10);
-      if (Number.isFinite(t0)) touBase = t0;
-    }
-
-    // tapped?
-    const tappedFlag = (
-      el.dataset.tapped === '1' ||
-      el.classList.contains('is-tapped')
-    );
-
-    // summoning sickness flags we're willing to accept:
-    // we'll treat any of these truthy strings as "has summoning sickness"
-    const sickFlag = (
-      el.dataset.summoningSick === '1' ||
-      el.dataset.summoningSick === 'true' ||
-      el.dataset.hasSummoningSickness === 'true' ||
-      el.dataset.summoningSickness === 'true'
-    ) ? true : false;
-
-    // commander / command zone check:
-    const inCmd = (
-      el.dataset.inCommandZone === 'true' ||
-      el.dataset.inCommandZone === true ||
-      String(el.dataset.zone||'').toLowerCase() === 'command' ||
-      String(el.dataset.zone||'').toLowerCase() === 'commander' ||
-      String(el.dataset.zone||'').toLowerCase() === 'commandzone'
-    );
-
-    return {
-      cid,
-      name,
-
-      // ownership
-      seat:        seatGuess,      // numeric guess at seat
-      ownerCurrent,
-      ownerOriginal,
-
-      // mana / color
-      manaCostRaw,                 // "{U}{B}{R}" etc.
-      colors: colorsArr,           // ["U","B","R"]
-
-      // state
-      types: mergedTypes,                 // final types/subtypes (incl. granted)
-      abilities: Array.from(abilSet),     // final abilities (incl. 🛡️Red, 🚩Artifact, etc.)
-      buffs: buffsPretty,                 // raw buff strings with durations
-      ptFinal,
-      powNum,                              // final numeric P
-      touNum,                              // final numeric T
-      powBase,                             // printed base P
-      touBase,                             // printed base T
-      isTapped: tappedFlag,
-
-      // NEW: commander / zone awareness
-      inCommandZone: !!inCmd,
-
-      // NEW: summoning sickness awareness
-      hasSummoningSickness: sickFlag,
-
-      // internals if combat math / UI needs them later:
-      _rulesPT: info.__rulesPT || null,
-      _grant:   info.__grant   || null,
-      _el:      el
-    };
-
   }
+
+  // Merge in granted ABILITIES (into the fallback abilSet)
+  for (const a of (grant.abilities || [])) {
+    const k = String(a).trim();
+    if (k) abilSet.add(k.replace(/\b\w/g, m => m.toUpperCase()));
+  }
+
+  // --- RULES BUFF STRINGS → keep pretty and add cleaned tokens into abilSet fallback
+  const buffsRaw = Array.isArray(info.__rulesBuffs) ? info.__rulesBuffs.slice() : [];
+  const buffsPretty = [];
+  for (const b of buffsRaw){
+    const txt = String(b?.text || '').trim();
+    if (!txt) continue;
+    buffsPretty.push(txt);
+    const cleaned = txt.replace(/\s+(PERM|EOT|EOY|EOC|EoT|Until EOT)$/i, '').trim();
+    if (cleaned) abilSet.add(cleaned);
+  }
+
+  // --- PT FINAL (exactly your logic) ---
+  let ptFinal = '';
+  if (info.__rulesPT
+      && Number.isFinite(info.__rulesPT.powFinal)
+      && Number.isFinite(info.__rulesPT.touFinal)) {
+    ptFinal = `${info.__rulesPT.powFinal|0}/${info.__rulesPT.touFinal|0}`;
+  }
+  if (!ptFinal && Number.isFinite(info.__grant?._pow) && Number.isFinite(info.__grant?._tou)) {
+    ptFinal = `${info.__grant._pow|0}/${info.__grant._tou|0}`;
+  }
+  if (!ptFinal && el.dataset.ptCurrent) {
+    ptFinal = el.dataset.ptCurrent;
+  }
+  if (!ptFinal &&
+      el.dataset.power !== undefined && el.dataset.power !== '' &&
+      el.dataset.toughness !== undefined && el.dataset.toughness !== '') {
+    ptFinal = `${el.dataset.power|0}/${el.dataset.toughness|0}`;
+  }
+
+  let powNum = null, touNum = null;
+  if (ptFinal && ptFinal.includes('/')) {
+    const [pStr,tStr] = ptFinal.split('/');
+    const pVal = parseInt(pStr,10);
+    const tVal = parseInt(tStr,10);
+    if (Number.isFinite(pVal)) powNum = pVal;
+    if (Number.isFinite(tVal)) touNum = tVal;
+  }
+
+  // ORIGINAL printed/base PT for this face (pre-buffs)
+  let powBase = null, touBase = null;
+  if (el.dataset.power !== undefined && el.dataset.power !== '') {
+    const p0 = parseInt(el.dataset.power,10);
+    if (Number.isFinite(p0)) powBase = p0;
+  }
+  if (el.dataset.toughness !== undefined && el.dataset.toughness !== '') {
+    const t0 = parseInt(el.dataset.toughness,10);
+    if (Number.isFinite(t0)) touBase = t0;
+  }
+
+  // tapped / sickness / zone
+  const tappedFlag = (el.dataset.tapped === '1' || el.classList.contains('is-tapped'));
+  const sickFlag = (
+    el.dataset.summoningSick === '1' ||
+    el.dataset.summoningSick === 'true' ||
+    el.dataset.hasSummoningSickness === 'true' ||
+    el.dataset.summoningSickness === 'true'
+  ) ? true : false;
+  const inCmd = (
+    el.dataset.inCommandZone === 'true' ||
+    el.dataset.inCommandZone === true ||
+    String(el.dataset.zone||'').toLowerCase() === 'command' ||
+    String(el.dataset.zone||'').toLowerCase() === 'commander' ||
+    String(el.dataset.zone||'').toLowerCase() === 'commandzone'
+  );
+
+  // -------------------------------
+  // HARDENED ABILITY SOURCE ORDER:
+  //   1) Badges’ FINAL abilities if present (info.abilities)
+  //   2) Badges’ BASE abilities if present (info.__baseAbilities)
+  //   3) Fallback = parsed oracle + grants + cleaned buffs (abilSet)
+  // -------------------------------
+  const norm = s => String(s||'').trim().replace(/\s+/g,' ')
+                   .replace(/\b\w/g,c=>c.toUpperCase());
+  const uniqMerge = (...lists) => {
+    const out = [];
+    const seen = new Set();
+    for (const list of lists) {
+      for (const v of (list||[])) {
+        const k = norm(v);
+        if (k && !seen.has(k)) { seen.add(k); out.push(k); }
+      }
+    }
+    return out;
+  };
+
+  const fromBadgesFinal = Array.isArray(info.abilities) ? info.abilities : null;
+  const fromBadgesBase  = Array.isArray(info.__baseAbilities) ? info.__baseAbilities : null;
+  const fromFallback    = Array.from(abilSet);
+
+  let abilFinal;
+  if (fromBadgesFinal && fromBadgesFinal.length) {
+    // prefer what Badges is actively showing (already includes grants it knows about)
+    abilFinal = uniqMerge(fromBadgesFinal, fromFallback);
+  } else if (fromBadgesBase && fromBadgesBase.length) {
+    // otherwise prefer baseAbilities (innate keywords) plus our fallback
+    abilFinal = uniqMerge(fromBadgesBase, fromFallback);
+  } else {
+    // last resort: oracle parse + grants + cleaned buffs
+    abilFinal = uniqMerge(fromFallback);
+  }
+
+  return {
+    cid,
+    name,
+
+    // ownership
+    seat:        seatGuess,
+    ownerCurrent,
+    ownerOriginal,
+
+    // mana / color
+    manaCostRaw,
+    colors: colorsArr,
+
+    // state
+    types: mergedTypes,
+    abilities: abilFinal,           // ✅ no more ReferenceError; hardened source order
+    buffs: buffsPretty,
+    ptFinal,
+    powNum,
+    touNum,
+    powBase,
+    touBase,
+    isTapped: tappedFlag,
+
+    inCommandZone: !!inCmd,
+    hasSummoningSickness: sickFlag,
+
+    // internals
+    _rulesPT: info.__rulesPT || null,
+    _grant:   info.__grant   || null,
+    _el:      el
+  };
+}
+
 
   // ------------------------------------------------------------
   // CORE PUBLIC PROFILE GETTER

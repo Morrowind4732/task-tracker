@@ -991,23 +991,25 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
         zIndex: '9999'
       });
       popup.querySelectorAll('.deck-option').forEach(opt => {
-        opt.addEventListener('click', () => {
-          const choice = opt.textContent.trim();
-          if (choice === 'Cancel') {
-            popup.remove();
-            return;
-          }
+  opt.addEventListener('click', () => {
+    const choice = opt.textContent.trim();
+    if (choice === 'Cancel') {
+      popup.remove();
+      console.log('[Deck] Insert canceled');
+      return;
+    }
 
-          if (choice === 'Random') {
-            const confirmShuffle = confirm("Shuffle after placing randomly?");
-            if (confirmShuffle) console.log('[Deck] Shuffle after random insert');
-          }
+    if (choice === 'Random') {
+      const confirmShuffle = confirm("Shuffle after placing randomly?");
+      if (confirmShuffle) console.log('[Deck] Shuffle after random insert (requested)');
+    }
 
-          console.log(`[Deck] Insert card to: ${choice}`);
-          popup.remove();
-          onDone();
-        });
-      });
+    console.log(`[Deck] Insert card to: ${choice}`);
+    popup.remove();
+    onDone(choice); // ⬅️ pass the actual choice upward
+  });
+});
+
       document.body.appendChild(popup);
     };
 
@@ -1263,10 +1265,35 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
 
         // 4. MY deck (top/bottom/random popup then remove from table)
         else if (overZone('pl-deck')) {
-          showDeckInsertOptions(el, () => {
-            removeCard('deck', 'player');
-          });
-        }
+  showDeckInsertOptions(el, (choice) => {
+    const pos = String(choice || '').toLowerCase(); // 'top' | 'bottom' | 'random'
+    const ownerSide = 'player';
+
+    // Try to hand this card to a deck insert hook if available
+    // Expected signature: Zones.recordCardToDeck(ownerSide, el, pos) -> boolean
+    let inserted = false;
+    try {
+      if (typeof Zones?.recordCardToDeck === 'function') {
+        inserted = !!Zones.recordCardToDeck(ownerSide, el, pos);
+        console.log('[Deck] recordCardToDeck result:', inserted, { pos, cid: el.dataset.cid, name: el.dataset.name || el.title || '' });
+      } else {
+        console.warn('[Deck] Zones.recordCardToDeck not found — card will be removed from table but NOT added to deck list.');
+      }
+
+      // Optional: if user picked Random and your Zones supports shuffle
+      if (pos === 'random' && typeof Zones?.shuffleDeck === 'function') {
+        Zones.shuffleDeck(ownerSide);
+        console.log('[Deck] shuffleDeck(ownerSide) called after random insert');
+      }
+    } catch (e) {
+      console.warn('[Deck] recordCardToDeck threw:', e);
+    }
+
+    // Remove from table either way so the visual state matches the action
+    removeCard('deck', ownerSide);
+  });
+}
+
         // (future: if you want to let me tuck into opponent's deck, mirror this with 'op-deck')
 
       } else {
