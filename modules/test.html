@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Alexios vs Kratos - Sword Clash</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: white;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    h1 {
+      margin-top: 10px;
+    }
+
+    .scene {
+      flex: 1;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 40px;
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+      position: relative;
+      width: 100%;
+    }
+
+    img.card {
+      height: 400px;
+      border-radius: 8px;
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+      z-index: 1;
+    }
+
+    #scaleSlider {
+      width: 60%;
+      margin: 10px auto 20px;
+    }
+
+    .slash {
+      position: absolute;
+      width: 300px;
+      height: 10px;
+      background: linear-gradient(to right, #fff 0%, #f00 60%, transparent 100%);
+      box-shadow: 0 0 15px 5px red;
+      border-radius: 5px;
+      z-index: 5;
+      pointer-events: none;
+      transform-origin: left center;
+      opacity: 0;
+    }
+
+    .from-left {
+      left: calc(25% + 100px);
+      top: 50%;
+      animation: slashLeft 0.4s ease-out forwards;
+    }
+
+    .from-right {
+      right: calc(25% + 100px);
+      top: 50%;
+      transform-origin: right center;
+      background: linear-gradient(to left, #fff 0%, #f00 60%, transparent 100%);
+      animation: slashRight 0.4s ease-out forwards;
+    }
+
+    @keyframes slashLeft {
+      0%   { transform: rotate(0deg) scaleX(0.1); opacity: 1; }
+      50%  { transform: rotate(-20deg) scaleX(1.2); opacity: 1; }
+      100% { transform: rotate(-40deg) scaleX(1.6); opacity: 0; }
+    }
+
+    @keyframes slashRight {
+      0%   { transform: rotate(0deg) scaleX(0.1); opacity: 1; }
+      50%  { transform: rotate(20deg) scaleX(1.2); opacity: 1; }
+      100% { transform: rotate(40deg) scaleX(1.6); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>⚔️ Alexios vs Kratos</h1>
+  <div class="scene" id="scene"></div>
+  <input type="range" id="scaleSlider" min="0.4" max="2" step="0.01" value="1">
+  <label for="scaleSlider">Zoom</label>
+
+  <script>
+    const cardNames = [
+      "Alexios, Deimos of Kosmos",
+      "Kratos, God of War"
+    ];
+
+    const scene = document.getElementById("scene");
+
+    async function fetchCardImage(name) {
+      const res = await fetch(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`);
+      const data = await res.json();
+      return data.image_uris?.normal || data.card_faces?.[0]?.image_uris?.normal;
+    }
+
+    async function loadCards() {
+      for (const name of cardNames) {
+        const imgUrl = await fetchCardImage(name);
+        const img = document.createElement("img");
+        img.className = "card";
+        img.src = imgUrl;
+        scene.appendChild(img);
+      }
+    }
+
+    function createSlash(fromSide) {
+      const slash = document.createElement("div");
+      slash.className = `slash ${fromSide}`;
+      scene.appendChild(slash);
+      setTimeout(() => slash.remove(), 500);
+    }
+
+    function clashSwords() {
+      createSlash("from-left");
+      createSlash("from-right");
+    }
+
+    loadCards();
+
+    // Clash every 3.5 seconds
+    setInterval(clashSwords, 3500);
+
+    document.getElementById("scaleSlider").addEventListener("input", (e) => {
+      scene.style.transform = `scale(${e.target.value})`;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="stylesheet" href="/mana-master/css/mana.min.css">
+
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Infinite Felt Table</title>
+<style>
+  :root{
+    /* === CARD SIZE ON TABLE === */
+    --card-height-table: 180px;           /* was hardcoded 180 on table */
+    --card-aspect: 0.714;
+    --card-width-table: calc(var(--card-height-table) * var(--card-aspect));
+
+    /* === HAND FAN === */
+    --hand-card-height: 190px;            /* was .hand-card height:190px */
+    --hand-zone-height: 220px;            /* was .hand-zone height:220px */
+    --hand-zone-bottom-gap: 12px;         /* was .hand-zone bottom:12px */
+
+    /* === MID GAP BETWEEN FIELDS (your no-man's land) ===
+       this used to be calc(2 * var(--card-height-table) + 20px)
+       We're keeping the same default math for now so behavior doesn't change,
+       BUT it's now its own var that we can override directly later.
+    */
+    --mid-gap: calc(2 * var(--card-height-table) + 20px);
+
+    /* === COMBAT BAND HEIGHT === */
+    --combat-height: 300px;               /* was 300px */
+
+    /* felt colors / zone look */
+    --felt-dark:#2f8d3c;
+    --zone-border: rgba(255,255,255,0.85);
+    --zone-fill: rgba(255,255,255,0.06);
+  }
+
+  html, body {
+    height:100%; margin:0; overflow:hidden;
+    background:#0f3f18; color:#fff;
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+  }
+
+  #viewport {
+    position:relative;
+    width:100%;
+    height:100%;
+    cursor:grab;
+    user-select:none;
+    overflow:hidden;
+  }
+  #viewport:active { cursor:grabbing; }
+
+  #world {
+    position:absolute; inset:0; transform:translate(0px,0px);
+    /* Layered repeating texture so it feels endless at all zooms */
+    background:
+      radial-gradient(circle at 25% 25%, rgba(255,255,255,0.04), transparent 36%) 0 0/280px 280px repeat,
+      radial-gradient(circle at 75% 75%, rgba(0,0,0,0.05), transparent 38%) 0 0/560px 560px repeat,
+      linear-gradient(180deg, var(--felt-mid), var(--felt-light) 40%, var(--felt-mid));
+    box-shadow: inset 0 0 560px var(--felt-vignette);
+    /* Vast canvas so you can pan for days */
+    min-width: 20000px;
+    min-height: 20000px;
+    will-change: transform;
+  }
+
+  .mid-gap {
+    position:absolute;
+    left:50%; top:50%;
+    translate:-50% -50%;
+    width:80%;
+    height:var(--mid-gap);
+    pointer-events:none;
+    background: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.25) 50%, transparent 100%);
+    border-top:2px solid rgba(255,255,255,0.12);
+    border-bottom:2px solid rgba(255,255,255,0.12);
+    border-radius:8px;
+  }
+
+  .mid-label {
+    position:absolute;
+    left:50%;
+    top:calc(50% - (var(--mid-gap)/2) - 14px);
+    translate:-50% -100%;
+    font-weight:700;
+    letter-spacing:.04em;
+    text-shadow:0 1px 2px rgba(0,0,0,.7);
+    opacity:.9;
+  }
+
+  .field {
+    position:absolute;
+    left:50%;
+    translate:-50% 0;
+    width:max(70%, 900px);
+    display:grid;
+    place-items:center;
+  }
+  .field.top {
+    bottom: calc(50% + (var(--mid-gap)/2));
+  }
+  .field.bottom {
+    top: calc(50% + (var(--mid-gap)/2));
+  }
+
+  .zones {
+    display:grid;
+    grid-template-columns:repeat(2, auto);
+    grid-template-rows:repeat(2, auto);
+    gap:14px 14px;
+    align-items:center;
+    justify-items:center;
+  }
+
+  .zone {
+    width:calc(var(--card-width-table) + 10px);
+    height:calc(var(--card-height-table) + 10px);
+    padding:5px;
+    border-radius:10px;
+    background:var(--zone-fill);
+    border:2px dashed var(--zone-border);
+    box-shadow:
+      inset 0 0 12px rgba(255,255,255,.15),
+      0 2px 10px rgba(0,0,0,.35);
+    display:grid;
+    place-items:center;
+    position:relative;
+  }
+
+  .zone > .label{
+  position:absolute;
+  left:50%;
+  top:50%;
+  transform: translate(-50%, -50%);
+  translate: none !important;   /* neutralize the old translate */
+  bottom: auto !important;      /* neutralize the old bottom */
+  width:100%;
+  text-align:center;
+  font-size:12px;
+  letter-spacing:.03em;
+  opacity:.9;
+  text-shadow:0 1px 1px rgba(0,0,0,.7);
+  pointer-events:none;
+}
+
+
+  .half-guide {
+    position:absolute;
+    left:50%;
+    translate:-50% 0;
+    width:84%;
+    height:0;
+    border-top:1px dashed rgba(255,255,255,.18);
+  }
+  .half-guide.top {
+    bottom: calc(50% + (var(--mid-gap) / 2));
+  }
+  .half-guide.bottom {
+    top: calc(50% + (var(--mid-gap) / 2));
+  }
+  
+  .table-card {
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    border-radius: 10px;
+    user-select: none;
+    touch-action: none;
+    will-change: left, top, transform;
+    transition: none; /* local drag must be immediate */
+  }
+
+  /* ONLY remote-updated cards get smoothing */
+  .table-card.remote-smooth {
+    transition: left 0.08s linear, top 0.08s linear;
+  }
+
+  /* extra safety: while dragging, force no transition even if class leaks in */
+  .table-card.is-dragging {
+    transition: none !important;
+  }
+
+  /* ---- Hand UI ---- */
+  .hand-zone{
+    position:absolute;
+    left:50%;
+    bottom:var(--hand-zone-bottom-gap);
+    transform:translateX(-50%);
+    width:min(1080px, 92vw);
+    height:var(--hand-zone-height);
+    pointer-events:auto;
+    z-index: 5000; /* above world cards */
+  }
+
+  .hand-card{
+    height:var(--hand-card-height);
+    transform-origin:center bottom;
+    position:absolute;
+    user-select:none;
+    -webkit-user-drag:none;
+    pointer-events:auto;
+    cursor:grab;
+    filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
+    border-radius:10px;
+  }
+
+  /* fly-in animation sprite from hand.js uses .fly-card */
+  .fly-card{
+    border-radius:10px;
+    filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
+  }
+
+  #tooltip .mc i,
+  #tooltip .ora i {
+    font-size: 1em;
+    vertical-align: middle;
+  }
+
+  #felt {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 400000px;
+    height: 400000px;
+    transform: translate(-50%,-50%);
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(1200px 600px at 50% 40%, #3aa649, #2f8d3c 45%, #1e6a2a 100%),
+      repeating-radial-gradient(circle at 30% 30%, rgba(255,255,255,0.025), rgba(0,0,0,0.0) 6px, rgba(0,0,0,0.03) 10px, rgba(0,0,0,0.0) 14px),
+      repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0 2px, rgba(0,0,0,0.02) 2px 4px);
+    background-blend-mode: overlay, multiply, normal;
+    backface-visibility: hidden;
+    will-change: transform;
+  }
+  #felt::after {
+    content:"";
+    position:absolute; inset:0;
+    box-shadow: inset 0 0 300px 80px rgba(0,0,0,0.35);
+    pointer-events: none;
+  }
+
+  /* Combat band: world-wide strip at y=0 */
+  #combatBand {
+    position: absolute;
+    left: -200000px;
+    width: 400000px;
+    top: 0;
+    height: var(--combat-height);
+    background: rgba(85,85,85,0.9);
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;                /* hidden until activated */
+    transition: opacity 120ms ease;
+  }
+
+  /* Compatibility “zones” */
+  #opponentZone, #playerZone {
+    position: absolute;
+    left: -200000px;
+    width: 400000px;
+    background: transparent;
+    z-index: 1;
+    pointer-events: none;
+  }
+  #opponentZone { top: calc(-100000px); height: 100000px; }
+  #playerZone   { top: var(--combat-height); height: 100000px; }
+
+  /* Combat band: world-wide strip at y=0 (duplicate block kept consistent) */
+  #combatBand {
+    position: absolute;
+    left: -200000px;
+    width: 400000px;
+    top: 0;
+    height: var(--combat-height);
+    background: rgba(85,85,85,0.9);
+    z-index: 1;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+</style>
+
+</head>
+<body class="manamaster">
+
+<div id="viewport">
+  <div id="world">
+    <div id="felt" aria-hidden="true"></div>
+    <div id="combatBand"></div>
+    <div id="opponentZone"></div>
+    <div id="playerZone"></div>
+  </div>
+</div>
+
+<div id="handZone" class="hand-zone" aria-label="Hand"></div>
+
+  <!-- Load env (creates [ENV/SUPABASE] logs) then RTC bus + sugar (creates [RTC] / [RTC:send]/[RTC:recv]) -->
+<script type="module" src="./modules/env.supabase.js"></script>
+<script type="module" src="./modules/rtc.messages.js"></script>
+<script type="module" src="./modules/rtc.bus.js"></script>
+<script type="module" src="./modules/turn.upkeep.js"></script>
+<script type="module" src="./modules/battle.system.js"></script>
+<script type="module" src="./modules/battle.system.rules.js"></script>
+<script type="module">
+
+// global default (e.g., in your bootstrap script)
+window.DECK_BACK_URL = 'https://i.imgur.com/LdOBU1I.jpeg';
+// OR in HTML: <div id="op-deck" data-deck-back="https://i.imgur.com/yourCardBack.png"></div>
+
+import './modules/env.supabase.js';
+import './modules/rtc.messages.js';
+import { initRTCConnectionUI } from './modules/rtc.bus.js';
+import { Camera } from './modules/camera.js';
+import { Zones } from './modules/zones.js';
+import { CardPlacement } from './modules/card.placement.math.js';
+import './modules/hand.js';
+import './modules/badges.js';  // auto-attaches to new table cards
+import { Tooltip } from './modules/tooltip.js';
+import { UserInterface } from './modules/user.interface.js';
+
+import { manaCostHtml } from "./modules/mana.master.js";
+
+
+// mount persistent UI chrome (life bar, rails, drawer) + tooltip
+Tooltip.mount();
+UserInterface.mount();
+
+window.addEventListener('DOMContentLoaded', () => {
+  const viewport = document.getElementById('viewport');
+  const world    = document.getElementById('world');
+
+  // table zones & camera
+  Zones.mount(world);
+
+  Camera.mount({
+    viewport,
+    world,
+    minScale: 0.4,
+    maxScale: 2.5,
+    wheelStep: 0.12
+  });
+
+  // bring up RTC join/host popup / wire seats etc.
+  initRTCConnectionUI();
+
+  // --- seat/turn bootstrap ---------------------------------------
+  // After host/join choice: flip life sides if I'm seat 2 (joiner),
+  // AND immediately tell UI whose turn it currently is (seat 1 starts).
+  //
+  // Tries window.peer first (rtc), falls back to mySeat() helper.
+  function trySeatDetect() {
+    // Prefer explicit seat from RTC, otherwise infer from role, otherwise fallback.
+    const rawSeat = (window?.peer?.seat ?? window.mySeat?.());
+    const role    = (window?.peer?.role ?? (rawSeat === 1 ? 'host' : rawSeat === 2 ? 'join' : undefined));
+
+    // If role says "join" but seat is unknown, assume seat 2; if "host", seat 1.
+    const seat = Number(
+      rawSeat != null ? rawSeat :
+      role === 'join' ? 2 :
+      role === 'host' ? 1 :
+      1
+    );
+
+    if (seat) {
+      // Tell the UI who WE are (sets STATE.seat, flips life pills, etc.)
+      UserInterface.setSeatRole(seat, role || (seat === 1 ? 'host' : 'join'));
+
+      // Tell the UI whose turn it is RIGHT NOW.
+      // Game start = Turn 1, Player 1's turn, activeSeat = 1.
+      // This call is what actually swaps ⚔️ vs 🛡 and enables/disables END TURN.
+      UserInterface.setTurn(1, 'Player 1', 1);
+
+      return true;
+    }
+    return false;
+  }
+
+  // Try immediately. If RTC info isn't populated yet, poll briefly.
+  if (!trySeatDetect()) {
+    const id = setInterval(() => {
+      if (trySeatDetect()) clearInterval(id);
+    }, 250);
+    setTimeout(() => clearInterval(id), 8000);
+  }
+});
+</script>
+
+
+</body>
+</html>

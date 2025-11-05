@@ -1,0 +1,878 @@
+// modules/rtc.bus.js
+// RTC Join Popup UI and connection bootstrap
+// Public API: initRTCConnectionUI()
+
+import { createPeerRoom } from './net.rtc.js';
+import { RTCApply } from './rtc.rules.js';
+
+// --- Seat assignment helper (Host=1, Join=2) ---
+// CTRL-F anchor: [RTC:seat]
+function setSeat(n) {
+  const seat = Number(n) || 1;
+  window.mySeat = () => seat;
+  console.log('%c[RTC:seat]', 'color:#f90', { seat });
+}
+
+// --- Apply a full resolved card state received over RTC ---
+async function applyFullCardStateFromRTC(cid, state){
+  if (!cid || !state) return;
+
+  // 1) Ensure a table-card element exists
+  let el = document.querySelector(`img.table-card[data-cid="${cid}"]`);
+  if (!el){
+    const name = state.title || 'Card';
+    const img  = state.img   || '';
+    el = document.createElement('img');
+    el.className = 'table-card';
+    el.dataset.cid = cid;
+    el.title = name;
+    el.src = img;
+
+    // 🔴 OWNER STAMP (full-state): prefer state.owner if provided
+    if (state.owner != null) {
+      el.dataset.owner = String(state.owner);
+    }
+
+    Object.assign(el.style, {
+      position:'absolute',
+      height:'var(--card-height-table)'
+    });
+    (document.getElementById('world') || document.body).appendChild(el);
+    try { window.ensureCardSideButtons?.(el); } catch {}
+  } else {
+    // If element pre-existed but lacks owner, hydrate from state
+    if (!el.dataset.owner && state.owner != null) {
+      el.dataset.owner = String(state.owner);
+    }
+  }
+
+
+  // 2) CardAttributes store ← state
+  try {
+    const { CardAttributes } = await import('./card.attributes.js');
+    const row = CardAttributes.get?.(cid) || {};
+
+    if (state.pt){
+      const [p,t] = String(state.pt).split('/').map(Number);
+      if (Number.isFinite(p)) row.pow = p;
+      if (Number.isFinite(t)) row.tou = t;
+    }
+    if (Array.isArray(state.abilities)) row.abilities = state.abilities.slice();
+    if (state.counters && typeof state.counters === 'object') row.counters = { ...state.counters };
+    if (Array.isArray(state.types)) row.types = state.types.slice();
+    if (state.temp && typeof state.temp === 'object') row.temp = { ...state.temp }; // debug-only
+
+    CardAttributes.set?.(cid, row);
+  } catch (e){
+    console.warn('[RTC apply] CardAttributes set failed', e);
+  }
+
+  // 3) Mirror into dataset so overlays/tooltips read immediately
+  try {
+    el.dataset.remoteAttrs = JSON.stringify({
+      pt: state.pt || '',
+      abilities: state.abilities || [],
+      counters: state.counters || {},
+      types: state.types || []
+    });
+	
+    if (state.pt) el.dataset.ptCurrent = String(state.pt);
+  } catch {}
+
+  // 4) Render attributes overlay (not just reflow)
+  try {
+    const { AttributesOverlay } = await import('./card.attributes.overlay.js');
+    AttributesOverlay.attach(el);
+    AttributesOverlay.render(el);
+  } catch {}
+
+  // 5) Keep tooltip in sync if visible
+  try { window.Tooltip?.showForCard?.(el, el, { mode:'right' }); } catch {}
+
+  console.log('[RTC] applied full state', { cid, pt: el.dataset.ptCurrent });
+}
+
+// [RTC:tap-css] local helper so remote taps animate just like local
+let __tapAnimStyleInjected = false;
+function ensureTapAnimCSS(){
+  if (__tapAnimStyleInjected) return;
+  const style = document.createElement('style');
+  style.textContent = `
+    @supports (rotate: 0deg) {
+      .tap-anim { transition: rotate 180ms cubic-bezier(.2,.8,.2,1); }
+    }
+  `;
+  document.head.appendChild(style);
+  __tapAnimStyleInjected = true;
+}
+function applyTapToEl(el, tapped){
+  ensureTapAnimCSS();
+  el.classList.add('tap-anim');
+  el.dataset.tapped = tapped ? '1' : '0';
+  el.style.rotate   = tapped ? '90deg' : '0deg';
+  el.classList.toggle('is-tapped', tapped);
+  // keep tooltip/badges feeling fresh
+  try { window.Tooltip?.showForCard?.(el, el, { mode:'right' }); } catch {}
+  try { (async () => { (await import('./badges.js')).Badges.render(el); })(); } catch {}
+}
+
+export function initRTCConnectionUI() {
+
+  const popup = document.createElement('div');
+  popup.id = 'joinPopup';
+  popup.innerHTML = `
+    <style>
+      #joinPopup {
+        position: fixed;
+        top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: #222;
+        border: 2px solid #444;
+        border-radius: 10px;
+        padding: 20px;
+        z-index: 9999;
+        width: 300px;
+        font-family: sans-serif;
+        color: white;
+        box-shadow: 0 0 30px black;
+      }
+      #joinPopup input, #joinPopup select, #joinPopup button {
+        display: block;
+        width: 100%;
+        margin: 8px 0;
+        padding: 8px;
+        font-size: 16px;
+        border-radius: 6px;
+        border: none;
+      }
+      #joinPopup .row { display:flex; gap:8px; }
+      #joinPopup button {
+        background: #4499ee;
+        color: white;
+        font-weight: bold;
+        cursor: pointer;
+      }
+      #joinPopup .host { background:#2ecc71; }
+      #joinPopup .join { background:#e67e22; }
+    </style>
+
+    <label>Room Name</label>
+    <input type="text" id="roomInput" value="dev-room">
+
+    <div class="row">
+      <button class="host" id="hostBtn">Host (P1)</button>
+      <button class="join" id="joinBtn">Join (P2)</button>
+    </div>
+  `;
+  document.body.appendChild(popup);
+
+  const connect = async (role) => {
+  const roomId = document.getElementById('roomInput').value.trim() || 'dev-room';
+  const seat   = (role === 'host') ? 1 : 2;  // 🔒 force mapping Host→P1, Join→P2
+
+  // flip life bar sides now (no flicker, no waiting on RTC)
+  try { window.UserInterface?.setSeatRole(seat, role); } catch {}
+
+  popup.remove();
+
+
+    // Remember our seat for UI perspective logic
+    window.__LOCAL_SEAT = seat;
+
+    // 🔧 NEW: publish mySeat() so placement/mirroring can compare owner vs local
+    // CTRL-F anchor: [RTC:seat]
+    try { setSeat(seat); } catch (_) {}
+    console.log('%c[RTC] local seat ready', 'color:#f90', { seat, hasMySeatFn: typeof window.mySeat === 'function' });
+
+    window.peer = await createPeerRoom({
+      roomId,
+      role,
+      seat,
+onMessage: async (msg) => {
+
+  console.log('%c[RTC:recv]', 'color:#0f0', msg);
+
+  // ---- TURN PASS / TURN SYNC --------------------------------------
+  // turn_pass = opponent hit End Turn and is telling us new turn state
+  // turn_sync = (future use) a "here's current turn" broadcast
+  if (msg?.type === 'turn_pass' || msg?.type === 'turn_sync') {
+    try {
+      const UI = window.UserInterface;
+	  try { (await import('./turn.upkeep.js')).TurnUpkeep.applyTurnPassFromRTC(msg); } catch {}
+
+      if (UI && UI._STATE) {
+        const S = UI._STATE;
+
+        // pull data from the message
+        if (Number.isFinite(msg.turn)) {
+          S.turn = msg.turn;
+        }
+        if (Number.isFinite(msg.activeSeat)) {
+          S.activeSeat = msg.activeSeat;
+        }
+        if (msg.playerLabel) {
+          S.playerLabel = msg.playerLabel;
+        } else {
+          // fallback label if not provided
+          S.playerLabel = (S.activeSeat === 1) ? 'Player 1' : 'Player 2';
+        }
+
+        // update the pill at the top: "Turn: X – Player Y"
+        try {
+          UI.setTurn(S.turn, S.playerLabel);
+        } catch(e){
+          console.warn('[RTC turn_pass] setTurn failed', e);
+        }
+
+        // Now style MY local controls for attack / defend
+        // S.seat = who am I? (1 = host, 2 = join). We already keep that in setSeatRole.
+        if (S.activeSeat === S.seat) {
+          // It is NOW my turn. I'm the active seat.
+          UI._markAttackerUI();   // ⚔️ Battle + End Turn enabled
+
+          // 🔴 NEW: clear summoning sickness on MY cards now that my turn begins.
+          // This flips dataset.hasSummoningSickness to "false" for my creatures
+          // and broadcasts 'move' packets with hasSummoningSickness:'false'
+          // so opponent syncs them.
+          try {
+            window.CardPlacement?.clearSummoningSicknessForMyBoard?.();
+          } catch (err2) {
+            console.warn('[RTC turn_pass] clearSummoningSicknessForMyBoard failed', err2);
+          }
+
+        } else {
+          // It's NOT my turn. I'm the defender.
+          UI._markDefenderUI();   // 🛡️ Block + End Turn disabled
+        }
+      }
+    } catch (err){
+      console.warn('[RTC turn_pass] handler error', err, msg);
+    }
+
+    // we've fully handled this message, don't fall through to card logic
+    return;
+  // ---- LIFE UPDATE -------------------------------------------------
+  } else if (msg?.type === 'life:update') {
+    try {
+      // Preferred: delegate to the UI module’s dedicated handler (no re-broadcast).
+      if (typeof window.__applyRemoteLifeUpdate === 'function') {
+        window.__applyRemoteLifeUpdate(msg);
+      } else if (window.UserInterface) {
+        // Fallback: apply directly to the life bar without broadcasting.
+        const p1 = msg.p1 || {};
+        const p2 = msg.p2 || {};
+        // Use existing setters; undefined args keep previous values.
+        window.UserInterface.setP1(
+          Number.isFinite(p1.total)  ? p1.total  : undefined,
+          Number.isFinite(p1.mid)    ? p1.mid    : undefined,
+          Number.isFinite(p1.poison) ? p1.poison : undefined
+        );
+        window.UserInterface.setP2(
+          Number.isFinite(p2.total)  ? p2.total  : undefined,
+          Number.isFinite(p2.mid)    ? p2.mid    : undefined,
+          Number.isFinite(p2.poison) ? p2.poison : undefined
+        );
+      }
+      console.log('%c[RTC:life:update→applied]', 'color:#6cf', {
+        from: msg.from, reason: msg.reason, p1: msg.p1, p2: msg.p2
+      });
+    } catch (err) {
+      console.warn('[RTC:life:update] handler error', err, msg);
+    }
+    return;
+
+
+  // ---- CARD SPAWN / MOVE ------------------------------------------
+  } else if (msg?.type === 'spawn') {
+    window.CardPlacement?.applyRemoteSpawn?.(msg);
+
+    // After the element exists, hydrate datasets (owner info, command zone, mana, colors, etc.)
+    try {
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`img.table-card[data-cid="${msg.cid}"]`);
+        if (!el) return;
+
+        // --- OWNERSHIP SYNC ---
+        // ownerCurrent wins. Fallback to msg.owner, then leave existing.
+        if (msg.ownerOriginal != null) {
+          el.dataset.ownerOriginal = String(msg.ownerOriginal);
+        }
+        if (msg.ownerCurrent != null) {
+          el.dataset.ownerCurrent = String(msg.ownerCurrent);
+        }
+        if (msg.owner != null && !el.dataset.ownerCurrent) {
+          el.dataset.ownerCurrent = String(msg.owner);
+        }
+
+        // legacy `owner` mirror (selection logic elsewhere still checks .dataset.owner)
+        if (msg.owner != null) {
+          el.dataset.owner = String(msg.owner);
+        } else if (msg.ownerCurrent != null) {
+          el.dataset.owner = String(msg.ownerCurrent);
+        } else if (!el.dataset.owner) {
+          el.dataset.owner = '-1';
+        }
+
+        // --- FIELD SIDE / COMMAND ZONE SYNC ---
+        if (msg.fieldSide != null) {
+          el.dataset.fieldSide = msg.fieldSide; // "top"/"bottom"
+        }
+        if (msg.inCommandZone != null) {
+          el.dataset.inCommandZone =
+            (msg.inCommandZone === 'true' || msg.inCommandZone === true)
+            ? 'true'
+            : 'false';
+        }
+
+        // 🔴 NEW: SUMMONING SICKNESS SYNC ON SPAWN
+        // carry over hasSummoningSickness from remote spawn packet
+        if (msg.hasSummoningSickness != null) {
+          el.dataset.hasSummoningSickness =
+            (msg.hasSummoningSickness === 'true' || msg.hasSummoningSickness === true)
+              ? 'true'
+              : 'false';
+        }
+
+        // --- NAME / RULES TEXT / STATS SYNC ---
+        if (msg.name && !el.dataset.name) el.dataset.name = String(msg.name);
+        if (msg.name && !el.title)        el.title        = String(msg.name);
+
+        if (msg.typeLine)  el.dataset.typeLine  = String(msg.typeLine);
+        if (msg.oracle)    el.dataset.oracle    = String(msg.oracle);
+        if (msg.power != null)     el.dataset.power     = String(msg.power);
+        if (msg.toughness != null) el.dataset.toughness = String(msg.toughness);
+        if (msg.pt)                el.dataset.ptCurrent = String(msg.pt);
+
+        // --- MANA COST / COLOR IDENTITY SYNC ---
+        // We're including this so the mirrored side has cost+colors in dataset
+        // immediately for tooltip, commander snapshot, etc.
+        if (msg.manaCostRaw != null) {
+          el.dataset.manaCost    = String(msg.manaCostRaw);
+          el.dataset.manaCostRaw = String(msg.manaCostRaw);
+        }
+        if (msg.colors) {
+          try {
+            el.dataset.colors = JSON.stringify(msg.colors); // ['U','B','R']
+          } catch(_) {
+            el.dataset.colors = '[]';
+          }
+        }
+
+        const hasIdentity = () =>
+          !!(el.dataset.typeLine?.trim() || el.dataset.name?.trim() || el.title?.trim());
+
+        const doRender = async () => {
+          try {
+            const { Badges } = await import('./badges.js');
+            await Badges.render(el);
+          } catch (err) {
+            console.warn('[RTC:spawn→badges] render failed', err);
+          }
+        };
+
+        // Grace period for async metadata seeding
+        const start = Date.now();
+        const waitForIdentity = (resolve) => {
+          if (hasIdentity() || Date.now() - start > 800) return resolve();
+          setTimeout(() => waitForIdentity(resolve), 100);
+        };
+
+        new Promise(waitForIdentity).then(() => {
+          // Wait for art to load before badges, but don't stall forever
+          if (el.complete && el.naturalWidth > 0) {
+            setTimeout(doRender, 60);
+          } else {
+            el.addEventListener('load', () => setTimeout(doRender, 60), { once: true });
+            setTimeout(doRender, 900);
+          }
+        });
+      });
+    } catch {}
+
+
+} else if (msg?.type === 'owner-swap') {
+  try {
+    const sel = `img.table-card[data-cid="${msg.cid}"]`;
+    const el  = document.querySelector(sel);
+    if (!el) {
+      console.warn('[RTC:owner-swap] no element for', msg.cid, msg);
+    } else {
+      if (msg.ownerOriginal != null) {
+        el.dataset.ownerOriginal = String(msg.ownerOriginal);
+      }
+      if (msg.ownerCurrent  != null) {
+        el.dataset.ownerCurrent = String(msg.ownerCurrent);
+        el.dataset.owner        = String(msg.ownerCurrent); // legacy sync for selection
+      }
+      if (msg.fieldSide != null) {
+        el.dataset.fieldSide = msg.fieldSide;
+      }
+      if (msg.inCommandZone != null) {
+        el.dataset.inCommandZone =
+          (msg.inCommandZone === 'true' || msg.inCommandZone === true)
+          ? 'true'
+          : 'false';
+      }
+
+      // 🔵 carry mana cost + colors on owner-swap too
+      if (msg.manaCostRaw != null) {
+        el.dataset.manaCost    = String(msg.manaCostRaw);
+        el.dataset.manaCostRaw = String(msg.manaCostRaw);
+      }
+      if (msg.colors) {
+        try {
+          el.dataset.colors = JSON.stringify(msg.colors);
+        } catch(_) {
+          el.dataset.colors = '[]';
+        }
+      }
+
+      console.log('%c[RTC:owner-swap→applied]', 'color:#fc6', {
+        cid           : msg.cid,
+        ownerOriginal : el.dataset.ownerOriginal,
+        ownerCurrent  : el.dataset.ownerCurrent,
+        fieldSide     : el.dataset.fieldSide,
+        inCommandZone : el.dataset.inCommandZone,
+        manaCostRaw   : el.dataset.manaCost,
+        colors        : el.dataset.colors
+      });
+    }
+  } catch (err) {
+    console.warn('[RTC:owner-swap] handler error', err, msg);
+  }
+
+
+        } else if (msg?.type === 'move') {
+  // 🔊 DEBUG: log full inbound move packet so we can see colors / manaCostRaw / etc.
+  console.log(
+    '%c[RTC:recv MOVE]', 'color:#0ff;font-weight:bold',
+    {
+      cid: msg.cid,
+      x: msg.x,
+      y: msg.y,
+      owner: msg.owner,
+      ownerOriginal: msg.ownerOriginal,
+      ownerCurrent: msg.ownerCurrent,
+      fieldSide: msg.fieldSide,
+      inCommandZone: msg.inCommandZone,
+
+      // 🔴 NEW: include sickness in debug so we can watch it clear
+      hasSummoningSickness: msg.hasSummoningSickness,
+
+      manaCostRaw: msg.manaCostRaw,
+      colors: msg.colors,
+      raw: msg
+    }
+  );
+
+  window.CardPlacement?.applyRemoteMove?.(msg);
+
+                } else if (msg?.type === 'remove') {
+          // Remote says: "cid left the battlefield. zone = graveyard/exile/deck/etc."
+          //
+          // We must:
+          // 1. Snapshot that card into the CORRECT graveyard/exile bucket on THIS client
+          //    (player vs opponent is POV-dependent, not sender-dependent)
+          // 2. Clean up DOM and overlays
+          try {
+            const cidRaw = msg.cid;
+            if (!cidRaw) {
+              console.warn('[RTC:remove] missing cid', msg);
+              return;
+            }
+            const cid = String(cidRaw);
+            // 🔒 Use CSS.escape so attribute selector works for any cid characters
+            const sel = `img.table-card[data-cid="${CSS.escape(cid)}"]`;
+
+            // Normalize zone synonyms to our canonical keys
+            const z = (msg.zone || '').toString().toLowerCase().trim();
+            const finalZone = (
+              z === 'grave' || z === 'gy' ? 'graveyard' :
+              z === 'exiled'              ? 'exile'     :
+              z
+            ); // 'graveyard','exile','deck',''
+
+            const node = document.querySelector(sel);
+
+            if (!node) {
+              console.warn('[RTC:remove] element not found; selector miss?', { sel, cid, zone: finalZone, msg });
+            } else {
+              // Figure out who *owned* that card, from this client's POV.
+              // Prefer dataset.ownerCurrent/owner; fall back to message owner fields if present.
+              let snapBucket = null;
+
+              // Decide if we should snapshot (only for gy/exile)
+              const shouldSnapshot = (finalZone === 'graveyard' || finalZone === 'exile');
+
+              if (shouldSnapshot) {
+                try {
+                  const ownerSeatStr = (node.dataset.ownerCurrent
+                                      || node.dataset.owner
+                                      || (msg.ownerCurrent != null ? String(msg.ownerCurrent)
+                                         : (msg.owner != null ? String(msg.owner) : ''))
+                                      || '').trim();
+
+                  const meSeatNum = (function(){
+                    try {
+                      return String(
+                        typeof window.mySeat === 'function' ? window.mySeat() : 1
+                      ).trim();
+                    } catch {
+                      return '1';
+                    }
+                  })();
+
+                  snapBucket = (ownerSeatStr && meSeatNum && ownerSeatStr === meSeatNum)
+                    ? 'player'
+                    : 'opponent';
+
+                  // Record snapshot in correct bucket for THIS viewer.
+                  window.Zones?.recordCardToZone?.(snapBucket, finalZone, node);
+
+                  console.log('[RTC:remove] recorded zone snapshot', {
+                    bucket    : snapBucket,
+                    zone      : finalZone,
+                    cid,
+                    ownerSeat : ownerSeatStr,
+                    meSeatNum,
+                    name      : node?.dataset?.name || node?.title || '',
+                    img       : node?.currentSrc    || node?.src || '',
+                    typeLine  : node?.dataset?.typeLine || ''
+                  });
+                } catch (zoneErr) {
+                  console.warn('[RTC:remove] recordCardToZone failed', zoneErr, { cid, finalZone });
+                }
+              }
+
+              // Clean up overlays before nuking node
+              try { if (window.Tooltip?.hide) window.Tooltip.hide(); } catch {}
+
+              try {
+                if (window.Badges?.detach) window.Badges.detach(node);
+              } catch (e) {
+                console.warn('[RTC:remove] Badges.detach fail', e);
+              }
+
+              // Remove the actual mirrored DOM card
+              try { node.remove(); } catch {}
+
+              // Safety: kill any legacy .card elements with same cid
+              try {
+                document
+                  .querySelectorAll(`.card[data-cid="${CSS.escape(cid)}"]`)
+                  .forEach(n => n.remove());
+              } catch {}
+            }
+
+            console.log('%c[RTC:remove→applied]', 'color:#f66', { cid, zone: finalZone, hadNode: !!node, raw: msg });
+          } catch (err) {
+            console.warn('[RTC:remove] handler error', err, msg);
+          }
+
+
+				} else if (msg?.type === 'attrs') {
+  try {
+    const el = document.querySelector(`img.table-card[data-cid="${msg.cid}"]`);
+    if (el && msg.attrs) {
+      console.groupCollapsed('%c[RTC:attrs→el]', 'color:#0ff', { cid: msg.cid, attrs: msg.attrs });
+      el.dataset.remoteAttrs = JSON.stringify(msg.attrs);
+      if (msg.attrs.pt) el.dataset.ptCurrent = String(msg.attrs.pt);
+      console.log('[RTC:attrs] set dataset:', {
+        ptCurrent: el.dataset.ptCurrent,
+        remoteAttrsLen: (el.dataset.remoteAttrs||'').length
+      });
+      const mod = await import('./card.attributes.overlay.ui.js');
+      console.log('[RTC:attrs] calling AttributesOverlay.render');
+      mod.AttributesOverlay.render(el);
+
+      // ⬇️ NEW: refresh right-side badges immediately
+      try { (await import('./badges.js')).Badges.render(el); } catch {}
+
+      console.groupEnd();
+    } else {
+      console.warn('[RTC:attrs] no element for cid or no attrs', { cid: msg?.cid, hasEl: !!el });
+    }
+  } catch (err) {
+    console.error('[RTC:attrs] handler error', err);
+  }
+
+
+                } else if (msg?.type === 'buff') {
+  try {
+    console.log('%c[RTC:recv buff]', 'color:#0ff', msg);
+    RTCApply.recvBuff(msg); // ✅ central bridge handles IDs and visuals
+  } catch (err) {
+    console.warn('[RTC:recv buff] handler error', err, msg);
+  }
+} else if (msg.type === 'card.state.full') {
+          Promise
+            .resolve(applyFullCardStateFromRTC(msg.cid, msg.state))
+            .catch(err => console.warn('[RTC] failed to apply card.state.full', err, msg));
+          return;
+} else if (msg?.type === 'buffRemove') {
+  try {
+    console.log('%c[RTC:recv buffRemove]', 'color:#f55', msg);
+    if (window.RTCApply?.recvBuffRemove) {
+      RTCApply.recvBuffRemove(msg);
+    } else {
+      const { RulesStore } = await import('./rules.store.js');
+      RulesStore.removeEffect?.(msg.effectId);
+      const { Badges } = await import('./badges.js');
+      document.querySelectorAll('img.table-card').forEach(cardEl => {
+        const cid = cardEl.dataset.cid;
+        if (!cid) return;
+        Badges.refreshFor?.(cid);
+      });
+    }
+  } catch (err) {
+    console.warn('[RTC:recv buffRemove] handler error', err, msg);
+  }
+
+        // ---- FLIP --------------------------------------------------------
+        } else if (msg?.type === 'flip') {
+  try{
+    const sel = `img.table-card[data-cid="${msg.cid}"]`;
+    const el  = document.querySelector(sel);
+    if (!el) { console.warn('[RTC:flip] no element for', msg.cid); return; }
+
+    // --- OWNERSHIP / CONTROL / POSITION STATE ---
+    if (msg.ownerOriginal != null) {
+      el.dataset.ownerOriginal = String(msg.ownerOriginal);
+    }
+    if (msg.ownerCurrent  != null) {
+      el.dataset.ownerCurrent = String(msg.ownerCurrent);
+      el.dataset.owner        = String(msg.ownerCurrent); // legacy
+    } else if (msg.owner != null) {
+      el.dataset.owner        = String(msg.owner);
+      if (!el.dataset.ownerCurrent) {
+        el.dataset.ownerCurrent = String(msg.owner);
+      }
+    }
+    if (msg.fieldSide != null) {
+      el.dataset.fieldSide = msg.fieldSide;
+    }
+    if (msg.inCommandZone != null) {
+      el.dataset.inCommandZone = msg.inCommandZone === 'true' ? 'true'
+                                   : msg.inCommandZone === true   ? 'true'
+                                   : 'false';
+    }
+
+    // --- VISUAL / RULES DATA ---
+    if (msg.img)  el.src = msg.img;
+    if (msg.name) el.title = msg.name;
+
+    el.dataset.faceIndex = String(Number(msg.faceIndex)||0);
+    el.dataset.hasFlip   = msg.hasFlip ? '1' : '';
+    el.dataset.manaCost  = msg.manaCost  || '';
+    el.dataset.typeLine  = msg.typeLine  || '';
+    el.dataset.oracle    = msg.oracle    || '';
+    el.dataset.power     = msg.power     || '';
+    el.dataset.toughness = msg.toughness || '';
+
+    try { window.updateCardSideButtonsPosition?.(el); } catch {}
+
+    // Keep UI in sync
+    try { window.Tooltip?.showForCard?.(el, el, { mode: 'right' }); } catch {}
+    try { (await import('./badges.js')).Badges.render(el); } catch {}
+
+    console.log('%c[RTC:flip→applied]', 'color:#6cf', {
+      cid           : msg.cid,
+      face          : msg.faceIndex,
+      ownerOriginal : el.dataset.ownerOriginal,
+      ownerCurrent  : el.dataset.ownerCurrent,
+      fieldSide     : el.dataset.fieldSide,
+      inCommandZone : el.dataset.inCommandZone
+    });
+  }catch(err){
+    console.error('[RTC:flip] apply failed', err, msg);
+  }
+
+  // Re-render badges one more time in case we hit the catch path above
+  try { (await import('./badges.js')).Badges.render(el); } catch { }
+
+
+
+        // ---- TAP / UNTAP -------------------------------------------------
+        } else if (msg?.type === 'tap') {
+  try {
+    const sel = `img.table-card[data-cid="${msg.cid}"]`;
+    const el  = document.querySelector(sel);
+    if (!el) { console.warn('[RTC:tap] no element for', msg.cid); return; }
+
+    // --- OWNERSHIP / CONTROL / COMMAND ZONE SYNC ---
+    if (msg.ownerOriginal != null) {
+      el.dataset.ownerOriginal = String(msg.ownerOriginal);
+    }
+    if (msg.ownerCurrent  != null) {
+      el.dataset.ownerCurrent = String(msg.ownerCurrent);
+      el.dataset.owner        = String(msg.ownerCurrent); // legacy
+    } else if (msg.owner != null) {
+      el.dataset.owner        = String(msg.owner);
+      if (!el.dataset.ownerCurrent) {
+        el.dataset.ownerCurrent = String(msg.owner);
+      }
+    }
+    if (msg.fieldSide != null) {
+      el.dataset.fieldSide = msg.fieldSide;
+    }
+    if (msg.inCommandZone != null) {
+      el.dataset.inCommandZone = msg.inCommandZone === 'true' ? 'true'
+                                   : msg.inCommandZone === true   ? 'true'
+                                   : 'false';
+    }
+
+    // apply animated tap state
+    applyTapToEl(el, !!msg.tapped);
+
+    console.log('%c[RTC:tap→applied]', 'color:#6f6', {
+      cid           : msg.cid,
+      tapped        : !!msg.tapped,
+      ownerOriginal : el.dataset.ownerOriginal,
+      ownerCurrent  : el.dataset.ownerCurrent,
+      fieldSide     : el.dataset.fieldSide,
+      inCommandZone : el.dataset.inCommandZone
+    });
+  } catch (e) {
+    console.warn('[RTC:tap] apply failed', e, msg);
+  }
+		} else if (msg?.type === 'combat_charge') {
+          const list = Array.isArray(msg.cids) ? msg.cids
+                   : Array.isArray(msg.attackers) ? msg.attackers : [];
+          window.Battle?.applyRemoteCharge?.(list);
+
+        // ---- COMBAT: BLOCKERS LAYOUT ------------------------------------
+        } else if (msg?.type === 'combat_blocks') {
+  const map = (msg.map && typeof msg.map === 'object') ? msg.map : {};
+  window.Battle?.applyRemoteBlocks?.(map);
+
+// 🔵 NEW: explicit end-of-combat → advance phase on both clients
+} else if (msg?.type === 'combat:end') {
+  try {
+    // Optional hook if you add it; safe to call even if missing.
+    (await import('./turn.upkeep.js')).TurnUpkeep?.onCombatFinishedFromRTC?.(msg);
+  } catch (e) {
+    console.warn('[RTC:combat:end] handler error', e, msg);
+  }
+  return;
+
+// ---- TURN SYNC ---------------------------------------------------
+} else if (msg?.type === 'turn_sync') {
+  window.Turn?.hydrate?.(msg.state);
+
+
+        // ---- (Legacy) TURN seat/turn pair --------------------------------
+        } else if (msg?.type === 'turn') {
+          const n = String(msg.seat).match(/\d+/)?.[0] || '1';
+          window.Turn?.hydrate?.({ activeSeat: Number(n), turn: Number(msg.turn)||1 });
+
+        // ---- DECK VISUAL TOGGLE ------------------------------------------
+        } else if (msg?.type === 'deck_visual' || msg?.type === 'deck-visual') {
+  // --- Decide whose zone to toggle (mirror like cards)
+  const mySeatNum    = String(typeof window.mySeat === 'function' ? window.mySeat() : 1).match(/\d+/)?.[0];
+  const seatStr      = (msg.seat != null) ? String(msg.seat) : null;
+  const theirSeatNum = seatStr?.match(/\d+/)?.[0] ?? null;
+
+  const fromWhoRaw   = (msg.who ?? '').toString().toLowerCase();
+  const fromWho      = (fromWhoRaw === 'player' || fromWhoRaw === 'opponent') ? fromWhoRaw : null;
+
+  const has = (msg.has != null) ? !!msg.has
+            : (msg.hasDeck != null) ? !!msg.hasDeck
+            : false;
+
+  let which;
+  if (theirSeatNum && mySeatNum) {
+    which = (theirSeatNum === mySeatNum) ? 'player' : 'oppo';
+  } else if (fromWho) {
+    which = (fromWho === 'player') ? 'oppo' : 'player';
+  } else {
+    which = 'oppo';
+  }
+
+  // --- Render: replace legacy dot with a real deck-back image in the zone
+  // Source order of precedence for the image:
+  //   1) msg.url
+  //   2) window.DECK_BACK_URL (set once anywhere)
+  //   3) data-deck-back on the deck zone
+  //   4) transparent fallback (won’t show anything if missing)
+  const map = { player: 'pl-deck', oppo: 'op-deck' };
+  const zoneId = map[which];
+  const zone   = zoneId ? document.getElementById(zoneId) : null;
+
+  // Clean up any legacy dot
+  try { document.querySelectorAll('.deck-visual-dot').forEach(n => n.remove()); } catch {}
+
+  if (!zone) {
+    console.warn('[deck-visual] zone not found for', which, { zoneId, msg });
+    return;
+  }
+
+  // Ensure a single <img> child we control (NOT .table-card -> won’t trigger badges)
+  let img = zone.querySelector(':scope > img.deck-visual-img');
+  if (!img) {
+    img = document.createElement('img');
+    img.className = 'deck-visual-img';
+    // styling: centered in zone, sized like a deck, non-interactive, behind cards/buttons
+    img.style.cssText = `
+      position:absolute; inset:0; margin:auto;
+      height: var(--card-height-table);
+      aspect-ratio: var(--card-aspect, 0.714);
+      object-fit: cover; pointer-events: none;
+      filter: drop-shadow(0 6px 18px rgba(0,0,0,.35));
+      z-index: 1; opacity: 0.95;
+    `;
+    zone.style.position = zone.style.position || 'relative';
+    zone.appendChild(img);
+  }
+
+  if (has) {
+    // Pick URL (allow sender to pass msg.url). If still empty, we hide silently.
+    const url = msg.url
+      || window.DECK_BACK_URL
+      || zone.getAttribute('data-deck-back')
+      || '';
+
+    if (url) {
+      img.src = url;
+      img.style.display = '';
+    } else {
+      // nothing to show
+      img.remove();
+    }
+  } else {
+    // Hide/remove visual when deck is gone
+    if (img) img.remove();
+  }
+
+  console.log('%c[RTC:recv:deck-visual→IMG]', 'color:#0a0', { which, has, url: img?.src || null, raw: msg });
+  return;
+
+} else {
+
+
+          console.log('[RTC:recv] unhandled message', msg);
+        }
+      }
+    });
+
+
+    console.log(`[RTC] Connected as ${role} (seat ${seat}) to room "${roomId}"`,
+            { hasSend: !!window.peer?.send });
+
+// ensure UI is correct post-connect too
+try { window.UserInterface?.setSeatRole(seat, role); } catch {}
+
+
+    if (role === 'host') {
+      try { window.sendTurnSync?.(); } catch {}
+    }
+  };
+
+  document.getElementById('hostBtn').onclick = () => {
+  try { window.UserInterface?.setSeatRole(1, 'host'); } catch {}
+  connect('host');
+};
+document.getElementById('joinBtn').onclick = () => {
+  try { window.UserInterface?.setSeatRole(2, 'join'); } catch {}
+  connect('join');
+};
+
+}

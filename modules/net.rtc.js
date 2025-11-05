@@ -264,6 +264,23 @@ export async function createPeerRoom({
   };
 }
 
+// --- mirror helpers used by the spawn handler (Choice B: mirror across bottom of combat zone)
+function getMirrorAxisY(){
+  const css = getComputedStyle(document.documentElement);
+  return parseFloat(css.getPropertyValue('--combat-height')) || 300;
+}
+function getCardHeightWorldFromCssVar(){
+  const css = getComputedStyle(document.documentElement);
+  const v = parseFloat(css.getPropertyValue('--card-height-table'));
+  return Number.isFinite(v) ? v : 180;
+}
+// y' = 2*A − (y + h)
+function mirrorTopB(y, h){
+  const A = getMirrorAxisY();
+  return (A * 2) - (y + h);
+}
+
+
 // ---- internal: datastream handlers
 function wireDC(dc, onMessage) {
   dc.addEventListener('message', (e) => {
@@ -316,66 +333,118 @@ if (msg.type === 'spawn_table_card') {
 }
 
     // NEW: Spawn event for repaired cards (delete → respawn → hydrate)
-    if (msg.type === 'spawn') {
-      const cid = msg.cid;
-      if (!cid) return;
+if (msg.type === 'spawn') {
+  const cid = msg.cid;
+  if (!cid) return;
 
-      // 1) Remove stale DOM
-      try { window.Stacking?.detach?.(document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)); } catch{}
-      try { window.Zones?.cfg?.removeTableCardDomById?.(cid); } catch{}
-      try {
-        document.querySelectorAll(`.card[data-cid="${CSS.escape(cid)}"]`).forEach(n => n.remove());
-      } catch {}
+  // 🔒 Ignore our own spawn packets (prevents local double-spawn)
+  const my = (window.mySeat?.() ?? -1);
+  if (Number(msg.owner) === Number(my)) return;
 
-      // 2) Spawn new card at exact x,y
-      let el = null;
-      const cardObj = {
-        name: msg.name || '',
-        img:  msg.img  || '',
-        type_line:   msg.type_line   || '',
-        mana_cost:   msg.mana_cost   || '',
-        oracle_text: msg.oracle_text || '',
-        ogpower:     msg.ogpower,
-        ogtoughness: msg.ogtoughness,
-        ogTypes:     msg.ogTypes || [],
-        ogEffects:   msg.ogEffects || [],
-        power:'', toughness:'', loyalty:''
-      };
+  // 0) Compute mirrored coordinates for remote view (Choice B)
+  //    y' = 2*A − (y + h), where h is card height in world units
+  const hWorld = getCardHeightWorldFromCssVar();
+  const mirroredTop = mirrorTopB(Number(msg.y) || 0, hWorld);
+  const mirroredLeft = Number(msg.x) || 0;
 
-      if (typeof window.spawnTableCard === 'function') {
-        el = window.spawnTableCard(cardObj, msg.x, msg.y, { cid: msg.cid, owner: msg.owner });
-      } else if (typeof window.Zones?.spawnToTable === 'function') {
-        Zones.spawnToTable({ ...cardObj, cid: msg.cid }, msg.owner);
-        el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-        if (el){
-          el.style.left = `${msg.x}px`;
-          el.style.top  = `${msg.y}px`;
-        }
-      }
+  // 1) Remove stale DOM
+  try { window.Stacking?.detach?.(document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)); } catch{}
+  try { window.Zones?.cfg?.removeTableCardDomById?.(cid); } catch{}
+  try {
+    document.querySelectorAll(`.card[data-cid="${CSS.escape(cid)}"]`).forEach(n => n.remove());
+  } catch {}
 
-      // 3) Hydrate + badges + tooltip
-      requestAnimationFrame(() => {
-        const node = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-        if (node) {
-          try {
-            window.CardAttributes?.applyToDom?.(cid);
-            window.CardAttributes?.refreshPT?.(cid);
-            window.attachTooltip?.(node, {
-  name: msg.name || '',
-  typeLine: msg.type_line || '',
-  costHTML: '',
-  oracle: msg.oracle_text || ''
-});
+  // 2) Spawn new card at mirrored x,y
+  let el = null;
+  const cardObj = {
+    name: msg.name || '',
+    img:  msg.img  || '',
+    type_line:   msg.type_line   || '',
+    mana_cost:   msg.mana_cost   || '',
+    oracle_text: msg.oracle_text || '',
+    ogpower:     msg.ogpower,
+    ogtoughness: msg.ogtoughness,
+    ogTypes:     msg.ogTypes || [],
+    ogEffects:   msg.ogEffects || [],
+    power:'', toughness:'', loyalty:''
+  };
 
-            window.reflowAll?.();
-          } catch (e) {
-            console.warn('spawn hydration failed', e);
-          }
-        }
+  if (typeof window.spawnTableCard === 'function') {
+    // If your helper takes raw x,y, give it the mirrored coords
+    el = window.spawnTableCard(cardObj, mirroredLeft, mirroredTop, { cid: msg.cid, owner: msg.owner });
+  } else if (typeof window.Zones?.spawnToTable === 'function') {
+    Zones.spawnToTable({ ...cardObj, cid: msg.cid }, msg.owner);
+    el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+    if (el){
+      el.style.left = `${mirroredLeft}px`;
+      el.style.top  = `${mirroredTop}px`;
+    }
+  }
+
+  // 3) Hydrate + badges + tooltip (+ apply incoming attrs to remote DOM/store)
+  requestAnimationFrame(async () => {
+    const node =
+      document.querySelector(`img.table-card[data-cid="${CSS.escape(cid)}"]`) ||
+      document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
+    if (!node) return;
+
+    // A) reflect incoming attrs on the DOM immediately (so overlays/tooltip see them)
+    const a = msg.attrs || {};
+    if (a.pt)              node.dataset.ptCurrent = String(a.pt);               // e.g. "2/2"
+    if (Array.isArray(a.abilities))
+                           node.dataset.keywords  = a.abilities.join('|');      // e.g. "Flying|Skulk"
+    if (Array.isArray(a.types) && a.types.length)
+                           node.dataset.subTypes  = a.types.join('|');          // e.g. "Vampire|Horror"
+
+    // B) seed CardAttributes if present (non-fatal if module absent)
+    try {
+      const { CardAttributes } = await import('./card.attributes.js');
+      const [pStr, tStr] = String(a.pt || '').split('/');
+      const pow = Number(pStr), tou = Number(tStr);
+
+      CardAttributes.initForCard(node.dataset.cid, {
+        og: {
+          pow: Number.isFinite(pow) ? pow : (CardAttributes.getComputedPT(node.dataset.cid)?.pow ?? 0),
+          tou: Number.isFinite(tou) ? tou : (CardAttributes.getComputedPT(node.dataset.cid)?.tou ?? 0)
+        },
+        types: Array.isArray(a.types) ? a.types.slice() : []
       });
 
-      return;
+      const row = CardAttributes.getFor?.(node.dataset.cid) || {};
+      if (Array.isArray(a.abilities)) {
+        row.abilities = Array.from(new Set([...(row.abilities || []), ...a.abilities]));
+      }
+      if (a.counters && typeof a.counters === 'object') {
+        row.counters = { ...(row.counters || {}), ...a.counters };
+      }
+      if (CardAttributes.setFor) CardAttributes.setFor(node.dataset.cid, row);
+    } catch {}
+
+    // C) reflow overlays and tooltip with the now-applied attributes
+    try {
+      const mod = await import('./card.attributes.overlay.ui.js');
+      mod.AttributesOverlay?.attach?.(node);
+      mod.AttributesOverlay?.reflow?.(node);
+    } catch {}
+
+    try {
+      window.CardAttributes?.applyToDom?.(cid);
+      window.CardAttributes?.refreshPT?.(cid);
+
+      if (window.Tooltip?.current?.cid === cid) {
+        window.Tooltip.showForCard?.(node, node);
+        window.Tooltip.followAnchorIf?.(node);
+      }
+      window.reflowAll?.();
+    } catch (e) {
+      console.warn('spawn hydration failed', e);
     }
+  });
+
+
+  return;
+}
+
 
 
   });

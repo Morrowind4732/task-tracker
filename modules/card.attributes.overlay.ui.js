@@ -1,0 +1,2564 @@
+// /modules/card.attributes.overlay.ui.js
+// Unified Attributes Overlay (mock UI) — tabs: Scan, Apply, Active, Manage
+// - High-Z modal sheet with large left preview
+// - Right-side tabbed panes for Scan/Apply/Active/Manage
+// - Radial pickers (+ / -) for Types / Abilities / Counters with alpha wheel
+// - No Flip/SendTo; Apply buttons are stubbed (no-op) per request
+
+// /modules/card.attributes.overlay.ui.js
+// Unified Attributes Overlay / Buff Applier UI
+
+import { RulesStore } from './rules.store.js';
+import { RTCApply }   from './rtc.rules.js';
+import { scanOracleTextForActions } from './oracle.text.scanner.js';
+
+export const CardOverlayUI = (() => {
+  const STATE = {
+    mounted: false,
+    cssInjected: false,
+    root: null,
+    activeCid: null,
+    activeTab: 'scan', // scan | apply | active | manage
+    tmp: { typeInput:'', abilityInput:'', counterInput:'', pow:'0', tou:'0' }
+  };
+
+  // ------- Mock catalogs (trimmed; extend later or fetch real data) -------
+  const TYPES = {
+    A: ['Advisor','Aetherborn','Ally','Angel','Antelope','Archer'],
+    B: ['Bat','Bear','Beast','Berserker','Bird','Boar'],
+    C: ['Cat','Centaur','Cleric','Construct','Crocodile'],
+    D: ['Demon','Devil','Dinosaur','Djinn','Dragon','Druid'],
+    E: ['Efreet','Elder','Elemental','Elf'],
+    F: ['Faerie','Fish','Fox','Fractal','Frog'],
+    G: ['Giant','Gnome','Goat','Goblin','Golem'],
+    H: ['Human','Hydra','Horror','Hound'],
+    I: ['Illusion','Imp','Incarnation','Insect'],
+    K: ['Knight','Kobold','Kor','Kraken'],
+    L: ['Lizard','Leviathan'],
+    M: ['Merfolk','Minion','Minotaur','Myr'],
+    N: ['Naga','Nautilus','Ninja','Nymph'],
+    O: ['Ooze','Orc','Ogre'],
+    P: ['Pegasus','Phoenix','Pirate','Plant','Praetor'],
+    R: ['Rat','Rogue'],
+    S: ['Samurai','Scout','Serpent','Shaman','Skeleton','Sliver','Soldier','Sphinx','Spirit'],
+    T: ['Treefolk','Trilobite','Troll'],
+    V: ['Vampire','Vedalken','Viashino','Volver'],
+    W: ['Warlock','Warrior','Wizard','Wraith','Wurm'],
+    Z: ['Zombie']
+  };
+  const ABILITIES = {
+    A: ['Afflict','Affinity'],
+    C: ['Cascade','Champion','Convoke'],
+    D: ['Deathtouch','Defender'],
+    F: ['First strike','Flying'],
+    H: ['Haste','Hexproof'],
+    I: ['Indestructible'],
+    L: ['Lifelink'],
+    M: ['Menace'],
+    P: ['Prowess'],
+    R: ['Reach'],
+    T: ['Trample'],
+    V: ['Vigilance']
+  };
+  const COUNTERS = {
+    '+': ['+1/+1','Loyalty','Shield','Oil'],
+    '-': ['-1/-1'],
+    M: ['Muster','Mining'],
+    P: ['Poison'],
+    S: ['Stun','Spore']
+  };
+
+  const CSS = `
+  :root{
+    --ovlZ: 2147483000; /* absurdly high; beats badges */
+    --bg0:#0b1116; --bg1:#0e141b; --bg2:#121a22; --panel:#0f1821;
+    --ink:#e7f2ff; --mut:#97a6b5; --hi:#61d095; --warn:#ef4444; --line:#1f2a36;
+    --pill:#142331; --pillOn:#0f3324;
+    --radius:14px; --shadow:0 22px 64px rgba(0,0,0,.6);
+  }
+  .ovlBack{
+    position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    display:none; align-items:center; justify-content:center;
+    z-index: var(--ovlZ);
+  }
+  .ovlBack[aria-hidden="false"]{ display:flex; }
+  .ovl{
+    width:min(1200px,96vw); max-height:90vh; background: linear-gradient(180deg,var(--bg1),var(--bg2));
+    color:var(--ink); border:1px solid var(--line); border-radius:18px; box-shadow:var(--shadow);
+    transform: translateY(14px) scale(.98); opacity:0; transition:.18s ease;
+    display:grid; grid-template-rows:auto 1fr auto;
+  }
+  .ovlBack[aria-hidden="false"] .ovl{ transform:none; opacity:1; }
+  .ovlHead{ display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--line); }
+  .title{ font-weight:700; letter-spacing:.3px; }
+  .cid{ margin-left:auto; font-size:12px; color:var(--mut); }
+  .xBtn{ appearance:none; border:1px solid var(--line); background:#101820; color:var(--ink); border-radius:10px; padding:8px 12px; cursor:pointer; }
+
+  .ovlBody{ display:grid; grid-template-columns: 360px 1fr; gap:16px; padding:16px; overflow:hidden; }
+  .ovlBody[data-mode="compact"]{ grid-template-columns: 1fr; }
+  .ovlBody[data-mode="compact"] .preview{ display:none; }
+
+  .preview{
+    background:#000; border:1px solid var(--line); border-radius:16px; overflow:hidden;
+    display:grid; grid-template-rows: auto 1fr; min-height:420px;
+  }
+  .preview img{ width:100%; height:auto; display:block; }
+  .preview .cap{ padding:8px 10px; font-size:12px; color:var(--mut); border-top:1px solid var(--line); background:#0a0f13; }
+
+  .right{ overflow:auto; }
+  .tabs{ display:flex; gap:8px; padding:0 4px 10px; position:sticky; top:0; background:linear-gradient(180deg,var(--bg1),transparent 70%); z-index:1; }
+  .tabBtn{
+    padding:8px 12px; border-radius:999px; border:1px solid var(--line); background:var(--pill); color:var(--ink);
+    cursor:pointer; font-weight:600; letter-spacing:.2px;
+  }
+  .tabBtn[data-on="true"]{ outline:2px solid var(--hi); background:var(--pillOn); }
+
+  .panel{ display:none; border:1px solid var(--line); border-radius:16px; background:var(--panel); padding:14px; }
+  .panel[aria-hidden="false"]{ display:block; }
+
+  .grid2{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  .group{ border:1px solid var(--line); border-radius:12px; padding:12px; background:#0c141b; }
+  .label{ font-size:12px; color:var(--mut); text-transform:uppercase; letter-spacing:.1em; margin-bottom:8px; }
+
+  .ipt, .sel, .btn{ appearance:none; border:1px solid var(--line); background:#0a1118; color:var(--ink); border-radius:10px; padding:10px 12px; }
+  .btn{ cursor:pointer; }
+  .btnPrimary{ background:#0e2419; border-color:#224e3b; }
+  .btnDanger{ background:#271212; border-color:#5b2525; }
+  .chipRow{ display:flex; flex-wrap:wrap; gap:6px; }
+  .chip{ padding:6px 10px; border:1px solid var(--line); background:#0c151d; border-radius:999px; font-size:12px; }
+
+  /* Radial */
+  .radialBack{ position:fixed; inset:0; z-index: calc(var(--ovlZ) + 1); display:none; place-items:center; background: rgba(0,0,0,.4); }
+  .radialBack[aria-hidden="false"]{ display:grid; }
+  .radial{
+    width:520px; height:520px; border-radius:50%; background: radial-gradient(ellipse at center, #0f1b26 0%, #0a0f13 70%);
+    border:1px solid #1c2a38; position:relative; display:grid; place-items:center;
+  }
+  .rBtn{ position:absolute; width:44px; height:44px; border-radius:50%; border:1px solid #203041; background:#0b1620; display:grid; place-items:center; cursor:pointer; }
+  .rBtn:hover{ filter:brightness(1.15); }
+  .rList{ position:absolute; width:280px; max-height:300px; overflow:auto; border:1px solid #203041; background:#0d1823; border-radius:12px; padding:8px; display:grid; gap:6px; }
+  .rItem{ padding:10px 12px; border-radius:10px; border:1px solid #203041; background:#0b1620; cursor:pointer; }
+  .rItem:hover{ background:#0e1f2b; }
+  .rClose{ position:absolute; bottom:8px; right:8px; }
+
+  .foot{ display:flex; gap:10px; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line); }
+  
+    .oracleBox{
+    width:100%;
+    min-height: 200px;           /* starts tall */
+    padding:12px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    background:#0a0f13;
+    color:var(--ink);
+    line-height:1.35;
+    white-space:pre-wrap;         /* preserves lines */
+    word-break:break-word;
+    font-size:14px;
+  }
+  .oracleBox i.ms{ margin:0 2px; vertical-align:middle; } /* mana icons */
+
+  /* stacked PT controls (Power over Toughness) */
+  .ptStack{ display:grid; grid-template-columns: 1fr; gap:12px; }
+  .ptRow{ display:flex; gap:6px; align-items:center; }
+  .ptRow .ipt{ width:120px; }
+
+  /* vertical radio group to cut scrolling */
+  .radioCol{ display:grid; gap:8px; }
+
+  /* ---- Target row layout in "Select Targets" ---- */
+  .targetRow{
+    display:flex;
+    align-items:flex-start;
+    gap:12px;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:10px 12px;
+    background:#0a0f13;
+    min-height:48px;
+    font-size:13px;
+    line-height:1.3;
+    color:var(--ink);
+  }
+
+  .tLeft{
+    display:flex;
+    align-items:flex-start;
+    gap:8px;
+    min-width:0;
+    font-weight:600;
+    color:var(--ink);
+  }
+  .tLeft img{
+    width:22px;
+    height:auto;
+    border-radius:4px;
+    flex-shrink:0;
+  }
+  .tLeft input[type="checkbox"]{
+    flex-shrink:0;
+    margin-top:3px;
+    accent-color:#61d095;
+  }
+
+  .tName{
+    white-space:nowrap;
+    max-width:180px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    color:var(--ink);
+    font-weight:600;
+  }
+
+  .tMid{
+    flex:1;
+    min-width:0;
+    font-size:12px;
+    color:var(--mut);
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    padding-top:2px;
+  }
+
+  .tRight{
+  display:flex;
+  flex-direction:row;         /* <-- horizontal row now */
+  align-items:center;
+  justify-content:flex-end;
+  gap:8px;
+  flex-shrink:0;
+  min-width:80px;
+  text-align:right;
+}
+
+.tPT{
+  font-weight:700;
+  font-variant-numeric:tabular-nums;
+  color:#e7f2ff;
+  min-width:44px;
+  line-height:1.2;
+  font-size:13px;
+}
+
+.eyeBtn{
+  appearance:none;
+  cursor:pointer;
+  border:1px solid var(--line);
+  background:#0a1118;
+  color:var(--ink);
+  border-radius:8px;
+  font-size:16px;            /* bigger */
+  font-weight:600;
+  line-height:1;
+  padding:6px 10px;          /* slightly wider */
+  min-width:36px;
+  min-height:28px;
+  text-align:center;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.eyeBtn:hover{
+  background:#0e2419;
+  border-color:#224e3b;
+  color:var(--hi);
+}
+
+
+  
+
+
+  `;
+
+  function injectCSS(){
+    if (STATE.cssInjected) return;
+    const st = document.createElement('style');
+    st.id = 'card-ovl-ui-css';
+    st.textContent = CSS;
+    document.head.appendChild(st);
+    STATE.cssInjected = true;
+  }
+
+  function make(el, cls, html){
+    const n = document.createElement(el);
+    if (cls) n.className = cls;
+    if (html != null) n.innerHTML = html;
+    return n;
+  }
+
+  function makeRoot(){
+    const back = make('div','ovlBack'); back.setAttribute('aria-hidden','true');
+
+    back.innerHTML = `
+      <section class="ovl" role="dialog" aria-modal="true">
+        <header class="ovlHead">
+  <div class="tabs tabsHead">
+    <button class="tabBtn" data-tab="scan">Scan</button>
+    <button class="tabBtn" data-tab="apply">Apply</button>
+    <button class="tabBtn" data-tab="active">Active</button>
+    <button class="tabBtn" data-tab="manage">Manage</button>
+  </div>
+  <div class="cid"></div>
+  <button class="xBtn" data-act="close">Close</button>
+</header>
+
+<div class="ovlBody">
+  <aside class="preview">
+    <img alt="Card"/>
+    <div class="cap"></div>
+  </aside>
+
+  <section class="right">
+    <!-- (tabs row removed; buttons now live in header) -->
+
+
+            <!-- Scan -->
+            <div class="panel" data-pane="scan" aria-hidden="false">
+              <div class="group">
+  <div class="label">Scanned Oracle Text</div>
+  <div class="oracleBox" data-scan="oracle" role="region" aria-label="Oracle text"></div>
+  <div style="margin-top:8px; display:flex; gap:8px;">
+    <button class="btn" data-scan="rescan">Rescan</button>
+    <button class="btn" data-scan="clear">Clear</button>
+  </div>
+</div>
+
+
+              <div class="grid2" style="margin-top:12px;">
+                <div class="group">
+                  <div class="label">Detected abilities</div>
+                  <div class="chipRow" data-scan="detected">
+                    <!-- mock entries; dynamic later -->
+                  </div>
+                </div>
+                <div class="group">
+                  <div class="label">Quick actions</div>
+                  <div class="chipRow" data-scan="actions">
+                    <!-- Each actionable detection gets a button (e.g., Create X Token) -->
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Apply -->            <!-- Apply -->
+            <div class="panel" data-pane="apply" aria-hidden="true">
+
+              <!-- mini-tabs INSIDE Apply -->
+              <div class="tabs" data-apply="steps" style="margin-bottom:12px;">
+                <button class="tabBtn" data-apply-step="targets" data-on="true">Targets</button>
+                <button class="tabBtn" data-apply-step="effects" data-on="false">Effects</button>
+              </div>
+
+              <!-- STEP: TARGETS -->
+              <div class="applyStep" data-step="targets" aria-hidden="false"
+                   style="display:grid; grid-template-columns: 1fr 320px; gap:12px; min-height:300px;">
+
+                <!-- left column: target picker / filters / list -->
+                <div class="group" style="display:grid; gap:12px;">
+
+                  <!-- scope row -->
+                  <div class="group">
+                    <div class="label">Scope</div>
+                    <div class="chipRow" style="flex-wrap:wrap; row-gap:8px;">
+                      <button class="btn" data-scope="mine">My cards</button>
+                      <button class="btn" data-scope="opp">Opponent</button>
+                      <button class="btn" data-scope="both">Both</button>
+                      <button class="btn" data-scope="deck">Deck</button>
+
+                      <!-- extra modes -->
+                      <button class="btn" data-scope="type">By Type</button>
+                      <button class="btn" data-scope-filter="open"
+                              title="Filter card types"
+                              style="display:flex;align-items:center;gap:6px;">
+                        <span>Filter</span>
+                        <span style="font-size:14px;">⏷</span>
+                      </button>
+                    </div>
+
+                    <!-- by-type mode UI (only visible in By Type scope) -->
+                    <div class="group"
+                         data-bytype-block
+                         style="display:none; margin-top:10px;">
+                      <div class="label">Match Type</div>
+                      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <input class="ipt" data-bytype="name" placeholder="e.g. Zombie"/>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-bytype="mine" checked/> Mine
+                        </label>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-bytype="opp" /> Opp
+                        </label>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-bytype="both" /> Both
+                        </label>
+                      </div>
+                    </div>
+
+                    <!-- filter drawer -->
+                    <div class="group" data-filter-drawer style="display:none; margin-top:10px;">
+                      <div class="label">Show only…</div>
+                      <div class="chipRow" style="flex-wrap:wrap; row-gap:8px;">
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-filter-kind="all" checked/> All
+                        </label>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-filter-kind="creature"/> Creature
+                        </label>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-filter-kind="legendary"/> Legendary
+                        </label>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-filter-kind="artifact"/> Artifact
+                        </label>
+                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
+                          <input type="checkbox" data-filter-kind="enchantment"/> Enchantment
+                        </label>
+                        <!-- add more buckets later -->
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Target by creature type (we only show this in By Type mode) -->
+                  <div class="group"
+                       data-target-mode="typeBlock"
+                       style="display:none;">
+                    <div class="label">Target by creature type</div>
+                    <div style="display:flex; gap:6px;">
+                      <input class="ipt" data-apply="type" placeholder="e.g. Zombie (optional)"/>
+                      <button class="btn" data-radial="+type">+</button>
+                      <button class="btn" data-radial="-type">-</button>
+                    </div>
+                    <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                      <input type="checkbox" checked/>
+                      <span class="mut">Include source card when applying</span>
+                    </label>
+                  </div>
+
+                  <!-- list of specific card targets (default visible for mine/opp/both/deck) -->
+                  <div class="group"
+                       data-target-mode="listBlock"
+                       style="max-height:240px; overflow:auto;">
+                    <div class="label">Select Targets</div>
+                    <div data-apply="list" style="display:grid; gap:6px;">
+                      <!-- rows injected via rebuildTargets(scope) -->
+                    </div>
+                  </div>
+                </div>
+
+
+                <!-- right column: live preview of a highlighted card -->
+                <div class="group" style="min-height:240px; display:grid; grid-template-rows:auto 1fr; gap:8px;">
+                  <div class="label">Preview</div>
+                  <div data-apply="previewCardShell"
+                       style="border:1px solid var(--line); border-radius:12px; background:#0a0f13;
+                              min-height:200px; display:flex; align-items:center; justify-content:center;
+                              overflow:hidden;">
+                    <div data-apply="previewCardMsg"
+                         style="color:var(--mut); font-size:12px; padding:12px; text-align:center;">
+                      Tap the eye icon on a card to preview it.
+                    </div>
+                    <!-- live clone of the card will be injected here -->
+                  </div>
+                </div>
+
+              </div> <!-- /applyStep targets -->
+
+              <!-- STEP: EFFECTS -->
+              <div class="applyStep" data-step="effects" aria-hidden="true"
+                   style="display:none; grid-template-columns: 1fr 320px; gap:12px; min-height:300px;">
+
+                <!-- left column: effect builder -->
+                <div class="group" style="display:grid; gap:12px;">
+
+                  <div class="group">
+                    <div class="label">What are we applying?</div>
+
+                    <div class="chipRow" data-effect="toggles"
+                         style="margin-bottom:10px; flex-wrap:wrap; row-gap:8px;">
+                      <label class="chip">
+                        <input type="checkbox" data-eff="pt" /> Power/Toughness
+                      </label>
+                      <label class="chip">
+                        <input type="checkbox" data-eff="counters"/> Counters
+                      </label>
+                      <label class="chip">
+                        <input type="checkbox" data-eff="ability"/> Grant ability
+                      </label>
+                      <label class="chip">
+                        <input type="checkbox" data-eff="type"/> Grant type
+                      </label>
+                    </div>
+
+                    <!-- Dynamic effect sections render here based on toggles -->
+                    <div data-apply="effect-sections" style="display:grid; gap:10px;"></div>
+                  </div>
+
+                  <div class="group">
+                    <div class="label">Duration</div>
+                    <div class="radioCol" style="margin-bottom:10px;">
+                      <label class="chip">
+                        <input type="radio" name="dur" checked/>
+                        Until end of turn
+                      </label>
+                      <label class="chip">
+                        <input type="radio" name="dur"/>
+                        While source remains on battlefield
+                      </label>
+                      <label class="chip">
+                        <input type="radio" name="dur"/>
+                        Persistent (manual remove)
+                      </label>
+                    </div>
+
+                    <div class="label">Application</div>
+                    <div class="chipRow" style="flex-wrap:wrap; row-gap:8px;">
+                      <label class="chip">
+                        <input type="radio" name="app" />
+                        Current
+                      </label>
+                      <label class="chip">
+                        <input type="radio" name="app" checked/>
+                        Ongoing
+                      </label>
+                    </div>
+                  </div>
+
+                </div>
+
+                <!-- right column: summary / final check -->
+                <div class="group" style="min-height:240px; display:grid; grid-template-rows:auto 1fr; gap:8px;">
+                  <div class="label">Summary</div>
+                  <div data-apply="summaryShell"
+                       style="border:1px solid var(--line); border-radius:12px; background:#0a0f13;
+                              min-height:200px; color:var(--mut); font-size:12px; line-height:1.4;
+                              padding:12px; overflow:auto;">
+                    <!-- We'll fill this with "You will apply +1/+1 and Flying to 3 cards" etc -->
+                    <div data-apply="summaryMsg">
+                      Choose targets first, then configure the effect.
+                    </div>
+                  </div>
+                </div>
+
+              </div> <!-- /applyStep effects -->
+
+            </div>
+
+
+            <!-- Active -->
+            <div class="panel" data-pane="active" aria-hidden="true">
+              <div class="chipRow" style="margin-bottom:10px;">
+                <button class="btn" data-active="mine">My Cards</button>
+                <button class="btn" data-active="opp">Opponent</button>
+                <button class="btn" data-active="both">Both</button>
+                <button class="btn" data-active="refresh">Refresh</button>
+              </div>
+              <div class="group">
+                <div class="label">Active effects on selected targets</div>
+                <div data-active="list" style="display:grid; gap:8px;">
+                  <!-- rows appear here -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Manage -->
+            <div class="panel" data-pane="manage" aria-hidden="true">
+              <div class="group" style="margin-bottom:12px;">
+                <div class="label">Force Types</div>
+                <div style="display:flex; gap:6px;">
+                  <input class="ipt" data-man="type" placeholder="Type (e.g., Elf)"/>
+                  <button class="btn" data-radial="+manType">+</button>
+                  <button class="btn" data-radial="-manType">-</button>
+                </div>
+              </div>
+
+              <div class="group" style="margin-bottom:12px;">
+                <div class="label">Force Effects / Abilities</div>
+                <div style="display:flex; gap:6px;">
+                  <input class="ipt" data-man="ability" placeholder="Ability (e.g., Flying)"/>
+                  <button class="btn" data-radial="+manAbility">+</button>
+                  <button class="btn" data-radial="-manAbility">-</button>
+                </div>
+              </div>
+
+              <div class="group">
+                <div class="label">Force Counters</div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                  <input class="ipt" data-man="counter" placeholder="Counter kind (e.g., +1/+1)" style="flex:1; min-width:180px;"/>
+                  <button class="btn" data-radial="+manCounter">+</button>
+                  <button class="btn" data-radial="-manCounter">-</button>
+                  <input class="ipt" data-man="counterQty" value="1" style="width:84px;"/>
+                </div>
+              </div>
+
+              <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
+                <button class="btn btnDanger" data-man="delete">Delete</button>
+                <button class="btn" data-man="repair">Repair</button>
+                <button class="btn" data-man="save">Save</button>
+                <button class="btn btnPrimary" data-man="apply">Apply</button>
+              </div>
+            </div>
+
+          </section>
+        </div>
+
+        <footer class="foot">
+          <button class="btn" data-act="cancel">Cancel</button>
+          <button class="btn btnPrimary" data-act="apply-root">Apply</button>
+        </footer>
+      </section>
+
+      <!-- Radial picker -->
+      <div class="radialBack" aria-hidden="true">
+        <div class="radial">
+          <button class="xBtn rClose" data-radial="close">Close</button>
+          <!-- alpha ring buttons injected here -->
+          <!-- selection list appears in center as .rList -->
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(back);
+
+    // Close/backdrop
+    back.addEventListener('click', (e) => {
+      if (e.target.classList.contains('ovlBack')) close();
+    });
+    back.querySelector('[data-act="close"]').addEventListener('click', close);
+    back.querySelector('[data-act="cancel"]').addEventListener('click', close);
+
+    // Tabs (now in header)
+back.querySelectorAll('.ovlHead .tabBtn').forEach(btn => {
+  btn.addEventListener('click', () => setTab(btn.dataset.tab));
+});
+
+
+    // Scope buttons → swap targeting mode (card list vs by-type) and maybe rebuild list
+    back.querySelectorAll('[data-scope]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scope = btn.getAttribute('data-scope'); // mine | opp | both | deck | type
+
+        // grab the blocks we want to toggle
+        const typeBlock   = back.querySelector('[data-target-mode="typeBlock"]');
+        const listBlock   = back.querySelector('[data-target-mode="listBlock"]');
+        const byTypeUI    = back.querySelector('[data-bytype-block]');
+
+        if (scope === 'type') {
+          // show "target by creature type" UI
+          if (typeBlock) typeBlock.style.display = 'block';
+          // hide the plain list of specific cards
+          if (listBlock) listBlock.style.display = 'none';
+          // show the match-type filter row
+          if (byTypeUI)  byTypeUI.style.display  = 'block';
+
+          // IMPORTANT: do NOT call rebuildTargets('type')
+          // Because 'type' mode doesn't use the checkbox list at all.
+          return;
+        }
+
+        // otherwise (mine / opp / both / deck):
+        // hide the creature-type targeting block
+        if (typeBlock) typeBlock.style.display = 'none';
+        // hide the by-type match UI
+        if (byTypeUI)  byTypeUI.style.display  = 'none';
+        // show the checkbox list block again
+        if (listBlock) listBlock.style.display = 'block';
+
+        // rebuild checkbox list for that scope so user can pick cids
+        rebuildTargets(scope);
+      });
+    });
+
+
+
+
+
+
+
+
+    back.querySelector('[data-scan="clear"]').addEventListener('click', () => {
+      const box = back.querySelector('[data-scan="oracle"]');
+      if (box) box.innerHTML = '';
+      back.querySelector('[data-scan="detected"]').innerHTML = '';
+      back.querySelector('[data-scan="actions"]').innerHTML = '';
+    });
+
+
+        // Apply tab: toggle → rebuild dynamic sections
+    const effToggles = back.querySelector('[data-effect="toggles"]');
+    effToggles?.addEventListener('change', rebuildEffectSections);
+    // initial render: only PT visible by default
+    rebuildEffectSections();
+
+    // Delegate PT +/- so it continues to work across re-renders
+    back.addEventListener('click', (ev) => {
+      const btn = ev.target.closest?.('[data-pt]');
+      if (!btn) return;
+      const kind = btn.getAttribute('data-pt');
+      const root = STATE.root;
+      const powI = root.querySelector('input[data-pt="pow"]');
+      const touI = root.querySelector('input[data-pt="tou"]');
+      if (kind === '+pow') powI.value = String((parseInt(powI.value||'0',10))+1);
+      if (kind === '-pow') powI.value = String((parseInt(powI.value||'0',10))-1);
+      if (kind === '+tou') touI.value = String((parseInt(touI.value||'0',10))+1);
+      if (kind === '-tou') touI.value = String((parseInt(touI.value||'0',10))-1);
+    });
+
+
+    // Apply tab: targets are populated dynamically via rebuildTargets(scope).
+    // (Default first build happens from openForCard → rebuildTargets('mine'))
+
+
+        // Footer Apply: context sensitive
+    back.querySelector('[data-act="apply-root"]').addEventListener('click', ()=>{
+      const tab = STATE.activeTab;
+      if (tab === 'apply') {
+        applyFromApplyTab(); // central handler
+      } else if (tab === 'scan') {
+        // Optional: rescan or simply close; keeping as a no-op for now
+        console.log('[Footer Apply] (scan) no-op');
+      } else if (tab === 'active') {
+        console.log('[Footer Apply] (active) no-op');
+      } else if (tab === 'manage') {
+        console.log('[Footer Apply] (manage) no-op');
+      }
+    });
+	
+	
+	// sync a payload's effects directly into DOM datasets + CardAttributes +
+// ALSO mirror into el.dataset.remoteAttrs so Badges.getGrantedFromStore()
+// can ALWAYS see granted abilities/types/pt immediately.
+// then force Badges / Tooltip to redraw right now (local OR remote).
+function applyBuffLocally(payload){
+  if (!payload) return;
+// De-dupe: ignore the same transaction twice on this client
+window.__SeenBuffTxnIds = window.__SeenBuffTxnIds || new Set();
+if (payload.txnId && window.__SeenBuffTxnIds.has(payload.txnId)) {
+  console.log('[applyBuffLocally] skip duplicate txnId', payload.txnId);
+  return;
+}
+if (payload.txnId) window.__SeenBuffTxnIds.add(payload.txnId);
+
+  // Support both shapes:
+  //  - payload.targets = ['c_x','c_y',...]
+  //  - payload.targetCid = 'c_x'
+  let targetList = [];
+  if (Array.isArray(payload.targets) && payload.targets.length) {
+    targetList = payload.targets.slice();
+  } else if (payload.targetCid) {
+    targetList = [ payload.targetCid ];
+  }
+
+  if (!targetList.length) {
+    console.warn('[applyBuffLocally] no targets in payload', payload);
+    return;
+  }
+
+  const enabledPT    = !!payload.pt;
+  const powDelta     = enabledPT ? (parseInt(payload.pt?.powDelta || '0',10)) : 0;
+  const touDelta     = enabledPT ? (parseInt(payload.pt?.touDelta || '0',10)) : 0;
+
+  // raw user text
+  const grantAbilityRaw = payload.ability || '';
+  const grantTypeRaw    = payload.typeAdd || '';
+
+  // normalize ability text a bit: "Firststrike" -> "First Strike"
+  // (panel later .toUpperCase() first letters anyway, but let's be nice)
+  function normalizeAbility(str){
+    const s = String(str || '').trim();
+    if (!s) return '';
+    // insert space between "Firststrike" style camel/compound if missing
+    // super cheap heuristic: split on capital letters
+    // but don't go too wild — just return capitalized words
+    return s
+      .replace(/([a-z])([A-Z])/g, '$1 $2')   // camelCase -> camel Case
+      .replace(/\s+/g,' ')
+      .replace(/^\s+|\s+$/g,'')
+      .replace(/\b\w/g, m => m.toUpperCase());
+  }
+
+  function normalizeType(str){
+    const s = String(str || '').trim();
+    if (!s) return '';
+    return s.replace(/\s+/g,' ').trim().replace(/\b\w/g, m => m.toUpperCase());
+  }
+
+  const grantAbilityNorm = normalizeAbility(grantAbilityRaw);
+  const grantTypeNorm    = normalizeType(grantTypeRaw);
+
+  for (const cid of targetList){
+    const sel = `img.table-card[data-cid="${cid}"]`;
+    const el  = document.querySelector(sel);
+    if (!el) {
+      console.warn('[applyBuffLocally] no DOM card for cid', cid, sel);
+      continue;
+    }
+
+    // --- figure out current visible PT BEFORE buff
+    const baseP = Number(el.dataset.power || 0);
+    const baseT = Number(el.dataset.toughness || 0);
+
+    const curStr = el.dataset.ptCurrent || `${baseP}/${baseT}`;
+    const parts  = curStr.split('/');
+    const curP   = Number(parts[0] || baseP || 0);
+    const curT   = Number(parts[1] || baseT || 0);
+
+    // --- apply deltas if we toggled PT
+    const newP = enabledPT ? (curP + powDelta) : curP;
+    const newT = enabledPT ? (curT + touDelta) : curT;
+
+    // stash new PT into dataset so Badges.livePT() can read it
+    el.dataset.ptCurrent = `${newP}/${newT}`;
+
+    // --- sync CardAttributes backing store AND collect merged arrays
+let mergedAbilities = [];
+let mergedTypes     = [];
+let mergedCounters  = []; // NEW
+try {
+  const CA = window.CardAttributes;
+  if (CA && typeof CA.get === 'function') {
+    const rec = CA.get(cid) || {};
+    rec.pow = newP;
+    rec.tou = newT;
+
+    // abilities
+    rec.abilities = Array.isArray(rec.abilities) ? rec.abilities.slice() : [];
+    if (grantAbilityNorm){
+      if (!rec.abilities.includes(grantAbilityNorm)) {
+        rec.abilities.push(grantAbilityNorm);
+      }
+    }
+
+    // types
+    rec.types = Array.isArray(rec.types) ? rec.types.slice() : [];
+    if (grantTypeNorm){
+      if (!rec.types.includes(grantTypeNorm)) {
+        rec.types.push(grantTypeNorm);
+      }
+    }
+
+    // counters (merge/SET ABSOLUTE); payload.counter = { kind, qty }
+// Build a union from CA.counters and remoteAttrs.counters so we never wipe
+// counters that only existed in the dataset mirror from older overlays.
+function _readRemoteCountersSafe(node){
+  try {
+    const ro = node?.dataset?.remoteAttrs ? JSON.parse(node.dataset.remoteAttrs) : null;
+    return Array.isArray(ro?.counters) ? ro.counters.slice() : [];
+  } catch { return []; }
+}
+function _mergeCountersUnion(aList, bList){
+  const byKind = new Map();
+  [...(aList||[]), ...(bList||[])].forEach(c=>{
+    if (!c) return;
+    const k = String(c.kind || c.name || '').trim();
+    if (!k) return;
+    byKind.set(k.toLowerCase(), { kind:k, qty: Number(c.qty||0) });
+  });
+  return Array.from(byKind.values());
+}
+
+const remoteCounters = _readRemoteCountersSafe(el);
+const baseCounters   = _mergeCountersUnion(
+  Array.isArray(rec.counters) ? rec.counters : [],
+  remoteCounters
+);
+
+// Apply the ONE change as an absolute target value
+let nextCounters = baseCounters;
+if (payload.counter && payload.counter.kind){
+  const kind = String(payload.counter.kind).trim();
+  let qty    = parseInt(payload.counter.qty || 0, 10);
+  if (kind && Number.isFinite(qty)){
+    const kLc = kind.toLowerCase();
+    const idx = nextCounters.findIndex(c => String(c.kind||'').toLowerCase() === kLc);
+    if (qty <= 0){
+      if (idx >= 0) nextCounters.splice(idx, 1);
+    } else {
+      const entry = { kind, qty };
+      if (idx >= 0) nextCounters[idx] = entry;
+      else nextCounters.push(entry);
+    }
+
+    // loyalty convenience…
+    if (kLc === 'loyalty'){
+      if (qty <= 0){
+        const baseL = parseInt(el.dataset.loyalty || '0', 10) || 0;
+        el.dataset.loyaltyCurrent = String(baseL);
+      } else {
+        el.dataset.loyaltyCurrent = String(qty);
+      }
+    }
+  }
+}
+
+// commit back onto the record
+rec.counters = nextCounters;
+
+
+
+    // write back (Map-style .set OR plain object fallback)
+    if (typeof CA.set === 'function') {
+      CA.set(cid, rec);
+    } else {
+      CA[cid] = rec;
+    }
+
+    mergedAbilities = rec.abilities.slice();
+    mergedTypes     = rec.types.slice();
+    mergedCounters  = rec.counters.slice();
+  } else {
+    // no CardAttributes? fall back to payload-only merges
+    if (grantAbilityNorm) mergedAbilities.push(grantAbilityNorm);
+    if (grantTypeNorm)    mergedTypes.push(grantTypeNorm);
+    if (payload.counter && payload.counter.kind) {
+      mergedCounters.push({ kind:String(payload.counter.kind).trim(), qty:parseInt(payload.counter.qty||0,10) });
+      if (String(payload.counter.kind).toLowerCase() === 'loyalty') {
+        const curL = parseInt(el.dataset.loyaltyCurrent || el.dataset.loyalty || '0', 10) || 0;
+        el.dataset.loyaltyCurrent = String(curL + (parseInt(payload.counter.qty||0,10) || 0));
+      }
+    }
+  }
+} catch(err){
+  console.warn('[applyBuffLocally] CardAttributes sync fail for', cid, err);
+  if (grantAbilityNorm) mergedAbilities.push(grantAbilityNorm);
+  if (grantTypeNorm)    mergedTypes.push(grantTypeNorm);
+  if (payload.counter && payload.counter.kind) {
+    mergedCounters.push({ kind:String(payload.counter.kind).trim(), qty:parseInt(payload.counter.qty||0,10) });
+  }
+}
+
+
+    // --- MIRROR to dataset.remoteAttrs so Badges.getGrantedFromStore()
+    // can ALWAYS see these new granted abilities/types immediately.
+    // We merge with any existing remoteAttrs instead of nuking it.
+    try {
+      let remoteObj = {};
+try { remoteObj = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch { remoteObj = {}; }
+
+// Take the canonical values we just computed/updated:
+const nextAbilities = mergedAbilities.slice();
+const nextTypes     = mergedTypes.slice();
+
+// mergedCounters already includes the union we stored in rec.counters above.
+// But to be belt-and-suspenders, union again with any existing remote counters.
+function _unionCounters(a,b){
+  const byKind = new Map();
+  [...(a||[]), ...(b||[])].forEach(c=>{
+    if (!c) return;
+    const k = String(c.kind || c.name || '').trim();
+    if (!k) return;
+    byKind.set(k.toLowerCase(), { kind:k, qty:Number(c.qty||0) });
+  });
+  return Array.from(byKind.values());
+}
+let prevRemote = {};
+try { prevRemote = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch {}
+const prevCounters = Array.isArray(prevRemote.counters) ? prevRemote.counters : [];
+
+// NEW should overwrite OLD, so list OLD first, then NEW:
+const nextCounters = _unionCounters(prevCounters, mergedCounters.slice());
+
+
+const ptStr = `${newP}/${newT}`;
+el.dataset.remoteAttrs = JSON.stringify({
+  abilities: nextAbilities,
+  types:     nextTypes,
+  counters:  nextCounters,
+  pt:        ptStr
+});
+
+
+    } catch(err){
+      console.warn('[applyBuffLocally] remoteAttrs sync fail for', cid, err);
+    }
+
+    // --- force redraw NOW on that element
+    try {
+      // badges panel + sticker refresh
+      if (window.Badges?.render) {
+        window.Badges.render(el);
+      } else if (window.Badges?.refreshFor) {
+        window.Badges.refreshFor(cid);
+      }
+
+      // tooltip refresh if visible
+      if (window.Tooltip?.refreshFor) {
+        window.Tooltip.refreshFor(cid);
+      } else if (window.Tooltip?.showForCard) {
+        window.Tooltip.showForCard(el, el, { mode:'right' });
+      }
+    } catch(err){
+      console.warn('[applyBuffLocally] redraw fail for', cid, err);
+    }
+  }
+}
+
+
+// expose so rtc.bus.js can call it
+window.CardOverlayUI = window.CardOverlayUI || {};
+window.CardOverlayUI.applyBuffLocally = applyBuffLocally;
+
+
+
+       function applyFromApplyTab(){
+      // 1. Collect all checked targets (cids)
+      const targets = Array
+        .from(STATE.root.querySelectorAll('[data-apply="list"] input[type="checkbox"]:checked'))
+        .map(cb => cb.getAttribute('data-target-cid'))
+        .filter(Boolean);
+
+      if (!targets.length){
+        console.warn('[OverlayApply] no targets selected');
+        return;
+      }
+
+      // 2. Which effect types are toggled on?
+      const toggles = Array.from(
+        STATE.root.querySelectorAll('[data-effect="toggles"] input[type="checkbox"]')
+      );
+      const enabled = new Set(
+        toggles.filter(i=>i.checked).map(i=>i.getAttribute('data-eff'))
+      );
+
+      // 3. Read numeric P/T deltas
+      const powDelta = parseInt(STATE.root.querySelector('input[data-pt="pow"]')?.value || '0', 10);
+      const touDelta = parseInt(STATE.root.querySelector('input[data-pt="tou"]')?.value || '0', 10);
+
+      // 4. Read granted ability / type text
+      const grantAbility = STATE.root.querySelector('input[data-apply="ability"]')?.value.trim() || '';
+      const grantType    = STATE.root.querySelector('input[data-apply="grantType"]')?.value.trim() || '';
+
+      // 5. Read counters
+      const counterKind  = STATE.root.querySelector('input[data-apply="counterKind"]')?.value.trim() || '';
+      const counterQty   = parseInt(STATE.root.querySelector('input[data-apply="counterQty"]')?.value || '1', 10);
+
+      // 6. Duration radio → 'EOT' | 'SOURCE' | 'PERM'
+      const durRadios = Array.from(STATE.root.querySelectorAll('input[name="dur"]'));
+      let duration = 'EOT';
+      const checkedIdx = durRadios.findIndex(r => r.checked);
+      if (checkedIdx === 1) duration = 'SOURCE';
+      if (checkedIdx === 2) duration = 'PERM';
+
+      // 7. Source card = the card whose wand overlay we opened
+      const srcCid = STATE.activeCid || null;
+
+      // 8. Who applied this (seat)? (used for EOT cleanup per player)
+      const ownerSeat = (typeof window.mySeat === 'function') ? window.mySeat() : 1;
+
+      // 9. Build the canonical payload for RulesStore / RTC / local sync
+      const payload = {
+  // idempotency guard
+  txnId: (crypto?.randomUUID ? crypto.randomUUID() : (Date.now() + ':' + Math.random().toString(36).slice(2))),
+  srcCid,
+  ownerSeat,
+  duration,
+  pt: (enabled.has('pt') ? { powDelta, touDelta } : null),
+  ability: (enabled.has('ability') && grantAbility) ? grantAbility : null,
+  typeAdd: (enabled.has('type') && grantType) ? grantType : null,
+  counter: (enabled.has('counters') && counterKind)
+    ? { kind: counterKind, qty: counterQty }
+    : null,
+  targets
+};
+
+
+      console.log('[OverlayApply] committing payload:', payload);
+
+      // 10. FIRST: apply it LOCALLY so badges/PT update instantly on my screen.
+      try {
+        if (window.CardOverlayUI?.applyBuffLocally) {
+          window.CardOverlayUI.applyBuffLocally(payload);
+        }
+      } catch (err){
+        console.warn('[OverlayApply] local applyBuffLocally failed', err);
+      }
+
+      // 11. THEN broadcast via RTC / RulesStore so opponent mirrors it.
+      try {
+        RTCApply.broadcastBuff(payload);
+      } catch (err){
+        console.warn('[OverlayApply] RTC broadcastBuff failed', err);
+      }
+    }
+
+
+
+
+window.CardOverlayUI = window.CardOverlayUI || {};
+window.CardOverlayUI.applyBuffLocally = applyBuffLocally;
+
+// --- Local effect removal helper: strip ability/type/counter from a single card ---
+function removeEffectLocally(cardCid, effect){
+  try{
+    if (!cardCid || !effect) return;
+    const el = document.querySelector(`img.table-card[data-cid="${cardCid}"]`);
+    const CA = window.CardAttributes;
+
+    // 1) pull current record (or make a new shell)
+    const rec = (CA && typeof CA.get === 'function') ? (CA.get(cardCid) || {}) : (window.CardAttributes?.[cardCid] || {});
+
+    // 2) abilities
+    if (effect.ability){
+      const abil = String(effect.ability).trim().toLowerCase();
+      if (Array.isArray(rec.abilities)){
+        rec.abilities = rec.abilities.filter(a => String(a).trim().toLowerCase() !== abil);
+      }
+    }
+
+    // 3) types
+    if (effect.typeAdd){
+      const t = String(effect.typeAdd).trim().toLowerCase();
+      if (Array.isArray(rec.types)){
+        rec.types = rec.types.filter(a => String(a).trim().toLowerCase() !== t);
+      }
+    }
+
+    // 4) counters
+    if (effect.counter && effect.counter.kind){
+      const k = String(effect.counter.kind).trim().toLowerCase();
+      if (Array.isArray(rec.counters)){
+        rec.counters = rec.counters.filter(c => String(c?.kind || c?.name || '').toLowerCase() !== k);
+      }
+      if (el && k === 'loyalty'){
+        // restore to base or 0
+        const baseL = parseInt(el.dataset.loyalty || '0', 10) || 0;
+        el.dataset.loyaltyCurrent = String(baseL);
+      }
+    }
+
+    // 5) write back CardAttributes
+    if (CA && typeof CA.set === 'function') {
+      CA.set(cardCid, rec);
+    } else {
+      window.CardAttributes = window.CardAttributes || {};
+      window.CardAttributes[cardCid] = rec;
+    }
+
+    // 6) sync dataset.remoteAttrs mirror (authoritative merge)
+    if (el){
+      let remoteObj = {};
+      try { remoteObj = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch {}
+      const abilities = Array.isArray(rec.abilities) ? rec.abilities.slice() : [];
+      const types     = Array.isArray(rec.types)     ? rec.types.slice()     : [];
+      const counters  = Array.isArray(rec.counters)  ? rec.counters.slice()  : [];
+      const pt        = el.dataset.ptCurrent || `${el.dataset.power||0}/${el.dataset.toughness||0}`;
+
+      el.dataset.remoteAttrs = JSON.stringify({ abilities, types, counters, pt });
+    }
+
+    // 7) force redraws
+    try { if (window.Badges?.render && el) window.Badges.render(el); } catch {}
+    try { if (window.Tooltip?.refreshFor) window.Tooltip.refreshFor(cardCid); } catch {}
+  } catch(e){
+    console.warn('[removeEffectLocally] failed', e, {cardCid, effect});
+  }
+}
+
+
+        // ---------------- ACTIVE TAB (live effects / remove) ----------------
+
+    // track filter state for Active tab: 'both' | 'mine' | 'opp'
+    let activeFilter = 'both';
+
+    // helper to normalize effect → a "signature" so we can de-dupe kinds
+    function _effectSignature(e){
+      try{
+        const type = (e?.type || '').toLowerCase();
+        // Prefer explicit fields if RulesStore provides them; else derive from label.
+        if (type === 'counter' || /counter/i.test(e?.type || e?.label || '')){
+          const kind =
+            (e?.counter?.kind) ||
+            (e?.kind) ||
+            // label fallback: "Stun x3 (EOT)" → "Stun"
+            (String(e?.label || '').replace(/\(.*\)$/,'').match(/([+\-]?\d+\s*\/\s*[+\-]?\d+|[A-Za-z][A-Za-z +/+-]*?)\s*(?:x\d+)?$/)?.[1]) ||
+            '';
+          return `counter:${String(kind).trim().toLowerCase()}`;
+        }
+        if (type === 'ability' || /grant/i.test(e?.label || '') || e?.ability){
+          const a = (e?.ability || (e?.label||'').replace(/^grant\s+/i,'')).trim();
+          return `ability:${a.toLowerCase()}`;
+        }
+        if (type === 'type' || e?.typeAdd){
+          const t = (e?.typeAdd || '').trim();
+          return `type:${t.toLowerCase()}`;
+        }
+        // fallback: label-only bucket
+        return `label:${String(e?.label||'').trim().toLowerCase()}`;
+      }catch{ return 'unknown'; }
+    }
+
+    // newest-first compare: prefer .ts, else .id lexical, else array order
+    function _isNewer(a,b){
+      const ta = Number(a?.ts || 0), tb = Number(b?.ts || 0);
+      if (ta !== tb) return ta > tb;
+      const ia = String(a?.id||''), ib = String(b?.id||'');
+      if (ia && ib && ia !== ib) return ia > ib;
+      return true;
+    }
+
+    // Remove all effects on a card that match a signature, and also
+    // update CardAttributes + dataset.remoteAttrs so badges drop.
+    function _removeAllBySignature(cardCid, signature, latestEffSnapshot){
+      // 1) collect all matching effect ids for that card (from current list)
+      let ids = [];
+      try {
+        const row = (RulesStore.listActiveEffectsGroupedByCard?.(null) || [])
+          .find(r => String(r.cid) === String(cardCid));
+        if (row && Array.isArray(row.effects)){
+          ids = row.effects
+            .filter(e => _effectSignature(e) === signature)
+            .map(e => e.id)
+            .filter(Boolean);
+        }
+      } catch(e) { console.warn('[ActiveTab] signature collect failed', e); }
+
+      // 2) remove from RulesStore (ALL versions)
+      ids.forEach(id => {
+        try { RulesStore.removeEffect?.(id); } catch(err){
+          console.warn('[ActiveTab] removeEffect failed', id, err);
+        }
+      });
+
+      // 3) also strip local attributes/counters mirror so badges clear
+      // Build a "removal effect" snapshot that our helper understands.
+      const removeShape = {};
+      if (signature.startsWith('counter:')){
+        const kind = signature.slice('counter:'.length);
+        removeShape.counter = { kind, qty: 0 }; // qty 0 → remove that counter-kind
+      } else if (signature.startsWith('ability:')){
+        removeShape.ability = (latestEffSnapshot?.ability) ||
+                              String(latestEffSnapshot?.label || '').replace(/^grant\s+/i,'').trim();
+      } else if (signature.startsWith('type:')){
+        removeShape.typeAdd = latestEffSnapshot?.typeAdd || String(latestEffSnapshot?.label||'').trim();
+      }
+      try { removeEffectLocally(cardCid, removeShape); } catch(e){
+        console.warn('[ActiveTab] removeEffectLocally failed', e, {cardCid, removeShape});
+      }
+
+      // 4) repaint that card’s badges
+      try{
+        const cardEl = document.querySelector(`img.table-card[data-cid="${cardCid}"]`);
+        if (cardEl){
+          if (window.Badges?.render) window.Badges.render(cardEl);
+          else if (window.Badges?.refreshFor) window.Badges.refreshFor(cardCid);
+        }
+      }catch(err){ console.warn('[ActiveTab] badge refresh fail', err); }
+
+      // 5) notify opponent (coarse-grain: send each id we actually removed)
+      try{
+        ids.forEach(effectId => {
+          window.rtcSend?.({ type:'buffRemove', effectId });
+        });
+      }catch(err){ console.warn('[ActiveTab] rtcSend buffRemove failed', err); }
+    }
+
+    // helper to re-render the Active tab list from RulesStore (de-duped by "latest per kind")
+    function refreshActiveTab(){
+      const host = back.querySelector('[data-active="list"]');
+      if (!host) return;
+      host.innerHTML = '';
+
+      // seat filter
+      let seatFilter = null;
+      try {
+        const me = Number(window.mySeat?.() ?? 1);
+        if (activeFilter === 'mine'){ seatFilter = me; }
+        else if (activeFilter === 'opp'){ seatFilter = (me === 1 ? 2 : 1); }
+        else { seatFilter = null; }
+      } catch { seatFilter = null; }
+
+      // fetch rows
+      let rows = [];
+      try {
+        rows = RulesStore.listActiveEffectsGroupedByCard
+          ? RulesStore.listActiveEffectsGroupedByCard(seatFilter)
+          : [];
+      } catch(err){
+        console.warn('[ActiveTab] listActiveEffectsGroupedByCard failed', err);
+        rows = [];
+      }
+
+      if (!rows.length){
+        const empty = document.createElement('div');
+        empty.className = 'mut';
+        empty.textContent = 'No active effects.';
+        host.appendChild(empty);
+        return;
+      }
+
+      // Build UI per card with de-dupe: keep only newest per signature
+      rows.forEach(cardRow => {
+        const wrap = document.createElement('div');
+        wrap.className = 'group';
+
+        const header = document.createElement('div');
+        header.className = 'label';
+        header.textContent = cardRow.name || cardRow.cid || 'Card';
+        wrap.appendChild(header);
+
+        // Group effects by signature, keep newest
+        const bySig = new Map();
+        (cardRow.effects || []).forEach(e => {
+          const sig = _effectSignature(e);
+          const prev = bySig.get(sig);
+          if (!prev || _isNewer(e, prev)) bySig.set(sig, e);
+        });
+
+        // Render only the newest one per signature
+        Array.from(bySig.values()).forEach(eff => {
+          const holder = document.createElement('div');
+          holder.style.display = 'flex';
+          holder.style.alignItems = 'center';
+          holder.style.flexWrap = 'wrap';
+          holder.style.gap = '8px';
+
+          const chip = document.createElement('div');
+          chip.className = 'chip';
+          chip.textContent = eff.label || '(effect)';
+          holder.appendChild(chip);
+
+          const rm = document.createElement('button');
+          rm.className = 'btn btnDanger';
+          rm.textContent = 'Remove';
+
+          rm.addEventListener('click', () => {
+            const sig = _effectSignature(eff);
+            console.log('[ActiveTab] Remove clicked → batch remove signature', { cid:cardRow.cid, sig, latest:eff });
+            _removeAllBySignature(cardRow.cid, sig, eff);
+            // refresh the list (should now be gone)
+            refreshActiveTab();
+          });
+
+          holder.appendChild(rm);
+          wrap.appendChild(holder);
+        });
+
+        host.appendChild(wrap);
+      });
+    }
+
+
+    // hook up the Active tab filter buttons
+    const btnMine    = back.querySelector('[data-active="mine"]');
+    const btnOpp     = back.querySelector('[data-active="opp"]');
+    const btnBoth    = back.querySelector('[data-active="both"]');
+    const btnRefresh = back.querySelector('[data-active="refresh"]');
+
+    if (btnMine){
+      btnMine.addEventListener('click', () => {
+        activeFilter = 'mine';
+        refreshActiveTab();
+      });
+    }
+    if (btnOpp){
+      btnOpp.addEventListener('click', () => {
+        activeFilter = 'opp';
+        refreshActiveTab();
+      });
+    }
+    if (btnBoth){
+      btnBoth.addEventListener('click', () => {
+        activeFilter = 'both';
+        refreshActiveTab();
+      });
+    }
+    if (btnRefresh){
+      btnRefresh.addEventListener('click', () => {
+        refreshActiveTab();
+      });
+    }
+
+    // ---------------- MANAGE TAB (unchanged / stubs) ----------------
+    back.querySelectorAll('[data-man]').forEach(btn=>{
+      if (btn.tagName === 'INPUT') return;
+      btn.addEventListener('click', ()=>{
+        console.log('[Manage]', btn.getAttribute('data-man'), 'clicked (stub)');
+      });
+    });
+
+    // ---------------- RADIAL PICKER HOOKS ----------------
+    // Radial open triggers (+/- on apply/manage/type/ability/counter)
+    back.querySelectorAll('[data-radial]').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const key = b.getAttribute('data-radial');
+        openRadial(key);
+      });
+    });
+
+    // Radial close
+    back.querySelector('[data-radial="close"]').addEventListener('click', ()=> setRadialVisible(false));
+
+    STATE.root = back;
+
+    // Scan tab "Rescan" button now that STATE.root is set
+    back.querySelector('[data-scan="rescan"]').addEventListener('click', async () => {
+      await runScanForActiveCard();
+    });
+
+    // --- NEW: mini "Targets / Effects" tabs inside Apply panel
+    const applyStepTabs = back.querySelector('[data-apply="steps"]');
+    if (applyStepTabs) {
+      applyStepTabs.addEventListener('click', (ev) => {
+        const btn = ev.target.closest('[data-apply-step]');
+        if (!btn) return;
+        const step = btn.getAttribute('data-apply-step'); // 'targets' | 'effects'
+        setApplyStep(step);
+      });
+    }
+
+    // make sure Apply starts sane if user jumps straight there later
+    setApplyStep('targets');
+
+    // NOTE: we do NOT call refreshActiveTab() here automatically, because we only
+    // want to populate Active when that tab is actually shown. We now trigger it
+    // from setTab() when tab === 'active'.
+  }
+
+
+    function setVisible(v){
+    STATE.root?.setAttribute('aria-hidden', v ? 'false' : 'true');
+  }
+
+  // --- NEW: internal sub-tab switcher for Apply (targets <-> effects)
+  function setApplyStep(step){
+    if (!STATE.root) return;
+
+    // highlight the correct mini-tab button
+    STATE.root.querySelectorAll('[data-apply-step]').forEach(btn => {
+      const thisStep = btn.getAttribute('data-apply-step');
+      btn.dataset.on = String(thisStep === step);
+    });
+
+    // show/hide the two step panels
+    STATE.root.querySelectorAll('.applyStep').forEach(p => {
+      const match = (p.getAttribute('data-step') === step);
+      p.setAttribute('aria-hidden', String(!match));
+      // force layout mode explicitly so inline style="display:none" or display:grid gets controlled
+      p.style.display = match ? 'grid' : 'none';
+    });
+  }
+
+  function setTab(tab){
+    STATE.activeTab = tab;
+
+    // top-level header tabs (Scan / Apply / Active / Manage)
+    STATE.root.querySelectorAll('.tabBtn').forEach(b => {
+      if (b.hasAttribute('data-tab')) {
+        b.dataset.on = String(b.dataset.tab === tab);
+      }
+    });
+
+    // show the correct main panel
+    STATE.root.querySelectorAll('.panel').forEach(p => {
+      p.setAttribute('aria-hidden', String(p.dataset.pane !== tab));
+    });
+
+    // layout mode: hide big preview on non-scan tabs
+    const body = STATE.root.querySelector('.ovlBody');
+    if (body) {
+      body.setAttribute('data-mode', tab === 'scan' ? '' : 'compact');
+    }
+
+    // when we land on Apply, default its inner mini-step to "targets"
+    if (tab === 'apply') {
+      setApplyStep('targets');
+    }
+
+    // when we land on Active, refresh the Active tab list on-demand
+    if (tab === 'active') {
+      refreshActiveTab();
+    }
+  }
+
+
+  // --- Oracle fetch helper (dataset first, fall back to Scryfall by name) ---
+  async function hydrateOracleFor(el){
+  try{
+    const box = STATE.root?.querySelector('[data-scan="oracle"]');
+    if (!box) return;
+
+    // 1) dataset first
+    const ds = (el && el.dataset) ? (el.dataset.oracle || '') : '';
+    if (ds && ds.trim()) { box.innerHTML = await manaHtml(ds); return; }
+
+    // 2) fetch by title
+    const name = el?.title || '';
+    if (!name) { box.innerHTML = ''; return; }
+    const url = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`;
+    const r = await fetch(url, { cache: 'no-store' });
+    if (!r.ok) { box.innerHTML = ''; return; }
+    const j = await r.json();
+    const face0 = Array.isArray(j.card_faces) ? j.card_faces[0] : j;
+    const oracle = face0?.oracle_text || j?.oracle_text || '';
+    box.innerHTML = await manaHtml(oracle || '');
+  }catch{
+    const box = STATE.root?.querySelector('[data-scan="oracle"]');
+    if (box) box.innerHTML = '';
+  }
+}
+
+
+// ---------------- Quick-Action helpers (token-first) ----------------
+function _resolveOverlayZ() {
+  // Pull the overlay z from :root, then go higher.
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--ovlZ') || '';
+    const base = parseInt(String(v).replace(/[^\d]/g,''), 10);
+    if (!isNaN(base)) return base + 50;            // slightly above attributes overlay
+  } catch {}
+  return 2147483600; // absurdly high fallback
+}
+
+/**
+ * Try to open the existing "Add Any Card" overlay (wherever it lives)
+ * and prefill search + quantity. We try several likely entry points and selectors.
+ *
+ * opts = { name: string, qty: number }
+ */
+// --- Hard-wire to Zones’ Add-Any-Card overlay with robust prefill + z-fix + FILTERS ---
+function openAnyCardOverlayPrefilled(opts = {}) {
+  // opts: { name, qty, colors?:['white'|'blue'|'black'|'red'|'green'|'colorless'], abilities?:['Flying', ...] }
+
+  // --- Sanitizer helpers (robust against leading "X" and colors) ---
+function _stripLeadingVarX(s){
+  // Drop a leading variable X only when it introduces PT or color words.
+  // e.g. "X 2/2 white Cat" -> "2/2 white Cat"
+  return s.replace(/^\s*[Xx]\b(?=\s*(\d+\s*\/\s*\d+|\bwhite\b|\bblue\b|\bblack\b|\bred\b|\bgreen\b|\bcolorless\b))/i,'').trim();
+}
+function _stripLeadingPT(s){ return s.replace(/^\s*\d+\s*\/\s*\d+\s*/, ''); }
+function _stripWithTail(s){ return s.replace(/\bwith\b.*$/i, ''); }
+function _stripArticlesAndToken(s){
+  return s.replace(/^(?:a|an)\s+/i,'').replace(/^\s*token\s+/i,'');
+}
+function _stripLeadingColors(s){
+  let t = s.trim();
+  const COLOR = /^(white|blue|black|red|green|colorless)\b/i;
+  while (true){
+    const m = t.match(COLOR);
+    if (!m) break;
+    t = t.slice(m[0].length);
+    t = t.replace(/^[\s,]+/,'').replace(/^and\s+/i,'');
+  }
+  return t.trim();
+}
+function sanitizeTokenQuery(q){
+  let s = String(q || '').trim();
+  if (!s) return '';
+  const original = s;
+  s = _stripWithTail(s);
+  s = _stripLeadingVarX(s);   // <-- NEW: kill leading variable X
+  s = _stripLeadingPT(s);
+  s = _stripArticlesAndToken(s);
+  s = _stripLeadingColors(s);
+  s = s.replace(/\b\s+X\s+\b/gi,' ');     // "White X Cat" -> "White Cat" (belt & suspenders)
+  s = s.replace(/\s{2,}/g,' ').trim();
+  console.log('[AddAnyCard][SANITIZE]', { original, sanitized:s });
+  return s;
+}
+
+
+  const nameRaw = String(opts.name || '').trim();
+  const name    = sanitizeTokenQuery(nameRaw);
+  const qty     = Math.max(1, Number(opts.qty || 1));
+
+  const colors   = Array.isArray(opts.colors)    ? opts.colors.map(c => String(c).toLowerCase()) : [];
+  const abilities= Array.isArray(opts.abilities) ? opts.abilities.map(a => String(a)) : [];
+
+  // read the attributes overlay z so we can sit on top of it
+  let zTop = 2147483600;
+  try {
+    const cssZ = getComputedStyle(document.documentElement).getPropertyValue('--ovlZ') || '';
+    const base = parseInt(String(cssZ).replace(/[^\d]/g, ''), 10);
+    if (!Number.isNaN(base)) zTop = base + 50;
+  } catch {}
+
+  console.log('[AddAnyCard][STEP 1] Requested open with:', { name, qty, zTop, colors, abilities });
+
+  // STEP 1: open Zones overlay via the canonical entry
+  try {
+    if (!window.Zones || typeof window.Zones.openAddAnyCardOverlay !== 'function') {
+      console.warn('[AddAnyCard][ERROR] window.Zones.openAddAnyCardOverlay is not available');
+    } else {
+      console.log('[AddAnyCard][STEP 2] Calling window.Zones.openAddAnyCardOverlay()');
+      window.Zones.openAddAnyCardOverlay();
+    }
+  } catch (err) {
+    console.warn('[AddAnyCard][EXCEPTION] while opening overlay:', err);
+  }
+
+  // Helper: locate a likely overlay host (div that contains a text input + number input)
+  function _findOverlayHost() {
+    const roots = Array.from(document.body.querySelectorAll('body > div, body > section, body > aside, body > dialog'));
+    for (let i = roots.length - 1; i >= 0; i--) {
+      const host = roots[i];
+      const textI = host.querySelector('input[type="text"], input:not([type]), input[type="search"]');
+      const numI  = host.querySelector('input[type="number"]');
+      if (textI && numI) return host;
+    }
+    return null;
+  }
+
+  // Best-effort setters for color & ability filters inside “Add Any Card” overlay
+  function _applyColorFilters(host, colorList){
+  if (!host || !colorList?.length) return;
+
+  const COLOR_KEYS = ['white','blue','black','red','green','colorless'];
+  const LETTER_BY_COLOR = { white:'W', blue:'U', black:'B', red:'R', green:'G', colorless:'C' };
+
+  // Uncheck an "All" toggle if present (non-fatal)
+  try {
+    const allCkb = host.querySelector('input[type="checkbox"][data-filter-kind="all"]');
+    if (allCkb && allCkb.checked) {
+      allCkb.checked = false;
+      allCkb.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+  } catch {}
+
+  colorList.forEach(c => {
+    if (!COLOR_KEYS.includes(c)) return;
+
+    // --- 1) Original checkbox-style paths (preserve previous behavior)
+    const selCandidates = [
+      `[data-filter-color="${c}"]`,
+      `[data-color="${c}"]`,
+      `input[type="checkbox"][name="color-${c}"]`,
+      `input[type="checkbox"][value="${c}"]`,
+      `input[type="checkbox"][value="${(LETTER_BY_COLOR[c]||'').toUpperCase()}"]`
+    ];
+    let el = null;
+    for (const sel of selCandidates) {
+      el = host.querySelector(sel);
+      if (el) break;
+    }
+    if (el && el.type === 'checkbox') {
+      if (!el.checked) {
+        el.checked = true;
+        el.dispatchEvent(new Event('change', { bubbles:true }));
+      }
+      console.log('[AddAnyCard][FILTER] set color via checkbox:', c);
+      return;
+    }
+
+    // --- 2) NEW: “W/U/B/R/G” chips as buttons
+    // Look for a button-like element whose textContent is exactly the letter.
+    const letter = (LETTER_BY_COLOR[c] || '').toUpperCase();
+    if (letter) {
+      const chip = Array.from(
+        host.querySelectorAll('button, .chip, .pill, [role="button"]')
+      ).find(n => (n.textContent || '').trim().toUpperCase() === letter);
+
+      if (chip) {
+        // try to avoid toggling OFF if already active
+        const pressed = chip.getAttribute?.('aria-pressed');
+        const dataOn  = chip.getAttribute?.('data-on');
+        const isOn = (pressed === 'true') || (dataOn === 'true') || chip.classList.contains('active');
+
+        if (!isOn) {
+          try { chip.click(); console.log('[AddAnyCard][FILTER] clicked color chip:', c, `(${letter})`); } catch {}
+        } else {
+          console.log('[AddAnyCard][FILTER] color chip already on:', c, `(${letter})`);
+        }
+        return;
+      }
+    }
+
+    // --- 3) Fallback: full-word label/button
+    const labels = Array.from(host.querySelectorAll('label,button,.chip,.pill'));
+    const match = labels.find(n => new RegExp(`\\b${c}\\b`, 'i').test(n.textContent || ''));
+    if (match) {
+      try { match.click(); console.log('[AddAnyCard][FILTER] clicked color label (fallback):', c); } catch {}
+    } else {
+      console.log('[AddAnyCard][FILTER] could not locate control for color:', c);
+    }
+  });
+}
+
+
+  function _applyAbilityFilters(host, abilityList){
+  if (!host || !abilityList?.length) return;
+
+  // Prefer the single “Filter (comma-separated …)” field,
+  // then any input whose placeholder mentions abilities,
+  // then fall back to the longest plain text input under the filters row.
+  let targetInput =
+    host.querySelector('input[placeholder^="Filter (comma-separated"]') ||
+    host.querySelector('input[placeholder*="abilities" i]') ||
+    null;
+
+  if (!targetInput) {
+    // choose the longest text input inside the overlay body as a last resort
+    const candidates = Array.from(host.querySelectorAll('input[type="text"], input[type="search"]'));
+    targetInput = candidates.sort((a,b)=>(b.placeholder?.length||0)-(a.placeholder?.length||0))[0] || null;
+  }
+
+  if (!targetInput) {
+    console.log('[AddAnyCard][FILTER] no suitable ability filter input found');
+    return;
+  }
+
+  // Append abilities to any existing filter text, comma-separated, de-duped.
+  const existing = (targetInput.value || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const add = abilityList.map(s=>String(s).trim()).filter(Boolean);
+  const merged = Array.from(new Set([...existing, ...add]));
+
+  try {
+    targetInput.value = merged.join(', ');
+    targetInput.dispatchEvent(new Event('input', { bubbles:true }));
+    console.log('[AddAnyCard][FILTER] set abilities ->', targetInput.value);
+  } catch (e) {
+    console.warn('[AddAnyCard][FILTER] failed to set abilities', e);
+  }
+
+  // NOTE: per request, we are NOT adding the optional custom-event listener path here.
+}
+
+
+  // STEP 3: after a short delay, prefill search + qty and bump z-index (+ apply filters)
+  const attemptPrefill = (tag) => {
+    const host = _findOverlayHost();
+    if (!host) {
+      console.log(`[AddAnyCard][${tag}] overlay host not found yet`);
+      return false;
+    }
+
+    // Raise z-index
+    try {
+      host.style.zIndex = String(zTop);
+      console.log(`[AddAnyCard][${tag}] z-index set to`, zTop, host);
+    } catch {}
+
+    // Find first text input and first number input
+    const searchInput = host.querySelector('input[type="text"], input:not([type]), input[type="search"]');
+    const qtyInput    = host.querySelector('input[type="number"]');
+
+    if (!searchInput) {
+      console.log(`[AddAnyCard][${tag}] search input not found`);
+    } else {
+      searchInput.value = name;
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      console.log(`[AddAnyCard][${tag}] set search:`, name);
+    }
+
+    if (!qtyInput) {
+      console.log(`[AddAnyCard][${tag}] qty input not found`);
+    } else {
+      qtyInput.value = String(qty);
+      qtyInput.dispatchEvent(new Event('input', { bubbles: true }));
+      console.log(`[AddAnyCard][${tag}] set qty:`, qty);
+    }
+
+    // NEW: apply color + ability filters if the overlay exposes them
+    try { _applyColorFilters(host, colors); } catch(e){ console.warn('[AddAnyCard] color filter set failed', e); }
+    try { _applyAbilityFilters(host, abilities); } catch(e){ console.warn('[AddAnyCard] ability filter set failed', e); }
+
+    // Optional: click an obvious Search/Apply button
+    const goBtn = host.querySelector('button, [role="button"]');
+    if (goBtn && /search|apply|go|find|filter/i.test(goBtn.textContent || '')) {
+      try { goBtn.click(); console.log(`[AddAnyCard][${tag}] clicked button:`, goBtn.textContent.trim()); } catch {}
+    }
+
+    return true;
+  };
+
+  // Try a few times to catch late DOM mount
+  setTimeout(() => attemptPrefill('t+50'), 50);
+  setTimeout(() => attemptPrefill('t+150'), 150);
+  setTimeout(() => {
+    if (!attemptPrefill('t+350')) {
+      console.warn('[AddAnyCard][WARN] overlay not detected by t+350ms — will not spam further');
+    }
+  }, 350);
+}
+
+
+
+
+// helper so we can call the exact same scan logic on open + on button press
+async function runScanForActiveCard(){
+  // Which card are we scanning?
+  const el = STATE.activeCid
+    ? document.querySelector(`.table-card[data-cid="${STATE.activeCid}"]`)
+    : null;
+
+  // 1) hydrate the oracleBox in the overlay (from dataset.oracle or Scryfall)
+  await hydrateOracleFor(el);
+
+  // 2) grab the text we just hydrated
+  const root = STATE.root;
+  if (!root) {
+    console.warn('[runScanForActiveCard] no STATE.root yet');
+    return;
+  }
+
+  const box = root.querySelector('[data-scan="oracle"]');
+  const oracleText = box?.innerText || '';
+
+  // 3) run the parser
+  const { detectedFlags, quickActions, tokens, counters } =
+    scanOracleTextForActions(oracleText);
+
+  // 4) wipe + repopulate Detected Abilities + Quick Actions
+  const out = root.querySelector('[data-scan="detected"]');
+  const act = root.querySelector('[data-scan="actions"]');
+  if (!out || !act) {
+    console.warn('[runScanForActiveCard] missing scan output containers');
+    return;
+  }
+
+  out.innerHTML = '';
+  act.innerHTML = '';
+
+  // --- Detected Abilities chips ---
+  detectedFlags.forEach(f => {
+    const chip = make('div', 'chip', f.label);
+
+    // when you click a detected ability, it should:
+    // 1. switch to Apply tab
+    // 2. enable "Grant ability"
+    // 3. prefill the ability text field
+    chip.style.cursor = 'pointer';
+    chip.title = 'Click to apply this ability';
+    chip.addEventListener('click', () => {
+      // 1) jump to Apply tab
+      setTab('apply');
+
+      // 2) toggle on "Grant ability"
+      const abilityToggle = STATE.root.querySelector('[data-eff="ability"]');
+      if (abilityToggle && !abilityToggle.checked) {
+        abilityToggle.checked = true;
+        rebuildEffectSections(); // so the ability input exists
+      }
+
+      // 3) stuff that label into the ability input
+      const input = STATE.root.querySelector('input[data-apply="ability"]');
+      if (input) {
+        input.value = f.label || '';
+        input.focus();
+      }
+    });
+
+    out.appendChild(chip);
+  });
+
+  // --- Quick Actions buttons (now routed) ---
+ // --- Quick Actions (delegated; routes to Tokens / Counters / Grant Ability) ---
+STATE.lastQuickActions = Array.isArray(quickActions) ? quickActions.slice() : [];
+act.innerHTML = '';
+
+window.openAnyCardOverlayPrefilled = openAnyCardOverlayPrefilled;
+
+const ABILITY_WORDS = new Set([
+  'flying','first strike','double strike','vigilance','lifelink','deathtouch',
+  'trample','haste','reach','hexproof','indestructible','menace','prowess','ward'
+]);
+
+function titleCaseWords(s){
+  return String(s||'').trim().replace(/\s+/g,' ').replace(/\b\w/g, m => m.toUpperCase());
+}
+
+// Clean display text: kill "Xx" → "X", and " White X Cat" → " White Cat"
+function cleanActionLabel(lbl){
+  return String(lbl || '')
+    .replace(/\bXx\b/gi,'X')
+    .replace(/\b(white|blue|black|red|green|colorless)\s+X\s+/gi,'$1 ')
+    .replace(/\s{2,}/g,' ')
+    .trim();
+}
+
+// Token metadata from either structured data or label text
+function deriveTokenMeta(a){
+  const d = a?.data || {};
+  const lbl = String(a?.label || '');
+  // qty: prefer structured, else look for "xN" or a bare X (variable)
+  let qty = Number(d.qty || d.count || d.quantity);
+  if (!qty || Number.isNaN(qty)) {
+    const mN = lbl.match(/\bx\s*(\d+)\b/i);
+    if (mN) qty = Number(mN[1]);
+    else if (/\bX\b/i.test(lbl)) qty = NaN; // variable → will coerce to 1 later
+  }
+
+  // token-ish name base: cut off leading "Create ..." and trim at "with ..."
+  let nameGuess = lbl.replace(/^.*?\bcreate\b/i,'').trim();
+  nameGuess = nameGuess.replace(/\bwith\b.*$/i,'').trim();
+  nameGuess = nameGuess.replace(/^[xX]\b/,'').trim(); // "X 2/2 ..."
+  nameGuess = nameGuess.replace(/^\s*\d+\s*\/\s*\d+\s*/,'').trim(); // strip P/T
+  // normalize colors out of the front, keep the type word
+  nameGuess = nameGuess.replace(/^(white|blue|black|red|green|colorless)\s+/i,'').trim();
+
+  // derive colors set for overlay filter
+  const colors = [];
+  (lbl.match(/\b(white|blue|black|red|green|colorless)\b/gi) || []).forEach(c=>{
+    const lc = c.toLowerCase();
+    if (!colors.includes(lc)) colors.push(lc);
+  });
+
+  // abilities after "with ..." that we recognize
+  const withTail = (lbl.match(/\bwith\b(.*)$/i) || [,''])[1];
+  const abilities = [];
+  withTail.split(/[,;]+/).forEach(chunk=>{
+    const t = chunk.toLowerCase().trim();
+    // try to match any of our known ability words inside the chunk
+    ABILITY_WORDS.forEach(word=>{
+      if (new RegExp(`\\b${word}\\b`,'i').test(t)) {
+        const nice = titleCaseWords(word);
+        if (!abilities.includes(nice)) abilities.push(nice);
+      }
+    });
+  });
+
+  const name = (function(){
+    // Use provided structured name if present, else sanitize guess
+    const raw = String(d.name || d.token || nameGuess || '').trim();
+    // Reuse the central sanitizer used by the Add-Any overlay
+    try { return sanitizeTokenQuery(raw); } catch { return raw; }
+  })();
+
+  return { name, qty: qty, colors, abilities };
+}
+
+/** Parse a counter quick-action. */
+function parseCounterAction(a){
+  const d = a?.data || {};
+  const t = String(a?.type || '').toLowerCase();
+  const lbl = String(a?.label || '');
+  const looksCounter = t === 'counter' || t === 'counters' || /\bcounter\b/i.test(lbl);
+  if (!looksCounter) return null;
+
+  let kind = (d.kind || d.counter || '').toString().trim();
+  let qty  = Number(d.qty || d.count || d.quantity || 0);
+  if (!kind) {
+    const m = lbl.match(/([+\-]?\d+\s*\/\s*[+\-]?\d+|[A-Za-z][A-Za-z +/+-]*?)\s+counter/i);
+    if (m) kind = m[1].trim();
+  }
+  if (!qty || Number.isNaN(qty)) {
+    const mq = lbl.match(/\bx\s*(\d+)\b/i);
+    qty = mq ? Number(mq[1]) : 1;
+  }
+  if (!kind) return null;
+  return { kind, qty: Math.max(1, qty) };
+}
+
+/** Prefill Apply tab for a counter action (+1/+1 also sets PT +1/+1). */
+function prefillApplyForCounter(kind, qty){
+  setTab('apply');
+  const togglesHost = STATE.root.querySelector('[data-effect="toggles"]');
+  if (!togglesHost) return;
+
+  const countersChk = togglesHost.querySelector('input[type="checkbox"][data-eff="counters"]');
+  if (countersChk && !countersChk.checked) countersChk.checked = true;
+
+  const isPlusOne = /^\s*\+1\s*\/\s*\+1\s*$/i.test(kind);
+  if (isPlusOne) {
+    const ptChk = togglesHost.querySelector('input[type="checkbox"][data-eff="pt"]');
+    if (ptChk && !ptChk.checked) ptChk.checked = true;
+  }
+  rebuildEffectSections();
+
+  const kindI = STATE.root.querySelector('input[data-apply="counterKind"]');
+  const qtyI  = STATE.root.querySelector('input[data-apply="counterQty"]');
+  if (kindI) kindI.value = kind;
+  if (qtyI)  qtyI.value  = String(qty);
+  if (isPlusOne) {
+    const powI = STATE.root.querySelector('input[data-pt="pow"]');
+    const touI = STATE.root.querySelector('input[data-pt="tou"]');
+    if (powI) powI.value = '1';
+    if (touI) touI.value = '1';
+  }
+  try { kindI?.focus(); } catch{}
+}
+
+/** NEW: Prefill Apply tab for a "Grant XYZ" action. */
+function prefillApplyForGrantAbility(ability){
+  const nice = titleCaseWords(ability);
+  setTab('apply');
+  // ensure ability toggle on & section rendered
+  const abilityChk = STATE.root.querySelector('input[type="checkbox"][data-eff="ability"]');
+  if (abilityChk && !abilityChk.checked) abilityChk.checked = true;
+  rebuildEffectSections();
+  // write the ability text
+  const input = STATE.root.querySelector('input[data-apply="ability"]');
+  if (input) {
+    input.value = nice;
+    try { input.focus(); } catch{}
+  }
+}
+
+// Render buttons (with cleaned labels)
+STATE.lastQuickActions.forEach((a, i) => {
+  const btn = make('button', 'btn', cleanActionLabel(a.label));
+  btn.type = 'button';
+  btn.dataset.qidx = String(i);
+  act.appendChild(btn);
+});
+
+if (!act._delegated) {
+  act.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button.btn[data-qidx]');
+    if (!btn) return;
+    const idx = Number(btn.dataset.qidx);
+    const a = (STATE.lastQuickActions || [])[idx];
+    if (!a) return;
+
+    const rawType = String(a?.type || '').toLowerCase().replace(/[\s-]+/g,'_');
+    const label   = String(a?.label || '');
+    const labelClean = cleanActionLabel(label);
+    const d       = a.data || {};
+
+    // 1) COUNTERS
+    const parsed = parseCounterAction(a);
+    if (parsed) {
+      console.log('[QuickAction] Counter detected:', parsed);
+      prefillApplyForCounter(parsed.kind, parsed.qty);
+      return;
+    }
+
+    // 2) TOKENS
+    const looksLikeToken =
+      rawType === 'token' ||
+      rawType === 'create_token' ||
+      rawType === 'spawn_token' ||
+      /\bcreate\b/i.test(labelClean);
+
+    if (looksLikeToken) {
+      const meta = deriveTokenMeta(a); // { name, qty, colors[], abilities[] }
+      try {
+        openAnyCardOverlayPrefilled(meta);
+      } catch (err) {
+        console.warn('[QuickAction] openAnyCardOverlayPrefilled failed, trying broadcast', err);
+        window.dispatchEvent(new CustomEvent('open-any-card-overlay', {
+          detail: { search: meta.name, qty: meta.qty, colors: meta.colors, abilities: meta.abilities }
+        }));
+      }
+      return;
+    }
+
+    // 3) GRANT ABILITY (e.g., "Grant Flying", "Grant Double Strike")
+    const mGrant = labelClean.match(/^\s*grant\s+(.+?)\s*$/i);
+    if (rawType === 'grant_ability' || mGrant) {
+      const abil = (d.ability || d.effect || (mGrant ? mGrant[1] : '') || '').trim();
+      if (abil) {
+        console.log('[QuickAction] Grant ability:', abil);
+        prefillApplyForGrantAbility(abil);
+        return;
+      }
+    }
+
+    console.log('[Scan Action] (no route yet, raw action):', a);
+  });
+  act._delegated = true;
+}
+
+
+
+
+
+
+
+  console.log('[Scan] Detected', { detectedFlags, quickActions, tokens, counters });
+}
+
+
+
+  // --- Mana render helper (prefers global; falls back to dynamic import) ---
+  async function manaHtml(str){
+    const s = String(str || '');
+    if (!s) return '';
+    // 1) global
+    if (window.ManaMaster?.manaCostHtml) return window.ManaMaster.manaCostHtml(s);
+    // 2) dynamic import (try both casings)
+    try {
+      const mod = await import('./mana.master.js').catch(async () => await import('./mana.Master.js'));
+      if (mod?.manaCostHtml) return mod.manaCostHtml(s);
+      if (window.ManaMaster?.manaCostHtml) return window.ManaMaster.manaCostHtml(s);
+    } catch {}
+    return s; // fallback plain text
+  }
+
+
+  function openForCard(elOrCid){
+    ensure();
+    const el = typeof elOrCid === 'string' ? document.querySelector(`.table-card[data-cid="${elOrCid}"]`) : elOrCid;
+    const cid = el?.dataset?.cid || String(elOrCid || '');
+    STATE.activeCid = cid || null;
+
+    const img = STATE.root.querySelector('.preview img');
+    img.src = el?.src || '';
+    img.alt = el?.title || 'Card';
+    STATE.root.querySelector('.preview .cap').textContent = el?.title || '';
+    STATE.root.querySelector('.cid').textContent = cid ? `cid: ${cid}` : '';
+
+        setTab('scan');
+    rebuildTargets('mine'); // default to showing "My cards" in Apply tab
+    setVisible(true);
+
+    // auto-run initial scan so the user doesn't have to press Rescan
+    // (this will also hydrate oracle text internally)
+    runScanForActiveCard();
+
+
+
+  }
+
+  function close(){
+    setVisible(false);
+    STATE.activeCid = null;
+    setRadialVisible(false);
+  }
+
+  function ensure(){ injectCSS(); if (!STATE.root) makeRoot(); if (!STATE.mounted){ STATE.mounted = true; } }
+  function mount(){ ensure(); }
+
+  // ---------------- Radial picker ----------------
+  function setRadialVisible(v){ STATE.root.querySelector('.radialBack')?.setAttribute('aria-hidden', v ? 'false':'true'); }
+
+  function openRadial(key){
+    const rBack = STATE.root.querySelector('.radialBack');
+    const rad = rBack.querySelector('.radial');
+    // ... (radial code)
+    setRadialVisible(true);
+  }
+
+  // --------- Effect sections (render on toggle) ---------
+  function buildPTSection(){
+    const wrap = document.createElement('div');
+    wrap.className = 'group';
+    wrap.innerHTML = `
+      <div class="label">Power / Toughness</div>
+      <div class="ptStack">
+        <div>
+          <div class="label" style="margin-bottom:4px;">Power</div>
+          <div class="ptRow">
+            <button class="btn" data-pt="-pow">−</button>
+            <input class="ipt" data-pt="pow" value="0" />
+            <button class="btn" data-pt="+pow">+</button>
+          </div>
+        </div>
+        <div>
+          <div class="label" style="margin-bottom:4px;">Toughness</div>
+          <div class="ptRow">
+            <button class="btn" data-pt="-tou">−</button>
+            <input class="ipt" data-pt="tou" value="0" />
+            <button class="btn" data-pt="+tou">+</button>
+          </div>
+        </div>
+      </div>
+    `;
+    return wrap;
+  }
+
+  function buildAbilitySection(){
+    const wrap = document.createElement('div');
+    wrap.className = 'group';
+    wrap.innerHTML = `
+      <div class="label">Ability</div>
+      <div style="display:flex; gap:6px;">
+        <input class="ipt" data-apply="ability" placeholder="e.g. flying"/>
+        <button class="btn" data-radial="+ability">+</button>
+        <button class="btn" data-radial="-ability">-</button>
+      </div>
+    `;
+    return wrap;
+  }
+
+  function buildTypeSection(){
+    const wrap = document.createElement('div');
+    wrap.className = 'group';
+    wrap.innerHTML = `
+      <div class="label">Type</div>
+      <div style="display:flex; gap:6px;">
+        <input class="ipt" data-apply="grantType" placeholder="e.g. Elf"/>
+        <button class="btn" data-radial="+grantType">+</button>
+        <button class="btn" data-radial="-grantType">-</button>
+      </div>
+    `;
+    return wrap;
+  }
+
+  function buildCountersSection(){
+    const wrap = document.createElement('div');
+    wrap.className = 'group';
+    wrap.innerHTML = `
+      <div class="label">Counters</div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+        <input class="ipt" data-apply="counterKind" placeholder="e.g. +1/+1" style="flex:1; min-width:180px;"/>
+        <input class="ipt" data-apply="counterQty" value="1" style="width:84px;"/>
+        <button class="btn" data-radial="+manCounter">+</button>
+        <button class="btn" data-radial="-manCounter">-</button>
+      </div>
+    `;
+    return wrap;
+  }
+
+  function rebuildEffectSections(){
+    const host = STATE.root?.querySelector('[data-apply="effect-sections"]');
+    if (!host) return;
+    host.innerHTML = '';
+
+    const toggles = STATE.root.querySelectorAll('[data-effect="toggles"] input[type="checkbox"]');
+    const on = new Set(Array.from(toggles).filter(i=>i.checked).map(i=>i.getAttribute('data-eff')));
+
+    // Order: PT, Ability, Type, Counters (compact & predictable)
+    if (on.has('pt'))       host.appendChild(buildPTSection());
+    if (on.has('ability'))  host.appendChild(buildAbilitySection());
+    if (on.has('type'))     host.appendChild(buildTypeSection());
+    if (on.has('counters')) host.appendChild(buildCountersSection());
+  }
+
+
+  // --------- Target collection & rebuild ---------
+  function getMySeat(){
+    try { return Number(window.mySeat?.() ?? 1); } catch { return 1; }
+  }
+
+  function collectTableCards(){
+    const nodes = Array.from(document.querySelectorAll('img.table-card'));
+    return nodes.map(el => ({
+      cid:   el?.dataset?.cid || '',
+      owner: Number(el?.dataset?.owner || NaN),
+      title: el?.title || 'Card',
+      img:   el?.src || '',
+      el
+    }));
+  }
+
+  function collectDeck(){
+    try {
+      const list = (window.DeckAccess?.enumerate?.() || []);
+      return list.map((c,i) => ({
+        cid: '', owner: -1, title: c.name || `Card ${i+1}`, img: c.img || '', el: null
+      }));
+    } catch { return []; }
+  }
+
+  // Build a friendly summary string for middle column:
+  // "Legendary Elder Dragon • Flying, Hexproof, Menace"
+  function _summarizeAttrsForRow(cardDbg){
+  if (!cardDbg) return '';
+
+  // ---- 1. TYPES ----
+  // Expect something like ["Legendary","Creature","Elder","Dragon"]
+  const typesArr = Array.isArray(cardDbg.types)
+    ? cardDbg.types.slice()
+    : [];
+
+  // We'll turn that into "Legendary Creature Elder Dragon"
+  const cleanTypes = typesArr.join(' ').trim();
+
+  // ---- 2. ABILITIES / KEYWORDS / BADGES ----
+  // Different parts of the code may stash abilities in different shapes:
+  // - arrays: ["Flying","Hexproof"]
+  // - objects: { Flying:true, Vigilance:true }
+  // - nested props like grantedAbilities, flags, keywords, etc.
+  //
+  // We’re going to sweep several likely buckets AND accept object-style maps.
+
+  const abilityBucketsToCheck = [
+    'abilities',
+    'keywords',
+    'flags',
+    'grantedAbilities',
+    'keywordAbilities',
+    'staticAbilities',
+    'badges',            // just in case Badges._storeDebug puts them here
+    'status'
+  ];
+
+  const abilFound = [];
+
+  // helper: push array items
+  function takeArray(arr){
+    arr.forEach(v => {
+      const label = String(v || '').trim();
+      if (!label) return;
+      abilFound.push(label);
+    });
+  }
+
+  // helper: push keys of an object where the value is truthy
+  function takeObject(obj){
+    Object.keys(obj).forEach(key => {
+      // ignore obvious non-ability state-y things if needed
+      // (summoning sickness, etc. can be noisy in this row)
+      const lower = key.toLowerCase();
+      if (
+        lower.includes('summon') ||
+        lower.includes('sick') ||
+        lower.includes('tapped') ||
+        lower.includes('pt') ||
+        lower.includes('power') ||
+        lower.includes('tough') ||
+        lower.includes('owner')
+      ){
+        return;
+      }
+      if (obj[key]) {
+        const label = String(key || '').trim();
+        if (label) abilFound.push(label);
+      }
+    });
+  }
+
+  // sweep buckets
+  abilityBucketsToCheck.forEach(bucket => {
+    const val = cardDbg[bucket];
+    if (!val) return;
+    if (Array.isArray(val)) {
+      takeArray(val);
+    } else if (typeof val === 'object') {
+      takeObject(val);
+    }
+  });
+
+  // also catch super-obvious single-boolean shapes like { flying:true }
+  // just in case debug is something like { flying:true, haste:false }
+  Object.keys(cardDbg).forEach(k => {
+    const v = cardDbg[k];
+    if (typeof v === 'boolean' && v === true) {
+      // keys like "flying", "deathtouch", "menace"
+      const lower = k.toLowerCase();
+      // filter out non-combat-y booleans
+      if (
+        lower === 'flying' ||
+        lower === 'menace' ||
+        lower === 'deathtouch' ||
+        lower === 'firststrike' ||
+        lower === 'first_strike' ||
+        lower === 'doublestrike' ||
+        lower === 'double_strike' ||
+        lower === 'hexproof' ||
+        lower === 'indestructible' ||
+        lower === 'lifelink' ||
+        lower === 'trample' ||
+        lower === 'vigilance' ||
+        lower === 'reach' ||
+        lower === 'haste'
+      ){
+        abilFound.push(k.replace(/[_]/g,' '));
+      }
+    }
+  });
+
+  // normalize, dedupe, capitalize nicely
+  const cleanAbils = Array.from(new Set(
+    abilFound.map(a => {
+      return String(a)
+        .trim()
+        .replace(/\s+/g,' ')
+        .replace(/^\s+|\s+$/g,'')
+        .replace(/\b\w/g, m => m.toUpperCase()); // Flying -> Flying, double_strike -> Double_Strike -> Double_Strike -> Double_Strike (close enough)
+    })
+  ))
+  .join(', ')
+  .trim();
+
+  // ---- 3. COMBINE ----
+  if (cleanTypes && cleanAbils){
+    // ex: "Legendary Creature Elder Dragon • Flying, Hexproof"
+    return `${cleanTypes} • ${cleanAbils}`;
+  }
+  if (cleanTypes){
+    return cleanTypes;
+  }
+  if (cleanAbils){
+    return cleanAbils;
+  }
+  return '';
+}
+
+
+
+  // helper to safely read PT for right column
+  function _ptForRow(cardDbg){
+    if (!cardDbg) return '';
+    return cardDbg.ptFinal || '';
+  }
+
+  // Inject card preview clone into the right-side Preview pane.
+  // We don't make it draggable, and we don't spawn floating badges there
+  // (your Badges module positions panels as fixed in viewport and chases rAF).
+  // We'll just show the card art element clone for now so it's obvious.
+  function setPreviewCard(cid){
+  const shell = STATE.root?.querySelector('[data-apply="previewCardShell"]');
+  const msg   = STATE.root?.querySelector('[data-apply="previewCardMsg"]');
+  if (!shell) return;
+
+  // Clear previous preview content
+  shell.innerHTML = '';
+
+  // Get the live card from the table
+  const live = document.querySelector(`img.table-card[data-cid="${cid}"]`);
+  if (!live){
+    const fallback = document.createElement('div');
+    fallback.style.color = 'var(--mut)';
+    fallback.style.fontSize = '12px';
+    fallback.style.padding = '12px';
+    fallback.textContent = 'Card not found on table.';
+    shell.appendChild(fallback);
+    return;
+  }
+
+  // Clone the real table card <img>
+  const clone = live.cloneNode(true);
+
+  // We WANT all its data-* so Badges/PT sticker logic sees exactly
+  // the same power/toughness, abilities, granted types, etc.
+  // BUT we do NOT want it to behave like a draggable board piece.
+
+  // Remove the gameplay class so table layout CSS (absolute pos, transforms)
+  // doesn't yank it out of our frame.
+  clone.classList.remove('table-card');
+
+  // Force safe inline layout
+  clone.style.position = 'static';
+  clone.style.left = 'auto';
+  clone.style.top = 'auto';
+  clone.style.transform = 'none';
+  clone.style.rotate = live.style.rotate || '';
+  clone.style.maxWidth = '100%';
+  clone.style.height = 'auto';
+  clone.style.pointerEvents = 'none'; // no dragging / clicking
+  clone.draggable = false;
+  clone.setAttribute('draggable','false');
+
+  // Frame wrapper so it sits nicely in the preview box
+  const frame = document.createElement('div');
+  frame.style.position = 'relative';
+  frame.style.display = 'flex';
+  frame.style.alignItems = 'center';
+  frame.style.justifyContent = 'center';
+  frame.style.width = '100%';
+  frame.style.minHeight = '200px';
+  frame.style.padding = '12px';
+  frame.style.background = '#000';
+  frame.style.border = '1px solid var(--line)';
+  frame.style.borderRadius = '12px';
+  frame.appendChild(clone);
+
+  shell.appendChild(frame);
+
+  // NOW: paint badges / PT sticker on this clone.
+  // We try Badges.render(el) first. If that's not available, fall back to
+  // Badges.refreshFor(cid) which normally re-reads data for that cid.
+  try {
+    if (window.Badges?.render) {
+      window.Badges.render(clone);
+    } else if (window.Badges?.refreshFor) {
+      // this one usually looks up by cid and positions overlays based on getBoundingClientRect
+      window.Badges.refreshFor(cid);
+    }
+  } catch(err){
+    console.warn('[PreviewCard] badge render failed', err);
+  }
+
+  // OPTIONAL: if Tooltips auto-attach rules text overlays,
+  // we don't want hover behavior in preview. We already set pointerEvents:none
+  // on the <img>, so it shouldn't pop hover tooltips anyway.
+}
+
+
+  function rebuildTargets(scope){
+    const host = STATE.root?.querySelector('[data-apply="list"]');
+    if (!host) return;
+    host.innerHTML = '';
+
+    const me = getMySeat();
+    const all = collectTableCards();
+
+    let rows = [];
+    if (scope === 'deck') {
+      rows = collectDeck();
+    } else if (scope === 'mine') {
+      rows = all.filter(r => Number(r.owner) === me);
+    } else if (scope === 'opp') {
+      rows = all.filter(r => Number(r.owner) && Number(r.owner) !== me);
+    } else {
+      // "both" OR anything else we don't recognize
+      rows = all;
+    }
+
+    rows.forEach(r => {
+      // pull live badge summary if we have a cid
+      let dbg = null;
+      if (r.cid && window.badgesForCid) {
+        try {
+          dbg = window.badgesForCid(r.cid);
+        } catch {
+          dbg = null;
+        }
+      }
+
+      const midText = _summarizeAttrsForRow(dbg);
+      const ptText  = _ptForRow(dbg);
+
+      // row wrapper
+      const rowDiv = document.createElement('div');
+      rowDiv.className = 'targetRow';
+
+      // LEFT chunk (checkbox + img + name)
+      const leftLab = document.createElement('label');
+      leftLab.className = 'tLeft';
+
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.setAttribute('data-target-cid', r.cid || '');
+      leftLab.appendChild(check);
+
+      if (r.img) {
+        const art = document.createElement('img');
+        art.src = r.img;
+        art.alt = r.title || '';
+        leftLab.appendChild(art);
+      }
+
+      const nm = document.createElement('span');
+      nm.className = 'tName';
+      nm.textContent = r.title || (r.cid || 'Card');
+      leftLab.appendChild(nm);
+
+      rowDiv.appendChild(leftLab);
+
+      // MIDDLE chunk (types / abilities summary, ellipsis)
+      const mid = document.createElement('div');
+      mid.className = 'tMid';
+      mid.textContent = midText || '';
+      if (midText) {
+        mid.title = midText; // hover to read full text
+      }
+      rowDiv.appendChild(mid);
+
+      // RIGHT chunk (PT + 👁)
+      const right = document.createElement('div');
+      right.className = 'tRight';
+
+      const ptSpan = document.createElement('div');
+      ptSpan.className = 'tPT';
+      ptSpan.textContent = ptText || '';
+      right.appendChild(ptSpan);
+
+      const eyeBtn = document.createElement('button');
+      eyeBtn.type = 'button';
+      eyeBtn.className = 'eyeBtn';
+      eyeBtn.textContent = '👁';
+      eyeBtn.setAttribute('data-preview-cid', r.cid || '');
+      eyeBtn.title = 'Preview this card';
+      eyeBtn.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        const cid = eyeBtn.getAttribute('data-preview-cid');
+        if (cid) setPreviewCard(cid);
+      });
+      right.appendChild(eyeBtn);
+
+      rowDiv.appendChild(right);
+
+      host.appendChild(rowDiv);
+    });
+
+    console.log('[Overlay] targets rebuilt:', scope, rows.length);
+  }
+
+
+  // expose for badges
+  window.CardOverlayUI = window.CardOverlayUI || { mount, openForCard, close };
+
+  return { mount, openForCard, close };
+})();

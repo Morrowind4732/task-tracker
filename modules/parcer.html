@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>MTG Oracle Parser Debugger v1.7</title>
+<style>
+  body {
+    background:#0f172a;
+    color:#f8fafc;
+    font-family:system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    margin:0;
+    padding:1rem;
+  }
+  h2 {
+    margin:0 0 .75rem;
+    font-size:1rem;
+    font-weight:600;
+    color:#f8fafc;
+  }
+  .top-row {
+    display:flex;
+    flex-wrap:wrap;
+    gap:.5rem;
+    align-items:flex-start;
+    margin-bottom:1rem;
+  }
+  .input-box {
+    padding:.4rem .5rem;
+    width:260px;
+    background:#0f172a;
+    color:#f8fafc;
+    border:1px solid #334155;
+    border-radius:.4rem;
+    font-size:.85rem;
+    line-height:1.2;
+  }
+  .input-box:focus {
+    outline:none;
+    border-color:#38bdf8;
+    box-shadow:0 0 0 2px rgb(56 189 248 / .25);
+  }
+  button {
+    cursor:pointer;
+    background:#38bdf8;
+    color:#0f172a;
+    border:0;
+    font-size:.8rem;
+    font-weight:600;
+    border-radius:.4rem;
+    line-height:1;
+    padding:.6rem .8rem;
+  }
+  button.secondary {
+    background:transparent;
+    color:#38bdf8;
+    border:1px solid #38bdf8;
+  }
+  button:active { transform:scale(.98); }
+
+  .layout-top {
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:1rem;
+    margin-bottom:1rem;
+  }
+  @media(max-width:900px){
+    .layout-top { grid-template-columns:1fr; }
+  }
+
+  .panel {
+    background:#1e253a;
+    border:1px solid #334155;
+    border-radius:.5rem;
+    padding:1rem;
+  }
+
+  .section-title {
+    font-size:.8rem;
+    font-weight:600;
+    color:#94a3b8;
+    text-transform:uppercase;
+    margin-bottom:.5rem;
+  }
+
+  .card-name {
+    font-size:1rem;
+    font-weight:600;
+    color:#f8fafc;
+    margin-bottom:.5rem;
+  }
+
+  .oracle-text-block {
+    white-space:pre-wrap;
+    background:#0f172a;
+    border:1px solid #334155;
+    border-radius:.4rem;
+    padding:.75rem .75rem .5rem;
+    font-size:.8rem;
+    line-height:1.4;
+    color:#f8fafc;
+  }
+
+  .err-line {
+    color:#f87171;
+    font-size:.8rem;
+    margin-top:.5rem;
+    min-height:1em;
+    word-break:break-word;
+  }
+
+  .parsed-section {
+    background:#0f172a;
+    border:1px solid #334155;
+    border-radius:.5rem;
+    padding:.75rem .75rem .5rem;
+    font-size:.8rem;
+    color:#f8fafc;
+    margin-bottom:.75rem;
+  }
+  .parsed-section-header {
+    font-size:.75rem;
+    color:#facc15;
+    font-weight:600;
+    margin-bottom:.5rem;
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:space-between;
+  }
+  .parsed-raw {
+    background:rgba(148,163,184,.08);
+    border:1px solid rgba(148,163,184,.2);
+    border-radius:.4rem;
+    padding:.5rem .6rem;
+    line-height:1.4;
+    white-space:pre-wrap;
+    margin-bottom:.5rem;
+  }
+
+  .kv-grid {
+    display:grid;
+    grid-template-columns:max-content 1fr;
+    column-gap:.75rem;
+    row-gap:.4rem;
+  }
+  .kv-key {
+    color:#94a3b8;
+    font-size:.7rem;
+    line-height:1.4;
+    white-space:nowrap;
+  }
+  .kv-val {
+    color:#f8fafc;
+    font-size:.8rem;
+    line-height:1.4;
+    word-break:break-word;
+  }
+  .dim { opacity:.6; }
+
+  /* Resolution Builder styling */
+  .builder-panel {
+    background:#1e253a;
+    border:1px solid #334155;
+    border-radius:.5rem;
+    padding:1rem;
+    margin-bottom:2rem;
+  }
+
+  .builder-header-row {
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:space-between;
+    align-items:flex-start;
+    margin-bottom:.75rem;
+  }
+  .builder-header-left {
+    font-size:.8rem;
+    font-weight:600;
+    color:#94a3b8;
+    text-transform:uppercase;
+  }
+  .builder-header-right button {
+    font-size:.7rem;
+    line-height:1;
+    padding:.5rem .6rem;
+    border-radius:.4rem;
+  }
+
+  .builder-table-wrapper {
+    overflow-x:auto;
+  }
+
+  table.builder-table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:.75rem;
+    color:#f8fafc;
+    min-width:800px;
+  }
+
+  table.builder-table thead {
+    background:#0f172a;
+    color:#94a3b8;
+  }
+
+  table.builder-table th {
+    text-align:left;
+    padding:.5rem;
+    border-bottom:1px solid #334155;
+    font-weight:500;
+    white-space:nowrap;
+    font-size:.7rem;
+  }
+
+  table.builder-table td {
+    vertical-align:top;
+    padding:.5rem;
+    border-bottom:1px solid #334155;
+    position:relative; /* for suggestion dropdown anchoring */
+  }
+
+  /* Input cells */
+  .builder-input {
+    width:100%;
+    background:#0f172a;
+    color:#f8fafc;
+    border:1px solid #475569;
+    border-radius:.4rem;
+    font-size:.7rem;
+    line-height:1.2;
+    padding:.4rem .5rem;
+    box-sizing:border-box;
+  }
+  .builder-input:focus {
+    outline:none;
+    border-color:#38bdf8;
+    box-shadow:0 0 0 2px rgb(56 189 248 / .25);
+  }
+
+  .group-tag-input {
+    width:3rem;
+    text-align:center;
+    font-weight:600;
+    background:#0f172a;
+    color:#38bdf8;
+    border:1px solid #38bdf8;
+  }
+
+  .row-controls {
+    display:flex;
+    gap:.5rem;
+    flex-wrap:wrap;
+    margin-top:.4rem;
+  }
+  .row-controls button {
+    background:transparent;
+    border:1px solid #475569;
+    color:#94a3b8;
+    font-size:.6rem;
+    padding:.3rem .4rem;
+    border-radius:.4rem;
+    line-height:1;
+    cursor:pointer;
+  }
+  .row-controls button:active {
+    transform:scale(.97);
+  }
+
+  .small-note {
+    color:#94a3b8;
+    font-size:.65rem;
+    line-height:1.3;
+    margin-top:.75rem;
+  }
+
+  /* Suggestion dropdown */
+  .suggest-box {
+    position:absolute;
+    left:0;
+    right:0;
+    top:calc(100% + 2px);
+    background:#0f172a;
+    border:1px solid #475569;
+    border-radius:.4rem;
+    box-shadow:0 8px 16px rgb(0 0 0 / .6);
+    z-index:9999;
+    max-height:140px;
+    overflow-y:auto;
+    font-size:.7rem;
+    line-height:1.3;
+    display:none;
+  }
+
+  .suggest-item {
+    padding:.4rem .5rem;
+    cursor:pointer;
+    border-bottom:1px solid #1e253a;
+    color:#f8fafc;
+    white-space:nowrap;
+    text-overflow:ellipsis;
+    overflow:hidden;
+  }
+  .suggest-item:last-child {
+    border-bottom:0;
+  }
+  .suggest-item:hover {
+    background:#1e253a;
+  }
+  
+    /* chip bar under each cell */
+  .chip-bar {
+    display:flex;
+    flex-wrap:wrap;
+    gap:.4rem;
+    margin-top:.5rem;
+  }
+  .chip-btn {
+    background:#0f172a;
+    border:1px solid #475569;
+    border-radius:.4rem;
+    color:#94a3b8;
+    font-size:.6rem;
+    line-height:1.2;
+    padding:.3rem .4rem;
+    cursor:pointer;
+    user-select:none;
+  }
+  .chip-btn.active {
+    background:#38bdf8;
+    border-color:#38bdf8;
+    color:#0f172a;
+    font-weight:600;
+  }
+
+</style>
+</head>
+<body>
+<h2>Oracle Parser Debugger v1.7</h2>
+
+<div class="top-row">
+  <input id="cardNameInput" class="input-box" type="text" placeholder='e.g. "Ashnod&#39;s Cylix"'>
+  <button id="btnLoad">Load Card</button>
+  <button id="btnRandom" class="secondary">Random</button>
+</div>
+
+<!-- Top layout: Card + Parsed -->
+<div class="layout-top">
+  <div class="panel">
+    <div class="section-title">Card</div>
+    <div id="cardName" class="card-name">–</div>
+    <div id="oracleText" class="oracle-text-block">No card loaded.</div>
+    <div id="errLine" class="err-line"></div>
+  </div>
+
+  <div class="panel">
+    <div class="section-title">Parsed</div>
+    <div id="parsedSections">
+      <div class="dim" style="font-size:.8rem;">No parsed sections yet.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom layout: Resolution Builder -->
+<div class="builder-panel">
+  <div class="builder-header-row">
+    <div class="builder-header-left">
+      Resolution Builder (Manual Linking / Execution Rows)
+    </div>
+    <div class="builder-header-right">
+      <button id="btnAddRow" class="secondary">+ Add Row</button>
+    </div>
+  </div>
+
+  <div class="builder-table-wrapper">
+    <table class="builder-table">
+      <thead>
+        <tr>
+          <th>link</th>
+          <th>target</th>
+          <th>action(s)</th>
+          <th>grants / result</th>
+          <th>duration</th>
+          <th>condition / requirement</th>
+          <th>activation cost</th>
+          <th>notes</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="builderRows">
+        <!-- rows dynamically injected -->
+      </tbody>
+    </table>
+  </div>
+
+  <div class="small-note">
+    link = tie rows together (e.g. "A" for all effects that resolve at the same time).<br/>
+    Start typing in any cell to see card-specific suggestions. Tap a suggestion to fill it.
+  </div>
+</div>
+
+<script>
+// --------------------------------------------------
+// GLOBAL STATE
+// --------------------------------------------------
+let builderRowsData = [];
+let suggestionPools = {
+  target: [],
+  actions: [],
+  grants: [],
+  duration: [],
+  condition: [],
+  activationCost: [],
+  notes: []
+};
+
+// --------------------------------------------------
+// PARSER LOGIC
+// --------------------------------------------------
+const ACTION_VERBS = [
+  "move","create","put","puts","gets","gain","gains","loses","has","deals",
+  "draw","draws","discard","return","destroy","exile","exiles","fight",
+  "search","reveal","look","looks","add {","becomes","transform","sacrifice","create a"
+];
+
+const TEMPORAL_KEYWORDS = [
+  "when","whenever","during","at the beginning","at the beginning of",
+  "until end of turn","until your next turn","until the end of turn"
+];
+
+const PAYMENT_BASE_VERBS = [
+  "you may pay",
+  "you may sacrifice",
+  "you may discard",
+  "you may tap",
+  "pay",
+  "sacrifice",
+  "discard",
+  "rather than pay",
+  "instead of paying",
+  "as an additional cost to cast"
+];
+
+const TARGET_PATTERNS = [
+  "target creature",
+  "target creature card",
+  "target permanent",
+  "target opponent",
+  "target player",
+  "target card",
+  "target artifact",
+  "target spell",
+  "target planeswalker",
+  "target enchantment",
+  "target nonland permanent"
+];
+
+const QUANTIFIER_KEYWORDS = [
+  "each",
+  "for each",
+  "another",
+  "other",
+  "one or more",
+  "the rest",
+  "one of",
+  "top three",
+  "top two",
+  "top four",
+  "top five"
+];
+
+const DURATION_KEYWORDS = [
+  "until end of turn",
+  "until your next turn",
+  "until the end of turn"
+];
+
+const SUBJECT_PATTERNS = [
+  "you",
+  "you've",
+  "this creature",
+  "this permanent",
+  "this card",
+  "this spell",
+  "it",
+  "that creature",
+  "that player",
+  "that permanent",
+  "an opponent",
+  "an opponent's",
+  "each opponent"
+];
+
+const CHOICE_PATTERNS = [
+  "choose",
+  "choice",
+  "of your choice",
+  "you may",
+  "may"
+];
+
+const ABILITY_KEYWORDS = [
+  "flying",
+  "first strike",
+  "double strike",
+  "menace",
+  "lifelink",
+  "trample",
+  "hexproof",
+  "indestructible",
+  "protection",
+  "haste",
+  "reach",
+  "vigilance",
+  "deathtouch",
+  "defender"   // ✅ now detected from oracle text
+];
+
+
+
+const CONNECTOR_PATTERNS = [
+  "then",
+  "and",
+  "or",
+  "if you do",
+  "otherwise"
+];
+
+const CONDITION_OPENERS = [
+  "if ",
+  "if you",
+  "if you'",
+  "if an opponent",
+  "as long as",
+  "while ",
+  "unless",
+  "so long as"
+];
+
+const TIME_SCOPES = [
+  "this turn",
+  "this combat",
+  "this step",
+  "this end step",
+  "this upkeep",
+  "this main phase",
+  "this phase",
+  "this attack",
+  "this block",
+  "this declare blockers step",
+  "this combat phase",
+  "this player's next end step",
+  "your next end step",
+  "your next turn",
+  "until end of turn"
+];
+
+function uniqueClean(arr){
+  return [...new Set(arr.map(x=>x.trim()).filter(Boolean))];
+}
+function collectMatches(str, list){
+  const low = str.toLowerCase();
+  return uniqueClean(list.filter(p => low.includes(p.toLowerCase())));
+}
+function findActivationCost(txt){
+  const m = txt.match(/^([^:]+):/);
+  if(!m) return null;
+  const possible = m[1].trim();
+  if (/[{]/.test(possible) ||
+      /\btap\b/i.test(possible) ||
+      /\bsacrifice\b/i.test(possible) ||
+      /\bdiscard\b/i.test(possible) ||
+      /\bpay\b/i.test(possible)){
+    return possible;
+  }
+  return null;
+}
+function findTransfer(txt){
+  const low = txt.toLowerCase();
+  const fromIdx1 = low.indexOf(" from ");
+  const ontoIdx1 = low.indexOf(" onto ");
+  if(fromIdx1 !== -1 && ontoIdx1 !== -1 && ontoIdx1 > fromIdx1){
+    const fromPart = txt.slice(fromIdx1+6, ontoIdx1).trim();
+    let rest = txt.slice(ontoIdx1+6).trim();
+    const dot = rest.indexOf(".");
+    if(dot !== -1) rest = rest.slice(0, dot).trim();
+    return { from: fromPart, to: rest };
+  }
+  const m = txt.match(/from\s+([^.,;]+?)\s+to\s+([^.,;]+?)([.,;]|$)/i);
+  if(m){
+    return {
+      from: m[1].trim(),
+      to:   m[2].trim()
+    };
+  }
+  return null;
+}
+function findNumericQuantifiers(txt){
+  const q = [];
+  const re = /\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+or\s+(more|less|fewer)\b/gi;
+  let m;
+  while((m = re.exec(txt)) !== null){
+    q.push((m[1] + " or " + m[2]).trim());
+  }
+  return q;
+}
+function findConditions(txt){
+  const lowersrc = txt.toLowerCase();
+  const conds = [];
+  for (const opener of CONDITION_OPENERS){
+    let idx = lowersrc.indexOf(opener.toLowerCase());
+    while (idx !== -1){
+      let rest = txt.slice(idx).trim();
+      let stop = rest.search(/[.,]/);
+      if (stop === -1) stop = rest.length;
+      const clause = rest.slice(0, stop).trim();
+      conds.push(clause);
+      idx = lowersrc.indexOf(opener.toLowerCase(), idx + opener.length);
+    }
+  }
+  return uniqueClean(conds);
+}
+function findConnectors(txt){
+  const low = txt.toLowerCase();
+  let hits = [];
+  for (const c of CONNECTOR_PATTERNS){
+    if (low.includes(c.toLowerCase())) hits.push(c);
+  }
+  hits = hits.filter(conn => {
+    if (conn.toLowerCase() !== "or") return true;
+    // keep "or" only if it's actually branching, not "or more"
+    const orRegex = /\bor\b\s+([a-z]+)/gi;
+    let m;
+    let keepOr = false;
+    while ((m = orRegex.exec(low)) !== null){
+      const nxt = (m[1]||"").toLowerCase();
+      if (["more","less","fewer"].includes(nxt)) {
+        // quantifier context, skip
+      } else {
+        keepOr = true;
+      }
+    }
+    return keepOr;
+  });
+  return uniqueClean(hits);
+}
+function findPayments(txt){
+  const hits = [];
+  const youMayRe = /\byou may (pay|sacrifice|discard|tap)[^.,;]+/gi;
+  const m1 = txt.match(youMayRe) || [];
+  hits.push(...m1);
+  const addCostRe = /\bas an additional cost to cast[^.,;]+/gi;
+  const m2 = txt.match(addCostRe) || [];
+  hits.push(...m2);
+  return uniqueClean(hits);
+}
+function findChoices(txt){
+  return collectMatches(txt, CHOICE_PATTERNS);
+}
+function findQuantifiers(txt){
+  const base = collectMatches(txt, QUANTIFIER_KEYWORDS);
+  const dyn  = findNumericQuantifiers(txt);
+  return uniqueClean([...base, ...dyn]);
+}
+function findActions(txt){
+  return collectMatches(txt, ACTION_VERBS);
+}
+function findDurations(txt){
+  return collectMatches(txt, DURATION_KEYWORDS);
+}
+function findTemporal(txt){
+  return collectMatches(txt, TEMPORAL_KEYWORDS);
+}
+function findSubjects(txt, cardName, targets){
+  let subs = collectMatches(txt, SUBJECT_PATTERNS);
+  if(!subs.length && targets.length){
+    subs.push(targets[0]);
+  }
+  if(cardName && txt.toLowerCase().includes(cardName.toLowerCase())){
+    subs.push(cardName);
+  }
+  return uniqueClean(subs);
+}
+function findGrantsAbility(txt){
+  const low = txt.toLowerCase();
+  const out = [];
+  for(const ab of ABILITY_KEYWORDS){
+    if (
+      low.includes("gains " + ab.toLowerCase()) ||
+      low.includes("has "   + ab.toLowerCase()) ||
+      low.includes("gets "  + ab.toLowerCase())
+    ){
+      out.push(ab);
+    }
+  }
+  return uniqueClean(out);
+}
+function findPTBuffsInText(txt){
+  const buffs = [];
+  const re = /[+-]\d+\/[+-]\d+/g;
+  let m;
+  while((m = re.exec(txt)) !== null){
+    buffs.push(m[0]);
+  }
+  return uniqueClean(buffs);
+}
+function guessEffectTarget(effectPart){
+  let t = collectMatches(effectPart, [
+    "this creature",
+    "target creature",
+    "target creature card",
+    "target permanent",
+    "it",
+    "that creature"
+  ]);
+  if (t.length) return t[0];
+  return null;
+}
+function guessTimeScope(str){
+  const low = str.toLowerCase();
+  for(const ts of TIME_SCOPES){
+    if(low.includes(ts.toLowerCase())){
+      return ts;
+    }
+  }
+  return null;
+}
+function analyzeConditionClause(condText){
+  const subjCandidates = collectMatches(condText, SUBJECT_PATTERNS);
+  const subject = subjCandidates.length ? subjCandidates[0] : null;
+  const quantNums = findNumericQuantifiers(condText);
+  const quantifier = quantNums.length ? quantNums[0] : null;
+  const timeScope = guessTimeScope(condText);
+  let body = condText.replace(/^(as long as|if|while|unless|so long as)\s*/i,"").trim();
+  return {
+    raw: condText,
+    body,
+    subject,
+    quantifier,
+    timeScope
+  };
+}
+function splitConditionEffect(fullText){
+  const low = fullText.toLowerCase();
+  let openerPos = -1;
+  for(const opener of CONDITION_OPENERS){
+    const pos = low.indexOf(opener.toLowerCase());
+    if(pos === 0){
+      openerPos = pos;
+      break;
+    }
+  }
+  if(openerPos !== 0){
+    return { conditionPart:null, effectPart:null };
+  }
+  const commaIdx = fullText.indexOf(",");
+  if(commaIdx === -1){
+    return { conditionPart:null, effectPart:fullText.trim() };
+  }
+  const conditionPart = fullText.slice(0, commaIdx).trim();
+  const effectPart    = fullText.slice(commaIdx+1).trim();
+  return { conditionPart, effectPart };
+}
+function buildLogicGraph(sectionText){
+  const { conditionPart, effectPart } = splitConditionEffect(sectionText);
+  if(!conditionPart && !effectPart){
+    return { graph:null, summary:null };
+  }
+  let conditionData = null;
+  if(conditionPart){
+    conditionData = analyzeConditionClause(conditionPart);
+  }
+  let effectData = null;
+  if(effectPart){
+    const targetGuess = guessEffectTarget(effectPart);
+    const verbs = collectMatches(effectPart, [
+      "gets","has","gains","gives","deals",
+      "draws","draw","exiles","exile","puts","put",
+      "create","creates","return","returns"
+    ]);
+    const ptBuffs = findPTBuffsInText(effectPart);
+    const gAbs = [];
+    const low = effectPart.toLowerCase();
+    for(const ab of ABILITY_KEYWORDS){
+      if(low.includes(ab.toLowerCase())){
+        gAbs.push(ab);
+      }
+    }
+    const grants = uniqueClean([...ptBuffs, ...gAbs]);
+    effectData = {
+      raw: effectPart,
+      target: targetGuess,
+      verbs: uniqueClean(verbs),
+      grants
+    };
+  }
+  let summary = null;
+  if(conditionData && effectData){
+    const condBody = conditionData.body || conditionPart;
+    const effTarget = effectData.target || "that target";
+    let grantText;
+    if(effectData.grants.length){
+      grantText = effectData.grants.join(" and ");
+    } else {
+      grantText = effectPart;
+    }
+    summary = `IF ${condBody} THEN ${effTarget} ${grantText}`;
+  } else if(effectData){
+    if(effectData.target && effectData.grants.length){
+      summary = `${effectData.target} ${effectData.grants.join(" and ")}`;
+    } else {
+      summary = effectPart || null;
+    }
+  }
+  return {
+    graph: (conditionData || effectData) ? { condition: conditionData, effect: effectData } : null,
+    summary
+  };
+}
+function findUnplaced(txt, activationCost){
+  let base = txt;
+  if(activationCost){
+    const escaped = activationCost.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const costRe = new RegExp("^\\s*" + escaped + "\\s*:\\s*","i");
+    base = base.replace(costRe, "");
+  }
+  const ALL_PATTERNS = [
+    ...ACTION_VERBS,
+    ...TEMPORAL_KEYWORDS,
+    ...PAYMENT_BASE_VERBS,
+    ...TARGET_PATTERNS,
+    ...QUANTIFIER_KEYWORDS,
+    ...DURATION_KEYWORDS,
+    ...SUBJECT_PATTERNS,
+    ...CHOICE_PATTERNS,
+    ...CONNECTOR_PATTERNS,
+    ...CONDITION_OPENERS,
+    "or more","or less","or fewer",
+    "the battlefield","battlefield",
+    "graveyard","your graveyard",
+    "library","their library","your library"
+  ];
+  const numericQuantRe = /\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+or\s+(more|less|fewer)\b/gi;
+  base = base.replace(numericQuantRe,"");
+  for(const ts of TIME_SCOPES){
+    const esc = ts.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    base = base.replace(new RegExp(esc,"ig")," ");
+  }
+  for(const p of ALL_PATTERNS){
+    const esc = p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    base = base.replace(new RegExp(esc,"ig")," ");
+  }
+  base = base
+    .replace(/\bof upkeep\b/gi,"")
+    .replace(/[,;:]/g," ")
+    .replace(/\b\w\b/g,"")
+    .replace(/\s+/g," ")
+    .trim();
+  return base;
+}
+
+function parseSection(txt, cardName){
+  const activationCost = findActivationCost(txt);
+  const targets        = collectMatches(txt, TARGET_PATTERNS);
+  const subjects       = findSubjects(txt, cardName, targets);
+  const logic          = buildLogicGraph(txt);
+
+  return {
+    raw: txt,
+    temporal:      findTemporal(txt),
+    connectors:    findConnectors(txt),
+    conditions:    findConditions(txt),
+    subjects,
+    activationCost,
+    payments:      findPayments(txt),
+    targets,
+    quantifiers:   findQuantifiers(txt),
+    actions:       findActions(txt),
+    durations:     findDurations(txt),
+    choices:       findChoices(txt),
+    transfer:      findTransfer(txt),
+    grantsAbility: findGrantsAbility(txt),
+    logicGraphSummary: logic.summary || null,
+    logicGraph:    logic.graph || null,
+    unplaced:      findUnplaced(txt, activationCost)
+  };
+}
+
+// --------------------------------------------------
+// FETCH + RENDER (CARD + PARSED)
+// --------------------------------------------------
+async function fetchCardByName(nameExact){
+  const res = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(nameExact)}`);
+  if(!res.ok) throw new Error("Card not found / error from Scryfall.");
+  return res.json();
+}
+async function fetchRandomCard(){
+  const res = await fetch("https://api.scryfall.com/cards/random");
+  if(!res.ok) throw new Error("Random fetch failed.");
+  return res.json();
+}
+
+function renderCardInfo(cardData){
+  const nameEl   = document.getElementById("cardName");
+  const oracleEl = document.getElementById("oracleText");
+  const errEl    = document.getElementById("errLine");
+  errEl.textContent = "";
+
+  let displayName   = cardData.name || "(unknown)";
+  let displayOracle = cardData.oracle_text || "";
+
+  if(!displayOracle && cardData.card_faces && cardData.card_faces.length > 0){
+    displayOracle = cardData.card_faces[0].oracle_text || "";
+  }
+
+  nameEl.textContent   = displayName;
+  oracleEl.textContent = displayOracle || "No oracle text.";
+
+  return {
+    name: displayName,
+    oracle: displayOracle
+  };
+}
+
+function renderParsedSections(parsedArr){
+  const container = document.getElementById("parsedSections");
+  container.innerHTML = "";
+
+  if(!parsedArr.length){
+    container.innerHTML = `<div class="dim" style="font-size:.8rem;">No parsed sections.</div>`;
+    return;
+  }
+
+  parsedArr.forEach((sec, idx) => {
+    const wrap = document.createElement("div");
+    wrap.className = "parsed-section";
+
+    const head = document.createElement("div");
+    head.className = "parsed-section-header";
+    head.innerHTML = `
+      <div>Section ${idx+1}</div>
+      <div style="font-size:.7rem;color:#94a3b8;font-weight:400;">${sec.raw.length} chars</div>
+    `;
+    wrap.appendChild(head);
+
+    const rawDiv = document.createElement("div");
+    rawDiv.className = "parsed-raw";
+    rawDiv.textContent = sec.raw;
+    wrap.appendChild(rawDiv);
+
+    const grid = document.createElement("div");
+    grid.className = "kv-grid";
+
+    for(const k in sec){
+      if(k === "raw") continue;
+      const keyEl = document.createElement("div");
+      keyEl.className = "kv-key";
+      keyEl.textContent = k;
+
+      const valEl = document.createElement("div");
+      valEl.className = "kv-val";
+
+      const v = sec[k];
+
+      if(v === null || v === undefined || (Array.isArray(v) && !v.length)){
+        if(k === "transfer" && typeof v === "object" && v !== null){
+          const fromTxt = v.from || "";
+          const toTxt   = v.to   || "";
+          valEl.textContent = `from: ${fromTxt} → to: ${toTxt}`;
+        } else {
+          valEl.innerHTML = "<span class='dim'>—</span>";
+        }
+      } else {
+        if(k === "transfer" && typeof v === "object"){
+          const fromTxt = v.from || "";
+          const toTxt   = v.to   || "";
+          valEl.textContent = `from: ${fromTxt} → to: ${toTxt}`;
+        } else if(typeof v === "object" && !Array.isArray(v)){
+          valEl.textContent = JSON.stringify(v);
+        } else {
+          valEl.textContent = JSON.stringify(v);
+        }
+      }
+
+      grid.appendChild(keyEl);
+      grid.appendChild(valEl);
+    }
+
+    wrap.appendChild(grid);
+    container.appendChild(wrap);
+  });
+}
+
+// --------------------------------------------------
+// BUILDER: SUGGESTION POOLS
+// --------------------------------------------------
+function buildSuggestionPools(parsedArr){
+  const pools = {
+    target: [],
+    actions: [],
+    grants: [],
+    duration: [],
+    condition: [],
+    activationCost: [],
+    notes: []
+  };
+
+  parsedArr.forEach(sec => {
+    // targets
+    if (sec.targets && sec.targets.length){
+      pools.target.push(...sec.targets);
+    }
+    if (sec.logicGraph && sec.logicGraph.effect && sec.logicGraph.effect.target){
+      pools.target.push(sec.logicGraph.effect.target);
+    }
+
+    // actions
+    if (sec.actions && sec.actions.length){
+      pools.actions.push(...sec.actions);
+    }
+    if (sec.logicGraph && sec.logicGraph.effect && sec.logicGraph.effect.verbs){
+      pools.actions.push(...sec.logicGraph.effect.verbs);
+    }
+
+    // grants/result (abilities, PT buffs, tokens)
+    if (sec.grantsAbility && sec.grantsAbility.length){
+      pools.grants.push(...sec.grantsAbility);
+    }
+    if (sec.logicGraph && sec.logicGraph.effect && sec.logicGraph.effect.grants){
+      pools.grants.push(...sec.logicGraph.effect.grants);
+    }
+    const extraPT = findPTBuffsInText(sec.raw);
+    pools.grants.push(...extraPT);
+
+    // duration
+    if (sec.durations && sec.durations.length){
+      pools.duration.push(...sec.durations);
+    }
+    if (/until end of turn/i.test(sec.raw)){
+      pools.duration.push("until end of turn");
+    }
+
+    // condition
+    if (sec.conditions && sec.conditions.length){
+      pools.condition.push(...sec.conditions);
+    }
+    if (sec.logicGraph && sec.logicGraph.condition && sec.logicGraph.condition.body){
+      pools.condition.push(sec.logicGraph.condition.body);
+    }
+
+    // activationCost
+    if (sec.activationCost){
+      pools.activationCost.push(sec.activationCost);
+    }
+
+    // notes
+    if (sec.unplaced){
+      pools.notes.push(sec.unplaced);
+    }
+  });
+
+  // helpful defaults
+  pools.duration.push("permanent","until end of turn");
+
+  for(const k in pools){
+    pools[k] = uniqueClean(pools[k]);
+  }
+  return pools;
+}
+
+// --------------------------------------------------
+// BUILDER: SEED ROWS
+// --------------------------------------------------
+function seedBuilderRowsFromParsed(parsedArr){
+  builderRowsData = [];
+
+  parsedArr.forEach(sec => {
+    // target guess
+    let targetGuess = "";
+    if (sec.targets && sec.targets.length){
+      targetGuess = sec.targets[0];
+    }
+    if ((!targetGuess || targetGuess==="") &&
+        sec.logicGraph && sec.logicGraph.effect && sec.logicGraph.effect.target){
+      targetGuess = sec.logicGraph.effect.target;
+    }
+
+    // actions guess
+    let actionsGuess = "";
+    if (sec.actions && sec.actions.length){
+      actionsGuess = sec.actions.join(", ");
+    } else if (sec.logicGraph && sec.logicGraph.effect && sec.logicGraph.effect.verbs){
+      actionsGuess = sec.logicGraph.effect.verbs.join(", ");
+    }
+
+    // grants guess
+    let grantPieces = [];
+    if (sec.grantsAbility && sec.grantsAbility.length){
+      grantPieces.push(...sec.grantsAbility);
+    }
+    if (sec.logicGraph && sec.logicGraph.effect && sec.logicGraph.effect.grants){
+      grantPieces.push(...sec.logicGraph.effect.grants);
+    }
+    const ptExtra = findPTBuffsInText(sec.raw);
+    grantPieces.push(...ptExtra);
+    const grantsGuess = uniqueClean(grantPieces).join(", ");
+
+    // duration guess
+    let durationGuess = "";
+    if (sec.durations && sec.durations.length){
+      durationGuess = sec.durations[0];
+    } else if (/until end of turn/i.test(sec.raw)){
+      durationGuess = "until end of turn";
+    }
+
+    // condition guess
+    let conditionGuess = "";
+    if (sec.conditions && sec.conditions.length){
+      conditionGuess = sec.conditions[0];
+    } else if (sec.logicGraph && sec.logicGraph.condition && sec.logicGraph.condition.body){
+      conditionGuess = sec.logicGraph.condition.body;
+    }
+
+    const row = {
+      link: "A",
+      target: targetGuess || "",
+      actions: actionsGuess || "",
+      grants: grantsGuess || "",
+      duration: durationGuess || "",
+      condition: conditionGuess || "",
+      activationCost: sec.activationCost || "",
+      notes: sec.unplaced || ""
+    };
+
+    builderRowsData.push(row);
+
+    // heuristic for token creation
+    if (/create a/i.test(sec.raw)) {
+      if (!/target creature/i.test(sec.raw) || /and create/i.test(sec.raw.toLowerCase())) {
+        const tokenRow = {
+          link: "A",
+          target: "",
+          actions: "create",
+          grants: "token",
+          duration: "permanent",
+          condition: "",
+          activationCost: sec.activationCost || "",
+          notes: sec.unplaced || ""
+        };
+        builderRowsData.push(tokenRow);
+      }
+    }
+  });
+}
+
+// --------------------------------------------------
+// BUILDER: AUTOCOMPLETE DROPDOWNS
+// --------------------------------------------------
+function getSuggestionsForField(fieldName) {
+  return suggestionPools[fieldName] || [];
+}
+
+function filterSuggestions(fieldName, typed) {
+  const pool = getSuggestionsForField(fieldName);
+  if (!typed) return pool.slice(0,8);
+  const low = typed.toLowerCase();
+  const exactFirst = [];
+  const partial = [];
+  for (const opt of pool) {
+    const optLow = opt.toLowerCase();
+    if (optLow.startsWith(low)) {
+      exactFirst.push(opt);
+    } else if (optLow.includes(low)) {
+      partial.push(opt);
+    }
+  }
+  const out = [...uniqueClean(exactFirst.concat(partial))];
+  return out.slice(0,10);
+}
+
+function showSuggestionsForInput(inputEl) {
+  const rowIdx = inputEl.getAttribute("data-row");
+  const field  = inputEl.getAttribute("data-field");
+  const typed  = inputEl.value;
+
+  const results = filterSuggestions(field, typed);
+  const sbox = document.querySelector(`.suggest-box[data-sbox-for="${rowIdx}-${field}"]`);
+  if (!sbox) return;
+
+  if (!results.length) {
+    sbox.style.display = "none";
+    sbox.innerHTML = "";
+    return;
+  }
+
+  sbox.innerHTML = results.map(val => `
+    <div class="suggest-item"
+         data-pick="${val.replace(/"/g,'&quot;')}"
+         data-row="${rowIdx}"
+         data-field="${field}">
+      ${val}
+    </div>
+  `).join("");
+
+  sbox.style.display = "block";
+
+  // click to apply
+  sbox.querySelectorAll(".suggest-item").forEach(item => {
+    item.addEventListener("mousedown", e => {
+      const pickVal = item.getAttribute("data-pick");
+      const r = parseInt(item.getAttribute("data-row"),10);
+      const f = item.getAttribute("data-field");
+
+      builderRowsData[r][f] = pickVal;
+      const targetInput = document.querySelector(
+        `input.builder-input[data-row="${r}"][data-field="${f}"]`
+      );
+      if (targetInput) {
+        targetInput.value = pickVal;
+      }
+
+      const box = document.querySelector(`.suggest-box[data-sbox-for="${r}-${f}"]`);
+      if (box){
+        box.style.display = "none";
+      }
+    });
+  });
+}
+
+function hideSuggestionsForInput(inputEl) {
+  setTimeout(() => {
+    const rowIdx = inputEl.getAttribute("data-row");
+    const field  = inputEl.getAttribute("data-field");
+    const sbox = document.querySelector(`.suggest-box[data-sbox-for="${rowIdx}-${field}"]`);
+    if (sbox){
+      sbox.style.display = "none";
+    }
+  }, 150);
+}
+
+function handleBuilderFieldInput(e){
+  const rowIdx = parseInt(e.target.getAttribute("data-row"),10);
+  const field  = e.target.getAttribute("data-field");
+  builderRowsData[rowIdx][field] = e.target.value;
+  showSuggestionsForInput(e.target);
+}
+
+function handleBuilderFieldBlur(e){
+  hideSuggestionsForInput(e.target);
+}
+
+// --------------------------------------------------
+// CHIP HELPERS
+// --------------------------------------------------
+
+// Given "foo, bar, baz" -> ["foo","bar","baz"]
+function splitValueList(str) {
+  return str
+    .split(",")
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+}
+
+// Turn ["foo","bar","baz"] -> "foo, bar, baz"
+function joinValueList(arr) {
+  return uniqueClean(arr).join(", ");
+}
+
+// returns HTML of chip bar for a field
+function renderChipBarHTML(rowIdx, fieldName, poolArray, currentVal) {
+  if (!poolArray || !poolArray.length) return "";
+
+  const currentSet = new Set(splitValueList(currentVal || ""));
+  const chips = poolArray.map(txt => {
+    const isActive = currentSet.has(txt) ? "active" : "";
+    // data-row / data-field / data-chip is how we know what got clicked
+    return `<div class="chip-btn ${isActive}"
+                 data-chip-row="${rowIdx}"
+                 data-chip-field="${fieldName}"
+                 data-chip-text="${txt.replace(/"/g,'&quot;')}">${txt}</div>`;
+  }).join("");
+
+  return `<div class="chip-bar">${chips}</div>`;
+}
+
+// handle clicking a chip: toggle it in that row/field
+function handleChipClick(e){
+  const chip = e.target.closest(".chip-btn");
+  if(!chip) return;
+  const r = parseInt(chip.getAttribute("data-chip-row"),10);
+  const f = chip.getAttribute("data-chip-field");
+  const t = chip.getAttribute("data-chip-text");
+
+  // get current list from builderRowsData
+  const currentStr = builderRowsData[r][f] || "";
+  let list = splitValueList(currentStr);
+
+  if (list.includes(t)) {
+    // remove
+    list = list.filter(x => x !== t);
+  } else {
+    // add
+    list.push(t);
+  }
+
+  const newVal = joinValueList(list);
+
+  // update data model
+  builderRowsData[r][f] = newVal;
+
+  // update the input itself
+  const targetInput = document.querySelector(
+    `input.builder-input[data-row="${r}"][data-field="${f}"]`
+  );
+  if (targetInput) {
+    targetInput.value = newVal;
+  }
+
+  // also update active state on the chip
+  if (list.includes(t)) {
+    chip.classList.add("active");
+  } else {
+    chip.classList.remove("active");
+  }
+}
+
+
+// --------------------------------------------------
+// BUILDER: RENDER TABLE ROWS
+// --------------------------------------------------
+function renderBuilderRows(){
+  const tbody = document.getElementById("builderRows");
+  tbody.innerHTML = "";
+
+  builderRowsData.forEach((row, idx) => {
+    const tr = document.createElement("tr");
+
+    // build chip bars for each field using suggestionPools
+    const chip_link = renderChipBarHTML(idx, "link", [], row.link); // no global pool for link
+    const chip_target = renderChipBarHTML(idx, "target", suggestionPools.target, row.target);
+    const chip_actions = renderChipBarHTML(idx, "actions", suggestionPools.actions, row.actions);
+    const chip_grants = renderChipBarHTML(idx, "grants", suggestionPools.grants, row.grants);
+    const chip_duration = renderChipBarHTML(idx, "duration", suggestionPools.duration, row.duration);
+    const chip_condition = renderChipBarHTML(idx, "condition", suggestionPools.condition, row.condition);
+    const chip_activationCost = renderChipBarHTML(idx, "activationCost", suggestionPools.activationCost, row.activationCost);
+    const chip_notes = renderChipBarHTML(idx, "notes", suggestionPools.notes, row.notes);
+
+    tr.innerHTML = `
+      <td>
+        <input class="builder-input group-tag-input"
+               value="${row.link || ""}"
+               data-row="${idx}" data-field="link"
+               placeholder="A" />
+        <div class="suggest-box" data-sbox-for="${idx}-link"></div>
+        ${chip_link}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.target || ""}"
+               data-row="${idx}" data-field="target"
+               placeholder="target creature / you / each opponent" />
+        <div class="suggest-box" data-sbox-for="${idx}-target"></div>
+        ${chip_target}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.actions || ""}"
+               data-row="${idx}" data-field="actions"
+               placeholder="gets / gains / create / return..." />
+        <div class="suggest-box" data-sbox-for="${idx}-actions"></div>
+        ${chip_actions}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.grants || ""}"
+               data-row="${idx}" data-field="grants"
+               placeholder="+2/+0, first strike, Treasure token..." />
+        <div class="suggest-box" data-sbox-for="${idx}-grants"></div>
+        ${chip_grants}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.duration || ""}"
+               data-row="${idx}" data-field="duration"
+               placeholder="until end of turn / permanent..." />
+        <div class="suggest-box" data-sbox-for="${idx}-duration"></div>
+        ${chip_duration}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.condition || ""}"
+               data-row="${idx}" data-field="condition"
+               placeholder="if you've drawn 2+ cards this turn..." />
+        <div class="suggest-box" data-sbox-for="${idx}-condition"></div>
+        ${chip_condition}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.activationCost || ""}"
+               data-row="${idx}" data-field="activationCost"
+               placeholder="{3}, {T}: / Sacrifice another creature:" />
+        <div class="suggest-box" data-sbox-for="${idx}-activationCost"></div>
+        ${chip_activationCost}
+      </td>
+
+      <td>
+        <input class="builder-input"
+               value="${row.notes || ""}"
+               data-row="${idx}" data-field="notes"
+               placeholder="Treasure reminder text, etc." />
+        <div class="suggest-box" data-sbox-for="${idx}-notes"></div>
+        ${chip_notes}
+
+        <div class="row-controls" style="margin-top:.75rem;">
+          <button data-cmd="dup" data-row="${idx}">Duplicate</button>
+          <button data-cmd="del" data-row="${idx}">Delete</button>
+        </div>
+      </td>
+
+      <td></td>
+    `;
+
+    // attach one chip-click listener per row (event delegation)
+    tr.addEventListener("click", handleChipClick);
+
+    tbody.appendChild(tr);
+  });
+
+  // Hook up editing + autocomplete
+  tbody.querySelectorAll("input.builder-input").forEach(inp => {
+    inp.addEventListener("input", handleBuilderFieldInput);
+    inp.addEventListener("focus", handleBuilderFieldInput);
+    inp.addEventListener("blur", handleBuilderFieldBlur);
+  });
+
+  // Hook up duplicate / delete
+  tbody.querySelectorAll("button[data-cmd]").forEach(btn => {
+    btn.addEventListener("click", e => {
+      const rowIndex = parseInt(e.target.getAttribute("data-row"),10);
+      const cmd = e.target.getAttribute("data-cmd");
+      if (cmd === "dup") {
+        const clone = { ...builderRowsData[rowIndex] };
+        builderRowsData.splice(rowIndex+1, 0, clone);
+        renderBuilderRows();
+      } else if (cmd === "del") {
+        builderRowsData.splice(rowIndex,1);
+        renderBuilderRows();
+      }
+    });
+  });
+}
+
+
+// --------------------------------------------------
+// LOAD/RANDOM FLOW
+// --------------------------------------------------
+async function loadCardAndRender(name){
+  const errEl = document.getElementById("errLine");
+  errEl.textContent = "";
+  try {
+    const data = await fetchCardByName(name);
+    const norm = renderCardInfo(data);
+
+    const text = norm.oracle || "";
+    const sections = text
+      .split(/\n\s*\n/)
+      .map(s => s.trim())
+      .filter(Boolean)
+      .flatMap(block => block.split(/\n+/).map(l => l.trim()).filter(Boolean));
+
+    const parsedArr = sections.map(secText => parseSection(secText, norm.name));
+
+    renderParsedSections(parsedArr);
+
+    seedBuilderRowsFromParsed(parsedArr);
+    suggestionPools = buildSuggestionPools(parsedArr);
+
+    renderBuilderRows();
+
+  } catch (err){
+    console.error(err);
+    errEl.textContent = "Error: " + err.message;
+
+    document.getElementById("parsedSections").innerHTML =
+      `<div class="dim" style="font-size:.8rem;">No parsed sections.</div>`;
+
+    builderRowsData = [];
+    suggestionPools = {
+      target: [],
+      actions: [],
+      grants: [],
+      duration: [],
+      condition: [],
+      activationCost: [],
+      notes: []
+    };
+    renderBuilderRows();
+  }
+}
+
+async function randomCardAndRender(){
+  const errEl = document.getElementById("errLine");
+  errEl.textContent = "";
+  try {
+    const data = await fetchRandomCard();
+    const norm = renderCardInfo(data);
+
+    const text = norm.oracle || "";
+    const sections = text
+      .split(/\n\s*\n/)
+      .map(s => s.trim())
+      .filter(Boolean)
+      .flatMap(block => block.split(/\n+/).map(l => l.trim()).filter(Boolean));
+
+    const parsedArr = sections.map(secText => parseSection(secText, norm.name));
+
+    renderParsedSections(parsedArr);
+
+    seedBuilderRowsFromParsed(parsedArr);
+    suggestionPools = buildSuggestionPools(parsedArr);
+
+    renderBuilderRows();
+
+  } catch (err){
+    console.error(err);
+    errEl.textContent = "Error: " + err.message;
+
+    document.getElementById("parsedSections").innerHTML =
+      `<div class="dim" style="font-size:.8rem;">No parsed sections.</div>`;
+
+    builderRowsData = [];
+    suggestionPools = {
+      target: [],
+      actions: [],
+      grants: [],
+      duration: [],
+      condition: [],
+      activationCost: [],
+      notes: []
+    };
+    renderBuilderRows();
+  }
+}
+
+// --------------------------------------------------
+// UI HOOKUP
+// --------------------------------------------------
+document.getElementById("btnLoad").addEventListener("click", () => {
+  const val = document.getElementById("cardNameInput").value.trim();
+  if(!val){
+    document.getElementById("errLine").textContent = "Please enter a card name.";
+    return;
+  }
+  loadCardAndRender(val);
+});
+
+document.getElementById("btnRandom").addEventListener("click", () => {
+  randomCardAndRender();
+});
+
+document.getElementById("cardNameInput").addEventListener("keydown", e => {
+  if(e.key === "Enter"){
+    const val = document.getElementById("cardNameInput").value.trim();
+    if(!val) return;
+    loadCardAndRender(val);
+  }
+});
+
+// Add new blank row manually
+document.getElementById("btnAddRow").addEventListener("click", () => {
+  builderRowsData.push({
+    link:"A",
+    target:"",
+    actions:"",
+    grants:"",
+    duration:"",
+    condition:"",
+    activationCost:"",
+    notes:""
+  });
+  renderBuilderRows();
+});
+</script>
+</body>
+</html>
