@@ -11,6 +11,8 @@
 // Local drag lock: while I’m dragging a cid, ignore all remote move echoes for it.
 
 import { Zones } from './zones.js';   // ⬅️ NEW: so we can call Zones.recordCardToZone()
+import { extractInnateAbilities } from './oracle.innate.js'; // ⬅️ innate ability parser for RTC spawn
+
 
 const localDragLock = new Set();
 
@@ -45,6 +47,51 @@ export const CardPlacement = (() => {
   }
   
   window._screenToWorld = screenToWorld;
+
+
+// Snapshot rules for a card element with strong fallbacks.
+// Prefers current face (currentSide) → dataset.* → front*/back* → derive/compute.
+function _snapshotRules(el){
+  const d = el?.dataset || {};
+  const side = (d.currentSide === 'back') ? 'back' : 'front';
+
+  const pick = (key) => {
+    // Try active face first (frontTypeLine/backTypeLine), then generic, then the other face
+    return d[side + key] || d[key.toLowerCase()] || d[(side === 'back' ? 'front' : 'back') + key] || '';
+  };
+
+  // Type line / Oracle with fallbacks
+  const typeLine = d.typeLine || pick('TypeLine') || '';
+  const oracle   = d.oracle   || pick('Oracle')   || '';
+
+  // Base types
+  let baseTypes = [];
+  if (d.baseTypes) {
+    try { const arr = JSON.parse(d.baseTypes); if (Array.isArray(arr)) baseTypes = arr.slice(); } catch {}
+  }
+  if (!baseTypes.length) {
+    const faceKey = side + 'BaseTypes';
+    if (d[faceKey]) { try { const arr = JSON.parse(d[faceKey]); if (Array.isArray(arr)) baseTypes = arr.slice(); } catch {} }
+  }
+  if (!baseTypes.length && typeLine) {
+    baseTypes = _deriveBaseTypesFromTypeLine(typeLine);
+  }
+
+  // Base abilities
+  let baseAbilities = [];
+  if (d.baseAbilities) {
+    try { const arr = JSON.parse(d.baseAbilities); if (Array.isArray(arr)) baseAbilities = arr.slice(); } catch {}
+  }
+  if (!baseAbilities.length) {
+    const faceKey = side + 'BaseAbilities';
+    if (d[faceKey]) { try { const arr = JSON.parse(d[faceKey]); if (Array.isArray(arr)) baseAbilities = arr.slice(); } catch {} }
+  }
+  if (!baseAbilities.length && oracle) {
+    baseAbilities = extractInnateAbilities(oracle);
+  }
+
+  return { typeLine, oracle, baseTypes, baseAbilities };
+}
 
 
   // ---------- Combat gap edges (WORLD) ----------
@@ -420,6 +467,16 @@ function _collectAllTypes(el){
   return left.split(/\s+/).filter(Boolean);
 }
 
+// Derive base types from a type line (left of em-dash), stripped to words.
+function _deriveBaseTypesFromTypeLine(typeLine){
+  const left = String(typeLine || '').split('—')[0] || '';
+  return left
+    .split(/\s+/)
+    .map(w => w.replace(/[^A-Za-z]/g, ''))
+    .filter(Boolean);
+}
+
+
 // Build + emit the cast event (local call AND optional RTC mirror already handled via origin flag)
 function _emitCastFor(el, fromSeat){
   if (!el) return;
@@ -514,8 +571,9 @@ try{
 }catch{}
 
 
-  // Broadcast spawn to opponent with sickness + ownership + mana/color snapshot
-  try {
+  // Broadcast spawn after 1 frame so Tooltip/meta stamping can land first
+try {
+  requestAnimationFrame(() => {
     const ownerNow = el.dataset.ownerCurrent || el.dataset.owner || String(mySeat());
     const px = parseFloat(el.style.left) || 0;
     const py = parseFloat(el.style.top)  || 0;
@@ -523,34 +581,44 @@ try{
     const mc   = _calcManaColorPayload(el);
     const sick = (el.dataset.hasSummoningSickness === 'true') ? 'true' : 'false';
 
-   const pkt = {
-  senderSeat       : String(mySeat()) || '1',
+    const snap = _snapshotRules(el);
 
-  type                 : 'spawn',
-  origin               : 'hand', // NEW: declares this came from Hand → treat as a cast
-  cid                  : id,
-  name,
-  img,
-  x                    : px,
-  y                    : py,
-  owner                : ownerNow,
-  ownerOriginal        : el.dataset.ownerOriginal || null,
-  ownerCurrent         : el.dataset.ownerCurrent  || ownerNow || null,
-  fieldSide            : el.dataset.fieldSide     || null,
-  inCommandZone        : el.dataset.inCommandZone || null,
-  hasSummoningSickness : sick,
+    const pkt = {
+      senderSeat       : String(mySeat()) || '1',
+      type                 : 'spawn',
+      origin               : 'hand',
+      cid                  : id,
+      name,
+      img,
+      x                    : px,
+      y                    : py,
+      owner                : ownerNow,
+      ownerOriginal        : el.dataset.ownerOriginal || null,
+      ownerCurrent         : el.dataset.ownerCurrent  || ownerNow || null,
+      fieldSide            : el.dataset.fieldSide     || null,
+      inCommandZone        : el.dataset.inCommandZone || null,
+      hasSummoningSickness : sick,
 
-  // mana/color + typing for the receiver
-  manaCostRaw          : mc.manaCostRaw,
-  colors               : mc.colors,
-  typeLine             : el.dataset.typeLine || null
-};
-(window.rtcSend || window.peer?.send)?.(pkt);
+      manaCostRaw          : mc.manaCostRaw,
+      colors               : mc.colors,
 
-// 🔵 LOCAL: count cast immediately (lands auto-skipped)
-_emitCastFor(el, mySeat());
+      // rules snapshot (now guaranteed non-null when possible)
+      typeLine             : snap.typeLine || null,
+      oracle               : snap.oracle   || null,
+      baseAbilities        : snap.baseAbilities || [],
+      baseTypes            : snap.baseTypes     || []
+    };
 
-  } catch {}
+    console.log('%c[RTC:spawn SEND]', 'color:#0cf;font-weight:bold',
+      { cid:id, name, baseAbilities:pkt.baseAbilities, baseTypes:pkt.baseTypes, typeLine:pkt.typeLine });
+
+    (window.rtcSend || window.peer?.send)?.(pkt);
+
+    // LOCAL: count cast immediately (lands auto-skipped)
+    _emitCastFor(el, mySeat());
+  });
+} catch {}
+
 
   return el;
 }
@@ -1350,28 +1418,43 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
     const px = parseFloat(el.style.left) || 0;
     const py = parseFloat(el.style.top)  || 0;
 
-    const mc = _calcManaColorPayload(el);
+    const sendSpawnLocal = () => {
+  const mc = _calcManaColorPayload(el);
+  const snap = _snapshotRules(el);
 
-    const pkt = {
-		senderSeat       : String(mySeat()) || '1',
+  const pkt = {
+    senderSeat       : String(mySeat()) || '1',
+    type          : 'spawn',
+    cid           : id,
+    name,
+    img,
+    x             : px,
+    y             : py,
+    owner         : ownerNow,
+    ownerOriginal : el.dataset.ownerOriginal || null,
+    ownerCurrent  : el.dataset.ownerCurrent  || ownerNow || null,
+    fieldSide     : el.dataset.fieldSide     || null,
+    inCommandZone : el.dataset.inCommandZone || null,
 
-      type          : 'spawn',
-      cid           : id,
-      name,
-      img,
-      x             : px,
-      y             : py,
-      owner         : ownerNow,
-      ownerOriginal : el.dataset.ownerOriginal || null,
-      ownerCurrent  : el.dataset.ownerCurrent  || ownerNow || null,
-      fieldSide     : el.dataset.fieldSide     || null,
-      inCommandZone : el.dataset.inCommandZone || null,
+    manaCostRaw   : mc.manaCostRaw,
+    colors        : mc.colors,
 
-      // mana/color stamp
-      manaCostRaw   : mc.manaCostRaw,
-      colors        : mc.colors
-    };
-    (window.rtcSend || window.peer?.send)?.(pkt);
+    // rules snapshot
+    typeLine      : snap.typeLine || null,
+    oracle        : snap.oracle   || null,
+    baseAbilities : snap.baseAbilities || [],
+    baseTypes     : snap.baseTypes     || []
+  };
+
+  console.log('%c[RTC:spawnLocal SEND]', 'color:#0cf;font-weight:bold',
+    { cid:id, name, baseAbilities:pkt.baseAbilities, baseTypes:pkt.baseTypes, typeLine:pkt.typeLine });
+
+  (window.rtcSend || window.peer?.send)?.(pkt);
+};
+
+// If you want symmetry with pointer path, delay a frame; otherwise call immediately.
+requestAnimationFrame(sendSpawnLocal);
+
     //if (DBG.on) console.log('%c[Place:spawn→send]', 'color:#6cf', pkt);
   } catch (e) { /* ignore */ }
 
@@ -1480,38 +1563,48 @@ function spawnCommanderLocal({ name, img, commanderMeta }) {
     console.warn('[Place:spawnCommanderLocal] Tooltip hydration failed', e);
   }
 
-  // NOW that tooltip had a chance to stamp manaCost / colors,
-  // collect mana/color and broadcast spawn packet.
+  // Send commander spawn after 1 frame with full rules snapshot so remote has abilities/types
   try {
-    const ownerNow = el.dataset.ownerCurrent || el.dataset.owner || String(mySeat());
-    const x = parseFloat(el.style.left) || 0;
-    const y = parseFloat(el.style.top)  || 0;
+    requestAnimationFrame(() => {
+      const ownerNow = el.dataset.ownerCurrent || el.dataset.owner || String(mySeat());
+      const x = parseFloat(el.style.left) || 0;
+      const y = parseFloat(el.style.top)  || 0;
 
-    const mc = _calcManaColorPayload(el);
+      const mc   = _calcManaColorPayload(el);
+      const snap = _snapshotRules(el);
 
-    const pkt = {
-		senderSeat       : String(mySeat()) || '1',
+      const pkt = {
+        senderSeat       : String(mySeat()) || '1',
 
-      type          : 'spawn',
-      cid           : id,
-      name,
-      img,
-      x,
-      y,
-      owner         : ownerNow,
-      zone          : 'commander',
-      ownerOriginal : el.dataset.ownerOriginal || null,
-      ownerCurrent  : el.dataset.ownerCurrent  || ownerNow || null,
-      fieldSide     : el.dataset.fieldSide     || null,
-      inCommandZone : el.dataset.inCommandZone || null,
-      hasSummoningSickness : el.dataset.hasSummoningSickness === 'true' ? 'true' : 'false',
+        type                 : 'spawn',
+        cid                  : id,
+        name,
+        img,
+        x,
+        y,
+        owner                : ownerNow,
+        zone                 : 'commander',
+        ownerOriginal        : el.dataset.ownerOriginal || null,
+        ownerCurrent         : el.dataset.ownerCurrent  || ownerNow || null,
+        fieldSide            : el.dataset.fieldSide     || null,
+        inCommandZone        : el.dataset.inCommandZone || null,
+        hasSummoningSickness : (el.dataset.hasSummoningSickness === 'true') ? 'true' : 'false',
 
-      manaCostRaw   : mc.manaCostRaw,
-      colors        : mc.colors
-    };
+        manaCostRaw          : mc.manaCostRaw,
+        colors               : mc.colors,
 
-    (window.rtcSend || window.peer?.send)?.(pkt);
-    //if (DBG.on) console.log('%c[Place:spawnCommander→send]', 'color:#6cf', pkt);
+        // 🔵 include rules so remote can badge immediately
+        typeLine             : snap.typeLine || null,
+        oracle               : snap.oracle   || null,
+        baseAbilities        : snap.baseAbilities || [],
+        baseTypes            : snap.baseTypes     || []
+      };
+
+      console.log('%c[RTC:spawnCommander SEND]', 'color:#0cf;font-weight:bold',
+        { cid:id, name, baseAbilities:pkt.baseAbilities, baseTypes:pkt.baseTypes, typeLine:pkt.typeLine });
+
+      (window.rtcSend || window.peer?.send)?.(pkt);
+    });
   } catch (e) { /* ignore */ }
 
   return id;
@@ -1613,7 +1706,6 @@ if (msg.manaCostRaw != null) {
   el.dataset.manaCostRaw = String(msg.manaCostRaw);
 }
 if (msg.colors) {
-  // store JSON string so other systems can parse if needed
   try {
     el.dataset.colors = JSON.stringify(msg.colors);
   } catch(_) {
@@ -1621,11 +1713,31 @@ if (msg.colors) {
   }
 }
 
+// 🔵 NEW: rules/identity hydration
+if (msg.typeLine)  el.dataset.typeLine = String(msg.typeLine);
+if (msg.oracle)    el.dataset.oracle   = String(msg.oracle);
+
+if (Array.isArray(msg.baseAbilities)) {
+  try { el.dataset.baseAbilities = JSON.stringify(msg.baseAbilities); } catch {}
+} else if (el.dataset.oracle && !el.dataset.baseAbilities) {
+  // Fallback compute when sender omitted; matches tooltip pipeline
+  const computed = extractInnateAbilities(el.dataset.oracle);
+  try { el.dataset.baseAbilities = JSON.stringify(computed); } catch {}
+}
+
+if (Array.isArray(msg.baseTypes)) {
+  try { el.dataset.baseTypes = JSON.stringify(msg.baseTypes); } catch {}
+} else if (el.dataset.typeLine && !el.dataset.baseTypes) {
+  const derived = _deriveBaseTypesFromTypeLine(el.dataset.typeLine);
+  try { el.dataset.baseTypes = JSON.stringify(derived); } catch {}
+}
+
 // --- Cast mirror: if they spawned from hand, tally their cast on my side too
 try {
   const cameFromHand = String(msg.origin || '') === 'hand';
-if (cameFromHand) {
-  if (msg.typeLine) el.dataset.typeLine = msg.typeLine;
+  if (cameFromHand) {
+    if (msg.typeLine) el.dataset.typeLine = msg.typeLine;
+
   // Mark estimated-cast for this turn on the receiver, too
   try{
     const tnow = window.TurnUpkeep?.state?.().turn;
@@ -1651,6 +1763,8 @@ if (cameFromHand) {
 //});
 
 state.byCid.set(msg.cid, { el });
+console.log('%c[RTC:spawn APPLY]', 'color:#8f8',
+  { cid: msg.cid, baseAbilities: el.dataset.baseAbilities, baseTypes: el.dataset.baseTypes, typeLine: el.dataset.typeLine, oracle: el.dataset.oracle });
 
 }
 

@@ -451,6 +451,45 @@ function toPill(text){
   return pill;
 }
 
+/**
+ * Extract *structured* adds from RulesStore tempBuffs.
+ * We only trust explicit fields on the buff objects to avoid false positives.
+ * Supported shapes (any optional):
+ *   - b.typeAdd or b.type      -> push to types
+ *   - b.ability                -> push to abilities
+ *   - b.counter {kind|name, qty|amount} -> push to counters
+ */
+function _extractRulesAdds(buffs){
+  const out = { types: [], abilities: [], counters: [] };
+  if (!Array.isArray(buffs)) return out;
+
+  for (const b of buffs){
+    if (!b || typeof b !== 'object') continue;
+
+    // types
+    const t1 = (b.typeAdd != null) ? String(b.typeAdd).trim() : '';
+    const t2 = (b.type    != null) ? String(b.type).trim()    : '';
+    if (t1) out.types.push(t1);
+    if (t2) out.types.push(t2);
+
+    // abilities
+    const a = (b.ability != null) ? String(b.ability).trim() : '';
+    if (a) out.abilities.push(a);
+
+    // counters
+    const c = (b.counter && typeof b.counter === 'object') ? b.counter : null;
+    if (c){
+      const kind = String(c.kind || c.name || '').trim();
+      const qty  = Number(c.qty ?? c.amount ?? 0);
+      if (kind && Number.isFinite(qty) && qty !== 0){
+        out.counters.push({ kind, qty });
+      }
+    }
+  }
+  return out;
+}
+
+
 
 // ensurePanelFor --------------------------------------------------------------
 function ensurePanelFor(el){
@@ -752,10 +791,20 @@ async function hydrateFromRulesStore(info, el){
 // for "Double strike". That is dead forever.
 
 function renderPanel(el, info){
-  const rows = info.panel.querySelector('.rows');
+  // ensure rows container exists, then clear it for fresh render
+  let rows = info.panel.querySelector('.rows');
+  if (!rows) {
+    info.panel.innerHTML = `<div class="rows" style="display:flex; flex-direction:column; gap:8px;"></div>`;
+    rows = info.panel.querySelector('.rows');
+  }
+  rows.innerHTML = '';
+
+  // render counter
+  let count = 0;
 
   // pull what we know about the card itself
   const typeLine = el.dataset.typeLine || '';
+
 
   // TYPES
   // try data-baseTypes first, fall back to parseTypeBadges(typeLine)
@@ -785,10 +834,22 @@ function renderPanel(el, info){
   // bring in anything the player granted via overlay / remoteAttrs
   const grant = info.__grant || { abilities: [], types: [] };
 
+  // 🔹 Extract temporary adds from RulesStore tempBuffs (EOT, etc.)
+  const rulesAdds = _extractRulesAdds(info?.__rulesBuffs);
+
   // merge granted types
   const typeSeen = new Set(baseTypesArr.map(t => String(t)));
   const finalTypeList = baseTypesArr.slice();
+
   for (const t of (grant.types || [])) {
+    const k = String(t).trim();
+    if (k && !typeSeen.has(k)) {
+      typeSeen.add(k);
+      finalTypeList.push(k);
+    }
+  }
+  // 🔹 merge RulesStore type adds
+  for (const t of (rulesAdds.types || [])) {
     const k = String(t).trim();
     if (k && !typeSeen.has(k)) {
       typeSeen.add(k);
@@ -800,34 +861,17 @@ function renderPanel(el, info){
   for (const a of (grant.abilities || [])) {
     const k = String(a).trim();
     if (k) {
-      baseAbilitiesSet.add(
-        k.replace(/\b\w/g, m => m.toUpperCase())
-      );
+      baseAbilitiesSet.add(k.replace(/\b\w/g, m => m.toUpperCase()));
+    }
+  }
+  // 🔹 merge RulesStore ability adds (Title-Case, dedup by Set)
+  for (const a of (rulesAdds.abilities || [])) {
+    const k = String(a).trim();
+    if (k) {
+      baseAbilitiesSet.add(k.replace(/\b\w/g, m => m.toUpperCase()));
     }
   }
 
-  // build DOM
-  rows.innerHTML = '';
-  let count = 0;
-
-  // 1. types first
-  for (const t of finalTypeList) {
-    const pill = toPill(t);
-    if (pill) {
-      rows.appendChild(pill);
-      count++;
-    }
-  }
-
-  // 2. abilities next
-  for (const a of baseAbilitiesSet) {
-    const pill = toPill(a);
-    if (pill) {
-      rows.appendChild(pill);
-      count++;
-    }
-  }
-  
   // --- COUNTERS (loyalty / +1/+1 / etc.) ---  [DEDUPED + GUARDED]
   const countersArr = Array.isArray(info?.__grant?.counters)
     ? info.__grant.counters
@@ -843,18 +887,49 @@ function renderPanel(el, info){
     byKind.set(kind.toLowerCase(), { kind, qty });
   }
 
+  // 🔹 merge RulesStore counters (temporary)
+  for (const c of (rulesAdds.counters || [])) {
+    const kind = String(c?.kind || c?.name || '').trim();
+    const qty  = Number(c?.qty || 0);
+    if (!kind || !Number.isFinite(qty) || qty === 0) continue;
+    byKind.set(kind.toLowerCase(), { kind, qty });
+  }
+
   // Synthetic Loyalty only if not already present
   const hasLoyCounter = byKind.has('loyalty');
-if (!hasLoyCounter) {
-  const loyText = liveLOY(el, info.__grant);
-  const loyNum = Number(loyText);
-  if (Number.isFinite(loyNum) && loyNum > 0) {
-    byKind.set('loyalty', { kind: 'Loyalty', qty: loyNum });
+  if (!hasLoyCounter) {
+    const loyText = liveLOY(el, info.__grant);
+    const loyNum = Number(loyText);
+    if (Number.isFinite(loyNum) && loyNum > 0) {
+      byKind.set('loyalty', { kind: 'Loyalty', qty: loyNum });
+    }
   }
-}
 
 
-  // Render once
+
+  // ---- RENDER TYPES -------------------------------------------------
+  if (Array.isArray(finalTypeList) && finalTypeList.length) {
+    for (const t of finalTypeList) {
+      const pill = toPill(String(t).trim());
+      if (pill) {
+        rows.appendChild(pill);
+        count++;
+      }
+    }
+  }
+
+  // ---- RENDER ABILITIES --------------------------------------------
+  if (baseAbilitiesSet && baseAbilitiesSet.size) {
+    for (const a of baseAbilitiesSet) {
+      const pill = toPill(String(a).trim());
+      if (pill) {
+        rows.appendChild(pill);
+        count++;
+      }
+    }
+  }
+
+  // ---- RENDER COUNTERS ---------------------------------------------
   for (const { kind, qty } of byKind.values()) {
     const label = `${kind} ×${qty}`;
     const pill = toPill(label);
@@ -864,15 +939,11 @@ if (!hasLoyCounter) {
     }
   }
 
-
-  
-  
-
-
   info.panel.style.display = count ? '' : 'none';
-  info.__hasRows = !!count;
+  info.__hasRows = count > 0;
   return count;
 }
+
 
 
 

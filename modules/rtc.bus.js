@@ -5,6 +5,20 @@
 import { createPeerRoom } from './net.rtc.js';
 import { RTCApply } from './rtc.rules.js';
 
+// Ensure RTCApply exists on both sides before we handle buff/buffRemove.
+async function ensureRTCApply() {
+  if (window.RTCApply?.recvBuff && window.RTCApply?.recvBuffRemove) return window.RTCApply;
+  try {
+    if (!window.RTCApply) {
+      const mod = await import('./rtc.rules.js');
+      window.RTCApply = mod.RTCApply || window.RTCApply;
+    }
+  } catch (e) {
+    console.warn('[RTC] ensureRTCApply failed to import rtc.rules.js', e);
+  }
+  return window.RTCApply || {};
+}
+
 // --- Seat assignment helper (Host=1, Join=2) ---
 // CTRL-F anchor: [RTC:seat]
 function setSeat(n) {
@@ -337,10 +351,19 @@ onMessage: async (msg) => {
         if (msg.name && !el.title)        el.title        = String(msg.name);
 
         if (msg.typeLine)  el.dataset.typeLine  = String(msg.typeLine);
-        if (msg.oracle)    el.dataset.oracle    = String(msg.oracle);
-        if (msg.power != null)     el.dataset.power     = String(msg.power);
-        if (msg.toughness != null) el.dataset.toughness = String(msg.toughness);
-        if (msg.pt)                el.dataset.ptCurrent = String(msg.pt);
+if (msg.oracle)    el.dataset.oracle    = String(msg.oracle);
+if (msg.power != null)     el.dataset.power     = String(msg.power);
+if (msg.toughness != null) el.dataset.toughness = String(msg.toughness);
+if (msg.pt)                el.dataset.ptCurrent = String(msg.pt);
+
+// 🔵 NEW: mirror deck-stamped identity so Badges can show innate abilities remotely
+if (Array.isArray(msg.baseAbilities)) {
+  try { el.dataset.baseAbilities = JSON.stringify(msg.baseAbilities); } catch {}
+}
+if (Array.isArray(msg.baseTypes)) {
+  try { el.dataset.baseTypes = JSON.stringify(msg.baseTypes); } catch {}
+}
+
 
         // --- MANA COST / COLOR IDENTITY SYNC ---
         // We're including this so the mirrored side has cost+colors in dataset
@@ -599,10 +622,16 @@ onMessage: async (msg) => {
                 } else if (msg?.type === 'buff') {
   try {
     console.log('%c[RTC:recv buff]', 'color:#0ff', msg);
-    RTCApply.recvBuff(msg); // ✅ central bridge handles IDs and visuals
+    await ensureRTCApply();
+    if (window.RTCApply?.recvBuff) {
+      window.RTCApply.recvBuff(msg); // ensure the effect is registered with effectId on BOTH sides
+    } else {
+      console.warn('[RTC:recv buff] RTCApply.recvBuff missing after ensure, fallback may be incomplete');
+    }
   } catch (err) {
     console.warn('[RTC:recv buff] handler error', err, msg);
   }
+
 } else if (msg.type === 'card.state.full') {
           Promise
             .resolve(applyFullCardStateFromRTC(msg.cid, msg.state))
@@ -611,83 +640,73 @@ onMessage: async (msg) => {
 } else if (msg?.type === 'buffRemove') {
   try {
     console.log('%c[RTC:recv buffRemove]', 'color:#f55', msg);
+
+    // Always ensure handler is present on both sides
+    await ensureRTCApply();
+
+    // Preferred path: central bridge knows how to unapply & notify RulesStore/Badges
     if (window.RTCApply?.recvBuffRemove) {
-      RTCApply.recvBuffRemove(msg);
-    } else {
-      const { RulesStore } = await import('./rules.store.js');
-      RulesStore.removeEffect?.(msg.effectId);
-      const { Badges } = await import('./badges.js');
-      document.querySelectorAll('img.table-card').forEach(cardEl => {
-        const cid = cardEl.dataset.cid;
-        if (!cid) return;
+      window.RTCApply.recvBuffRemove(msg);
+      return;
+    }
+
+    // ---- Hardened fallback (in case the bridge still isn't present) ----
+    const { RulesStore } = await import('./rules.store.js');
+    const eff = RulesStore.get?.(msg.effectId) || null;
+
+    // Remove the effect first
+    RulesStore.removeEffect?.(msg.effectId);
+
+    // Determine target cid by multiple hints
+    const cid =
+      msg.targetCid ||
+      eff?.targetCid || eff?.attachCid ||
+      (Array.isArray(eff?.targets) ? eff.targets[0] : null) ||
+      msg.cid || null;
+
+    if (cid) {
+      const el = document.querySelector(`img.table-card[data-cid="${CSS.escape(String(cid))}"]`);
+      if (el) {
+        // prune dataset.remoteAttrs by effect fields we can infer from msg as well
+        let attrs = {};
+        try { attrs = JSON.parse(el.dataset.remoteAttrs || '{}'); } catch {}
+
+        // Remove granted ability if known
+        const abilityToRemove = msg.ability || eff?.ability || null;
+        if (abilityToRemove) {
+          attrs.abilities = (attrs.abilities || []).filter(a => a !== abilityToRemove);
+        }
+
+        // Remove counter kind if known
+        const counterKind = msg.counter || eff?.counter || null;
+        if (counterKind && attrs.counters && Object.prototype.hasOwnProperty.call(attrs.counters, counterKind)) {
+          delete attrs.counters[counterKind];
+        }
+
+        // Remove pt override if matches
+        const ptStr = msg.pt || eff?.pt || null;
+        if (ptStr && attrs.pt === ptStr) {
+          delete attrs.pt;
+          delete el.dataset.ptCurrent;
+        }
+
+        el.dataset.remoteAttrs = JSON.stringify(attrs);
+
+        // Force redraw for just this card
+        const { Badges } = await import('./badges.js');
         Badges.refreshFor?.(cid);
+      }
+    } else {
+      // Worst case: brute refresh all to reconcile
+      const { Badges } = await import('./badges.js');
+      document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
+        Badges.refreshFor?.(n.dataset.cid);
       });
     }
   } catch (err) {
     console.warn('[RTC:recv buffRemove] handler error', err, msg);
   }
 
-        // ---- FLIP --------------------------------------------------------
-        } else if (msg?.type === 'flip') {
-  try{
-    const sel = `img.table-card[data-cid="${msg.cid}"]`;
-    const el  = document.querySelector(sel);
-    if (!el) { console.warn('[RTC:flip] no element for', msg.cid); return; }
-
-    // --- OWNERSHIP / CONTROL / POSITION STATE ---
-    if (msg.ownerOriginal != null) {
-      el.dataset.ownerOriginal = String(msg.ownerOriginal);
-    }
-    if (msg.ownerCurrent  != null) {
-      el.dataset.ownerCurrent = String(msg.ownerCurrent);
-      el.dataset.owner        = String(msg.ownerCurrent); // legacy
-    } else if (msg.owner != null) {
-      el.dataset.owner        = String(msg.owner);
-      if (!el.dataset.ownerCurrent) {
-        el.dataset.ownerCurrent = String(msg.owner);
-      }
-    }
-    if (msg.fieldSide != null) {
-      el.dataset.fieldSide = msg.fieldSide;
-    }
-    if (msg.inCommandZone != null) {
-      el.dataset.inCommandZone = msg.inCommandZone === 'true' ? 'true'
-                                   : msg.inCommandZone === true   ? 'true'
-                                   : 'false';
-    }
-
-    // --- VISUAL / RULES DATA ---
-    if (msg.img)  el.src = msg.img;
-    if (msg.name) el.title = msg.name;
-
-    el.dataset.faceIndex = String(Number(msg.faceIndex)||0);
-    el.dataset.hasFlip   = msg.hasFlip ? '1' : '';
-    el.dataset.manaCost  = msg.manaCost  || '';
-    el.dataset.typeLine  = msg.typeLine  || '';
-    el.dataset.oracle    = msg.oracle    || '';
-    el.dataset.power     = msg.power     || '';
-    el.dataset.toughness = msg.toughness || '';
-
-    try { window.updateCardSideButtonsPosition?.(el); } catch {}
-
-    // Keep UI in sync
-    try { window.Tooltip?.showForCard?.(el, el, { mode: 'right' }); } catch {}
-    try { (await import('./badges.js')).Badges.render(el); } catch {}
-
-    console.log('%c[RTC:flip→applied]', 'color:#6cf', {
-      cid           : msg.cid,
-      face          : msg.faceIndex,
-      ownerOriginal : el.dataset.ownerOriginal,
-      ownerCurrent  : el.dataset.ownerCurrent,
-      fieldSide     : el.dataset.fieldSide,
-      inCommandZone : el.dataset.inCommandZone
-    });
-  }catch(err){
-    console.error('[RTC:flip] apply failed', err, msg);
-  }
-
-  // Re-render badges one more time in case we hit the catch path above
-  try { (await import('./badges.js')).Badges.render(el); } catch { }
 
 
 
