@@ -48,6 +48,60 @@ export const Battle = (() => {
   let blockAssignments = {};   // attackerCid -> [blockerCid,...]
   let activeBlockTarget = null;
   let mode = 'idle';           // 'idle' | 'attacking' | 'blocking'
+  
+    // ───────────────────────────────────────────────────────────────
+  // GLOBAL TOUCH→CLICK BRIDGE
+  // - Makes taps behave like clicks for combat selections and buttons.
+  // - No duplicate events: we debounce and only synthesize when the
+  //   pointer is TOUCH (or a real touchend).
+  // - Keeps all your existing click handlers intact.
+  // ───────────────────────────────────────────────────────────────
+  (function installBattleTouchBridge(){
+    if (window.__battleTouchBridgeInstalled) return;
+    window.__battleTouchBridgeInstalled = true;
+
+    let lastSynth = 0;
+    const DEBOUNCE_MS = 280;
+
+    function synthClick(target){
+      if (!target) return;
+      const now = Date.now();
+      if (now - lastSynth < DEBOUNCE_MS) return; // prevent double-fire
+      lastSynth = now;
+      try { target.click(); } catch {}
+    }
+
+    // Prefer pointer events where available
+    document.addEventListener('pointerup', (ev) => {
+      if (ev.pointerType !== 'touch') return;
+      const el = ev.target && ev.target.closest?.('img.table-card, button, [role="button"]');
+      if (!el) return;
+      // Only synthesize if the element is relevant to combat UI
+      // (attackers, blockers, or confirm buttons)
+      if (
+        el.matches('img.table-card') ||
+        el.id === 'ui-btn-sword-a' || el.id === 'ui-btn-sword-b' ||
+        el.id === 'ui-btn-cross-a' || el.id === 'ui-btn-cross-b'
+      ){
+        synthClick(el);
+      }
+    }, { passive: true });
+
+    // Fallback for older browsers: touchend → click
+    document.addEventListener('touchend', (ev) => {
+      const t = ev.target;
+      const el = t && (t.closest?.('img.table-card, button, [role="button"]') || null);
+      if (!el) return;
+      if (
+        el.matches('img.table-card') ||
+        el.id === 'ui-btn-sword-a' || el.id === 'ui-btn-sword-b' ||
+        el.id === 'ui-btn-cross-a' || el.id === 'ui-btn-cross-b'
+      ){
+        synthClick(el);
+      }
+    }, { passive: true });
+  })();
+
 
   // Set of CIDs that are ALLOWED to attack this turn.
   // We fill this in beginAttackSelection() using BattleRules.getEligibleAttackersForSeat()
