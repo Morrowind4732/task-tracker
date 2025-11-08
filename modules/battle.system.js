@@ -1338,6 +1338,10 @@ function _snapAttackersToGuideLine() {
       return;
     }
 
+    // NEW: slim tooltip during combat UI
+    try { window.Tooltip?.setBattleMode?.(true); } catch {}
+
+
     mode = 'attacking';
     currentAttackers   = [];
     blockAssignments   = {};
@@ -1556,37 +1560,48 @@ function _snapAttackersToGuideLine() {
       return;
     }
 
-    if (currentAttackers.includes(cid)){
-      // unselect
-      currentAttackers = currentAttackers.filter(x => x !== cid);
-      el.classList.remove('battle-attacking');
+    // shared presets
+const GOLD_BOX  = '0 0 12px 4px rgba(255,215,0,.7)';
+const GOLD_FILT = 'drop-shadow(0 0 6px rgba(255,215,0,.9))';
+const BLUE_OUTLINE = '2px solid #9cf';
+const BLUE_BOX  = '0 0 16px 8px rgba(0,160,255,1)';
+const BLUE_FILT = 'drop-shadow(0 0 12px rgba(0,160,255,1))';
 
-      // drop back to "canAttack" glow (gold outline)
-      if (el.classList.contains('battle-canAttack')){
-        el.style.boxShadow = '0 0 12px 4px rgba(255,215,0,.7)';
-        el.style.filter    = 'drop-shadow(0 0 6px rgba(255,215,0,.9))';
-      } else {
-        el.style.boxShadow = '';
-        el.style.filter    = '';
-      }
+if (currentAttackers.includes(cid)){
+  // unselect → back to GOLD “valid but unassigned”
+  currentAttackers = currentAttackers.filter(x => x !== cid);
+  el.classList.remove('battle-attacking');
 
-    } else {
-      // select
-      currentAttackers.push(cid);
+  el.style.outline = '';
+  el.style.outlineOffset = '';
+  if (el.classList.contains('battle-canAttack')){
+    el.style.boxShadow = GOLD_BOX;
+    el.style.filter    = GOLD_FILT;
+  } else {
+    el.style.boxShadow = '';
+    el.style.filter    = '';
+  }
 
-      // Store origin ONLY the first time we ever mark it as attacking
-      if (!attackerOrigin.has(cid)){
-        const curX = parseFloat(el.style.left) || 0;
-        const curY = parseFloat(el.style.top)  || 0;
-        attackerOrigin.set(cid, { x: curX, y: curY });
-        console.log('[Battle] attackerOrigin stored', { cid, x: curX, y: curY });
-      }
+} else {
+  // select → BLUE “assigned attacker”
+  currentAttackers.push(cid);
 
-      el.classList.add('battle-attacking');
-      // brighter glow for "locked in as attacker"
-      el.style.boxShadow = '0 0 14px 6px rgba(255,215,0,1)';
-      el.style.filter    = 'drop-shadow(0 0 10px rgba(255,215,0,1))';
-    }
+  if (!attackerOrigin.has(cid)){
+    const curX = parseFloat(el.style.left) || 0;
+    const curY = parseFloat(el.style.top)  || 0;
+    attackerOrigin.set(cid, { x: curX, y: curY });
+    console.log('[Battle] attackerOrigin stored', { cid, x: curX, y: curY });
+  }
+
+  el.classList.add('battle-attacking');
+
+  // swap gold → blue for assigned
+  el.style.outline = BLUE_OUTLINE;
+  el.style.outlineOffset = '-3px';
+  el.style.boxShadow = BLUE_BOX;
+  el.style.filter    = BLUE_FILT;
+}
+
 
     console.log('[Battle] toggle attacker', {
       cid,
@@ -1764,6 +1779,9 @@ function _snapAttackersToGuideLine() {
       el.style.boxShadow = '';
       el.style.filter = '';
     });
+	    // NEW: exit battle-mode slim after attacker confirm
+    try { window.Tooltip?.setBattleMode?.(false); } catch {}
+
   }
 
 
@@ -1776,6 +1794,10 @@ function _snapAttackersToGuideLine() {
     console.warn('[Battle] beginBlockSelection but it IS my turn');
     return;
   }
+
+  // NEW: slim tooltip during block UI
+  try { window.Tooltip?.setBattleMode?.(true); } catch {}
+
 
   mode = 'blocking';
   blockAssignments = {};
@@ -2203,6 +2225,10 @@ function _chooseAttackTargetForBlock(e){
           y: origPos.y
         });
       });
+
+    // NEW: exit battle-mode slim after blocker confirm
+    try { window.Tooltip?.setBattleMode?.(false); } catch {}
+
 
       blockerOrigin.clear();
     } catch(err){

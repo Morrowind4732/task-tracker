@@ -6,6 +6,12 @@
 //   DeckLoading.drawOne() -> {name, imageUrl} | null
 //   DeckLoading.drawOneToHand(deckEl?) -> boolean
 
+
+import * as PortraitOverlayMod from './portrait.dice.overlay.js';
+const PortraitOverlay = PortraitOverlayMod.PortraitOverlay || PortraitOverlayMod.default;
+
+
+
 export const DeckLoading = (() => {
 	  // --- Name normalizer (handles face names, punctuation, accents, spacing) ---
   const normName = (s) => String(s||'')
@@ -45,8 +51,26 @@ export const DeckLoading = (() => {
     overlay.querySelector('#btnCancel').onclick = hide;
     return overlay;
   }
-  function open(prefill=''){ const o=ensureOverlay(), ta=o.querySelector('#deckText'); ta.value=prefill||ta.value||''; o.style.display='flex'; setTimeout(()=>ta.focus(),0); }
-  function hide(){ if(overlay) overlay.style.display='none'; }
+function open(prefill=''){ const o=ensureOverlay(), ta=o.querySelector('#deckText'); ta.value=prefill||ta.value||''; o.style.display='flex'; setTimeout(()=>ta.focus(),0); }
+function hide(){ if(overlay) overlay.style.display='none'; }
+
+// Helper: grab the textarea contents and return the last non-empty/non-"Sideboard" line.
+// Useful if you want to pre-warm another overlay with the likely commander/name.
+function peekLastEntryFromTextarea(){
+  try{
+    const ta = overlay?.querySelector?.('#deckText');
+    if (!ta) return '';
+    const lines = String(ta.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    for (let i = lines.length-1; i >= 0; i--){
+      const L = lines[i];
+      if (/^sideboard$/i.test(L)) continue;
+      // strip leading counts like "1 " / "2x "
+      return L.replace(/^\s*(\d+|(\d+)?x)\s+/i,'').trim();
+    }
+    return '';
+  }catch{ return ''; }
+}
+
 
   // ---------- Defaults ----------
   const DEFAULT_LIST = `1 Accursed Witch
@@ -692,202 +716,212 @@ const state = {
 
   // ---------- API ----------
   let onLoadedCb = null;
-
-  function init({ onLoaded } = {}){
+  
+function init({ onLoaded } = {}){
   onLoadedCb = typeof onLoaded === 'function' ? onLoaded : null;
   const o = ensureOverlay();
-  o.querySelector('#btnLoadDeck').onclick = async () => {
-    const ta = o.querySelector('#deckText');
-    const src = (ta.value||'').trim() || DEFAULT_LIST;
+  o.querySelector('#btnLoadDeck').onclick = async (ev) => {
+  const btn = ev?.currentTarget || o.querySelector('#btnLoadDeck');
+  const ta  = o.querySelector('#deckText');
+  const src = (ta.value || '').trim() || DEFAULT_LIST;
 
-    const { deck, commander } = parseDecklist(src);
-    console.log('[DeckLoad] parsed', { deckCount: deck.length, commander, deck });
+  // 1) SHOW PORTRAIT OVERLAY *IMMEDIATELY* (no waiting on data)
+  try {
+    const already = (typeof PortraitOverlay?.isReady === 'function') && PortraitOverlay.isReady();
+    if (!already) {
+      console.log('[DeckLoad] Preparing PortraitOverlay (show on init)…');
+      await PortraitOverlay.init({
+        autoRandomIfUnset: false,
+        autoCloseOnBothRolled: true,
+        enableRTC: true,
+        showOnInit: true // open now
+      });
+    } else if (typeof PortraitOverlay?.isOpen === 'function' && !PortraitOverlay.isOpen()) {
+      PortraitOverlay.show();
+    }
+  } catch (e) {
+    console.warn('[DeckLoad] PortraitOverlay init/show failed, fallback UI only', e);
+  }
 
-    // fetch images + meta
-    const [cmdMeta, deckMap] = await Promise.all([
-      fetchCommanderImage(commander),
-      fetchDeckImages(deck)
-    ]);
+  // prevent double clicks
+  try { if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; } } catch {}
 
-    // build drawable library with metadata (art, types, oracle, untap flag)
-    // PLUS pre-parsed baseTypes / baseAbilities (strict, no conditionals)
-    const lib = deck.map(name => {
-      const meta = deckMap.get(normName(name));
+  // 2) Parse once; commander FIRST — do NOT fetch deck art yet
+  const { deck, commander } = parseDecklist(src);
+  console.log('[DeckLoad] parsed (commander-first)', { deckCount: deck.length, commander });
 
-      if (meta) {
-        
+  // 3) Fetch ONLY the commander art/meta
+  const cmdMeta = await fetchCommanderImage(commander);
 
-        const cardEntry = {
-  name,
+  // 4) Normalize commanderMeta shape (same as cards)
+  const enrichedCommanderMeta = {
+    ...cmdMeta,
+    name: commander,
+    imageUrl: cmdMeta.img || '',
+    imgFront: cmdMeta.img || '',
+    imgBack:  cmdMeta.imgBack || '',
+    typeLine: cmdMeta.typeLine || '',
+    frontTypeLine: cmdMeta.typeLine || '',
+    backTypeLine:  cmdMeta.backTypeLine || '',
+    oracle: cmdMeta.oracle || '',
+    frontOracle: cmdMeta.oracle || '',
+    backOracle:  cmdMeta.backOracle || '',
+    untapsDuringUntapStep: !!cmdMeta.untapsDuringUntapStep,
+    baseTypes:     cmdMeta.frontBaseTypes     || [],
+    baseAbilities: cmdMeta.frontBaseAbilities || [],
+    frontBaseTypes:      cmdMeta.frontBaseTypes     || [],
+    frontBaseAbilities:  cmdMeta.frontBaseAbilities || [],
+    backBaseTypes:       cmdMeta.backBaseTypes      || [],
+    backBaseAbilities:   cmdMeta.backBaseAbilities  || [],
+    power: cmdMeta.power || '',
+    toughness: cmdMeta.toughness || '',
+    loyalty: cmdMeta.loyalty || '',
+    backLoyalty: cmdMeta.backLoyalty || '',
+    currentSide: 'front'
+  };
 
-  // FRONT visual defaults
-  imageUrl: meta.img || '',
-  typeLine: meta.typeLine || '',
-  oracle:   meta.oracle || '',
+  // 5) Install minimal state (empty library for now)
+  Object.assign(state, {
+    deck: [...deck],
+    library: [],
+    commander,
+    commanderMeta: enrichedCommanderMeta
+  });
+  _syncLibGlobals();
 
-  // stats (creatures, planeswalkers, etc.)
-  power:     meta.power || '',
-  toughness: meta.toughness || '',
-  loyalty:   meta.loyalty || '',
-  backLoyalty: meta.backLoyalty || '',
+  // 6) SEND URL TO OPPONENT **BEFORE** ANY LOCAL PROCESSING; THEN PROCESS LOCALLY
+  try {
+    const mySeat = (typeof window.mySeat === 'function') ? Number(window.mySeat()) || 1 : (Number(window.__LOCAL_SEAT) || 1);
+    const side   = (mySeat === 1) ? 'left' : 'right';
+    const oppSide = (side === 'left') ? 'right' : 'left';
+    const artUrl = enrichedCommanderMeta.imgFront || enrichedCommanderMeta.img || '';
 
-  untapsDuringUntapStep: !!meta.untapsDuringUntapStep,
-
-
-  // what we consider "safe auto badges" for CURRENT face on spawn
-  baseTypes:     meta.frontBaseTypes     || [],
-  baseAbilities: meta.frontBaseAbilities || [],
-
-  // --- NEW: stash both faces for later flip logic ---
-  frontBaseTypes:      meta.frontBaseTypes     || [],
-  frontBaseAbilities:  meta.frontBaseAbilities || [],
-  backBaseTypes:       meta.backBaseTypes      || [],
-  backBaseAbilities:   meta.backBaseAbilities  || [],
-
-  frontTypeLine: meta.typeLine || '',
-  backTypeLine:  meta.backTypeLine || '',
-
-  frontOracle:   meta.oracle || '',
-  backOracle:    meta.backOracle || '',
-
-  imgFront:      meta.img || '',
-  imgBack:       meta.imgBack || '',
-
-  currentSide:   'front'
-};
-
-
-
-        // 🔍 DEBUG PER CARD (has meta)
-        console.log('%c[DeckLoad:card built ✅]', 'color:#6cf',
-          {
-            name: cardEntry.name,
-            imageUrl: cardEntry.imageUrl,
-            typeLine: cardEntry.typeLine,
-            oracle: cardEntry.oracle,
-            baseTypes: cardEntry.baseTypes,
-            baseAbilities: cardEntry.baseAbilities,
-            untapsDuringUntapStep: cardEntry.untapsDuringUntapStep
-          }
-        );
-
-        return cardEntry;
+    if (artUrl) {
+      // a) explicit RTC send of only the URL
+      try {
+        _rtcSend({ type: 'overlay:ready', seat: mySeat, artUrl });
+        console.log('[DeckLoad] RTC sent overlay:ready (URL only)', { seat: mySeat, side, artUrl });
+      } catch (eSend) {
+        console.warn('[DeckLoad] overlay:ready send failed', eSend);
       }
 
-      // fallback entry; downstream can hydrate via name later
-      const fallbackEntry = {
-        name,
-        imageUrl: '',
-        typeLine: '',
-        oracle: '',
-        untapsDuringUntapStep: true,
+      // b) start local processing immediately (no echo)
+      await PortraitOverlay.setPortrait(side, artUrl);
+      console.log('[DeckLoad] Local portrait set (processing started)', { side, artUrl });
 
-        baseTypes: [],
-        baseAbilities: []
-      };
+      // c) if we already cached their art, apply it now (no echo)
+      const pendingMap = (typeof window !== 'undefined') ? (window.__DICE_PENDING || null) : null;
+      const oppArt = pendingMap && pendingMap[oppSide] ? String(pendingMap[oppSide]) : '';
+      if (oppArt) {
+        console.log('[DeckLoad] Applying pending opponent portrait', { oppSide, oppArt });
+        await PortraitOverlay.setPortrait(oppSide, oppArt);
+        try { pendingMap[oppSide] = null; } catch {}
+      }
+    }
+  } catch (e) {
+    console.warn('[DeckLoad] portrait URL handling failed', e);
+  }
 
-      // 🔍 DEBUG PER CARD (NO META FOUND)
-      console.log('%c[DeckLoad:card built ❌META]', 'color:#f66;font-weight:bold',
-        {
-          name: fallbackEntry.name,
-          imageUrl: fallbackEntry.imageUrl,
-          typeLine: fallbackEntry.typeLine,
-          oracle: fallbackEntry.oracle,
-          baseTypes: fallbackEntry.baseTypes,
-          baseAbilities: fallbackEntry.baseAbilities,
-          untapsDuringUntapStep: fallbackEntry.untapsDuringUntapStep
+  // 7) Kick deck fetch/parse in the BACKGROUND (does not block overlay/processing)
+  (async () => {
+    try {
+      const deckMap = await fetchDeckImages(deck);
+
+      const lib = deck.map(name => {
+        const meta = deckMap.get(normName(name));
+        if (meta) {
+          const cardEntry = {
+            name,
+            imageUrl: meta.img || '',
+            typeLine: meta.typeLine || '',
+            oracle:   meta.oracle || '',
+            power:     meta.power || '',
+            toughness: meta.toughness || '',
+            loyalty:   meta.loyalty || '',
+            backLoyalty: meta.backLoyalty || '',
+            untapsDuringUntapStep: !!meta.untapsDuringUntapStep,
+            baseTypes:     meta.frontBaseTypes     || [],
+            baseAbilities: meta.frontBaseAbilities || [],
+            frontBaseTypes:      meta.frontBaseTypes     || [],
+            frontBaseAbilities:  meta.frontBaseAbilities || [],
+            backBaseTypes:       meta.backBaseTypes      || [],
+            backBaseAbilities:   meta.backBaseAbilities  || [],
+            frontTypeLine: meta.typeLine || '',
+            backTypeLine:  meta.backTypeLine || '',
+            frontOracle:   meta.oracle || '',
+            backOracle:    meta.backOracle || '',
+            imgFront:      meta.img || '',
+            imgBack:       meta.imgBack || '',
+            currentSide:   'front'
+          };
+          console.log('%c[DeckLoad:card built ✅]', 'color:#6cf', {
+            name: cardEntry.name, imageUrl: cardEntry.imageUrl,
+            typeLine: cardEntry.typeLine, oracle: cardEntry.oracle,
+            baseTypes: cardEntry.baseTypes, baseAbilities: cardEntry.baseAbilities,
+            untapsDuringUntapStep: cardEntry.untapsDuringUntapStep
+          });
+          return cardEntry;
         }
-      );
 
-      return fallbackEntry;
-    });
+        const fallbackEntry = {
+          name,
+          imageUrl: '',
+          typeLine: '',
+          oracle: '',
+          untapsDuringUntapStep: true,
+          baseTypes: [],
+          baseAbilities: []
+        };
+        console.log('%c[DeckLoad:card built ❌META]', 'color:#f66;font-weight:bold', {
+          name: fallbackEntry.name, imageUrl: '', typeLine: '', oracle: '',
+          baseTypes: [], baseAbilities: [], untapsDuringUntapStep: true
+        });
+        return fallbackEntry;
+      });
 
-    shuffleInPlace(lib);
+      shuffleInPlace(lib);
 
-    // --- NEW: enrich commanderMeta so it looks like every other card entry ---
-    // commanderMeta we got back from fetchCommanderImage(...) only has:
-    //   { img, typeLine, oracle, power, toughness }
-    // but the rest of the deck cards also have parsed:
-    //   baseTypes[], baseAbilities[]
-    //
-    // We run the exact same parser we already use for regular cards (extractConcreteInnate)
-    // so commander badges (Flying, etc.) exist on spawn.
-    // Commander meta is already full-shape from fetchCommanderImage() now.
-// We just alias the "current face" fields to what Badges expects on spawn.
-const enrichedCommanderMeta = {
-  ...cmdMeta,
+      // install full library now that it’s ready
+      state.library = lib;
+      _syncLibGlobals();
 
-  // give commander a name field like normal cards
-  name: commander,
+      // optional: close deck overlay now that deck is parsed
+      hide();
 
-  // normalize naming to match regular cardEntry:
-  imageUrl: cmdMeta.img || '',
-  imgFront: cmdMeta.img || '',
-  imgBack:  cmdMeta.imgBack || '',
+      // broadcast compact art snapshot (commander + entries)
+      try { _sendDeckArtSnapshot(); } catch {}
 
-  typeLine: cmdMeta.typeLine || '',
-  frontTypeLine: cmdMeta.typeLine || '',
-  backTypeLine:  cmdMeta.backTypeLine || '',
+      // notify Zones/UI consumer
+      try {
+        onLoadedCb?.(state.deck, state.commander, state.commanderMeta.img, state.commanderMeta);
+      } catch {}
 
-  oracle: cmdMeta.oracle || '',
-  frontOracle: cmdMeta.oracle || '',
-  backOracle:  cmdMeta.backOracle || '',
-
-  untapsDuringUntapStep: !!cmdMeta.untapsDuringUntapStep,
-
-  // what we consider "safe auto badges" for CURRENT face on spawn
-  baseTypes:     cmdMeta.frontBaseTypes     || [],
-  baseAbilities: cmdMeta.frontBaseAbilities || [],
-
-  // stash both faces
-  frontBaseTypes:      cmdMeta.frontBaseTypes     || [],
-  frontBaseAbilities:  cmdMeta.frontBaseAbilities || [],
-  backBaseTypes:       cmdMeta.backBaseTypes      || [],
-  backBaseAbilities:   cmdMeta.backBaseAbilities  || [],
-
-  // Commander-specific extras
-  power: cmdMeta.power || '',
-  toughness: cmdMeta.toughness || '',
-  loyalty: cmdMeta.loyalty || '',
-  backLoyalty: cmdMeta.backLoyalty || '',
-
-  currentSide: 'front'
-
+      console.log('%c[DeckLoad:FINAL LIB]', 'background:#222;color:#0f0;padding:4px 6px;border-radius:4px;', {
+        commander: state.commander,
+        commanderMeta: state.commanderMeta,
+        libraryCount: state.library.length,
+        libraryFirstFew: state.library.slice(0,10),
+        fullLibrary: state.library
+      });
+    } catch (e) {
+      console.warn('[DeckLoad] background deck fetch/build failed', e);
+      // Still close the text overlay to avoid trapping the user
+      try { hide(); } catch {}
+    } finally {
+      try { if (btn) { btn.disabled = false; btn.textContent = 'Load Deck'; } } catch {}
+    }
+  })();
 };
 
-
-Object.assign(state, {
-  deck: [...deck],
-  library: lib,
-  commander,
-  commanderMeta: enrichedCommanderMeta
-});
-
-
-    // 🔍 DEBUG FINAL LIB STATE
-    console.log('%c[DeckLoad:FINAL LIB]', 'background:#222;color:#0f0;padding:4px 6px;border-radius:4px;', {
-      commander: state.commander,
-      commanderMeta: state.commanderMeta,
-      libraryCount: state.library.length,
-      libraryFirstFew: state.library.slice(0,10), // sample preview
-      fullLibrary: state.library                  // full dump for scroll
-    });
-
-    hide();
-
-    // notify Zones so it can: mark deck present, show commander label,
-    // spawn commander image, send deck-visual
-    // Args: (deckNames, commanderName, commanderImageUrl, commanderMeta)
-    onLoadedCb?.(state.deck, state.commander, state.commanderMeta.img, state.commanderMeta);
-
-  };
 }
 
 
   function drawOne(){
-    const c = state.library.shift() || null;
-    return c || null;
-  }
+  const c = state.library.shift() || null;
+  try { _syncLibGlobals(); } catch {}
+  return c || null;
+}
+
 
   function drawOneToHand(deckEl){
     try{
@@ -925,8 +959,333 @@ Object.assign(state, {
     window.DeckAccess.enumerate = enumerateDeck;
     window.DeckAccess.count = deckCount;
   } catch {}
+  
+    // ---------- Return-to-deck (from a live table <img.table-card>) ----------
+  function _entryFromTableCardEl(cardEl){
+    const d = cardEl?.dataset || {};
+    const parseJSON = (s) => { try { const v = JSON.parse(s||'[]'); return Array.isArray(v)? v : []; } catch { return []; } };
 
-  return {
+    const entry = {
+      name: d.name || cardEl.title || 'Card',
+      imageUrl: cardEl.currentSrc || cardEl.src || '',
+      typeLine: d.typeLine || '',
+      oracle:   d.oracle   || '',
+      power:     d.power     || '',
+      toughness: d.toughness || '',
+      loyalty:   d.loyalty   || '',
+      backLoyalty: d.backLoyalty || '',
+      untapsDuringUntapStep: (d.untapsDuringUntapStep !== 'false'),
+
+      baseTypes:     parseJSON(d.baseTypes),
+      baseAbilities: parseJSON(d.baseAbilities),
+
+      // faces (kept so flip/tooltip have parity with freshly drawn cards)
+      frontBaseTypes:      parseJSON(d.frontBaseTypes),
+      frontBaseAbilities:  parseJSON(d.frontBaseAbilities),
+      backBaseTypes:       parseJSON(d.backBaseTypes),
+      backBaseAbilities:   parseJSON(d.backBaseAbilities),
+
+      frontTypeLine: d.frontTypeLine || d.typeLine || '',
+      backTypeLine:  d.backTypeLine  || '',
+      frontOracle:   d.frontOracle   || d.oracle   || '',
+      backOracle:    d.backOracle    || '',
+
+      imgFront: d.imgFront || (cardEl.currentSrc || cardEl.src || ''),
+      imgBack:  d.imgBack  || '',
+
+      currentSide: d.currentSide || 'front'
+    };
+
+    return entry;
+  }
+
+  // pos: 'top' | 'bottom' | 'random'
+  function insertFromTable(cardEl, pos='top'){
+    if (!cardEl) { console.warn('[DeckLoading] insertFromTable: no element'); return false; }
+    const entry = _entryFromTableCardEl(cardEl);
+    if (!entry.name) { console.warn('[DeckLoading] insertFromTable: no name on entry'); return false; }
+
+    const lib = state.library;
+    if (!Array.isArray(lib)) { console.warn('[DeckLoading] insertFromTable: library missing'); return false; }
+
+    const p = String(pos||'top').toLowerCase();
+    if (p === 'bottom') {
+      lib.push(entry);
+    } else if (p === 'random') {
+      const idx = Math.floor(Math.random() * (lib.length + 1));
+      lib.splice(idx, 0, entry);
+    } else {
+      lib.unshift(entry); // default top
+    }
+
+    console.log('[DeckLoading] insertFromTable →', { pos:p, name:entry.name, libraryCount: lib.length });
+try { _syncLibGlobals(); } catch {}
+return true;
+
+  }
+
+  function shuffleLibrary(){
+  shuffleInPlace(state.library);
+  try { _syncLibGlobals(); } catch {}
+  console.log('[DeckLoading] shuffleLibrary() →', { libraryCount: state.library.length });
+}
+
+
+// Keep a window-scoped mirror so other modules/console can read snapshots safely.
+const _WIN = (typeof window !== 'undefined' ? window : globalThis);
+if (!Array.isArray(_WIN.__LIB_REMAINING)) _WIN.__LIB_REMAINING = [];
+if (!Array.isArray(_WIN.__LIB_ALL))       _WIN.__LIB_ALL       = [];
+
+// Keep window mirrors in sync with our module state.
+function _syncLibGlobals(){
+  try{
+    // remaining = live drawable stack (top -> bottom)
+    _WIN.__LIB_REMAINING.length = 0;
+    _WIN.__LIB_REMAINING.push(...state.library.map(x => ({ ...x })));
+
+    // all = canonical parsed deck (set once per load; if empty, initialize)
+    if (!_WIN.__LIB_ALL.length) {
+      _WIN.__LIB_ALL = state.library.map(x => ({ ...x }));
+    }
+  }catch(e){
+    console.warn('[DeckLoading] _syncLibGlobals failed', e);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// RTC: deck art snapshot (send-only; receiver will be added later)
+// ────────────────────────────────────────────────────────────
+function _rtcSend(obj){
+  try {
+    const send = (window.rtcSend || window.peer?.send);
+    if (typeof send === 'function') {
+      send(obj);
+      console.log('%c[RTC:send]', 'color:#6cf', obj);
+    }
+  } catch (e) {
+    console.warn('[DeckLoading] rtc send failed', e);
+  }
+}
+
+// ────────────────────────────────────────────────────────────
+// RTC RECEIVE: deck-art + portrait packets → force-open + apply
+// ────────────────────────────────────────────────────────────
+(function installDeckLoadingRx(){
+  if (typeof window === 'undefined') return;
+  if (window.__DECK_LOADING_RX) return; 
+  window.__DECK_LOADING_RX = true;
+
+  // Helper: attach our handler to whatever RTC bus is present.
+  function attach(handler){
+    // 1) array bus
+    if (Array.isArray(window.rtcOnMessage)) { window.rtcOnMessage.push(handler); return true; }
+    // 2) DOM custom event
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('rtc-message', (e)=> handler(e?.detail || e));
+      return true;
+    }
+    // 3) simple peer.js style
+    try {
+      if (window.peer && typeof window.peer.on === 'function') {
+        window.peer.on('data', (data)=> {
+          try { handler(typeof data === 'string' ? JSON.parse(data) : data); } catch { handler(data); }
+        });
+        return true;
+      }
+    } catch {}
+    // 4) last resort shim
+    const prev = window.onRTCMessage;
+    window.onRTCMessage = function(msg){ try{ handler(msg); }catch{} if (typeof prev === 'function') prev(msg); };
+    return true;
+  }
+
+  const handler = async (msg) => {
+    if (!msg || typeof msg !== 'object') return;
+
+    // Ensure overlay exists and is RTC-enabled before applying art
+    async function ensureOverlayReady(){
+  try {
+    const already = (typeof PortraitOverlay?.isReady === 'function') && PortraitOverlay.isReady();
+    if (!already) {
+      await PortraitOverlay.init({
+        autoRandomIfUnset: false,
+        autoCloseOnBothRolled: true,
+        enableRTC: true
+      });
+    }
+  } catch {}
+}
+
+
+    try {
+      // Case A: explicit portrait packet from opponent
+      if (msg.type === 'dice-portrait') {
+        const side = (msg.side === 'left' || msg.side === 'right') ? msg.side : null;
+        const url  = (typeof msg.url === 'string') ? msg.url : '';
+        if (!side || !url) return;
+
+        await ensureOverlayReady();
+        // Apply WITHOUT echo
+        await PortraitOverlay.setPortrait(side, url);
+        return;
+      }
+
+      // Case B: deck art snapshot (we only need the commander art)
+      if (msg.type === 'deck-art-sync') {
+        const mySeat  = (typeof window.mySeat === 'function') ? (Number(window.mySeat()) || 1) : (Number(window.__LOCAL_SEAT) || 1);
+        const mySide  = (mySeat === 1) ? 'left' : 'right';
+        const oppSide = (mySide === 'left') ? 'right' : 'left';
+
+        const art = msg?.commander?.imgFront || msg?.commander?.img || '';
+        if (!art) return;
+
+        await ensureOverlayReady();
+        // Apply WITHOUT echo
+        await PortraitOverlay.setPortrait(oppSide, art);
+        return;
+      }
+    } catch (e) {
+      console.warn('[DeckLoading] RX handler failed', e);
+    }
+  };
+
+  attach(handler);
+})();
+
+
+// Build a compact packet that mirrors art for commander + all drawable entries.
+// imgFront/imgBack are included for DFCs; imageUrl (front) is kept for parity.
+function _buildDeckArtPacket(){
+  try{
+    const seat = (typeof window.mySeat === 'function') ? window.mySeat() : 1;
+    const commanderMeta = state?.commanderMeta || {};
+    const commander = {
+      name: state?.commander || '',
+      imgFront: commanderMeta.imgFront || commanderMeta.img || '',
+      imgBack:  commanderMeta.imgBack  || ''
+    };
+
+    const deck = Array.isArray(state?.library) ? state.library.map(c => ({
+      name:     c?.name || '',
+      imgFront: c?.imgFront || c?.imageUrl || '',
+      imgBack:  c?.imgBack  || ''
+    })) : [];
+
+    return {
+      type: 'deck-art-sync',
+      seat,
+      commander,
+      deck
+    };
+  }catch(e){
+    console.warn('[DeckLoading] build packet failed', e);
+    return { type:'deck-art-sync', seat:1, commander:{name:'',imgFront:'',imgBack:''}, deck:[] };
+  }
+}
+
+function _sendDeckArtSnapshot(){
+  const pkt = _buildDeckArtPacket();
+  _rtcSend(pkt);
+}
+
+
+function exportLibrarySnapshot(){
+  try{
+    return {
+      remaining: (_WIN.__LIB_REMAINING || []).map(x => ({ ...x })),
+      all:       (_WIN.__LIB_ALL       || []).map(x => ({ ...x }))
+    };
+  }catch{
+    return { remaining: [], all: [] };
+  }
+}
+
+/**
+ * Hydrate the deck loader from a previously saved snapshot so
+ * the UI behaves exactly like a freshly loaded deck:
+ * - sets internal state (deck/library/commander/meta)
+ * - syncs window mirrors
+ * - flips the deck zone "has deck" UI + background
+ * - sends an RTC deck-visual ping to the opponent
+ * - updates the commander label if present
+ *
+ * @param {Object} snap
+ *   snap.remaining  -> array of live drawable entries (top -> bottom)
+ *   snap.all        -> (optional) full parsed deck entries
+ *   snap.commander  -> (optional) commander name
+ *   snap.commanderMeta -> (optional) meta blob used on first load
+ *   snap.deckNames  -> (optional) canonical name list (top -> bottom)
+ */
+function hydrateFromSave(snap = {}){
+  try{
+    const remaining = Array.isArray(snap.remaining) ? snap.remaining.map(x => ({ ...x })) : [];
+    const all       = Array.isArray(snap.all)       ? snap.all.map(x => ({ ...x }))       : [];
+
+    // Prefer provided commander info; otherwise keep the existing defaults
+    const commander     = String(snap.commander || state.commander || '');
+    const commanderMeta = snap.commanderMeta ? { ...snap.commanderMeta } : { ...state.commanderMeta };
+
+    // Optional canonical names (top -> bottom). If not provided, derive from remaining.
+    const deckNames = Array.isArray(snap.deckNames) && snap.deckNames.length
+      ? snap.deckNames.slice()
+      : remaining.map(c => c?.name || '').filter(Boolean);
+
+    // Install the library and commander info
+    Object.assign(state, {
+      deck: deckNames,
+      library: remaining,
+      commander,
+      commanderMeta
+    });
+
+    // Keep global mirrors in sync so overlays see the live deck
+    _syncLibGlobals();
+
+    // Flip the deck zone UI bits exactly as a fresh load would
+    try{
+      const deckZone = document.getElementById('pl-deck');
+      if (deckZone) {
+        deckZone.dataset.hasDeck = '1';
+        deckZone.classList.add('has-deck');
+      }
+    }catch{}
+
+    // Ask Zones to render deck background + commander label + send rtc visual
+    try{
+      const deckZone = document.getElementById('pl-deck');
+      const cmdZone  = document.getElementById('pl-commander');
+      if (window.Zones?.markDeckPresent)  window.Zones.markDeckPresent(deckZone, true);
+      if (window.Zones?.setCommanderName) window.Zones.setCommanderName(cmdZone, commander);
+      if (window.Zones?.sendDeckVisual)   window.Zones.sendDeckVisual(true);
+    }catch{}
+
+    // Notify any deck UI listeners (e.g., deck search overlay) to refresh
+    try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
+
+    // Send deck art snapshot so the remote mirrors art on restore flows too
+    try { _sendDeckArtSnapshot(); } catch {}
+
+    console.log('[DeckLoading] hydrateFromSave → ready', {
+      libraryCount: state.library.length,
+      commander: state.commander
+    });
+
+    return true;
+
+  }catch(e){
+    console.warn('[DeckLoading] hydrateFromSave failed', e);
+    return false;
+  }
+}
+
+function importLibrarySnapshot(snap = {}) {
+  // Thin alias so older callers keep working.
+  // Accepts { remaining:[], all:[], commander?, commanderMeta?, deckNames? }
+  return hydrateFromSave(snap);
+}
+
+
+return {
     init, open,
     drawOne, drawOneToHand,
 
@@ -934,6 +1293,17 @@ Object.assign(state, {
     enumerate: enumerateDeck,
     count: deckCount,
 
+    // ⬇️ NEW: return-to-deck + shuffle
+    insertFromTable,
+    shuffleLibrary,
+    exportLibrarySnapshot,
+
+    // ⬇️ NEW: allow loader to accept a restored deck and flip UI into "loaded" mode
+    hydrateFromSave,
+    importLibrarySnapshot,
+
     get state(){ return state; }
   };
 })();
+
+try { window.DeckLoadingHydrate = (snap) => DeckLoading.hydrateFromSave(snap); } catch {}

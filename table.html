@@ -300,6 +300,27 @@
 <script type="module" src="./modules/turn.upkeep.js"></script>
 <script type="module" src="./modules/battle.system.js"></script>
 <script type="module" src="./modules/battle.system.rules.js"></script>
+<script>
+  // Global timing + import wrapper
+  window.__modTime = (label, when) => {
+    const tag = `[mod] ${label}`;
+    if (when === 'start') { console.time(tag); console.log(tag, 'start'); }
+    else if (when === 'end') { console.log(tag, 'end'); console.timeEnd(tag); }
+  };
+
+  window.__timedImport = (path) => {
+    const tag = `[import] ${path}`;
+    console.time(tag);
+    return import(path)
+      .then(m => { console.timeEnd(tag); return m; })
+      .catch(e => { console.timeEnd(tag); console.error(tag, 'FAIL', e); throw e; });
+  };
+
+  // Surface silent failures:
+  window.addEventListener('error', e => console.error('[GLOBAL ERROR]', e.message, e.error));
+  window.addEventListener('unhandledrejection', e => console.error('[PROMISE REJECTION]', e.reason));
+</script>
+
 <script type="module">
 
 // global default (e.g., in your bootstrap script)
@@ -334,7 +355,7 @@ window.addEventListener('DOMContentLoaded', () => {
   Camera.mount({
     viewport,
     world,
-    minScale: 0.4,
+    minScale: 0.1,
     maxScale: 2.5,
     wheelStep: 0.12
   });

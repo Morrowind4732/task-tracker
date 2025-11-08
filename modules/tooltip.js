@@ -324,6 +324,11 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
   // low-profile dock flag
   let LOW_PROFILE = false;
 
+  // NEW: battle-mode (forces slim regardless of LOW_PROFILE)
+  let BATTLE_MODE = false;
+  const _isSlim = () => (BATTLE_MODE || LOW_PROFILE);
+
+
   // -----------------------
   // INTERNAL STYLE APPLY
   // -----------------------
@@ -394,10 +399,11 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
 
   // helper we expose so settings sliders/dropdowns can force a re-dock live
   function redockIfSlim(){
-    if (!LOW_PROFILE || !root || root.style.display === 'none') return;
+    if (!_isSlim() || !root || root.style.display === 'none') return;
     _applySizingForMode();
     _dockLowProfile();
   }
+
 
   // -----------------------
   // follow helpers
@@ -436,8 +442,8 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
 
     _applySizingForMode();
 
-    if (LOW_PROFILE) {
-      // slim dock: stop following and pin to edge
+    if (_isSlim()) {
+      // slim dock (battle mode or low-profile): stop following and pin to edge
       stopFollowing();
       if (root && root.style.display !== 'none') {
         _dockLowProfile();
@@ -453,6 +459,7 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
       }
     }
   }
+
 
   // -----------------------
   // mount
@@ -478,7 +485,7 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
     position:fixed; display:none;
     background:linear-gradient(180deg, var(--ui-deep-2), var(--ui-deep-1));
     color:var(--ui-text); border:1px solid var(--ui-border);
-    border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.55); z-index:999999;
+    border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.55); z-index:9000;
     max-width:min(var(--tt-max-width), 92vw); max-height:min(80vh, 680px); overflow:auto;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
     font-size:var(--tt-font-size);
@@ -617,51 +624,367 @@ flipBtn= root.querySelector('#ttFlip');
     stopFollowing();
   }
 
-  // -----------------------
-  // positionNear (normal mode)
-  // -----------------------
-  function positionNear(anchorEl, { mode = 'right' } = {}){
-    if (!root) return;
+ // -----------------------
+// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
+// -----------------------
+function positionNear(anchorEl, { mode = 'right' } = {}){
+  if (!root) return;
 
-    // LOW_PROFILE mode ignores anchor and just docks to edge
-    if (LOW_PROFILE){
-      _applySizingForMode();
-      _dockLowProfile();
-      return;
-    }
-
-    _applySizingForMode(); // normal floating bubble sizing
-
-    if (!anchorEl) return;
-    const r = anchorEl.getBoundingClientRect();
-    let x, y;
-
-    if (mode === 'bottom') {
-      const extraGap = 48;
-      x = (r.left + r.right) / 2 - (root.offsetWidth / 2);
-      y = r.bottom + extraGap;
-    } else if (mode === 'left') {
-      x = r.left - root.offsetWidth - 12;
-      y = r.top;
-    } else if (mode === 'top') {
-      x = r.left;
-      y = r.top - root.offsetHeight - 12;
-    } else { // 'right'
-      x = r.right + 12;
-      y = r.top;
-    }
-
-    // Clamp to viewport
-    x = Math.max(8, Math.min(x, window.innerWidth  - root.offsetWidth  - 8));
-    y = Math.max(8, Math.min(y, window.innerHeight - root.offsetHeight - 8));
-
-    root.style.position = 'fixed';
-    root.style.left  = `${x}px`;
-    root.style.top   = `${y}px`;
-    root.style.right = '';
-    root.style.bottom= '';
-    root.style.transform = '';
+  // Slim while either battle-mode OR low-profile
+  if (_isSlim()){
+    _applySizingForMode();
+    _dockLowProfile();
+    return;
   }
+
+
+  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
+
+  if (!anchorEl) return;
+
+  const cardRect = anchorEl.getBoundingClientRect();
+  const tipW = root.offsetWidth;
+  const tipH = root.offsetHeight;
+
+  // Helper: compute desired x/y for a mode without writing styles
+  const calcXY = (m) => {
+    if (m === 'bottom') {
+      const extraGap = 48;
+      return {
+        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
+        y: cardRect.bottom + extraGap
+      };
+    }
+    if (m === 'top') {
+      return {
+        x: cardRect.left,
+        y: cardRect.top - tipH - 12
+      };
+    }
+    if (m === 'left') {
+      return {
+        x: cardRect.left - tipW - 12,
+        y: cardRect.top
+      };
+    }
+    // default 'right'
+    return {
+      x: cardRect.right + 12,
+      y: cardRect.top
+    };
+  };
+
+  // Helper: clamp to viewport (leaves an 8px gutter)
+  const clampXY = ({x, y}) => ({
+    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
+  });
+
+  // Helper: simulate tooltip rect at x/y
+  const makeRect = ({x, y}) => ({
+    left: x, top: y, right: x + tipW, bottom: y + tipH
+  });
+
+  // Helper: intersection test
+  const intersects = (a, b) =>
+    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
+
+  // Start with requested mode
+  let preferred = mode || 'right';
+  let xy = clampXY(calcXY(preferred));
+  let tipRect = makeRect(xy);
+
+  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
+  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
+    const alt = preferred === 'bottom' ? 'top' : 'bottom';
+    const xyAlt = clampXY(calcXY(alt));
+    const rectAlt = makeRect(xyAlt);
+    // choose the alt if it removes overlap; otherwise keep clamped preferred
+    if (!intersects(cardRect, rectAlt)) {
+      preferred = alt;
+      xy = xyAlt;
+      tipRect = rectAlt;
+    }
+  }
+
+  root.style.position = 'fixed';
+  root.style.left  = `${xy.x}px`;
+  root.style.top   = `${xy.y}px`;
+  root.style.right = '';
+  root.style.bottom= '';
+  root.style.transform = '';
+}
+
+ // -----------------------
+// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
+// -----------------------
+function positionNear(anchorEl, { mode = 'right' } = {}){
+  if (!root) return;
+
+  // LOW_PROFILE mode ignores anchor and just docks to edge
+  if (LOW_PROFILE){
+    _applySizingForMode();
+    _dockLowProfile();
+    return;
+  }
+
+  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
+
+  if (!anchorEl) return;
+
+  const cardRect = anchorEl.getBoundingClientRect();
+  const tipW = root.offsetWidth;
+  const tipH = root.offsetHeight;
+
+  // Helper: compute desired x/y for a mode without writing styles
+  const calcXY = (m) => {
+    if (m === 'bottom') {
+      const extraGap = 48;
+      return {
+        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
+        y: cardRect.bottom + extraGap
+      };
+    }
+    if (m === 'top') {
+      return {
+        x: cardRect.left,
+        y: cardRect.top - tipH - 12
+      };
+    }
+    if (m === 'left') {
+      return {
+        x: cardRect.left - tipW - 12,
+        y: cardRect.top
+      };
+    }
+    // default 'right'
+    return {
+      x: cardRect.right + 12,
+      y: cardRect.top
+    };
+  };
+
+  // Helper: clamp to viewport (leaves an 8px gutter)
+  const clampXY = ({x, y}) => ({
+    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
+  });
+
+  // Helper: simulate tooltip rect at x/y
+  const makeRect = ({x, y}) => ({
+    left: x, top: y, right: x + tipW, bottom: y + tipH
+  });
+
+  // Helper: intersection test
+  const intersects = (a, b) =>
+    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
+
+  // Start with requested mode
+  let preferred = mode || 'right';
+  let xy = clampXY(calcXY(preferred));
+  let tipRect = makeRect(xy);
+
+  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
+  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
+    const alt = preferred === 'bottom' ? 'top' : 'bottom';
+    const xyAlt = clampXY(calcXY(alt));
+    const rectAlt = makeRect(xyAlt);
+    // choose the alt if it removes overlap; otherwise keep clamped preferred
+    if (!intersects(cardRect, rectAlt)) {
+      preferred = alt;
+      xy = xyAlt;
+      tipRect = rectAlt;
+    }
+  }
+
+  root.style.position = 'fixed';
+  root.style.left  = `${xy.x}px`;
+  root.style.top   = `${xy.y}px`;
+  root.style.right = '';
+  root.style.bottom= '';
+  root.style.transform = '';
+}
+
+ // -----------------------
+// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
+// -----------------------
+function positionNear(anchorEl, { mode = 'right' } = {}){
+  if (!root) return;
+
+  // LOW_PROFILE mode ignores anchor and just docks to edge
+  if (LOW_PROFILE){
+    _applySizingForMode();
+    _dockLowProfile();
+    return;
+  }
+
+  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
+
+  if (!anchorEl) return;
+
+  const cardRect = anchorEl.getBoundingClientRect();
+  const tipW = root.offsetWidth;
+  const tipH = root.offsetHeight;
+
+  // Helper: compute desired x/y for a mode without writing styles
+  const calcXY = (m) => {
+    if (m === 'bottom') {
+      const extraGap = 48;
+      return {
+        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
+        y: cardRect.bottom + extraGap
+      };
+    }
+    if (m === 'top') {
+      return {
+        x: cardRect.left,
+        y: cardRect.top - tipH - 12
+      };
+    }
+    if (m === 'left') {
+      return {
+        x: cardRect.left - tipW - 12,
+        y: cardRect.top
+      };
+    }
+    // default 'right'
+    return {
+      x: cardRect.right + 12,
+      y: cardRect.top
+    };
+  };
+
+  // Helper: clamp to viewport (leaves an 8px gutter)
+  const clampXY = ({x, y}) => ({
+    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
+  });
+
+  // Helper: simulate tooltip rect at x/y
+  const makeRect = ({x, y}) => ({
+    left: x, top: y, right: x + tipW, bottom: y + tipH
+  });
+
+  // Helper: intersection test
+  const intersects = (a, b) =>
+    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
+
+  // Start with requested mode
+  let preferred = mode || 'right';
+  let xy = clampXY(calcXY(preferred));
+  let tipRect = makeRect(xy);
+
+  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
+  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
+    const alt = preferred === 'bottom' ? 'top' : 'bottom';
+    const xyAlt = clampXY(calcXY(alt));
+    const rectAlt = makeRect(xyAlt);
+    // choose the alt if it removes overlap; otherwise keep clamped preferred
+    if (!intersects(cardRect, rectAlt)) {
+      preferred = alt;
+      xy = xyAlt;
+      tipRect = rectAlt;
+    }
+  }
+
+  root.style.position = 'fixed';
+  root.style.left  = `${xy.x}px`;
+  root.style.top   = `${xy.y}px`;
+  root.style.right = '';
+  root.style.bottom= '';
+  root.style.transform = '';
+}
+
+ // -----------------------
+// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
+// -----------------------
+function positionNear(anchorEl, { mode = 'right' } = {}){
+  if (!root) return;
+
+  // LOW_PROFILE mode ignores anchor and just docks to edge
+  if (LOW_PROFILE){
+    _applySizingForMode();
+    _dockLowProfile();
+    return;
+  }
+
+  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
+
+  if (!anchorEl) return;
+
+  const cardRect = anchorEl.getBoundingClientRect();
+  const tipW = root.offsetWidth;
+  const tipH = root.offsetHeight;
+
+  // Helper: compute desired x/y for a mode without writing styles
+  const calcXY = (m) => {
+    if (m === 'bottom') {
+      const extraGap = 48;
+      return {
+        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
+        y: cardRect.bottom + extraGap
+      };
+    }
+    if (m === 'top') {
+      return {
+        x: cardRect.left,
+        y: cardRect.top - tipH - 12
+      };
+    }
+    if (m === 'left') {
+      return {
+        x: cardRect.left - tipW - 12,
+        y: cardRect.top
+      };
+    }
+    // default 'right'
+    return {
+      x: cardRect.right + 12,
+      y: cardRect.top
+    };
+  };
+
+  // Helper: clamp to viewport (leaves an 8px gutter)
+  const clampXY = ({x, y}) => ({
+    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
+  });
+
+  // Helper: simulate tooltip rect at x/y
+  const makeRect = ({x, y}) => ({
+    left: x, top: y, right: x + tipW, bottom: y + tipH
+  });
+
+  // Helper: intersection test
+  const intersects = (a, b) =>
+    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
+
+  // Start with requested mode
+  let preferred = mode || 'right';
+  let xy = clampXY(calcXY(preferred));
+  let tipRect = makeRect(xy);
+
+  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
+  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
+    const alt = preferred === 'bottom' ? 'top' : 'bottom';
+    const xyAlt = clampXY(calcXY(alt));
+    const rectAlt = makeRect(xyAlt);
+    // choose the alt if it removes overlap; otherwise keep clamped preferred
+    if (!intersects(cardRect, rectAlt)) {
+      preferred = alt;
+      xy = xyAlt;
+      tipRect = rectAlt;
+    }
+  }
+
+  root.style.position = 'fixed';
+  root.style.left  = `${xy.x}px`;
+  root.style.top   = `${xy.y}px`;
+  root.style.right = '';
+  root.style.bottom= '';
+  root.style.transform = '';
+}
+
 
   // -----------------------
   // helpers
@@ -875,16 +1198,42 @@ if (typeof ogLOY !== 'undefined' && typeof liveLOY !== 'undefined') {
   }
 
   // -----------------------
+  // setBattleMode (forces slim while true)
+  // -----------------------
+  function setBattleMode(on){
+    BATTLE_MODE = !!on;
+    _applySizingForMode();
+
+    if (_isSlim()){
+      // force dock
+      stopFollowing();
+      if (root && root.style.display !== 'none') {
+        _dockLowProfile();
+      }
+    } else {
+      // return to normal follow if a card is active
+      const target = (activeEl && activeEl.isConnected) ? activeEl : null;
+      if (target && root && root.style.display !== 'none') {
+        positionNear(target, { mode:'bottom' });
+        startFollowing(target);
+      }
+    }
+  }
+
+
+  // -----------------------
   // public API
   // -----------------------
-  return {
+    return {
     mount,
     hide,
     showForCard,
     showForHandFocus,
     setLowProfile,
-    redockIfSlim
+    redockIfSlim,
+    setBattleMode   // ← NEW
   };
+
 })();
 
 // expose globally
@@ -895,6 +1244,8 @@ Object.assign(window.Tooltip, {
   showForCard: Tooltip.showForCard,
   showForHandFocus: Tooltip.showForHandFocus,
   setLowProfile: Tooltip.setLowProfile,
-  redockIfSlim: Tooltip.redockIfSlim
+  redockIfSlim: Tooltip.redockIfSlim,
+  setBattleMode: Tooltip.setBattleMode   // ← NEW
 });
+
 Tooltip.mount();

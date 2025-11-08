@@ -12,7 +12,7 @@
 
 import { Zones } from './zones.js';   // ⬅️ NEW: so we can call Zones.recordCardToZone()
 import { extractInnateAbilities } from './oracle.innate.js'; // ⬅️ innate ability parser for RTC spawn
-
+import { DeckLoading } from './deck.loading.js';            // ⬅️ use module, not window.*
 
 const localDragLock = new Set();
 
@@ -971,47 +971,170 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
     // -------------------------------------------------
     // popup helper lives OUTSIDE finalizeDrop just like before
     const showDeckInsertOptions = (cardEl, onDone) => {
-      const popup = document.createElement('div');
-      popup.className = 'deck-insert-popup';
-      popup.innerHTML = `
-        <div class="deck-option">Top</div>
-        <div class="deck-option">Bottom</div>
-        <div class="deck-option">Random</div>
-        <div class="deck-option cancel">Cancel</div>
-      `;
-      Object.assign(popup.style, {
-        position: 'fixed',
-        left: '50%',
-        top: '50%',
-        transform: 'translate(-50%,-50%)',
-        background: '#222',
-        color: 'white',
-        padding: '12px',
-        borderRadius: '8px',
-        zIndex: '9999'
-      });
-      popup.querySelectorAll('.deck-option').forEach(opt => {
-  opt.addEventListener('click', () => {
-    const choice = opt.textContent.trim();
-    if (choice === 'Cancel') {
-      popup.remove();
-      console.log('[Deck] Insert canceled');
-      return;
-    }
+  // guard: only one at a time
+  if (document.getElementById('deckInsertBackdrop')) return;
+
+  // backdrop
+  const backdrop = document.createElement('div');
+  backdrop.id = 'deckInsertBackdrop';
+  Object.assign(backdrop.style, {
+    position: 'fixed',
+    inset: '0',
+    background: 'rgba(2, 6, 23, 0.55)',            // slate-950-ish w/ alpha
+    backdropFilter: 'blur(6px)',
+    WebkitBackdropFilter: 'blur(6px)',
+    zIndex: '99998'
+  });
+
+  // modal shell
+  const modal = document.createElement('div');
+  modal.id = 'deckInsertModal';
+  Object.assign(modal.style, {
+    position: 'fixed',
+    left: '50%',
+    top: '50%',
+    transform: 'translate(-50%,-50%)',
+    width: 'min(420px, 92vw)',
+    borderRadius: '16px',
+    background: 'linear-gradient(180deg, rgba(30,41,59,.95), rgba(15,23,42,.95))', // glassy slate
+    boxShadow: '0 20px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(148,163,184,.15)',
+    color: '#e2e8f0',
+    zIndex: '99999',
+    padding: '18px'
+  });
+
+  // title + hint
+  const header = document.createElement('div');
+  header.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">
+      <h3 style="margin:0;font-size:16px;font-weight:700;letter-spacing:.2px;">Put card into library</h3>
+      <span style="opacity:.75;font-size:12px;">T / B / R • Esc</span>
+    </div>
+    <p style="margin:0 0 12px;font-size:13px;line-height:1.35;color:#cbd5e1;opacity:.9">
+      Choose where to place it. You can shuffle after <em>Random</em>.
+    </p>
+  `;
+
+  // options grid
+  const grid = document.createElement('div');
+  Object.assign(grid.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    gap: '10px'
+  });
+
+  const mkBtn = (label, sub, key, variant = 'primary') => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'deckInsertBtn';
+    btn.dataset.choice = label;
+    Object.assign(btn.style, {
+      width: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '12px',
+      padding: '12px 14px',
+      borderRadius: '12px',
+      border: '1px solid rgba(148,163,184,.18)',
+      background: variant === 'ghost'
+        ? 'rgba(15,23,42,.6)'
+        : 'linear-gradient(180deg, rgba(51,65,85,.9), rgba(30,41,59,.9))',
+      color: '#e5e7eb',
+      fontWeight: 700,
+      fontSize: '14px',
+      cursor: 'pointer',
+      transition: 'transform .06s ease, background .12s ease, border-color .12s ease'
+    });
+    btn.onmouseenter = () => {
+      btn.style.transform = 'translateY(-1px)';
+      btn.style.borderColor = 'rgba(148,163,184,.35)';
+    };
+    btn.onmouseleave = () => {
+      btn.style.transform = 'none';
+      btn.style.borderColor = 'rgba(148,163,184,.18)';
+    };
+    btn.onmousedown = () => (btn.style.transform = 'translateY(0)');
+    btn.onmouseup = () => (btn.style.transform = 'translateY(-1px)');
+
+    btn.innerHTML = `
+      <span style="display:flex;align-items:center;gap:10px">
+        <span>${
+          label === 'Top'    ? '⬆️' :
+          label === 'Bottom' ? '⬇️' :
+          label === 'Random' ? '🔀' : '✖️'
+        }</span>
+        <span>${label}</span>
+        <span style="opacity:.75;font-size:12px;font-weight:600">${sub || ''}</span>
+      </span>
+      ${key ? `<kbd style="
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size:12px;padding:2px 6px;border-radius:6px;
+        background: rgba(2,6,23,.6); border:1px solid rgba(148,163,184,.25);
+        color:#cbd5e1; letter-spacing:.3px;">${key}</kbd>` : ''}
+    `;
+    return btn;
+  };
+
+  const btnTop    = mkBtn('Top',    'Place on top of library',     'T');
+  const btnBottom = mkBtn('Bottom', 'Place on bottom of library',  'B');
+  const btnRandom = mkBtn('Random', 'Insert at random position',   'R');
+  const btnCancel = mkBtn('Cancel', 'Close without changes',       'Esc', 'ghost');
+
+  [btnTop, btnBottom, btnRandom, btnCancel].forEach(b => grid.appendChild(b));
+
+  modal.appendChild(header);
+  modal.appendChild(grid);
+
+  // attach
+  document.body.appendChild(backdrop);
+  document.body.appendChild(modal);
+
+  // focus management
+  btnTop.focus();
+
+  // close helpers
+  const teardown = (why = 'cancel') => {
+    try { modal.remove(); } catch {}
+    try { backdrop.remove(); } catch {}
+    console.log('[Deck] Insert', why === 'cancel' ? 'canceled' : `→ ${why}`);
+  };
+
+  const act = async (choice) => {
+    if (!choice || choice === 'Cancel') { teardown('cancel'); return; }
 
     if (choice === 'Random') {
-      const confirmShuffle = confirm("Shuffle after placing randomly?");
-      if (confirmShuffle) console.log('[Deck] Shuffle after random insert (requested)');
+      const ok = confirm('Shuffle after placing randomly?');
+      if (ok) console.log('[Deck] Shuffle after random insert (requested)');
     }
 
     console.log(`[Deck] Insert card to: ${choice}`);
-    popup.remove();
-    onDone(choice); // ⬅️ pass the actual choice upward
-  });
-});
+    teardown(choice);
+    onDone(choice);
+  };
 
-      document.body.appendChild(popup);
-    };
+  // events
+  backdrop.addEventListener('click', () => teardown('cancel'));
+  btnTop.addEventListener('click',    () => act('Top'));
+  btnBottom.addEventListener('click', () => act('Bottom'));
+  btnRandom.addEventListener('click', () => act('Random'));
+  btnCancel.addEventListener('click', () => teardown('cancel'));
+
+  // keyboard shortcuts
+  const onKey = (e) => {
+    if (!document.body.contains(modal)) {
+      window.removeEventListener('keydown', onKey);
+      return;
+    }
+    const k = e.key.toLowerCase();
+    if (k === 'escape') { e.preventDefault(); teardown('cancel'); return; }
+    if (k === 't') { e.preventDefault(); act('Top'); return; }
+    if (k === 'b') { e.preventDefault(); act('Bottom'); return; }
+    if (k === 'r') { e.preventDefault(); act('Random'); return; }
+  };
+  window.addEventListener('keydown', onKey, { passive: true });
+};
+
 
     const finalizeDrop = () => {
       // same body you already had in onUp(), but we'll conditionally skip
@@ -1266,31 +1389,27 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
         // 4. MY deck (top/bottom/random popup then remove from table)
         else if (overZone('pl-deck')) {
   showDeckInsertOptions(el, (choice) => {
-    const pos = String(choice || '').toLowerCase(); // 'top' | 'bottom' | 'random'
-    const ownerSide = 'player';
-
-    // Try to hand this card to a deck insert hook if available
-    // Expected signature: Zones.recordCardToDeck(ownerSide, el, pos) -> boolean
-    let inserted = false;
+    const pos = String(choice || 'top').toLowerCase(); // 'top' | 'bottom' | 'random'
+    let ok = false;
     try {
-      if (typeof Zones?.recordCardToDeck === 'function') {
-        inserted = !!Zones.recordCardToDeck(ownerSide, el, pos);
-        console.log('[Deck] recordCardToDeck result:', inserted, { pos, cid: el.dataset.cid, name: el.dataset.name || el.title || '' });
-      } else {
-        console.warn('[Deck] Zones.recordCardToDeck not found — card will be removed from table but NOT added to deck list.');
-      }
+      if (typeof DeckLoading?.insertFromTable === 'function') {
+  ok = !!DeckLoading.insertFromTable(el, pos);
+} else {
+  console.warn('[Deck] DeckLoading.insertFromTable not found (module import missing?)');
+}
 
-      // Optional: if user picked Random and your Zones supports shuffle
-      if (pos === 'random' && typeof Zones?.shuffleDeck === 'function') {
-        Zones.shuffleDeck(ownerSide);
-        console.log('[Deck] shuffleDeck(ownerSide) called after random insert');
+if (pos === 'random' && typeof DeckLoading?.shuffleLibrary === 'function') {
+        // only shuffle if user confirmed in the popup; log already printed there
+        // window.DeckLoading.shuffleLibrary();
       }
     } catch (e) {
-      console.warn('[Deck] recordCardToDeck threw:', e);
+      console.warn('[Deck] insertFromTable threw:', e);
     }
 
-    // Remove from table either way so the visual state matches the action
-    removeCard('deck', ownerSide);
+    if (!ok) {
+      console.warn('[Deck] insertFromTable failed — removing from table anyway');
+    }
+    removeCard('deck', 'player'); // keep visual state in sync
   });
 }
 

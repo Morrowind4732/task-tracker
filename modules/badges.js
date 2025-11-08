@@ -385,7 +385,11 @@ function parseTypeBadges(typeline = '') {
 
 async function getGrantedFromStore(el){
   const cid = byCid(el);
-  const out = { abilities: [], types: [], counters: [], _pow: undefined, _tou: undefined, _loyalty: undefined };
+  const out = {
+    abilities: [], types: [], counters: [],
+    grants: [],           // NEW
+    _pow: undefined, _tou: undefined, _loyalty: undefined
+  };
 
   // Local CardAttributes row (authoritative if present)
   try {
@@ -393,13 +397,16 @@ async function getGrantedFromStore(el){
     const row = mod.CardAttributes?.get?.(cid);
     if (row) {
       if (Array.isArray(row.abilities)) out.abilities = row.abilities.slice();
-      if (Array.isArray(row.types))     out.types     = row.types.slice();
-      if (Array.isArray(row.counters))  out.counters  = row.counters.slice();
+if (Array.isArray(row.types))     out.types     = row.types.slice();
+if (Array.isArray(row.counters))  out.counters  = row.counters.slice();
+if (Array.isArray(row.grants))    out.grants    = row.grants.slice();   // NEW
+if (Array.isArray(row.buffs))     out.buffs     = row.buffs.slice();    // NEW: plain-text buffs like "Deathtouch EOT"
+
 
       out._pow = row.pow;
       out._tou = row.tou;
 
-      // roll up loyalty from counters by name
+      // roll up loyalty...
       try {
         const loy = out.counters
           .filter(c => String(c?.kind || c?.name || '').toLowerCase() === 'loyalty')
@@ -416,8 +423,11 @@ async function getGrantedFromStore(el){
     const raw = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : null;
     if (raw) {
       if (Array.isArray(raw.abilities)) out.abilities = raw.abilities.slice();
-      if (Array.isArray(raw.types))     out.types     = raw.types.slice();
-      if (Array.isArray(raw.counters))  out.counters  = raw.counters.slice();
+if (Array.isArray(raw.types))     out.types     = raw.types.slice();
+if (Array.isArray(raw.counters))  out.counters  = raw.counters.slice();
+if (Array.isArray(raw.grants))    out.grants    = raw.grants.slice();   // NEW
+if (Array.isArray(raw.buffs))     out.buffs     = raw.buffs.slice();    // NEW
+
 
       if (raw.pt && typeof raw.pt === 'string'){
         const [p,t] = raw.pt.split('/').map(x=>Number(x));
@@ -437,6 +447,7 @@ async function getGrantedFromStore(el){
   return out;
 }
 
+
 function toPill(text){
   const s = String(text || '').trim();
   if (!s) return null;
@@ -451,6 +462,16 @@ function toPill(text){
   return pill;
 }
 
+// Infer duration from short text tokens if no structured duration is present.
+function _inferDurFromText(s){
+  const t = String(s || '').toUpperCase();
+  if (!t) return '';
+  if (/\(E\)|\bUNTIL END OF TURN\b|\bTHIS TURN\b/.test(t)) return 'EOT';
+  if (/\(L\)|\bLINKED\b|\bLINKED SOURCE\b/.test(t))        return 'SOURCE';
+  return '';
+}
+
+
 /**
  * Extract *structured* adds from RulesStore tempBuffs.
  * We only trust explicit fields on the buff objects to avoid false positives.
@@ -460,23 +481,47 @@ function toPill(text){
  *   - b.counter {kind|name, qty|amount} -> push to counters
  */
 function _extractRulesAdds(buffs){
+  // Now carries duration so we can suffix pills like "(E)" / "(L)"
+  // Shape:
+  //   out.types     = [ { name, duration }, ... ]
+  //   out.abilities = [ { name, duration }, ... ]
+  //   out.counters  = [ { kind, qty } ]  (unchanged)
   const out = { types: [], abilities: [], counters: [] };
   if (!Array.isArray(buffs)) return out;
 
+  const normDur = (b) => {
+    // 1) explicit field wins
+    const dRaw = String(b?.duration || '').trim().toUpperCase();
+    if (dRaw) return dRaw;
+
+    // 2) structured flags
+    if (b?.untilEOT || b?.untilEndOfTurn) return 'EOT';
+    if (b?.linkedSource || b?.sourceCid || b?.source) return 'SOURCE';
+
+    // 3) textual shorthands in b.text (e.g., "Flying (E)" or "(L)")
+    const txt = String(b?.text || '').toUpperCase();
+    if (/\(E\)|\bUNTIL END OF TURN\b|\bTHIS TURN\b/.test(txt)) return 'EOT';
+    if (/\(L\)|\bLINKED\b|\bLINKED SOURCE\b/.test(txt))        return 'SOURCE';
+
+    return ''; // permanent/unspecified
+  };
+
+
   for (const b of buffs){
     if (!b || typeof b !== 'object') continue;
+    const duration = normDur(b);
 
     // types
     const t1 = (b.typeAdd != null) ? String(b.typeAdd).trim() : '';
     const t2 = (b.type    != null) ? String(b.type).trim()    : '';
-    if (t1) out.types.push(t1);
-    if (t2) out.types.push(t2);
+    if (t1) out.types.push({ name: t1, duration });
+    if (t2) out.types.push({ name: t2, duration });
 
     // abilities
     const a = (b.ability != null) ? String(b.ability).trim() : '';
-    if (a) out.abilities.push(a);
+    if (a) out.abilities.push({ name: a, duration });
 
-    // counters
+    // counters (no duration—counters display as plain “Kind ×N”)
     const c = (b.counter && typeof b.counter === 'object') ? b.counter : null;
     if (c){
       const kind = String(c.kind || c.name || '').trim();
@@ -488,6 +533,7 @@ function _extractRulesAdds(buffs){
   }
   return out;
 }
+
 
 
 
@@ -533,7 +579,7 @@ function ensurePanelFor(el){
       border-radius:0;
       color:var(--ui-text);
       font: 600 13px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      display:flex; flex-direction:column; gap:6px; z-index:99998;
+      display:flex; flex-direction:column; gap:6px; z-index:8999;
       pointer-events:none;
       transform-origin: left center;
     `;
@@ -606,7 +652,7 @@ function ensurePanelFor(el){
         box-shadow:0 8px 24px rgba(0,0,0,.45);
         cursor:pointer; pointer-events:auto;
         transform:translateZ(0);
-        transform-origin:right center;
+        /* NOTE: transform-origin is set per button (left/right) below */
         user-select:none;
       `;
       b.addEventListener('mousedown', e => e.stopPropagation());
@@ -617,6 +663,9 @@ function ensurePanelFor(el){
     // Wand
     const btnWand = makeBtn('🪄');
     btnWand.title = 'Abilities / Attributes';
+    // Anchor scaling to the LEFT edge so it doesn’t drift with zoom
+    btnWand.style.transformOrigin = 'left center';
+
     btnWand.addEventListener('click', async (e) => {
       e.stopPropagation();
       async function tryImport(relPath) {
@@ -697,6 +746,9 @@ function ensurePanelFor(el){
     // Tap
     const btnTap = makeBtn('{T}');
     btnTap.title = 'Tap / Untap';
+    // Anchor scaling to the RIGHT edge (already assumed by your math)
+    btnTap.style.transformOrigin = 'right center';
+
     btnTap.dataset.mana = '{T}';
     try {
       if (window.manaCostHtml) {
@@ -805,9 +857,7 @@ function renderPanel(el, info){
   // pull what we know about the card itself
   const typeLine = el.dataset.typeLine || '';
 
-
-  // TYPES
-  // try data-baseTypes first, fall back to parseTypeBadges(typeLine)
+  // TYPES (BASE)
   let baseTypesArr = [];
   try {
     if (el.dataset.baseTypes) {
@@ -819,58 +869,175 @@ function renderPanel(el, info){
           .filter(Boolean);
       }
     }
-  } catch {
-    // ignore parse error
-  }
+  } catch {}
   if (!baseTypesArr.length) {
     baseTypesArr = parseTypeBadges(typeLine);
   }
 
-  // ABILITIES
-  // ONLY trust deck-stamped baseAbilities (readBaseAbilities)
-  // plus anything specifically granted during play.
+  // BASE ABILITIES (strict, from dataset.baseAbilities)
   let baseAbilitiesSet = readBaseAbilities(el); // Set([...]) or empty Set()
+  if (!(baseAbilitiesSet instanceof Set)) baseAbilitiesSet = new Set();
 
-  // bring in anything the player granted via overlay / remoteAttrs
-  const grant = info.__grant || { abilities: [], types: [] };
+  // GRANTS FROM CARD ATTRIBUTES / RTC
+  const grant = info.__grant || { abilities: [], types: [], counters: [], grants: [], _pow:undefined, _tou:undefined, _loyalty:undefined };
 
-  // 🔹 Extract temporary adds from RulesStore tempBuffs (EOT, etc.)
+  // TEMPORARY BUFFS FROM RULES STORE (WITH DURATION)
   const rulesAdds = _extractRulesAdds(info?.__rulesBuffs);
 
-  // merge granted types
-  const typeSeen = new Set(baseTypesArr.map(t => String(t)));
+  // Helpers
+  const titleCase = s => String(s||'').trim().replace(/\s+/g,' ').replace(/\b\w/g, m => m.toUpperCase());
+  const suffixFor = (dur) => (String(dur||'').toUpperCase() === 'EOT' ? ' (E)'
+                   : String(dur||'').toUpperCase() === 'SOURCE' ? ' (L)'
+                   : '');
+
+  // Build final base type list
   const finalTypeList = baseTypesArr.slice();
 
-  for (const t of (grant.types || [])) {
-    const k = String(t).trim();
-    if (k && !typeSeen.has(k)) {
-      typeSeen.add(k);
-      finalTypeList.push(k);
-    }
-  }
-  // 🔹 merge RulesStore type adds
-  for (const t of (rulesAdds.types || [])) {
-    const k = String(t).trim();
-    if (k && !typeSeen.has(k)) {
-      typeSeen.add(k);
-      finalTypeList.push(k);
+  // Legacy granted types (no duration)
+  const legacyGrantedTypes = (Array.isArray(grant.types) ? grant.types : [])
+    .map(t => String(t).trim()).filter(Boolean);
+
+  // Legacy granted abilities (no duration, Title Case)
+  const legacyGrantedAbilities = (Array.isArray(grant.abilities) ? grant.abilities : [])
+    .map(a => titleCase(a)).filter(Boolean);
+
+  // Duration-based adds from RulesStore
+  const durTypesFromRules = (rulesAdds.types || []).map(o => ({ name: titleCase(o.name), duration: o.duration || '' }));
+  const durAbilsFromRules = (rulesAdds.abilities || []).map(o => ({ name: titleCase(o.name), duration: o.duration || '' }));
+
+  // Duration-based grants from CardAttributes.grants
+  const durGrantsFromAttrs = (Array.isArray(grant.grants) ? grant.grants : [])
+    .map(g => ({ name: titleCase(g?.name||''), duration: String(g?.duration||'').toUpperCase(), source: g?.source }))
+    .filter(g => g.name);
+
+  // 🔹 Seed a local name→duration map so legacy strings can pick up durations
+  const _durByName = new Map();
+  for (const a of durAbilsFromRules)  { if (a?.name) _durByName.set(a.name, a.duration || ''); }
+  for (const g of durGrantsFromAttrs) { if (g?.name) _durByName.set(g.name, g.duration || ''); }
+
+  // Dedup tracking (canonical keys for dedup ONLY; never used for display)
+  const canon = s => String(s || '').trim().toLowerCase();
+
+
+  // For types/abilities we seed "seen" with canonical forms of base lists
+  const seenBaseType = new Set(finalTypeList.map(t => canon(t)));
+  const seenBaseAbil = new Set(Array.from(baseAbilitiesSet, a => canon(a)));
+
+  // 🔹 NEW: cross-source pill deduper (prevents duplicates across RulesStore/Attrs/etc.)
+  const seenPill = new Set();
+  const makeKey = (kind, name, dur='') => `${kind}|${canon(name)}|${String(dur||'').toUpperCase()}`;
+  const appendPillUnique = (rowsEl, kind, name, dur='', sourceCid=null) => {
+    const key = makeKey(kind, name, dur);
+    if (seenPill.has(key)) return false;
+    seenPill.add(key);
+    const pill = dur ? toDurPill(name, dur, sourceCid) : toPill(name);
+    if (pill) rowsEl.appendChild(pill);
+    return !!pill;
+  };
+
+
+  // ---- RENDER TYPES (BASE) -------------------------------------------------
+  if (Array.isArray(finalTypeList) && finalTypeList.length) {
+    for (const tRaw of finalTypeList) {
+      const t = String(tRaw).trim();
+      if (!t) continue;
+      // Mark as seen for both base-type dedupe AND cross-source pill dedupe
+      seenPill.add(makeKey('type', t, ''));
+      const pill = toPill(t);
+      if (pill) { rows.appendChild(pill); count++; }
     }
   }
 
-  // merge granted abilities (normalize Title Case before adding)
-  for (const a of (grant.abilities || [])) {
-    const k = String(a).trim();
-    if (k) {
-      baseAbilitiesSet.add(k.replace(/\b\w/g, m => m.toUpperCase()));
+  // ---- RENDER ABILITIES (BASE) ---------------------------------------------
+  if (baseAbilitiesSet && baseAbilitiesSet.size) {
+    for (const aRaw of baseAbilitiesSet) {
+      const a = String(aRaw).trim();
+      if (!a) continue;
+      // Mark as seen for both base-ability dedupe AND cross-source pill dedupe
+      seenPill.add(makeKey('abil', a, ''));
+      const pill = toPill(a);
+      if (pill) { rows.appendChild(pill); count++; }
     }
   }
-  // 🔹 merge RulesStore ability adds (Title-Case, dedup by Set)
-  for (const a of (rulesAdds.abilities || [])) {
-    const k = String(a).trim();
-    if (k) {
-      baseAbilitiesSet.add(k.replace(/\b\w/g, m => m.toUpperCase()));
+
+
+  // Small helper to make a duration pill with optional (L) click (for linked SOURCE)
+  function toDurPill(name, duration, sourceCid){
+    const sfx = suffixFor(duration);
+    const pill = document.createElement('div');
+    pill.style.cssText = `
+      display:inline-flex; align-items:center; gap:6px;
+      padding:6px 10px; border-radius:10px; border:1px solid var(--ui-border);
+      background:linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
+      white-space:nowrap;
+    `;
+    const label = document.createElement('span');
+    label.textContent = name;
+    pill.appendChild(label);
+    if (sfx) {
+      const suf = document.createElement('span');
+      suf.textContent = sfx;
+      suf.style.cssText = 'opacity:.9; font-weight:700; cursor:' + (String(duration).toUpperCase()==='SOURCE' ? 'pointer' : 'default');
+      if (String(duration).toUpperCase()==='SOURCE' && sourceCid){
+        suf.title = 'Show the linked source';
+        suf.addEventListener('click', (ev)=>{
+          ev.stopPropagation();
+          try {
+            const srcEl = document.querySelector(`img.table-card[data-cid="${sourceCid}"]`);
+            if (srcEl && window.Tooltip?.showForCard) {
+              window.Tooltip.showForCard(srcEl, srcEl, { mode:'right' });
+            } else if (srcEl) {
+              srcEl.style.outline = '2px solid #61d095';
+              setTimeout(()=> srcEl.style.outline = '', 700);
+            }
+          } catch {}
+        });
+      }
+      pill.appendChild(suf);
     }
+    return pill;
   }
+
+  // ---- RENDER LEGACY GRANTED TYPES (no duration metadata) -------------------
+  for (const tRaw of legacyGrantedTypes){
+    const key = String(tRaw).trim();
+    if (!key || seenBaseType.has(canon(key))) continue;
+    seenBaseType.add(canon(key));
+    if (appendPillUnique(rows, 'type', titleCase(key), '')) { count++; }
+  }
+
+  // ---- RENDER RULES TYPES WITH DURATION ------------------------------------
+  for (const t of durTypesFromRules){
+    if (appendPillUnique(rows, 'type', t.name, t.duration)) { count++; }
+  }
+
+  // ---- RENDER LEGACY GRANTED ABILITIES (no duration metadata) --------------
+  for (const aRaw of legacyGrantedAbilities){
+    const a = String(aRaw).trim();
+    if (!a || seenBaseAbil.has(canon(a))) continue;
+
+    // Detect trailing "(E)" or "(L)" if already present in the raw string
+    const m = a.match(/^(.*?)(?:\s*\((E|L)\))?$/i);
+    const name = (m && m[1]) ? m[1].trim() : a;
+    let dur    = (m && m[2]) ? (m[2].toUpperCase() === 'E' ? 'EOT' : 'SOURCE') : '';
+
+    // If no explicit tag, try structured lookups, then raw text inference
+    if (!dur) dur = _durByName.get(name) || _inferDurFromText(name);
+
+    seenBaseAbil.add(canon(a));
+    if (appendPillUnique(rows, 'abil', name, dur)) { count++; }
+  }
+
+  // ---- RENDER RULES ABILITIES WITH DURATION --------------------------------
+  for (const a of durAbilsFromRules){
+    if (appendPillUnique(rows, 'abil', a.name, a.duration)) { count++; }
+  }
+
+  // ---- RENDER ATTRS.GRANTS WITH DURATION + LINKED SOURCE -------------------
+  for (const g of durGrantsFromAttrs){
+    if (appendPillUnique(rows, 'abil', g.name, g.duration, g.source || null)) { count++; }
+  }
+
 
   // --- COUNTERS (loyalty / +1/+1 / etc.) ---  [DEDUPED + GUARDED]
   const countersArr = Array.isArray(info?.__grant?.counters)
@@ -902,30 +1069,6 @@ function renderPanel(el, info){
     const loyNum = Number(loyText);
     if (Number.isFinite(loyNum) && loyNum > 0) {
       byKind.set('loyalty', { kind: 'Loyalty', qty: loyNum });
-    }
-  }
-
-
-
-  // ---- RENDER TYPES -------------------------------------------------
-  if (Array.isArray(finalTypeList) && finalTypeList.length) {
-    for (const t of finalTypeList) {
-      const pill = toPill(String(t).trim());
-      if (pill) {
-        rows.appendChild(pill);
-        count++;
-      }
-    }
-  }
-
-  // ---- RENDER ABILITIES --------------------------------------------
-  if (baseAbilitiesSet && baseAbilitiesSet.size) {
-    for (const a of baseAbilitiesSet) {
-      const pill = toPill(String(a).trim());
-      if (pill) {
-        rows.appendChild(pill);
-        count++;
-      }
     }
   }
 
@@ -1056,15 +1199,22 @@ function followLoop(info){
     if (info.__visible && visRatio <= VIS_HIDE_RATIO)  info.__visible = false;
 
     if (!info.__visible) {
-      info.panel.style.display   = 'none';
-      info.sticker.style.display = 'none';
-      if (info.buffWrap) info.buffWrap.style.display = 'none';
-      info.raf = requestAnimationFrame(tick);
-      return;
-    } else {
-      info.panel.style.display = info.__hasRows ? '' : 'none';
-      if (info.buffWrap) info.buffWrap.style.display = '';
-    }
+  info.panel.style.display   = 'none';
+  info.sticker.style.display = 'none';
+  if (info.loySticker) info.loySticker.style.display = 'none';
+  if (info.buffWrap)  info.buffWrap.style.display  = 'none';
+  if (info.btnWand)   info.btnWand.style.display   = 'none';
+  if (info.btnTap)    info.btnTap.style.display    = 'none';
+  info.raf = requestAnimationFrame(tick);
+  return;
+} else {
+  info.panel.style.display = info.__hasRows ? '' : 'none';
+  if (info.loySticker) info.loySticker.style.display = '';
+  if (info.buffWrap)  info.buffWrap.style.display  = '';
+  if (info.btnWand)   info.btnWand.style.display   = '';
+  if (info.btnTap)    info.btnTap.style.display    = '';
+}
+
 
     // --- SCALING
     // base scale from physical card height vs 180
@@ -1115,7 +1265,7 @@ function followLoop(info){
     // --- LEFT/RIGHT BUTTONS BELOW CARD
     if (info.btnWand && info.btnTap){
       // buttons scale with panel scale so they "feel" locked to zoom
-      const sButtons = sPanel;
+      const sButtons = baseScale * userPanelScale; // <-- no clamp, tracks the card exactly
 
       const sizeUnscaled = LBTN_SIZE_BASE;
       const btnY = clamp(

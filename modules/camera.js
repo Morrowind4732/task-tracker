@@ -10,7 +10,7 @@
 export const Camera = (() => {
   const state = { x: 0, y: 0, scale: 1 };
 let VP = null, W = null;
-let minS = 0.4, maxS = 2.5, wheelStep = 0.08; // gentler wheel zoom by default
+let minS = .01, maxS = 2.5, wheelStep = 0.08; // gentler wheel zoom by default
 
 // Tunables
 const TOUCH_PAN_DAMP  = 1.0;  // 1-finger drag pan multiplier
@@ -158,30 +158,63 @@ const PINCH_PAN_DAMP  = 0.10; // 2-finger pinch pan multiplier (10%)
 }
 
 
-  // Center the world so the midline & zone grids are on-screen at startup
-function centerOnMidline(){
+  // Center on the UNION of the two zone grids in WORLD space by inverting the camera transform.
+// Keeps current zoom unless you pass { targetScale }.
+function centerOnZoneCluster({ targetScale } = {}) {
   if (!VP || !W) return;
+
   const vpW = VP.clientWidth, vpH = VP.clientHeight;
+
+  // Convert a viewport rect to world-space using current camera state.
+  const rectViewportToWorld = (r) => {
+    const left   = (r.left   - state.x) / state.scale;
+    const right  = (r.right  - state.x) / state.scale;
+    const top    = (r.top    - state.y) / state.scale;
+    const bottom = (r.bottom - state.y) / state.scale;
+    return { left, top, width: right - left, height: bottom - top };
+  };
+
+  const topGrid = document.querySelector('.field.top .zones');
+  const botGrid = document.querySelector('.field.bottom .zones');
+
+  if (topGrid && botGrid) {
+    // Measure both grids in viewport space, then map to world space
+    const tW = rectViewportToWorld(topGrid.getBoundingClientRect());
+    const bW = rectViewportToWorld(botGrid.getBoundingClientRect());
+
+    // Union in world space
+    const left   = Math.min(tW.left, bW.left);
+    const right  = Math.max(tW.left + tW.width,  bW.left + bW.width);
+    const top    = Math.min(tW.top,  bW.top);
+    const bottom = Math.max(tW.top  + tW.height, bW.top  + bW.height);
+
+    const cx = (left + right) / 2;
+    const cy = (top  + bottom) / 2;
+
+    // Keep current scale unless a targetScale is provided
+    const s = (typeof targetScale === 'number') ? clamp(targetScale, minS, maxS) : state.scale;
+
+    state.x = (vpW / 2) - cx * s;
+    state.y = (vpH / 2) - cy * s;
+    state.scale = s;
+    apply();
+    return;
+  }
+
+  // Fallback: center on world midpoint
   const wW  = W.scrollWidth  || W.offsetWidth;
   const wH  = W.scrollHeight || W.offsetHeight;
-
-  // We want the geometric center of #world (which holds the 50% midline content)
-  // to align to the center of the viewport.
-  const worldCenterX = wW * 0.5;
-  const worldCenterY = wH * 0.5;
-
-  // Place world so that (worldCenterX, worldCenterY) lands at (vpW/2, vpH/2)
-  state.x = (vpW / 2) - worldCenterX * state.scale;
-  state.y = (vpH / 2) - worldCenterY * state.scale;
-
-  // Nudge up a touch so the mid-gap + both 2x2 grids are comfortably visible.
-  // (Tweak this offset if you later change zone sizes.)
-  state.y += Math.min(80, vpH * 0.06);
-
+  const s   = (typeof targetScale === 'number') ? clamp(targetScale, minS, maxS) : state.scale;
+  state.x   = (vpW / 2) - (wW * 0.5) * s;
+  state.y   = (vpH / 2) - (wH * 0.5) * s;
+  state.scale = s;
   apply();
 }
 
-function mount({ viewport, world, minScale = 0.4, maxScale = 2.5, wheelStep: ws = 0.08 }){
+
+
+
+function mount({ viewport, world, minScale = 0.01, maxScale = 2.5, wheelStep: ws = 0.08 }){
   VP = viewport; W = world;
   if (!VP || !W) throw new Error('[CAM] mount() requires { viewport, world }');
   minS = minScale; maxS = maxScale; wheelStep = ws;
@@ -193,14 +226,16 @@ function mount({ viewport, world, minScale = 0.4, maxScale = 2.5, wheelStep: ws 
   VP.style.touchAction = 'none';
 
 
-  // Start truly centered on the combat midline & zones
-  centerOnMidline();
+  // Start centered on the full zone cluster with a comfy zoom
+centerOnZoneCluster({ targetScale: 0.9 });
+
 
   mountMouse();
   mountWheel();
   mountTouch();
 
-  window.Camera = { state, set, panBy, zoomAt };
+  window.Camera = { state, set, panBy, zoomAt, centerOnCluster: centerOnZoneCluster };
+
   //console.log('[CAM] mounted', { minScale: minS, maxScale: maxS, wheelStep });
 }
 

@@ -14,13 +14,15 @@ import { scanOracleTextForActions } from './oracle.text.scanner.js';
 
 export const CardOverlayUI = (() => {
   const STATE = {
-    mounted: false,
-    cssInjected: false,
-    root: null,
-    activeCid: null,
-    activeTab: 'scan', // scan | apply | active | manage
-    tmp: { typeInput:'', abilityInput:'', counterInput:'', pow:'0', tou:'0' }
-  };
+  mounted: false,
+  cssInjected: false,
+  root: null,
+  activeCid: null,
+  activeTab: 'scan', // scan | apply | active | manage
+  lastScope: 'mine', // ← NEW: remembers ‘mine’ | ‘opp’ | ‘both’ | ‘deck’ | ‘type’
+  tmp: { typeInput:'', abilityInput:'', counterInput:'', pow:'0', tou:'0' }
+};
+
 
   // ------- Mock catalogs (trimmed; extend later or fetch real data) -------
   const TYPES = {
@@ -246,7 +248,7 @@ export const CardOverlayUI = (() => {
   cursor:pointer;
   border:1px solid var(--line);
   background:#0a1118;
-  color:var(--ink);
+  color:#(ink);
   border-radius:8px;
   font-size:16px;            /* bigger */
   font-weight:600;
@@ -262,7 +264,7 @@ export const CardOverlayUI = (() => {
 .eyeBtn:hover{
   background:#0e2419;
   border-color:#224e3b;
-  color:var(--hi);
+  color:#hi;
 }
 
 
@@ -376,24 +378,39 @@ export const CardOverlayUI = (() => {
                       </button>
                     </div>
 
-                    <!-- by-type mode UI (only visible in By Type scope) -->
-                    <div class="group"
-                         data-bytype-block
-                         style="display:none; margin-top:10px;">
-                      <div class="label">Match Type</div>
-                      <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <input class="ipt" data-bytype="name" placeholder="e.g. Zombie"/>
-                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
-                          <input type="checkbox" data-bytype="mine" checked/> Mine
-                        </label>
-                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
-                          <input type="checkbox" data-bytype="opp" /> Opp
-                        </label>
-                        <label class="chip" style="display:flex;align-items:center;gap:6px;">
-                          <input type="checkbox" data-bytype="both" /> Both
-                        </label>
-                      </div>
-                    </div>
+                    <!-- Unified By Type block (visible only when scope === "type") -->
+<div class="group" data-target-mode="typeBlock" style="display:none; margin-top:10px;">
+  <div class="label">Target by creature type</div>
+
+  <!-- Line 1: Yours / Opponents / All (one line, mutually exclusive) -->
+  <div class="chipRow" style="flex-wrap:wrap; row-gap:8px; margin-bottom:8px;">
+    <label class="chip" style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="bytype-scope" value="mine" checked />
+      Yours
+    </label>
+    <label class="chip" style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="bytype-scope" value="opp" />
+      Opponents
+    </label>
+    <label class="chip" style="display:flex;align-items:center;gap:6px;">
+      <input type="radio" name="bytype-scope" value="both" />
+      All
+    </label>
+  </div>
+
+  <!-- Line 2: Type textbox (its own line) -->
+  <div style="display:flex; gap:6px; margin-bottom:8px;">
+    <input class="ipt" data-bytype="name" placeholder="e.g. Zombie" style="flex:1;"/>
+  </div>
+
+  <!-- Line 3: Include source checkbox (its own line) -->
+  <label class="chip" style="display:inline-flex; align-items:center; gap:8px;">
+    <input type="checkbox" data-bytype="includeSource" checked />
+    Include source card when applying
+  </label>
+</div>
+
+
 
                     <!-- filter drawer -->
                     <div class="group" data-filter-drawer style="display:none; margin-top:10px;">
@@ -419,21 +436,7 @@ export const CardOverlayUI = (() => {
                     </div>
                   </div>
 
-                  <!-- Target by creature type (we only show this in By Type mode) -->
-                  <div class="group"
-                       data-target-mode="typeBlock"
-                       style="display:none;">
-                    <div class="label">Target by creature type</div>
-                    <div style="display:flex; gap:6px;">
-                      <input class="ipt" data-apply="type" placeholder="e.g. Zombie (optional)"/>
-                      <button class="btn" data-radial="+type">+</button>
-                      <button class="btn" data-radial="-type">-</button>
-                    </div>
-                    <label style="display:flex; gap:8px; align-items:center; margin-top:8px;">
-                      <input type="checkbox" checked/>
-                      <span class="mut">Include source card when applying</span>
-                    </label>
-                  </div>
+                  
 
                   <!-- list of specific card targets (default visible for mine/opp/both/deck) -->
                   <div class="group"
@@ -634,40 +637,64 @@ back.querySelectorAll('.ovlHead .tabBtn').forEach(btn => {
 
 
     // Scope buttons → swap targeting mode (card list vs by-type) and maybe rebuild list
-    back.querySelectorAll('[data-scope]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const scope = btn.getAttribute('data-scope'); // mine | opp | both | deck | type
+back.querySelectorAll('[data-scope]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const scope = btn.getAttribute('data-scope'); // mine | opp | both | deck | type
+    STATE.lastScope = scope;                      // ← remember current scope
 
-        // grab the blocks we want to toggle
-        const typeBlock   = back.querySelector('[data-target-mode="typeBlock"]');
-        const listBlock   = back.querySelector('[data-target-mode="listBlock"]');
-        const byTypeUI    = back.querySelector('[data-bytype-block]');
+    const typeBlock = back.querySelector('[data-target-mode="typeBlock"]');
+    const listBlock = back.querySelector('[data-target-mode="listBlock"]');
 
-        if (scope === 'type') {
-          // show "target by creature type" UI
-          if (typeBlock) typeBlock.style.display = 'block';
-          // hide the plain list of specific cards
-          if (listBlock) listBlock.style.display = 'none';
-          // show the match-type filter row
-          if (byTypeUI)  byTypeUI.style.display  = 'block';
+    if (scope === 'type') {
+      if (typeBlock) typeBlock.style.display = 'block';
+      if (listBlock) listBlock.style.display = 'none';
+      return; // no checkbox list in type mode
+    }
 
-          // IMPORTANT: do NOT call rebuildTargets('type')
-          // Because 'type' mode doesn't use the checkbox list at all.
-          return;
-        }
+    if (typeBlock) typeBlock.style.display = 'none';
+    if (listBlock) listBlock.style.display = 'block';
+    rebuildTargets(scope); // will honor current filter drawer state
+  });
+});
 
-        // otherwise (mine / opp / both / deck):
-        // hide the creature-type targeting block
-        if (typeBlock) typeBlock.style.display = 'none';
-        // hide the by-type match UI
-        if (byTypeUI)  byTypeUI.style.display  = 'none';
-        // show the checkbox list block again
-        if (listBlock) listBlock.style.display = 'block';
+// --- NEW: Filter drawer toggle + change wiring
+const filterDrawer = back.querySelector('[data-filter-drawer]');
+const filterBtn    = back.querySelector('[data-scope-filter="open"]');
+if (filterBtn) {
+  filterBtn.addEventListener('click', () => {
+    if (!filterDrawer) return;
+    const visible = filterDrawer.style.display !== 'none';
+    filterDrawer.style.display = visible ? 'none' : 'block';
+  });
+}
 
-        // rebuild checkbox list for that scope so user can pick cids
-        rebuildTargets(scope);
-      });
-    });
+// Keep "All" mutually exclusive with other filters; rebuild on any change
+function _onFilterChanged(ev){
+  if (!filterDrawer) return;
+  const cbAll   = filterDrawer.querySelector('input[data-filter-kind="all"]');
+  const others  = Array.from(filterDrawer.querySelectorAll('input[data-filter-kind]:not([data-filter-kind="all"])'));
+  const kind    = ev?.target?.getAttribute?.('data-filter-kind');
+
+  if (kind === 'all') {
+    if (ev.target.checked) others.forEach(o => { o.checked = false; });
+  } else {
+    if (ev.target.checked && cbAll) cbAll.checked = false;
+    // If none of the others are checked, fall back to All
+    if (!others.some(o => o.checked)) { if (cbAll) cbAll.checked = true; }
+  }
+
+  // Rebuild the current list-only scopes (mine/opp/both); ignore when in type mode
+  if (STATE.lastScope !== 'type') rebuildTargets(STATE.lastScope || 'mine');
+}
+if (filterDrawer) {
+  filterDrawer.querySelectorAll('input[type="checkbox"][data-filter-kind]')
+    .forEach(cb => cb.addEventListener('change', _onFilterChanged));
+}
+
+// --- NEW: Hide the Deck scope button (can bring back later)
+const deckBtn = back.querySelector('[data-scope="deck"]');
+if (deckBtn) deckBtn.style.display = 'none';
+
 
 
 
@@ -724,6 +751,38 @@ back.querySelectorAll('.ovlHead .tabBtn').forEach(btn => {
       }
     });
 	
+	
+	// ---- GRANTS helpers (upsert / remove by name, case-insensitive) ----
+function _ensureGrantsArray(rec){
+  if (!Array.isArray(rec.grants)) rec.grants = [];
+  return rec.grants;
+}
+
+// NEW: normalized key for ability-name comparisons (strips "(EOT)" etc.)
+function _normalizeAbilityKey(s){
+  return String(s || '')
+    .replace(/\s*\(.*?\)\s*$/,'')  // drop trailing parenthetical like "(EOT)"
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+}
+
+function _upsertGrant(rec, name, duration, source){
+  if (!name) return;
+  const grants = _ensureGrantsArray(rec);
+  const key = _normalizeAbilityKey(name);
+  const row = { name: String(name).trim(), duration: String(duration||'').toUpperCase() };
+  if (source) row.source = String(source);
+  const i = grants.findIndex(g => _normalizeAbilityKey(g?.name||'') === key);
+  if (i >= 0) grants[i] = row; else grants.push(row);
+}
+
+function _removeGrantByName(rec, name){
+  if (!Array.isArray(rec?.grants)) return;
+  const key = _normalizeAbilityKey(name||'');
+  rec.grants = rec.grants.filter(g => _normalizeAbilityKey(g?.name||'') !== key);
+}
+
 	
 	// sync a payload's effects directly into DOM datasets + CardAttributes +
 // ALSO mirror into el.dataset.remoteAttrs so Badges.getGrantedFromStore()
@@ -810,10 +869,11 @@ if (payload.txnId) window.__SeenBuffTxnIds.add(payload.txnId);
     // stash new PT into dataset so Badges.livePT() can read it
     el.dataset.ptCurrent = `${newP}/${newT}`;
 
-    // --- sync CardAttributes backing store AND collect merged arrays
+ // --- sync CardAttributes backing store AND collect merged arrays
 let mergedAbilities = [];
 let mergedTypes     = [];
 let mergedCounters  = []; // NEW
+let mergedGrants    = []; // NEW
 try {
   const CA = window.CardAttributes;
   if (CA && typeof CA.get === 'function') {
@@ -829,6 +889,22 @@ try {
       }
     }
 
+    // NEW: structured grants (for display-only suffixes E/L and source peek)
+    // Keep storage of abilities the same; add a parallel "grants" list.
+    rec.grants = Array.isArray(rec.grants) ? rec.grants.slice() : [];
+    if (grantAbilityNorm && payload && (payload.duration || payload.abilityDuration)) {
+      const dur = (payload.abilityDuration || payload.duration || '').toUpperCase(); // 'EOT' | 'SOURCE' | 'PERM'
+      const src = payload.srcCid || payload.sourceCid || null;
+      // upsert instead of push → avoids duplicate "(E)/(L)" rows for same ability
+      _upsertGrant(rec, grantAbilityNorm, dur, src);
+    }
+
+    // Safety: if some other path removed the ability, prune stale grants.
+    if (Array.isArray(rec.grants) && Array.isArray(rec.abilities)) {
+      const abilSet = new Set(rec.abilities.map(a => _normalizeAbilityKey(a)));
+      rec.grants = rec.grants.filter(g => abilSet.has(_normalizeAbilityKey(g?.name||'')));
+    }
+
     // types
     rec.types = Array.isArray(rec.types) ? rec.types.slice() : [];
     if (grantTypeNorm){
@@ -838,63 +914,61 @@ try {
     }
 
     // counters (merge/SET ABSOLUTE); payload.counter = { kind, qty }
-// Build a union from CA.counters and remoteAttrs.counters so we never wipe
-// counters that only existed in the dataset mirror from older overlays.
-function _readRemoteCountersSafe(node){
-  try {
-    const ro = node?.dataset?.remoteAttrs ? JSON.parse(node.dataset.remoteAttrs) : null;
-    return Array.isArray(ro?.counters) ? ro.counters.slice() : [];
-  } catch { return []; }
-}
-function _mergeCountersUnion(aList, bList){
-  const byKind = new Map();
-  [...(aList||[]), ...(bList||[])].forEach(c=>{
-    if (!c) return;
-    const k = String(c.kind || c.name || '').trim();
-    if (!k) return;
-    byKind.set(k.toLowerCase(), { kind:k, qty: Number(c.qty||0) });
-  });
-  return Array.from(byKind.values());
-}
-
-const remoteCounters = _readRemoteCountersSafe(el);
-const baseCounters   = _mergeCountersUnion(
-  Array.isArray(rec.counters) ? rec.counters : [],
-  remoteCounters
-);
-
-// Apply the ONE change as an absolute target value
-let nextCounters = baseCounters;
-if (payload.counter && payload.counter.kind){
-  const kind = String(payload.counter.kind).trim();
-  let qty    = parseInt(payload.counter.qty || 0, 10);
-  if (kind && Number.isFinite(qty)){
-    const kLc = kind.toLowerCase();
-    const idx = nextCounters.findIndex(c => String(c.kind||'').toLowerCase() === kLc);
-    if (qty <= 0){
-      if (idx >= 0) nextCounters.splice(idx, 1);
-    } else {
-      const entry = { kind, qty };
-      if (idx >= 0) nextCounters[idx] = entry;
-      else nextCounters.push(entry);
+    // Build a union from CA.counters and remoteAttrs.counters so we never wipe
+    // counters that only existed in the dataset mirror from older overlays.
+    function _readRemoteCountersSafe(node){
+      try {
+        const ro = node?.dataset?.remoteAttrs ? JSON.parse(node.dataset.remoteAttrs) : null;
+        return Array.isArray(ro?.counters) ? ro.counters.slice() : [];
+      } catch { return []; }
+    }
+    function _mergeCountersUnion(aList, bList){
+      const byKind = new Map();
+      [...(aList||[]), ...(bList||[])].forEach(c=>{
+        if (!c) return;
+        const k = String(c.kind || c.name || '').trim();
+        if (!k) return;
+        byKind.set(k.toLowerCase(), { kind:k, qty: Number(c.qty||0) });
+      });
+      return Array.from(byKind.values());
     }
 
-    // loyalty convenience…
-    if (kLc === 'loyalty'){
-      if (qty <= 0){
-        const baseL = parseInt(el.dataset.loyalty || '0', 10) || 0;
-        el.dataset.loyaltyCurrent = String(baseL);
-      } else {
-        el.dataset.loyaltyCurrent = String(qty);
+    const remoteCounters = _readRemoteCountersSafe(el);
+    const baseCounters   = _mergeCountersUnion(
+      Array.isArray(rec.counters) ? rec.counters : [],
+      remoteCounters
+    );
+
+    // Apply the ONE change as an absolute target value
+    let nextCounters = baseCounters;
+    if (payload.counter && payload.counter.kind){
+      const kind = String(payload.counter.kind).trim();
+      let qty    = parseInt(payload.counter.qty || 0, 10);
+      if (kind && Number.isFinite(qty)){
+        const kLc = kind.toLowerCase();
+        const idx = nextCounters.findIndex(c => String(c.kind||'').toLowerCase() === kLc);
+        if (qty <= 0){
+          if (idx >= 0) nextCounters.splice(idx, 1);
+        } else {
+          const entry = { kind, qty };
+          if (idx >= 0) nextCounters[idx] = entry;
+          else nextCounters.push(entry);
+        }
+
+        // loyalty convenience…
+        if (kLc === 'loyalty'){
+          if (qty <= 0){
+            const baseL = parseInt(el.dataset.loyalty || '0', 10) || 0;
+            el.dataset.loyaltyCurrent = String(baseL);
+          } else {
+            el.dataset.loyaltyCurrent = String(qty);
+          }
+        }
       }
     }
-  }
-}
 
-// commit back onto the record
-rec.counters = nextCounters;
-
-
+    // commit back onto the record
+    rec.counters = nextCounters;
 
     // write back (Map-style .set OR plain object fallback)
     if (typeof CA.set === 'function') {
@@ -906,6 +980,7 @@ rec.counters = nextCounters;
     mergedAbilities = rec.abilities.slice();
     mergedTypes     = rec.types.slice();
     mergedCounters  = rec.counters.slice();
+    mergedGrants    = Array.isArray(rec.grants) ? rec.grants.slice() : [];
   } else {
     // no CardAttributes? fall back to payload-only merges
     if (grantAbilityNorm) mergedAbilities.push(grantAbilityNorm);
@@ -917,7 +992,15 @@ rec.counters = nextCounters;
         el.dataset.loyaltyCurrent = String(curL + (parseInt(payload.counter.qty||0,10) || 0));
       }
     }
+
+    // ⬇ NEW: still record a structured grant so Badges can render "(L)" / "(E)"
+    const dur = String(payload.abilityDuration || payload.duration || '').toUpperCase();
+    const src = payload.srcCid || payload.sourceCid || null;
+    if (grantAbilityNorm && dur) {
+      mergedGrants.push({ name: grantAbilityNorm, duration: dur, source: src });
+    }
   }
+
 } catch(err){
   console.warn('[applyBuffLocally] CardAttributes sync fail for', cid, err);
   if (grantAbilityNorm) mergedAbilities.push(grantAbilityNorm);
@@ -960,12 +1043,51 @@ const nextCounters = _unionCounters(prevCounters, mergedCounters.slice());
 
 
 const ptStr = `${newP}/${newT}`;
+
+// Merge any previous grants (if the opponent applied something first)
+let prevGrants = [];
+try {
+  const prev = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : null;
+  if (Array.isArray(prev?.grants)) prevGrants = prev.grants.slice();
+} catch {}
+
+let nextGrants = prevGrants.slice();
+
+// merge in any newly created grants (for builds without CardAttributes)
+const byName = new Map(nextGrants.map(g => [_normalizeAbilityKey(g?.name||''), g]));
+mergedGrants.forEach(g => {
+  if (!g || !g.name) return;
+  byName.set(_normalizeAbilityKey(g.name), {
+    name: g.name,
+    duration: String(g.duration||'').toUpperCase(),
+    source: g.source ?? null
+  });
+});
+
+// if CardAttributes exists, let it win as the authoritative copy
+try {
+  const CA = window.CardAttributes;
+  const row = CA?.get?.(cid);
+  if (row && Array.isArray(row.grants)) {
+    row.grants.forEach(g => {
+      if (!g || !g.name) return;
+      byName.set(_normalizeAbilityKey(g.name), g);
+    });
+  }
+} catch {}
+
+nextGrants = Array.from(byName.values());
+
+
 el.dataset.remoteAttrs = JSON.stringify({
   abilities: nextAbilities,
   types:     nextTypes,
   counters:  nextCounters,
-  pt:        ptStr
+  pt:        ptStr,
+  // NEW
+  grants:    nextGrants
 });
+
 
 
     } catch(err){
@@ -998,19 +1120,104 @@ el.dataset.remoteAttrs = JSON.stringify({
 window.CardOverlayUI = window.CardOverlayUI || {};
 window.CardOverlayUI.applyBuffLocally = applyBuffLocally;
 
+function _hasTypeCaseInsensitive(arr, typeName){
+  if (!typeName) return false;
+  const want = String(typeName).trim().toLowerCase();
+  return Array.isArray(arr) && arr.some(t => String(t||'').trim().toLowerCase() === want);
+}
+
+function collectTargetsByType(){
+  const root = STATE.root;
+  if (!root) return [];
+
+  // read UI
+  const typeName = root.querySelector('input[data-bytype="name"]')?.value.trim() || '';
+  if (!typeName) {
+    console.warn('[ByType] empty type name');
+    return [];
+  }
+  const sel = root.querySelector('input[name="bytype-scope"]:checked');
+  const scope = sel?.value || 'both'; // mine | opp | both
+  const includeSrc = !!root.querySelector('input[data-bytype="includeSource"]')?.checked;
+
+  const me = getMySeat();
+  const all = collectTableCards();
+  const picked = [];
+
+  for (const r of all){
+    // owner filter
+    if (scope === 'mine' && Number(r.owner) !== me) continue;
+    if (scope === 'opp'  && Number(r.owner) === me) continue;
+
+    // EXCLUDE source unless the checkbox is ON
+    if (!includeSrc && STATE.activeCid && r.cid === STATE.activeCid) continue;
+
+    // types from badges debug (preferred)
+    let types = [];
+    try {
+      const dbg = (r.cid && window.badgesForCid) ? window.badgesForCid(r.cid) : null;
+      if (dbg && Array.isArray(dbg.types)) types = dbg.types.slice();
+    } catch {}
+
+    // fallback: parse from typeLine in dataset if needed
+    if (!types.length && r.el?.dataset?.typeLine){
+      const tl = String(r.el.dataset.typeLine);
+      const m = tl.split('—')[1] || '';
+      types = m.split(/[\s-]+/).map(s => s.trim()).filter(Boolean);
+    }
+
+    if (_hasTypeCaseInsensitive(types, typeName)){
+      picked.push(r.cid);
+    }
+  }
+
+  // If checkbox is ON and source matches filters, ensure it's included once
+  if (includeSrc && STATE.activeCid && !picked.includes(STATE.activeCid)){
+    try {
+      const el = document.querySelector(`img.table-card[data-cid="${STATE.activeCid}"]`);
+      if (el){
+        const owner = Number(el.dataset.owner || NaN);
+        const ownerOk =
+          (scope === 'mine' && owner === me) ||
+          (scope === 'opp'  && owner !== me) ||
+          (scope === 'both');
+
+        if (ownerOk){
+          let srcTypes = [];
+          try { const dbgS = window.badgesForCid?.(STATE.activeCid); if (dbgS?.types) srcTypes = dbgS.types.slice(); } catch {}
+          if (!srcTypes.length && el?.dataset?.typeLine){
+            const tl = String(el.dataset.typeLine);
+            const m = tl.split('—')[1] || '';
+            srcTypes = m.split(/[\s-]+/).map(s => s.trim()).filter(Boolean);
+          }
+          if (_hasTypeCaseInsensitive(srcTypes, typeName)) picked.push(STATE.activeCid);
+        }
+      }
+    } catch {}
+  }
+
+  return picked;
+}
+
 
 
        function applyFromApplyTab(){
-      // 1. Collect all checked targets (cids)
-      const targets = Array
-        .from(STATE.root.querySelectorAll('[data-apply="list"] input[type="checkbox"]:checked'))
-        .map(cb => cb.getAttribute('data-target-cid'))
-        .filter(Boolean);
+      // 1. Collect targets based on current scope
+let targets = [];
+if (STATE.lastScope === 'type') {
+  targets = collectTargetsByType();
+} else {
+  targets = Array
+    .from(STATE.root.querySelectorAll('[data-apply="list"] input[type="checkbox"]:checked'))
+    .map(cb => cb.getAttribute('data-target-cid'))
+    .filter(Boolean);
+}
 
-      if (!targets.length){
-        console.warn('[OverlayApply] no targets selected');
-        return;
-      }
+if (!targets.length){
+  console.warn('[OverlayApply] no targets selected for scope:', STATE.lastScope);
+  return;
+}
+
 
       // 2. Which effect types are toggled on?
       const toggles = Array.from(
@@ -1094,65 +1301,102 @@ function removeEffectLocally(cardCid, effect){
     const el = document.querySelector(`img.table-card[data-cid="${cardCid}"]`);
     const CA = window.CardAttributes;
 
-    // 1) pull current record (or make a new shell)
-    const rec = (CA && typeof CA.get === 'function') ? (CA.get(cardCid) || {}) : (window.CardAttributes?.[cardCid] || {});
+    // --- Normalize key for comparison ---
+    const key = effect.ability ? _normalizeAbilityKey(effect.ability) : null;
+    const keyType = effect.typeAdd ? String(effect.typeAdd).trim().toLowerCase() : null;
+    const keyCounter = effect.counter?.kind ? String(effect.counter.kind).trim().toLowerCase() : null;
 
-    // 2) abilities
-    if (effect.ability){
-      const abil = String(effect.ability).trim().toLowerCase();
-      if (Array.isArray(rec.abilities)){
-        rec.abilities = rec.abilities.filter(a => String(a).trim().toLowerCase() !== abil);
-      }
+    // --- Pull record ---
+    const rec = (CA && typeof CA.get === 'function')
+      ? (CA.get(cardCid) || {})
+      : (window.CardAttributes?.[cardCid] || {});
+
+    // ---------- ABILITIES ----------
+    if (key && Array.isArray(rec.abilities)){
+      rec.abilities = rec.abilities.filter(a => _normalizeAbilityKey(a) !== key);
     }
 
-    // 3) types
-    if (effect.typeAdd){
-      const t = String(effect.typeAdd).trim().toLowerCase();
-      if (Array.isArray(rec.types)){
-        rec.types = rec.types.filter(a => String(a).trim().toLowerCase() !== t);
-      }
+    // ---------- GRANTS ----------
+    if (key && Array.isArray(rec.grants)){
+      rec.grants = rec.grants.filter(g => _normalizeAbilityKey(g?.name||'') !== key);
+      if (rec.grants.length === 0) delete rec.grants;
     }
 
-    // 4) counters
-    if (effect.counter && effect.counter.kind){
-      const k = String(effect.counter.kind).trim().toLowerCase();
-      if (Array.isArray(rec.counters)){
-        rec.counters = rec.counters.filter(c => String(c?.kind || c?.name || '').toLowerCase() !== k);
-      }
-      if (el && k === 'loyalty'){
-        // restore to base or 0
-        const baseL = parseInt(el.dataset.loyalty || '0', 10) || 0;
-        el.dataset.loyaltyCurrent = String(baseL);
-      }
+    // ---------- TYPES ----------
+    if (keyType && Array.isArray(rec.types)){
+      rec.types = rec.types.filter(t => String(t).trim().toLowerCase() !== keyType);
     }
 
-    // 5) write back CardAttributes
-    if (CA && typeof CA.set === 'function') {
+    // ---------- COUNTERS ----------
+    if (keyCounter && Array.isArray(rec.counters)){
+      rec.counters = rec.counters.filter(c => String(c?.kind||c?.name||'').toLowerCase() !== keyCounter);
+    }
+
+    // ---------- WRITE BACK CARDATTRIBUTES ----------
+    if (CA && typeof CA.set === 'function'){
       CA.set(cardCid, rec);
     } else {
       window.CardAttributes = window.CardAttributes || {};
       window.CardAttributes[cardCid] = rec;
     }
 
-    // 6) sync dataset.remoteAttrs mirror (authoritative merge)
+    // ---------- MIRROR TO dataset.remoteAttrs (THE IMPORTANT PART) ----------
     if (el){
-      let remoteObj = {};
-      try { remoteObj = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch {}
+      let remote = {};
+      try { remote = JSON.parse(el.dataset.remoteAttrs || '{}'); } catch {}
+
+      // Normalize all arrays
       const abilities = Array.isArray(rec.abilities) ? rec.abilities.slice() : [];
       const types     = Array.isArray(rec.types)     ? rec.types.slice()     : [];
       const counters  = Array.isArray(rec.counters)  ? rec.counters.slice()  : [];
-      const pt        = el.dataset.ptCurrent || `${el.dataset.power||0}/${el.dataset.toughness||0}`;
+      let   grants    = Array.isArray(rec.grants)    ? rec.grants.slice()    : [];
 
-      el.dataset.remoteAttrs = JSON.stringify({ abilities, types, counters, pt });
+      // **ALWAYS nuke matching grants in remoteAttrs, even if rec.grants is missing**
+      if (key && Array.isArray(remote.grants)){
+        remote.grants = remote.grants.filter(g => _normalizeAbilityKey(g?.name||'') !== key);
+      }
+
+      // **ALWAYS nuke abilities in remoteAttrs if mirrored**
+      if (key && Array.isArray(remote.abilities)){
+        remote.abilities = remote.abilities.filter(a => _normalizeAbilityKey(a) !== key);
+      }
+
+      // Rebuild final remote object
+      const pt = el.dataset.ptCurrent || `${el.dataset.power||0}/${el.dataset.toughness||0}`;
+      el.dataset.remoteAttrs = JSON.stringify({
+        abilities,
+        types,
+        counters,
+        pt,
+        grants: remote.grants || grants || []
+      });
     }
 
-    // 7) force redraws
-    try { if (window.Badges?.render && el) window.Badges.render(el); } catch {}
-    try { if (window.Tooltip?.refreshFor) window.Tooltip.refreshFor(cardCid); } catch {}
+    // ---------- NUKE BADGE CACHE ----------
+    try {
+      if (window.Badges?.invalidateFor) {
+        window.Badges.invalidateFor(cardCid);
+      } else if (window.Badges && window.Badges._cache && typeof window.Badges._cache.delete === 'function') {
+        window.Badges._cache.delete(cardCid);
+      } else if (window.badgesForCidCache && typeof window.badgesForCidCache.delete === 'function') {
+        window.badgesForCidCache.delete(cardCid);
+      }
+    } catch {}
+
+    // ---------- RERENDER ----------
+    try { window.Badges?.refreshFor?.(cardCid); } catch {}
+    try { window.Tooltip?.refreshFor?.(cardCid); } catch {}
+
+    try {
+      window.dispatchEvent(new CustomEvent('card-attrs-changed', { detail:{ cid: cardCid }}));
+    } catch {}
+
   } catch(e){
     console.warn('[removeEffectLocally] failed', e, {cardCid, effect});
   }
 }
+
+
 
 
         // ---------------- ACTIVE TAB (live effects / remove) ----------------
@@ -1163,29 +1407,66 @@ function removeEffectLocally(cardCid, effect){
     // helper to normalize effect → a "signature" so we can de-dupe kinds
     function _effectSignature(e){
       try{
-        const type = (e?.type || '').toLowerCase();
-        // Prefer explicit fields if RulesStore provides them; else derive from label.
-        if (type === 'counter' || /counter/i.test(e?.type || e?.label || '')){
-          const kind =
-            (e?.counter?.kind) ||
-            (e?.kind) ||
-            // label fallback: "Stun x3 (EOT)" → "Stun"
-            (String(e?.label || '').replace(/\(.*\)$/,'').match(/([+\-]?\d+\s*\/\s*[+\-]?\d+|[A-Za-z][A-Za-z +/+-]*?)\s*(?:x\d+)?$/)?.[1]) ||
-            '';
-          return `counter:${String(kind).trim().toLowerCase()}`;
+        const type = String(e?.type || '').toLowerCase();
+        const rawLabel = String(e?.label || '').trim();
+        const labelNoDur = rawLabel.replace(/\s*\(.*?\)\s*$/,'').trim(); // strip "(EOT)" / "(SOURCE)" / "(PERM)"
+
+        // 0) If the effect carries explicit fields, prefer those.
+        if (type === 'counter' || /counter/i.test(e?.type || '')){
+          const kind = (e?.counter?.kind || e?.kind || '').toString().trim();
+          if (kind) return `counter:${kind.toLowerCase()}`;
         }
-        if (type === 'ability' || /grant/i.test(e?.label || '') || e?.ability){
-          const a = (e?.ability || (e?.label||'').replace(/^grant\s+/i,'')).trim();
-          return `ability:${a.toLowerCase()}`;
+        if (type === 'ability' || e?.ability){
+          const a = (e?.ability || '').toString().trim();
+          if (a) return `ability:${a.toLowerCase()}`;
         }
         if (type === 'type' || e?.typeAdd){
-          const t = (e?.typeAdd || '').trim();
-          return `type:${t.toLowerCase()}`;
+          const t = (e?.typeAdd || '').toString().trim();
+          if (t) return `type:${t.toLowerCase()}`;
         }
-        // fallback: label-only bucket
-        return `label:${String(e?.label||'').trim().toLowerCase()}`;
-      }catch{ return 'unknown'; }
+
+        // 1) LABEL-ONLY INFERENCE FALLBACKS
+
+        // 1a) PT / counters: "+1/+1", "-2/-2", etc.
+        const mPT = labelNoDur.match(/^[+\-]?\d+\s*\/\s*[+\-]?\d+\s*(?:x\s*\d+)?$/i);
+        if (mPT){
+          // keep kind as the PT part only, drop xN
+          const kind = labelNoDur.replace(/\s*x\s*\d+\s*$/i,'').trim();
+          return `counter:${kind.toLowerCase()}`;
+        }
+
+        // 1b) Explicit "counter" word in label → extract kind before the word "counter"
+        if (/counter/i.test(rawLabel)){
+          const mKind = labelNoDur.match(/([+\-]?\d+\s*\/\s*[+\-]?\d+|[A-Za-z][A-Za-z +/+-]*?)\s*(?:x\s*\d+)?\s*$/);
+          const kind = (mKind?.[1] || '').trim();
+          if (kind) return `counter:${kind.toLowerCase()}`;
+        }
+
+        // 1c) Type-add like "+Elf", "+Zombie", "+Artifact"
+        if (/^\+/.test(labelNoDur)){
+          const t = labelNoDur.replace(/^\+\s*/,'').trim();
+          if (t) return `type:${t.toLowerCase()}`;
+        }
+
+        // 1d) Ability: a simple word/phrase like "Deathtouch", "Flying", "Hexproof"
+        // We allow spaces (e.g., "First strike") and slashes not present → avoid PT here.
+        const isLikelyAbility =
+          !!labelNoDur &&
+          !/[\/]/.test(labelNoDur) &&    // avoid PT false-positive
+          !/^\+/.test(labelNoDur) &&     // not a type-add
+          !/\bcounter\b/i.test(rawLabel);// not counters
+
+        if (isLikelyAbility){
+          return `ability:${labelNoDur.toLowerCase()}`;
+        }
+
+        // Last resort: keep label bucket (will still get handled in removal by parsing)
+        return `label:${rawLabel.toLowerCase()}`;
+      }catch{
+        return 'unknown';
+      }
     }
+
 
     // newest-first compare: prefer .ts, else .id lexical, else array order
     function _isNewer(a,b){
@@ -1201,14 +1482,20 @@ function removeEffectLocally(cardCid, effect){
     function _removeAllBySignature(cardCid, signature, latestEffSnapshot){
       // 1) collect all matching effect ids for that card (from current list)
       let ids = [];
+      let latestForSig = latestEffSnapshot || null;
       try {
         const row = (RulesStore.listActiveEffectsGroupedByCard?.(null) || [])
           .find(r => String(r.cid) === String(cardCid));
         if (row && Array.isArray(row.effects)){
-          ids = row.effects
-            .filter(e => _effectSignature(e) === signature)
-            .map(e => e.id)
-            .filter(Boolean);
+          const matches = row.effects.filter(e => _effectSignature(e) === signature);
+          ids = matches.map(e => e.id).filter(Boolean);
+          // keep the newest snapshot for label parsing below
+          latestForSig = matches.sort((a,b)=>{
+            const ta = Number(a?.ts||0), tb = Number(b?.ts||0);
+            if (ta !== tb) return tb - ta;
+            const ia = String(a?.id||''), ib = String(b?.id||'');
+            return ia > ib ? -1 : ia < ib ? 1 : 0;
+          })[0] || latestForSig;
         }
       } catch(e) { console.warn('[ActiveTab] signature collect failed', e); }
 
@@ -1219,38 +1506,94 @@ function removeEffectLocally(cardCid, effect){
         }
       });
 
-      // 3) also strip local attributes/counters mirror so badges clear
-      // Build a "removal effect" snapshot that our helper understands.
-      const removeShape = {};
-      if (signature.startsWith('counter:')){
-        const kind = signature.slice('counter:'.length);
-        removeShape.counter = { kind, qty: 0 }; // qty 0 → remove that counter-kind
-      } else if (signature.startsWith('ability:')){
-        removeShape.ability = (latestEffSnapshot?.ability) ||
-                              String(latestEffSnapshot?.label || '').replace(/^grant\s+/i,'').trim();
-      } else if (signature.startsWith('type:')){
-        removeShape.typeAdd = latestEffSnapshot?.typeAdd || String(latestEffSnapshot?.label||'').trim();
-      }
-      try { removeEffectLocally(cardCid, removeShape); } catch(e){
-        console.warn('[ActiveTab] removeEffectLocally failed', e, {cardCid, removeShape});
-      }
+       // 3) also strip local attributes/counters mirror so badges clear
+  const removeShape = {};
+  if (signature.startsWith('counter:')){
+    const kind = signature.slice('counter:'.length);
+    removeShape.counter = { kind, qty: 0 }; // qty 0 → remove that counter-kind
+  } else if (signature.startsWith('ability:')){
+    const rawLbl = String(latestEffSnapshot?.label || '').replace(/^grant\s+/i,'').trim();
+    const clean  = rawLbl.replace(/\s*\(.*\)\s*$/,'').trim(); // strip "(EOT)" etc.
+    removeShape.ability = latestEffSnapshot?.ability || clean || signature.slice('ability:'.length);
+  } else if (signature.startsWith('type:')){
+    removeShape.typeAdd = latestEffSnapshot?.typeAdd || String(latestEffSnapshot?.label||'').trim() || signature.slice('type:'.length);
+  }
+  try { removeEffectLocally(cardCid, removeShape); } catch(e){
+    console.warn('[ActiveTab] removeEffectLocally failed', e, {cardCid, removeShape});
+  }
 
-      // 4) repaint that card’s badges
-      try{
-        const cardEl = document.querySelector(`img.table-card[data-cid="${cardCid}"]`);
-        if (cardEl){
-          if (window.Badges?.render) window.Badges.render(cardEl);
-          else if (window.Badges?.refreshFor) window.Badges.refreshFor(cardCid);
-        }
-      }catch(err){ console.warn('[ActiveTab] badge refresh fail', err); }
+  // 4) repaint that card’s badges (after cache invalidation done inside removeEffectLocally)
+  try{
+    const cardEl = document.querySelector(`img.table-card[data-cid="${cardCid}"]`);
+    if (cardEl){
+      if (window.Badges?.render) window.Badges.render(cardEl);
+      else if (window.Badges?.refreshFor) window.Badges.refreshFor(cardCid);
+    }
+  }catch(err){ console.warn('[ActiveTab] badge refresh fail', err); }
 
-      // 5) notify opponent (coarse-grain: send each id we actually removed)
+  // 5) notify opponent (coarse-grain: send each id we actually removed)
+  try{
+    const removedAbilityName  =
+      removeShape.ability ||
+      (signature.startsWith('ability:') ? signature.slice('ability:'.length) : null);
+
+    const removedCounterKind  =
+      removeShape.counter?.kind ||
+      (signature.startsWith('counter:') ? signature.slice('counter:'.length) : null);
+
+    const removedTypeName     =
+      removeShape.typeAdd ||
+      (signature.startsWith('type:') ? signature.slice('type:'.length) : null);
+
+    const removedPtOverride   = null;
+
+    ids.forEach(effectId => {
+      window.rtcSend?.({
+        type: 'buffRemove',
+        effectId,
+        targetCid: cardCid,
+        signature,
+        ability: removedAbilityName || null,
+        counter: removedCounterKind || null,
+        typeName: removedTypeName || null,
+        pt: removedPtOverride
+      });
+    });
+  }catch(err){ console.warn('[ActiveTab] rtcSend buffRemove failed', err); }
+
+
+      // 6) notify opponent (coarse-grain: send each id we actually removed)
       try{
+        const removedAbilityName =
+          removeShape.ability ||
+          (signature.startsWith('ability:') ? signature.slice('ability:'.length) : null);
+
+        const removedCounterKind =
+          removeShape.counter?.kind ||
+          (signature.startsWith('counter:') ? signature.slice('counter:'.length) : null);
+
+        const removedTypeName =
+          removeShape.typeAdd ||
+          (signature.startsWith('type:') ? signature.slice('type:'.length) : null);
+
+        const removedPtOverride = null; // PT removal not batched via signature in this UI
+
         ids.forEach(effectId => {
-          window.rtcSend?.({ type:'buffRemove', effectId });
+          window.rtcSend?.({
+            type: 'buffRemove',
+            effectId,
+            targetCid: cardCid,
+            signature,
+            ability: removedAbilityName || null,
+            counter: removedCounterKind || null,
+            typeName: removedTypeName || null,
+            pt: removedPtOverride
+          });
         });
       }catch(err){ console.warn('[ActiveTab] rtcSend buffRemove failed', err); }
     }
+
+
 
     // helper to re-render the Active tab list from RulesStore (de-duped by "latest per kind")
     function refreshActiveTab(){
@@ -1595,7 +1938,7 @@ function sanitizeTokenQuery(q){
       const numI  = host.querySelector('input[type="number"]');
       if (textI && numI) return host;
     }
-    return null;
+       return null;
   }
 
   // Best-effort setters for color & ability filters inside “Add Any Card” overlay
@@ -2245,13 +2588,6 @@ if (!act._delegated) {
   const cleanTypes = typesArr.join(' ').trim();
 
   // ---- 2. ABILITIES / KEYWORDS / BADGES ----
-  // Different parts of the code may stash abilities in different shapes:
-  // - arrays: ["Flying","Hexproof"]
-  // - objects: { Flying:true, Vigilance:true }
-  // - nested props like grantedAbilities, flags, keywords, etc.
-  //
-  // We’re going to sweep several likely buckets AND accept object-style maps.
-
   const abilityBucketsToCheck = [
     'abilities',
     'keywords',
@@ -2259,13 +2595,12 @@ if (!act._delegated) {
     'grantedAbilities',
     'keywordAbilities',
     'staticAbilities',
-    'badges',            // just in case Badges._storeDebug puts them here
+    'badges',
     'status'
   ];
 
   const abilFound = [];
 
-  // helper: push array items
   function takeArray(arr){
     arr.forEach(v => {
       const label = String(v || '').trim();
@@ -2274,11 +2609,8 @@ if (!act._delegated) {
     });
   }
 
-  // helper: push keys of an object where the value is truthy
   function takeObject(obj){
     Object.keys(obj).forEach(key => {
-      // ignore obvious non-ability state-y things if needed
-      // (summoning sickness, etc. can be noisy in this row)
       const lower = key.toLowerCase();
       if (
         lower.includes('summon') ||
@@ -2298,7 +2630,6 @@ if (!act._delegated) {
     });
   }
 
-  // sweep buckets
   abilityBucketsToCheck.forEach(bucket => {
     const val = cardDbg[bucket];
     if (!val) return;
@@ -2309,14 +2640,10 @@ if (!act._delegated) {
     }
   });
 
-  // also catch super-obvious single-boolean shapes like { flying:true }
-  // just in case debug is something like { flying:true, haste:false }
   Object.keys(cardDbg).forEach(k => {
     const v = cardDbg[k];
     if (typeof v === 'boolean' && v === true) {
-      // keys like "flying", "deathtouch", "menace"
       const lower = k.toLowerCase();
-      // filter out non-combat-y booleans
       if (
         lower === 'flying' ||
         lower === 'menace' ||
@@ -2338,22 +2665,19 @@ if (!act._delegated) {
     }
   });
 
-  // normalize, dedupe, capitalize nicely
   const cleanAbils = Array.from(new Set(
     abilFound.map(a => {
       return String(a)
         .trim()
         .replace(/\s+/g,' ')
         .replace(/^\s+|\s+$/g,'')
-        .replace(/\b\w/g, m => m.toUpperCase()); // Flying -> Flying, double_strike -> Double_Strike -> Double_Strike -> Double_Strike (close enough)
+        .replace(/\b\w/g, m => m.toUpperCase());
     })
   ))
   .join(', ')
   .trim();
 
-  // ---- 3. COMBINE ----
   if (cleanTypes && cleanAbils){
-    // ex: "Legendary Creature Elder Dragon • Flying, Hexproof"
     return `${cleanTypes} • ${cleanAbils}`;
   }
   if (cleanTypes){
@@ -2367,25 +2691,18 @@ if (!act._delegated) {
 
 
 
-  // helper to safely read PT for right column
   function _ptForRow(cardDbg){
     if (!cardDbg) return '';
     return cardDbg.ptFinal || '';
   }
 
-  // Inject card preview clone into the right-side Preview pane.
-  // We don't make it draggable, and we don't spawn floating badges there
-  // (your Badges module positions panels as fixed in viewport and chases rAF).
-  // We'll just show the card art element clone for now so it's obvious.
   function setPreviewCard(cid){
   const shell = STATE.root?.querySelector('[data-apply="previewCardShell"]');
   const msg   = STATE.root?.querySelector('[data-apply="previewCardMsg"]');
   if (!shell) return;
 
-  // Clear previous preview content
   shell.innerHTML = '';
 
-  // Get the live card from the table
   const live = document.querySelector(`img.table-card[data-cid="${cid}"]`);
   if (!live){
     const fallback = document.createElement('div');
@@ -2397,18 +2714,10 @@ if (!act._delegated) {
     return;
   }
 
-  // Clone the real table card <img>
   const clone = live.cloneNode(true);
 
-  // We WANT all its data-* so Badges/PT sticker logic sees exactly
-  // the same power/toughness, abilities, granted types, etc.
-  // BUT we do NOT want it to behave like a draggable board piece.
-
-  // Remove the gameplay class so table layout CSS (absolute pos, transforms)
-  // doesn't yank it out of our frame.
   clone.classList.remove('table-card');
 
-  // Force safe inline layout
   clone.style.position = 'static';
   clone.style.left = 'auto';
   clone.style.top = 'auto';
@@ -2416,11 +2725,10 @@ if (!act._delegated) {
   clone.style.rotate = live.style.rotate || '';
   clone.style.maxWidth = '100%';
   clone.style.height = 'auto';
-  clone.style.pointerEvents = 'none'; // no dragging / clicking
+  clone.style.pointerEvents = 'none';
   clone.draggable = false;
   clone.setAttribute('draggable','false');
 
-  // Frame wrapper so it sits nicely in the preview box
   const frame = document.createElement('div');
   frame.style.position = 'relative';
   frame.style.display = 'flex';
@@ -2436,125 +2744,181 @@ if (!act._delegated) {
 
   shell.appendChild(frame);
 
-  // NOW: paint badges / PT sticker on this clone.
-  // We try Badges.render(el) first. If that's not available, fall back to
-  // Badges.refreshFor(cid) which normally re-reads data for that cid.
   try {
     if (window.Badges?.render) {
       window.Badges.render(clone);
     } else if (window.Badges?.refreshFor) {
-      // this one usually looks up by cid and positions overlays based on getBoundingClientRect
       window.Badges.refreshFor(cid);
     }
   } catch(err){
     console.warn('[PreviewCard] badge render failed', err);
   }
-
-  // OPTIONAL: if Tooltips auto-attach rules text overlays,
-  // we don't want hover behavior in preview. We already set pointerEvents:none
-  // on the <img>, so it shouldn't pop hover tooltips anyway.
 }
 
 
-  function rebuildTargets(scope){
-    const host = STATE.root?.querySelector('[data-apply="list"]');
-    if (!host) return;
-    host.innerHTML = '';
+  // --- NEW: pull active filter choices from the drawer
+function _getActiveKindFilters(){
+  const drawer = STATE.root?.querySelector('[data-filter-drawer]');
+  if (!drawer) return { all:true, kinds:[] };
+  const cbAll = drawer.querySelector('input[data-filter-kind="all"]');
+  const picks = Array.from(drawer.querySelectorAll('input[data-filter-kind]:not([data-filter-kind="all"])'))
+    .filter(cb => cb.checked)
+    .map(cb => String(cb.getAttribute('data-filter-kind')||'').toLowerCase());
+  const allOn = !!cbAll?.checked || picks.length === 0;
+  return { all: allOn, kinds: picks };
+}
 
-    const me = getMySeat();
-    const all = collectTableCards();
+// --- NEW: helpers to test type buckets from badges/dbg or dataset.typeLine
+function _hasTypeWord(tl, word){
+  if (!tl) return false;
+  return new RegExp(`\\b${word}\\b`, 'i').test(String(tl));
+}
+function _rowMatchesKinds(row, dbg, kinds){
+  if (!kinds || !kinds.length) return true;
 
-    let rows = [];
-    if (scope === 'deck') {
-      rows = collectDeck();
-    } else if (scope === 'mine') {
-      rows = all.filter(r => Number(r.owner) === me);
-    } else if (scope === 'opp') {
-      rows = all.filter(r => Number(r.owner) && Number(r.owner) !== me);
-    } else {
-      // "both" OR anything else we don't recognize
-      rows = all;
-    }
+  // Prefer badges types; fallback to dataset.typeLine
+  const typeLine = row?.el?.dataset?.typeLine || '';
+  const hasFromDbg = (label) => {
+    try {
+      const arr = (dbg?.types || []);
+      return Array.isArray(arr) && arr.some(t => String(t).toLowerCase() === label);
+    } catch { return false; }
+  };
 
-    rows.forEach(r => {
-      // pull live badge summary if we have a cid
+  // Map our checkboxes → predicates
+  const wantCreature    = kinds.includes('creature');
+  const wantLegendary   = kinds.includes('legendary');
+  const wantArtifact    = kinds.includes('artifact');
+  const wantEnchantment = kinds.includes('enchantment');
+
+  // If "All" was off, at least one of the selected buckets must match.
+  const checks = [];
+
+  if (wantCreature) {
+    checks.push( hasFromDbg('creature') || _hasTypeWord(typeLine, 'Creature') );
+  }
+  if (wantLegendary) {
+    // Legendary is a supertype; appears at start of line typically
+    checks.push( hasFromDbg('legendary') || _hasTypeWord(typeLine, 'Legendary') );
+  }
+  if (wantArtifact) {
+    checks.push( hasFromDbg('artifact') || _hasTypeWord(typeLine, 'Artifact') );
+  }
+  if (wantEnchantment) {
+    checks.push( hasFromDbg('enchantment') || _hasTypeWord(typeLine, 'Enchantment') );
+  }
+
+  // If user ticked N buckets, pass if ANY selected bucket matches.
+  return checks.length ? checks.some(Boolean) : true;
+}
+
+function rebuildTargets(scope){
+  const host = STATE.root?.querySelector('[data-apply="list"]');
+  if (!host) return;
+  host.innerHTML = '';
+
+  const me = getMySeat();
+  const all = collectTableCards();
+
+  let rows = [];
+  if (scope === 'deck') {
+    // Deck scope is currently hidden; keep code path intact in case you re-enable it.
+    rows = collectDeck();
+  } else if (scope === 'mine') {
+    rows = all.filter(r => Number(r.owner) === me);
+  } else if (scope === 'opp') {
+    rows = all.filter(r => Number(r.owner) && Number(r.owner) !== me);
+  } else {
+    rows = all;
+  }
+
+  // --- NEW: apply kind filters if drawer is active (All = no filtering)
+  const { all: allKinds, kinds } = _getActiveKindFilters();
+  if (!allKinds) {
+    rows = rows.filter(r => {
       let dbg = null;
       if (r.cid && window.badgesForCid) {
-        try {
-          dbg = window.badgesForCid(r.cid);
-        } catch {
-          dbg = null;
-        }
+        try { dbg = window.badgesForCid(r.cid); } catch { dbg = null; }
       }
-
-      const midText = _summarizeAttrsForRow(dbg);
-      const ptText  = _ptForRow(dbg);
-
-      // row wrapper
-      const rowDiv = document.createElement('div');
-      rowDiv.className = 'targetRow';
-
-      // LEFT chunk (checkbox + img + name)
-      const leftLab = document.createElement('label');
-      leftLab.className = 'tLeft';
-
-      const check = document.createElement('input');
-      check.type = 'checkbox';
-      check.setAttribute('data-target-cid', r.cid || '');
-      leftLab.appendChild(check);
-
-      if (r.img) {
-        const art = document.createElement('img');
-        art.src = r.img;
-        art.alt = r.title || '';
-        leftLab.appendChild(art);
-      }
-
-      const nm = document.createElement('span');
-      nm.className = 'tName';
-      nm.textContent = r.title || (r.cid || 'Card');
-      leftLab.appendChild(nm);
-
-      rowDiv.appendChild(leftLab);
-
-      // MIDDLE chunk (types / abilities summary, ellipsis)
-      const mid = document.createElement('div');
-      mid.className = 'tMid';
-      mid.textContent = midText || '';
-      if (midText) {
-        mid.title = midText; // hover to read full text
-      }
-      rowDiv.appendChild(mid);
-
-      // RIGHT chunk (PT + 👁)
-      const right = document.createElement('div');
-      right.className = 'tRight';
-
-      const ptSpan = document.createElement('div');
-      ptSpan.className = 'tPT';
-      ptSpan.textContent = ptText || '';
-      right.appendChild(ptSpan);
-
-      const eyeBtn = document.createElement('button');
-      eyeBtn.type = 'button';
-      eyeBtn.className = 'eyeBtn';
-      eyeBtn.textContent = '👁';
-      eyeBtn.setAttribute('data-preview-cid', r.cid || '');
-      eyeBtn.title = 'Preview this card';
-      eyeBtn.addEventListener('click', (ev)=>{
-        ev.stopPropagation();
-        const cid = eyeBtn.getAttribute('data-preview-cid');
-        if (cid) setPreviewCard(cid);
-      });
-      right.appendChild(eyeBtn);
-
-      rowDiv.appendChild(right);
-
-      host.appendChild(rowDiv);
+      return _rowMatchesKinds(r, dbg, kinds);
     });
-
-    console.log('[Overlay] targets rebuilt:', scope, rows.length);
   }
+
+  rows.forEach(r => {
+    let dbg = null;
+    if (r.cid && window.badgesForCid) {
+      try {
+        dbg = window.badgesForCid(r.cid);
+      } catch {
+        dbg = null;
+      }
+    }
+
+    const midText = _summarizeAttrsForRow(dbg);
+    const ptText  = _ptForRow(dbg);
+
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'targetRow';
+
+    const leftLab = document.createElement('label');
+    leftLab.className = 'tLeft';
+
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.setAttribute('data-target-cid', r.cid || '');
+    leftLab.appendChild(check);
+
+    if (r.img) {
+      const art = document.createElement('img');
+      art.src = r.img;
+      art.alt = r.title || '';
+      leftLab.appendChild(art);
+    }
+
+    const nm = document.createElement('span');
+    nm.className = 'tName';
+    nm.textContent = r.title || (r.cid || 'Card');
+    leftLab.appendChild(nm);
+
+    rowDiv.appendChild(leftLab);
+
+    const mid = document.createElement('div');
+    mid.className = 'tMid';
+    mid.textContent = midText || '';
+    if (midText) {
+      mid.title = midText;
+    }
+    rowDiv.appendChild(mid);
+
+    const right = document.createElement('div');
+    right.className = 'tRight';
+
+    const ptSpan = document.createElement('div');
+    ptSpan.className = 'tPT';
+    ptSpan.textContent = ptText || '';
+    right.appendChild(ptSpan);
+
+    const eyeBtn = document.createElement('button');
+    eyeBtn.type = 'button';
+    eyeBtn.className = 'eyeBtn';
+    eyeBtn.textContent = '👁';
+    eyeBtn.setAttribute('data-preview-cid', r.cid || '');
+    eyeBtn.title = 'Preview this card';
+    eyeBtn.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      const cid = eyeBtn.getAttribute('data-preview-cid');
+      if (cid) setPreviewCard(cid);
+    });
+    right.appendChild(eyeBtn);
+
+    rowDiv.appendChild(right);
+
+    host.appendChild(rowDiv);
+  });
+
+  console.log('[Overlay] targets rebuilt:', scope, rows.length, { filterAll: allKinds, kinds });
+}
+
 
 
   // expose for badges

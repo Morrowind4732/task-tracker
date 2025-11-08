@@ -143,6 +143,16 @@ export const UserInterface = (() => {
     showOpponentBadges: true,
     showOpponentTooltips: true
   };
+  
+  // ------------------------------------------------------------------
+  // SAVE HELPERS: Save state helpers
+  // ------------------------------------------------------------------
+function getP1(){ return STATE.p1; }
+function getP2(){ return STATE.p2; }
+function getTurn(){ return { turn: STATE.turn, phase: STATE.phase, activeSeat: STATE.activeSeat }; }
+function getPlayerLabel(){ return STATE.playerLabel; }
+function dumpLiveSettings(){ return { ...UISettingsLive }; }
+
 
   // ------------------------------------------------------------------
   // UI HELPERS: attacker/defender rail state visuals
@@ -1374,17 +1384,63 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
       showSettingsPanel();
     });
 
-    document.getElementById('ui-btn-save')?.addEventListener('pointerdown', (e) => {
-      if (e.button && e.button !== 0) return;
-      e.preventDefault();
-      console.log('[UI] Save clicked');
-    });
+    document.getElementById('ui-btn-save')?.addEventListener('pointerdown', async (e) => {
+  if (e.button && e.button !== 0) return;
+  e.preventDefault();
+  console.log('[UI] Save clicked');
+  try {
+    const { GameSave } = await import('./save.state.js');
+    const result = await GameSave.saveAndMaybePingOpponent();
+    console.log('[UI] Save complete', result);
+    try {
+      // Tiny inline confirmation with the shared Save ID
+      const sid = result?.saveId || '(unknown)';
+      alert('Saved. Save ID: ' + sid);
+    } catch {}
+  } catch (err) {
+    console.warn('[UI] Save failed', err);
+    alert('Save failed: ' + (err?.message || err));
+  }
+});
 
-    document.getElementById('ui-btn-load')?.addEventListener('pointerdown', (e) => {
-      if (e.button && e.button !== 0) return;
-      e.preventDefault();
-      console.log('[UI] Load clicked');
-    });
+
+document.getElementById('ui-btn-load')?.addEventListener('pointerdown', async (e) => {
+  if (e.button && e.button !== 0) return;
+  e.preventDefault();
+  console.log('[UI] Load clicked');
+  try {
+    const mod = await import('./load.state.js');
+    const GameLoad = mod?.GameLoad || mod?.default || mod;
+    if (!GameLoad) throw new Error('load.state.js not found or no GameLoad export');
+
+    if (typeof GameLoad.openLoadPicker === 'function') {
+      await GameLoad.openLoadPicker();
+      console.log('[UI] Load picker opened');
+      return;
+    }
+
+    if (typeof GameLoad.loadLatestForRoom === 'function') {
+      await GameLoad.loadLatestForRoom();
+      console.log('[UI] Loaded latest for room');
+      return;
+    }
+
+    if (typeof GameLoad.loadBySaveId === 'function') {
+      const sid = prompt('Enter Save ID to load:');
+      if (sid) {
+        await GameLoad.loadBySaveId(sid.trim());
+        console.log('[UI] Loaded save:', sid);
+      }
+      return;
+    }
+
+    throw new Error('GameLoad has no known load methods');
+  } catch (err) {
+    console.warn('[UI] Load failed', err);
+    alert('Load failed: ' + (err?.message || err));
+  }
+});
+
 
     // Settings footer buttons
     document.getElementById('ui-btn-cancelSettings')?.addEventListener('pointerdown', (e) => {
@@ -2238,8 +2294,8 @@ function setupLifeRtc(){
     applyDamage,       // wrapper: -N to total (broadcasts)
     applyLifelink,     // wrapper: +N to total (broadcasts)
     addPoison,         // wrapper: +N to poison (broadcasts)
-    addMid             // wrapper: +/- to mid (broadcasts)
-
+    addMid,             // wrapper: +/- to mid (broadcasts)
+	getP1, getP2, getTurn, getPlayerLabel
   };
 
 })();

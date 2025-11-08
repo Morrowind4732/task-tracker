@@ -1,7 +1,6 @@
 // modules/net.rtc.js
 // WebRTC datachannel using Supabase Realtime for signaling + presence.
-// Super chatty logs so we can see *exactly* where it stalls.
-// Now waits for window.SUPABASE_READY (from env.supabase.js) so we never race.
+// SOLO MODE fallback when Supabase is unavailable.
 
 const TAG = '[RTC]';
 const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
@@ -22,37 +21,29 @@ async function waitFor(okFn, { timeout = 8000, label = 'cond' } = {}) {
   return false;
 }
 
-// Ensure Supabase is initialized (uses window.SUPABASE_READY if present)
+// Ensure Supabase is initialized (SOLO mode if missing)
 async function getSupabaseClient() {
-  // Prefer the promise exposed by env.supabase.js
-  if (window.SUPABASE_READY) {
-    try {
-      const c = await window.SUPABASE_READY;
-      if (c) return c;
-    } catch (e) {
-      throw new Error('Supabase init failed (from SUPABASE_READY): ' + (e?.message || e));
+  try {
+    if (window.SUPABASE_READY) {
+      try {
+        const c = await window.SUPABASE_READY;
+        if (c) return c;
+      } catch {}
     }
-  }
-  // Fallback: poll for window.SUPABASE
-  const ok = await waitFor(() => !!window.SUPABASE, { timeout: 6000, label: 'window.SUPABASE' });
-  if (!ok) {
-    throw new Error('Supabase env not loaded (window.SUPABASE missing). Did env.supabase.js run?');
-  }
-  return window.SUPABASE;
+    const ok = await waitFor(() => !!window.SUPABASE, { timeout: 3000, label: 'window.SUPABASE' });
+    if (ok) return window.SUPABASE || null;
+  } catch {}
+  warn('[RTC] Supabase unavailable → SOLO MODE');
+  return null; // critical change (NO THROW)
 }
 
 /**
  * createPeerRoom
- * @param {object} opts
- *  - roomId   (string)  channel name suffix
- *  - role     ('host'|'join')
- *  - seat     (1..3)
- *  - onMessage(fn)
- *  - onSeatConflict(fn)
+ * SOLO MODE RETURNS A NullPeer (no RTC, but app boots cleanly).
  */
 export async function createPeerRoom({
   roomId,
-  role,          // 'host' | 'join'
+  role,
   seat = 1,
   onMessage = () => {},
   onSeatConflict = () => {}
@@ -60,6 +51,25 @@ export async function createPeerRoom({
   if (!roomId || !role) throw new Error('createPeerRoom: missing roomId/role');
 
   const sb = await getSupabaseClient();
+
+  // ===== SOLO MODE =====
+  if (!sb) {
+    warn('[RTC] Running in SOLO MODE (Supabase missing or blocked)');
+    return {
+      pc: null,
+      get dc() { return null; },
+      send: () => false,
+      close: () => {},
+      opened: Promise.resolve(), // instantly "connected"
+      role,
+      seat,
+      isSolo: true,
+      debug: { channelName: null },
+      sendRngRoll() { return false; }
+    };
+  }
+
+  // ===== NORMAL RTC MODE =====
   log('connecting realtime for room', roomId, 'as', role, 'seat', seat);
 
   // --- PeerConnection
@@ -67,12 +77,10 @@ export async function createPeerRoom({
   let dc = null;
   let left = false;
 
-  // visible flags
   let channelReady = false;
   let presenceSeen = false;
   let remoteSeen   = false;
 
-  // useful promise: resolves when DC is open or pc is connected.
   const opened = new Promise((resolve) => {
     const mark = () => {
       if (dc?.readyState === 'open' || pc.connectionState === 'connected') {
@@ -85,23 +93,20 @@ export async function createPeerRoom({
       if (pc.connectionState === 'connected') mark();
       if (pc.connectionState === 'failed') warn('pc failed (likely ICE)');
     });
-    // joiner receives datachannel
     pc.addEventListener('datachannel', (e) => {
       dc = e.channel;
       wireDC(dc, onMessage);
       log('ondatachannel:', dc.label);
       dc.addEventListener('open',  () => { log('dc open (join)');  mark(); });
-      dc.addEventListener('close', () =>  log('dc close (join)'));
+      dc.addEventListener('close', () => log('dc close (join)'));
     });
   });
 
-  // For ICE, we need channel reference; we’ll assign after subscribe.
   let channel = null;
 
   pc.addEventListener('icecandidate', (e) => {
     if (!channelReady) return;
     if (e.candidate) {
-      log('local ICE → broadcast');
       channel.send({
         type: 'broadcast',
         event: 'sig',
@@ -109,30 +114,26 @@ export async function createPeerRoom({
       });
     }
   });
+
   pc.addEventListener('iceconnectionstatechange', () => {
     log('iceConnectionState =', pc.iceConnectionState);
   });
 
-  // --- Realtime channel (signaling + presence)
   const chanName = `rtc_${roomId}`;
   channel = sb.channel(chanName, {
     config: {
-      broadcast: { self: true },          // we see our own (for debug)
-      presence:  { key: `seat-${seat}` }  // presence key shows seat id
+      broadcast: { self: true },
+      presence:  { key: `seat-${seat}` }
     }
   });
 
-  // presence sync → detect conflicts + remote presence
   channel.on('presence', { event: 'sync' }, () => {
-    const states = channel.presenceState(); // {socket_id:[{presence_ref, ...tracked}]}
+    const states = channel.presenceState();
     const members = Object.values(states).flat();
     const seats = members.map((m) => m?.seat).filter(Boolean);
     presenceSeen = true;
-
-    // remote present?
     remoteSeen = members.some((m) => m?.seat !== seat);
 
-    // seat conflict?
     const sameSeatCount = seats.filter((s) => s === seat).length;
     const seatOk = sameSeatCount <= 1;
     log('presence sync', { members: members.length, seats, seatOk, remoteSeen });
@@ -144,86 +145,61 @@ export async function createPeerRoom({
     }
   });
 
-  // signaling receiver
   channel.on('broadcast', { event: 'sig' }, async ({ payload }) => {
-    if (!payload) return;
-    if (payload.seat === seat) return; // ignore self-echo
-
+    if (!payload || payload.seat === seat) return;
     try {
       if (payload.t === 'offer') {
         log('← offer from seat', payload.seat);
         await pc.setRemoteDescription(payload.sdp);
         const ans = await pc.createAnswer();
         await pc.setLocalDescription(ans);
-        log('→ answer');
         channel.send({ type: 'broadcast', event: 'sig', payload: { t: 'answer', seat, role, sdp: ans } });
-
       } else if (payload.t === 'answer') {
-        log('← answer from seat', payload.seat);
         if (pc.signalingState !== 'stable') {
-          try { await pc.setRemoteDescription(payload.sdp); } catch (e) { warn('setRemoteDescription(answer) failed', e); }
+          try { await pc.setRemoteDescription(payload.sdp); } catch (e) { warn('remote desc fail', e); }
         }
-
       } else if (payload.t === 'ice') {
-        try { await pc.addIceCandidate(payload.c); } catch { /* likely dupes */ }
+        try { await pc.addIceCandidate(payload.c); } catch {}
       }
     } catch (e) {
       warn('signal handling error', e);
     }
   });
 
-  // subscribe + presence track
   log('connecting realtime channel:', chanName);
   await channel.subscribe(async (status) => {
     log('channel status =', status);
     if (status === 'SUBSCRIBED') {
       channelReady = true;
+      try { await channel.track({ seat, role, ts: Date.now() }); } catch {}
 
-      // announce our seat/role in presence
-      try {
-        await channel.track({ seat, role, ts: Date.now() });
-        log('presence track sent', { seat, role });
-      } catch (e) {
-        warn('presence track failed', e);
-      }
-
-      // host: create DC + send initial offer
       if (role === 'host') {
         dc = pc.createDataChannel('game', { ordered: true });
         wireDC(dc, onMessage);
         dc.addEventListener('open',  () => log('dc open (host)'));
         dc.addEventListener('close', () => log('dc close (host)'));
 
-        // small delay gives presence a moment to sync on cold start
         await wait(60);
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        log('→ offer broadcast');
         channel.send({ type: 'broadcast', event: 'sig', payload: { t: 'offer', seat, role, sdp: offer } });
-      } else {
-        log('joiner awaiting offer…');
       }
     }
   });
 
-  // 🔎 Diagnostics: timeouts that explain what didn’t happen
-  // 1) Did realtime subscription/presence happen?
   await waitFor(() => channelReady, { timeout: 5000, label: 'realtime subscribe' });
   await waitFor(() => presenceSeen,  { timeout: 5000, label: 'presence sync' });
 
-  // 2) If we never see a remote, we’ll say so (helps when two tabs used wrong room).
   setTimeout(() => {
-    if (!remoteSeen) warn('No remote presence detected yet — double-check both sides used the SAME roomId and one is Host, the other Join.');
+    if (!remoteSeen) warn('No remote presence detected yet.');
   }, 5000);
 
-  // 3) If we’re still not connected after 12s, the host forces a re-offer (iceRestart)
   setTimeout(async () => {
     if (left) return;
     if (pc.connectionState === 'connected') return;
     if (role === 'host') {
       try {
-        log('still not connected → re-offer (iceRestart)');
         const offer = await pc.createOffer({ iceRestart: true });
         await pc.setLocalDescription(offer);
         channel.send({ type: 'broadcast', event: 'sig', payload: { t: 'offer', seat, role, sdp: offer } });
@@ -231,14 +207,10 @@ export async function createPeerRoom({
     }
   }, 12000);
 
-  // public API
   function send(obj) {
-    if (!dc || dc.readyState !== 'open') {
-      warn('send() dropped (dc not open)', obj?.type);
-      return false;
-    }
+    if (!dc || dc.readyState !== 'open') return false;
     try { dc.send(JSON.stringify(obj)); return true; }
-    catch (e) { warn('send() error', e); return false; }
+    catch { return false; }
   }
 
   async function close() {
@@ -248,208 +220,40 @@ export async function createPeerRoom({
     try { pc.close(); } catch {}
   }
 
-  // Make life easier for the table page debugger
   return {
     pc,
     get dc() { return dc; },
     send,
     close,
-    opened,       // Promise resolves when link is live
+    opened,
     role,
     seat,
     debug: { channelName: chanName },
-
-  // NEW: sugar for RNG broadcasts
-  sendRngRoll(payload) { return send(payload); }
+    sendRngRoll(payload) { return send(payload); }
   };
 }
 
-// --- mirror helpers used by the spawn handler (Choice B: mirror across bottom of combat zone)
 function getMirrorAxisY(){
   const css = getComputedStyle(document.documentElement);
   return parseFloat(css.getPropertyValue('--combat-height')) || 300;
 }
 function getCardHeightWorldFromCssVar(){
-  const css = getComputedStyle(document.documentElement);
+  const css = getComputedStyle(document.document.documentElement);
   const v = parseFloat(css.getPropertyValue('--card-height-table'));
   return Number.isFinite(v) ? v : 180;
 }
-// y' = 2*A − (y + h)
 function mirrorTopB(y, h){
   const A = getMirrorAxisY();
   return (A * 2) - (y + h);
 }
 
-
-// ---- internal: datastream handlers
 function wireDC(dc, onMessage) {
   dc.addEventListener('message', (e) => {
     let msg = null;
     try { msg = JSON.parse(e.data); } catch {}
     if (!msg) return;
-
-    // Pass to app-level handler (unchanged)
     onMessage(msg);
-if (msg.type === 'spawn_table_card') {
-  // normalize old payload → new spawn
-  const c = msg.card || {};
-  msg = {
-    type: 'spawn',
-    owner: Number(msg.seat || msg.owner || 1),
-    cid: msg.cid,
-    name: c.name || '',
-    img:  c.img  || c.image || (c.image_uris?.normal) || '',
-    type_line:   c.type_line   || '',
-    mana_cost:   c.mana_cost   || '',
-    oracle_text: c.oracle_text || '',
-    x: msg.x ?? 0, y: msg.y ?? 0
-  };
-}
-
-    // NEW: RNG packets also emit a global event for overlay modules
-    if (msg.type === 'rng_roll') {
-      try {
-        window.dispatchEvent(new CustomEvent('versus-dice:show', { detail: msg }));
-      } catch {}
-    }
-
-    // NEW: Opponent hand count → broadcast DOM event so table can update the backs fan
-    if (msg.type === 'hand:count') {
-      try {
-        window.dispatchEvent(new CustomEvent('opponent-hand:count', { detail: msg }));
-      } catch {}
-    }
-
-    // NEW: Dedicated delete event (pure visual destroy; no zone writes)
-    if (msg.type === 'card:delete') {
-  const cid = msg.cid;
-  if (!cid) return;
-  try { window.Stacking?.detach?.(document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)); } catch{}
-  try { window.Zones?.cfg?.removeTableCardDomById?.(cid); } catch{}
-  try {
-    const el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-    el?.remove?.();
-  } catch {}
-}
-
-    // NEW: Spawn event for repaired cards (delete → respawn → hydrate)
-if (msg.type === 'spawn') {
-  const cid = msg.cid;
-  if (!cid) return;
-
-  // 🔒 Ignore our own spawn packets (prevents local double-spawn)
-  const my = (window.mySeat?.() ?? -1);
-  if (Number(msg.owner) === Number(my)) return;
-
-  // 0) Compute mirrored coordinates for remote view (Choice B)
-  //    y' = 2*A − (y + h), where h is card height in world units
-  const hWorld = getCardHeightWorldFromCssVar();
-  const mirroredTop = mirrorTopB(Number(msg.y) || 0, hWorld);
-  const mirroredLeft = Number(msg.x) || 0;
-
-  // 1) Remove stale DOM
-  try { window.Stacking?.detach?.(document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`)); } catch{}
-  try { window.Zones?.cfg?.removeTableCardDomById?.(cid); } catch{}
-  try {
-    document.querySelectorAll(`.card[data-cid="${CSS.escape(cid)}"]`).forEach(n => n.remove());
-  } catch {}
-
-  // 2) Spawn new card at mirrored x,y
-  let el = null;
-  const cardObj = {
-    name: msg.name || '',
-    img:  msg.img  || '',
-    type_line:   msg.type_line   || '',
-    mana_cost:   msg.mana_cost   || '',
-    oracle_text: msg.oracle_text || '',
-    ogpower:     msg.ogpower,
-    ogtoughness: msg.ogtoughness,
-    ogTypes:     msg.ogTypes || [],
-    ogEffects:   msg.ogEffects || [],
-    power:'', toughness:'', loyalty:''
-  };
-
-  if (typeof window.spawnTableCard === 'function') {
-    // If your helper takes raw x,y, give it the mirrored coords
-    el = window.spawnTableCard(cardObj, mirroredLeft, mirroredTop, { cid: msg.cid, owner: msg.owner });
-  } else if (typeof window.Zones?.spawnToTable === 'function') {
-    Zones.spawnToTable({ ...cardObj, cid: msg.cid }, msg.owner);
-    el = document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-    if (el){
-      el.style.left = `${mirroredLeft}px`;
-      el.style.top  = `${mirroredTop}px`;
-    }
-  }
-
-  // 3) Hydrate + badges + tooltip (+ apply incoming attrs to remote DOM/store)
-  requestAnimationFrame(async () => {
-    const node =
-      document.querySelector(`img.table-card[data-cid="${CSS.escape(cid)}"]`) ||
-      document.querySelector(`.card[data-cid="${CSS.escape(cid)}"]`);
-    if (!node) return;
-
-    // A) reflect incoming attrs on the DOM immediately (so overlays/tooltip see them)
-    const a = msg.attrs || {};
-    if (a.pt)              node.dataset.ptCurrent = String(a.pt);               // e.g. "2/2"
-    if (Array.isArray(a.abilities))
-                           node.dataset.keywords  = a.abilities.join('|');      // e.g. "Flying|Skulk"
-    if (Array.isArray(a.types) && a.types.length)
-                           node.dataset.subTypes  = a.types.join('|');          // e.g. "Vampire|Horror"
-
-    // B) seed CardAttributes if present (non-fatal if module absent)
-    try {
-      const { CardAttributes } = await import('./card.attributes.js');
-      const [pStr, tStr] = String(a.pt || '').split('/');
-      const pow = Number(pStr), tou = Number(tStr);
-
-      CardAttributes.initForCard(node.dataset.cid, {
-        og: {
-          pow: Number.isFinite(pow) ? pow : (CardAttributes.getComputedPT(node.dataset.cid)?.pow ?? 0),
-          tou: Number.isFinite(tou) ? tou : (CardAttributes.getComputedPT(node.dataset.cid)?.tou ?? 0)
-        },
-        types: Array.isArray(a.types) ? a.types.slice() : []
-      });
-
-      const row = CardAttributes.getFor?.(node.dataset.cid) || {};
-      if (Array.isArray(a.abilities)) {
-        row.abilities = Array.from(new Set([...(row.abilities || []), ...a.abilities]));
-      }
-      if (a.counters && typeof a.counters === 'object') {
-        row.counters = { ...(row.counters || {}), ...a.counters };
-      }
-      if (CardAttributes.setFor) CardAttributes.setFor(node.dataset.cid, row);
-    } catch {}
-
-    // C) reflow overlays and tooltip with the now-applied attributes
-    try {
-      const mod = await import('./card.attributes.overlay.ui.js');
-      mod.AttributesOverlay?.attach?.(node);
-      mod.AttributesOverlay?.reflow?.(node);
-    } catch {}
-
-    try {
-      window.CardAttributes?.applyToDom?.(cid);
-      window.CardAttributes?.refreshPT?.(cid);
-
-      if (window.Tooltip?.current?.cid === cid) {
-        window.Tooltip.showForCard?.(node, node);
-        window.Tooltip.followAnchorIf?.(node);
-      }
-      window.reflowAll?.();
-    } catch (e) {
-      console.warn('spawn hydration failed', e);
-    }
-  });
-
-
-  return;
-}
-
-
-
   });
   dc.addEventListener('error', (e) => console.warn('[RTC/DC] error', e));
   dc.addEventListener('close', () => console.log('[RTC/DC] closed'));
 }
-
-

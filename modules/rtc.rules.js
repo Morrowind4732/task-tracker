@@ -20,28 +20,28 @@ export const RTCApply = (() => {
     return hits;
   }
 
+  // remove ability/type/counter/pt from dataset.remoteAttrs
   function _pruneRemoteAttrsForEffect(el, eff){
     if (!el || !eff) return;
     let attrs = {};
     try { attrs = JSON.parse(el.dataset.remoteAttrs || '{}'); } catch {}
 
+    // abilities[]
     if (eff.kind === 'ability' && eff.ability){
       const arr = Array.isArray(attrs.abilities) ? attrs.abilities : [];
       attrs.abilities = arr.filter(a => a !== eff.ability);
     }
 
+    // types[]
     if (eff.kind === 'type' && eff.typeAdd){
-      // We generally don't mirror added types into remoteAttrs,
-      // but if you do, scrub them here:
       const arr = Array.isArray(attrs.types) ? attrs.types : [];
       attrs.types = arr.filter(t => t !== eff.typeAdd);
     }
 
+    // counters (rebuild safely)
     if (eff.kind === 'counter' && eff.counter?.kind){
-      // safest path: rebuild the counters map for this cid after removal
-      // (so stacked counters stay accurate)
       const remaining = RulesStore.exportEffectsFor(el.dataset.cid)
-        .filter(e => !(e.id === eff.id)); // pretend it's already gone
+        .filter(e => !(e.id === eff.id));
       const tally = {};
       for (const e of remaining){
         if (e.kind === 'counter' && e.counter?.kind){
@@ -52,10 +52,8 @@ export const RTCApply = (() => {
       attrs.counters = tally;
     }
 
+    // pt
     if (eff.kind === 'pt'){
-      // If you mirror PT into dataset.remoteAttrs.pt, clear it only when no PT
-      // effects remain after this removal; otherwise leave it (sticker will still
-      // render correctly from RulesStore.resolveForCard()).
       const remaining = RulesStore.exportEffectsFor(el.dataset.cid)
         .filter(e => !(e.id === eff.id) && e.kind === 'pt');
       if (remaining.length === 0){
@@ -71,13 +69,10 @@ export const RTCApply = (() => {
   function broadcastBuff(localOverlayPayload){
     if (!localOverlayPayload || !Array.isArray(localOverlayPayload.targets)) return;
 
-    // Step 1: commit to RulesStore and get stable IDs
     const commitResult = RulesStore.addEffectForTargets(localOverlayPayload);
 
-    // ✅ persist those IDs onto the payload for remote reuse
     localOverlayPayload.effectIds = commitResult.effectIds;
 
-    // Step 2: apply visuals locally (dataset.ptCurrent, badges, tooltip)
     try {
       if (window.CardOverlayUI?.applyBuffLocally){
         window.CardOverlayUI.applyBuffLocally(localOverlayPayload);
@@ -86,7 +81,6 @@ export const RTCApply = (() => {
       console.warn('[RTCApply.broadcastBuff] local visual sync fail', err);
     }
 
-    // Step 3: build + send RTC packet for EACH targetCid
     const { srcCid, ownerSeat, duration, pt, ability, typeAdd, counter, targets } = localOverlayPayload;
     for (const targetCid of targets){
       const pkt = {
@@ -115,7 +109,6 @@ export const RTCApply = (() => {
   async function recvBuff(pkt){
     if (!pkt || pkt.type !== 'buff') return;
 
-    // 1) store the effect with caller-supplied IDs (stable across clients)
     try {
       RulesStore.importRemoteEffect(pkt);
     } catch (err) {
@@ -124,7 +117,6 @@ export const RTCApply = (() => {
 
     console.log('%c[RTC:recv buff]', 'color:#0f0', pkt);
 
-    // 2) mirror visuals via CardOverlayUI
     const cid = pkt.targetCid;
     const mirrorPayload = {
       targets: cid ? [cid] : [],
@@ -181,23 +173,57 @@ export const RTCApply = (() => {
     const effectId = pkt?.effectId;
     if (!effectId) return;
 
-    // Which card(s) currently carry this effect?
     const hits = _cardsWithEffect(effectId);
 
-    // For each hit, prune remoteAttrs using the exact effect we’re about to kill.
     for (const { cid, el, list } of hits){
       const eff = list.find(e => e.id === effectId);
-      if (eff) _pruneRemoteAttrsForEffect(el, eff);
+      if (!eff) continue;
+
+      // 1) Remove from remoteAttrs standard areas
+      _pruneRemoteAttrsForEffect(el, eff);
+
+      // 2) *** REMOVE EVERY GRANT WITH THE SAME ABILITY NAME ***
+      if (eff.ability){
+        let attrs = {};
+        try { attrs = JSON.parse(el.dataset.remoteAttrs || '{}'); } catch {}
+        if (Array.isArray(attrs.grants)){
+          attrs.grants = attrs.grants.filter(g => g.name !== eff.ability);
+        }
+        el.dataset.remoteAttrs = JSON.stringify(attrs);
+      }
+
+      // 3) *** REMOVE from CardAttributes (all mirrors) ***
+      try {
+        const CA = window.CardAttributes;
+        if (CA) {
+          // abilities
+          if (CA.removeAbility) CA.removeAbility(cid, eff.ability);
+          // grants
+          if (CA.removeGrant) CA.removeGrant(cid, eff.ability);
+
+          // Hard fallback if internal maps exist
+          if (CA._grants && CA._grants[cid]){
+            CA._grants[cid] = (CA._grants[cid] || []).filter(g => g.name !== eff.ability);
+            if (CA._grants[cid].length === 0) delete CA._grants[cid];
+          }
+          if (CA._abilities && CA._abilities[cid]){
+            CA._abilities[cid] = (CA._abilities[cid] || []).filter(a => a !== eff.ability);
+            if (CA._abilities[cid].length === 0) delete CA._abilities[cid];
+          }
+        }
+      } catch(err){
+        console.warn('[RTCApply.recvBuffRemove] CardAttributes grant scrub fail', err);
+      }
     }
 
-    // Remove from store.
+    // 4) Remove from RulesStore
     try {
       RulesStore.removeEffect(effectId);
     } catch (e){
       console.warn('[RTCApply.recvBuffRemove] RulesStore.removeEffect failed', e, pkt);
     }
 
-    // Refresh UI for impacted cards (or targetCid hint if provided).
+    // 5) Refresh visuals
     const targetHint = pkt.targetCid ? String(pkt.targetCid) : null;
     const toRefresh = new Set(hits.map(h => h.cid));
     if (targetHint) toRefresh.add(targetHint);
@@ -207,7 +233,6 @@ export const RTCApply = (() => {
       try { window.Tooltip?.refreshFor?.(cid); } catch {}
     }
 
-    // Worst case (no hits found): do a light global refresh to reconcile.
     if (toRefresh.size === 0){
       try {
         document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
@@ -217,7 +242,7 @@ export const RTCApply = (() => {
       } catch {}
     }
 
-    console.log('%c[RTC:recv buffRemove→applied]', 'color:#f55', { effectId, refreshed: Array.from(toRefresh) });
+    console.log('%c[RTC:recv buffRemove→FULL ability purge]', 'color:#ff5', { effectId, refreshed: Array.from(toRefresh) });
   }
 
   const api = { broadcastBuff, recvBuff, recvBuffRemove };

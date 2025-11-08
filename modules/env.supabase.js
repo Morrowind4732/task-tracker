@@ -1,6 +1,9 @@
 // modules/env.supabase.js
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const __MOD = (import.meta?.url || 'unknown').split('/').pop();
+window.__modTime(__MOD, 'start');
+
 // hardcode for now (you said you'll rotate after testing)
 const SUPABASE_URL = "https://uvrnxrmwoyhswzldhcul.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV2cm54cm13b3loc3d6bGRoY3VsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4NDgyMDgsImV4cCI6MjA3NTQyNDIwOH0.vOefq7j90s4IF951U1P2-69xhLb5Z5rvdAZ875A1cXo";
@@ -331,3 +334,5 @@ export async function setCombatInitiated(gameId, attackerSeat, payload = {}){
     combatUpdatedAt: Date.now()
   });
 }
+window.__modTime(__MOD, 'end');
+

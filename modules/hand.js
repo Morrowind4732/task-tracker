@@ -47,6 +47,11 @@ let handTooltipActive = false;
 // Scryfall cache for art lookups on demand
 const ScryCache = new Map(); // name -> imageUrl(normal)
 
+// Unique id for hand cards so Save can find them with [data-cid]
+function uniqueCid(){
+  return 'h_' + Math.random().toString(36).slice(2,10);
+}
+
 // ---------- Public API ----------
 export function updateHandFan(){ renderHand(); }
 export function setHandFocus(target){
@@ -105,13 +110,21 @@ export async function flyDrawToHand(card, deckEl){
   await flyCardToHand({ name, url, from, to });
 
   // Swap ghost -> real element
-  const img = document.createElement('img');
-  img.className = 'hand-card';
-  img.src = url;
-  img.alt = img.title = name;
-  img.draggable = false;
-  styleHandCardBase(img);
-  attachHandGestures(img);
+const img = document.createElement('img');
+img.className = 'hand-card';
+img.src = url;
+img.alt = img.title = name;
+img.draggable = false;
+
+// 🔥 REQUIRED so Save.state can detect & serialize hand cards:
+img.dataset.cid   = uniqueCid();
+img.dataset.owner = String((typeof window.mySeat === 'function' ? window.mySeat() : (window.__LOCAL_SEAT||1)));
+img.dataset.name  = name;
+
+// Keep metadata you already had — DO NOT remove
+styleHandCardBase(img);
+attachHandGestures(img);
+
 
   // 🔵 STASH FULL METADATA FOR BOTH FACES ON THE HAND CARD
   // Everything here comes straight from DeckLoading's cardEntry:
@@ -181,18 +194,48 @@ export async function flyDrawToHand(card, deckEl){
 
 
 
-// Bind a simple “Draw 1” helper (optional)
-if (!window.Hand) window.Hand = {};
-Object.assign(window.Hand, {
-  handCards,
-  updateHandFan,
-  setHandFocus,
-  focusLastDrawn,
-  flyDrawToHand,
-  refanAll
-});
+
 
 window.flyDrawToHand = flyDrawToHand; // convenience for Zones
+
+// === Hand snapshot for Save/Restore ========================================
+// Export my visible hand as plain snapshots so a peer can request it for Save.
+// ownerKey is optional; only 'player' is valid here (opponent hand is not in my DOM).
+export function exportHandSnapshot(ownerKey = 'player'){
+  if (ownerKey !== 'player') return [];
+  return handCards.map(img => ({
+    cid    : img.dataset.cid || '',
+    owner  : Number(img.dataset.owner || (typeof window.mySeat === 'function' ? window.mySeat() : 1)),
+    name   : img.title || img.alt || img.dataset.name || '',
+    img    : img.currentSrc || img.src || '',
+    // carry along metadata so the opponent can recreate correctly on restore
+    rules: {
+      currentSide: img.dataset.currentSide || 'front',
+      typeLine   : img.dataset.typeLine   || '',
+      oracle     : img.dataset.oracle     || '',
+      baseTypes  : safeJsonParseArray(img.dataset.baseTypes),
+      baseAbilities: safeJsonParseArray(img.dataset.baseAbilities),
+      front: {
+        typeLine      : img.dataset.frontTypeLine || '',
+        oracle        : img.dataset.frontOracle   || '',
+        baseTypes     : safeJsonParseArray(img.dataset.frontBaseTypes),
+        baseAbilities : safeJsonParseArray(img.dataset.frontBaseAbilities),
+        img           : img.dataset.imgFront || ''
+      },
+      back: {
+        typeLine      : img.dataset.backTypeLine || '',
+        oracle        : img.dataset.backOracle   || '',
+        baseTypes     : safeJsonParseArray(img.dataset.backBaseTypes),
+        baseAbilities : safeJsonParseArray(img.dataset.backBaseAbilities),
+        img           : img.dataset.imgBack || ''
+      }
+    }
+  }));
+}
+
+// expose for Save.state.js
+window.exportHandSnapshot = exportHandSnapshot;
+
 
 // ---------- Render (fan) ----------
 function renderHand(){
@@ -729,3 +772,81 @@ async function fetchCardImage(name){
     return ''; // fallback -> will still draw with missing art if necessary
   }
 }
+
+
+// ===== RESTORE: rebuild the hand from a saved snapshot (keeps order & fan) =====
+export function restoreHandFromSnapshot(handList, { append = false } = {}){
+  const zone = document.getElementById('handZone');
+  if (!zone) return;
+
+  // Wipe current hand unless appending
+  if (!append){
+    for (const el of handCards.splice(0)){
+      try { el.remove(); } catch {}
+    }
+    focus = -1;
+  }
+
+  const seat = (typeof window.mySeat === 'function' ? window.mySeat() : (window.__LOCAL_SEAT || 1));
+
+  for (const h of (handList || [])){
+    // h: { cid, owner, name, img, rules, computed }
+    const img = document.createElement('img');
+    img.className = 'hand-card';
+    img.src = h.img || h?.rules?.front?.img || h?.rules?.back?.img || '';
+    img.alt = img.title = h.name || '';
+    img.draggable = false;
+
+    // REQUIRED so Save can see it
+    img.dataset.cid   = h.cid   || ('h_' + Math.random().toString(36).slice(2,10));
+    img.dataset.owner = String(h.owner ?? seat);
+    img.dataset.name  = h.name || '';
+
+    // Restore “rules face” snapshot
+    const r = h.rules || {};
+    img.dataset.currentSide = r.currentSide || 'front';
+    if (r.typeLine)      img.dataset.typeLine = r.typeLine;
+    if (r.oracle)        img.dataset.oracle   = r.oracle;
+    if (r.baseTypes)     img.dataset.baseTypes = JSON.stringify(r.baseTypes);
+    if (r.baseAbilities) img.dataset.baseAbilities = JSON.stringify(r.baseAbilities);
+
+    // Front/back canon
+    if (r.front){
+      if (r.front.typeLine)       img.dataset.frontTypeLine = r.front.typeLine;
+      if (r.front.oracle)         img.dataset.frontOracle = r.front.oracle;
+      if (r.front.baseTypes)      img.dataset.frontBaseTypes = JSON.stringify(r.front.baseTypes);
+      if (r.front.baseAbilities)  img.dataset.frontBaseAbilities = JSON.stringify(r.front.baseAbilities);
+      if (r.front.img)            img.dataset.imgFront = r.front.img;
+    }
+    if (r.back){
+      if (r.back.typeLine)        img.dataset.backTypeLine = r.back.typeLine;
+      if (r.back.oracle)          img.dataset.backOracle = r.back.oracle;
+      if (r.back.baseTypes)       img.dataset.backBaseTypes = JSON.stringify(r.back.baseTypes);
+      if (r.back.baseAbilities)   img.dataset.backBaseAbilities = JSON.stringify(r.back.baseAbilities);
+      if (r.back.img)             img.dataset.imgBack = r.back.img;
+    }
+
+    styleHandCardBase(img);
+    attachHandGestures(img);
+    zone.appendChild(img);
+    handCards.push(img);
+  }
+
+  // Refocus to the rightmost card and fan
+  if (handCards.length){
+    focus = handCards.length - 1;
+  }
+  renderHand();
+}
+
+// expose in the debug/global helper too
+if (!window.Hand) window.Hand = {};
+Object.assign(window.Hand, {
+  handCards,
+  updateHandFan,
+  setHandFocus,
+  focusLastDrawn,
+  flyDrawToHand,
+  refanAll,
+  restoreHandFromSnapshot,   // ⬅️ add this
+});

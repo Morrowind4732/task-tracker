@@ -27,10 +27,14 @@
 // Public API:
 //   RulesStore.addEffectForTargets(payload)
 //   RulesStore.getResolvedState(cid)
-//   RulesStore.removeEffectsBySource(srcCid)
+//   RulesStore.resolveForCard(cid)
+//   RulesStore.exportEffectsFor(cid)
+//   RulesStore.getEffectsBySource(srcCid)
+//   RulesStore.removeEffectsBySource(srcCid)  // <-- removes ALL effects linked to srcCid
 //   RulesStore.clearEOT(ownerSeat)
 //   RulesStore.importRemoteEffect(effectObj)
-//   RulesStore.exportEffectsFor(cid)  (for tooltip/badges UI)
+//   RulesStore.listActiveEffectsGroupedByCard(seatFilter?)
+//   RulesStore.removeEffect(effectId)
 //
 // We do NOT mutate DOM here. Rendering is someone else's job.
 
@@ -47,7 +51,27 @@ export const RulesStore = (() => {
     return 'e_' + Math.random().toString(36).slice(2,9);
   }
 
-    // ---------- addEffectForTargets ----------
+  // Internal generic removal helper; returns array of removed entries with context
+  // [{ effectId, targetCid, effect }]
+  function _removeEffectsByPredicate(pred){
+    const removed = [];
+    for (const [cid, arr] of cardEffects.entries()){
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const keep = [];
+      for (const eff of arr){
+        if (pred(eff, cid)){
+          removed.push({ effectId: eff.id, targetCid: cid, effect: eff });
+        } else {
+          keep.push(eff);
+        }
+      }
+      if (keep.length) cardEffects.set(cid, keep);
+      else cardEffects.delete(cid);
+    }
+    return removed;
+  }
+
+  // ---------- addEffectForTargets ----------
   // payload:
   // {
   //   srcCid: 'c_sourceOrNull',
@@ -59,9 +83,9 @@ export const RulesStore = (() => {
   //   counter: { kind:"+1/+1", qty:1 } | null,
   //   targets: ['cidA','cidB', ...],
   //
-  //   // NEW OPTIONAL:
+  //   // OPTIONAL stable ids from host/RTC:
   //   effectIds: {
-  //     pt:      'e_abc123',   // id to use for EVERY pt buff in this apply
+  //     pt:      'e_abc123',
   //     ability: 'e_def456',
   //     type:    'e_ghi789',
   //     counter: 'e_jkl012'
@@ -69,8 +93,8 @@ export const RulesStore = (() => {
   // }
   //
   // returns: {
-  //   effectIds: {pt,ability,type,counter},   // final ids we actually used
-  //   perCard: { [cid]: [effectObj,...] }     // just-added effects per card
+  //   effectIds: {pt,ability,type,counter},
+  //   perCard: { [cid]: [effectObj,...] }
   // }
   function addEffectForTargets(payload){
     const {
@@ -82,21 +106,18 @@ export const RulesStore = (() => {
       typeAdd     = null,
       counter     = null,
       targets     = [],
-      effectIds   = {}          // <-- MAY come in from host or may be {}
+      effectIds   = {}
     } = payload || {};
 
-    // 1. Make sure we have stable ids per KIND for this whole batch.
-    //    If caller didn't give us one, we mint it ONCE and reuse it.
+    // 1. Stable ids per KIND across this batch.
     const finalIds = {
-      pt:      pt        && (pt.powDelta || pt.touDelta) ? (effectIds.pt      || _newEffectId()) : null,
+      pt:      pt && (pt.powDelta || pt.touDelta) ? (effectIds.pt      || _newEffectId()) : null,
       ability: ability   ? (effectIds.ability || _newEffectId()) : null,
       type:    typeAdd   ? (effectIds.type    || _newEffectId()) : null,
-      counter: (counter && counter.kind)
-                 ? (effectIds.counter || _newEffectId())
-                 : null
+      counter: (counter && counter.kind) ? (effectIds.counter || _newEffectId()) : null
     };
 
-    // 2. Actually push effects into each target card.
+    // 2. Push into targets.
     const perCard = {}; // cid -> [newEffects]
 
     for (const cid of targets){
@@ -233,16 +254,82 @@ export const RulesStore = (() => {
     return (cardEffects.get(cid) || []).slice();
   }
 
-  // ---------- removeEffectsBySource ----------
-  // Call this when srcCid leaves the battlefield.
-  // Kill any effect whose duration === 'SOURCE' AND eff.srcCid===srcCid.
-  function removeEffectsBySource(srcCid){
-    if (!srcCid) return;
+  // ---------- getEffectsBySource ----------
+  // Enumerate ALL effects (any duration) created by a given srcCid across ALL targets.
+  // Returns: [{ effectId, targetCid, kind, duration, ability, typeAdd, counter }]
+  function getEffectsBySource(srcCid){
+    if (!srcCid) return [];
+    const out = [];
     for (const [cid, arr] of cardEffects.entries()){
-      const keep = arr.filter(e => !(e.duration === 'SOURCE' && e.srcCid === srcCid));
+      if (!Array.isArray(arr) || !arr.length) continue;
+      for (const eff of arr){
+        if (eff.srcCid === srcCid){
+          out.push({
+            effectId: eff.id,
+            targetCid: cid,
+            kind: eff.kind,
+            duration: eff.duration,
+            ability: eff.ability || null,
+            typeAdd: eff.typeAdd || null,
+            counter: eff.counter || null
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+  // ---------- listEffectsBySource ----------
+  // Returns an array of { effectId, targetCid, kind, ability, typeAdd, counter }
+  // WITHOUT mutating the store. Use this when you intend to remove via recvBuffRemove.
+  function listEffectsBySource(srcCid){
+    const out = [];
+    if (!srcCid) return out;
+    for (const [cid, arr] of cardEffects.entries()){
+      for (const e of (arr || [])){
+        if (e && e.srcCid === srcCid){
+          out.push({
+            effectId: e.id,
+            targetCid: cid,
+            kind: e.kind,
+            ability: e.ability || null,
+            typeAdd: e.typeAdd || null,
+            counter: e.counter || null,
+          });
+        }
+      }
+    }
+    return out;
+  }
+
+
+    // ---------- removeEffectsBySource ----------
+  // Mutating variant: removes and returns the removed effects.
+  // Prefer listEffectsBySource + recvBuffRemove when you need full UI cleanup.
+  function removeEffectsBySource(srcCid){
+    const removed = [];
+    if (!srcCid) return removed;
+    for (const [cid, arr] of cardEffects.entries()){
+      const keep = [];
+      for (const e of (arr || [])){
+        if (e && e.srcCid === srcCid && (e.duration === 'SOURCE' || e.duration === 'PERM' || e.duration === 'EOT')){
+          removed.push({
+            effectId: e.id,
+            targetCid: cid,
+            kind: e.kind,
+            ability: e.ability || null,
+            typeAdd: e.typeAdd || null,
+            counter: e.counter || null,
+          });
+        } else {
+          keep.push(e);
+        }
+      }
       cardEffects.set(cid, keep);
     }
+    return removed;
   }
+
 
   // ---------- clearEOT ----------
   // Call this at end of turn for a given seat.
@@ -250,11 +337,12 @@ export const RulesStore = (() => {
   function clearEOT(ownerSeat){
     for (const [cid, arr] of cardEffects.entries()){
       const keep = arr.filter(e => !(e.duration === 'EOT' && e.ownerSeat === ownerSeat));
-      cardEffects.set(cid, keep);
+      if (keep.length) cardEffects.set(cid, keep);
+      else cardEffects.delete(cid);
     }
   }
 
-    // ---------- importRemoteEffect ----------
+  // ---------- importRemoteEffect ----------
   // Opponent told us "I applied this buff".
   // remoteEff shape (ONE targetCid):
   // {
@@ -267,38 +355,35 @@ export const RulesStore = (() => {
   //   effectIds: { pt:'e_x', ability:'e_y', type:'e_z', counter:'e_w' }
   // }
   function importRemoteEffect(remoteEff){
-  if (!remoteEff || !remoteEff.targetCid) return;
-  const {
-    targetCid,
-    srcCid    = null,
-    ownerSeat = 1,
-    duration  = 'EOT',
-    pt        = null,
-    ability   = null,
-    typeAdd   = null,
-    counter   = null,
-    effectIds = {}
-  } = remoteEff;
+    if (!remoteEff || !remoteEff.targetCid) return;
+    const {
+      targetCid,
+      srcCid    = null,
+      ownerSeat = 1,
+      duration  = 'EOT',
+      pt        = null,
+      ability   = null,
+      typeAdd   = null,
+      counter   = null,
+      effectIds = {}
+    } = remoteEff;
 
-  // 👇 Add this debug line here
-  console.log('[IMPORT EFFECT]', JSON.stringify(effectIds), remoteEff);
+    // Debug
+    console.log('[IMPORT EFFECT]', JSON.stringify(effectIds), remoteEff);
 
-  // We just call addEffectForTargets with THEIR effectIds so we store
-  // the exact same IDs locally.
-  addEffectForTargets({
-    srcCid,
-    ownerSeat,
-    duration,
-    pt,
-    ability,
-    typeAdd,
-    counter,
-    targets:   [targetCid],
-    effectIds  // keep host IDs
-  });
-}
-
-
+    // Store with sender's IDs for stable cross-client identity.
+    addEffectForTargets({
+      srcCid,
+      ownerSeat,
+      duration,
+      pt,
+      ability,
+      typeAdd,
+      counter,
+      targets:   [targetCid],
+      effectIds
+    });
+  }
 
   // ---------- resolveForCard ----------
   // Adapter for badges.js.
@@ -318,10 +403,6 @@ export const RulesStore = (() => {
     const state = getResolvedState(cid);
     if (!state) return null;
 
-    // Build tempBuffs list from activeEffects.
-    // We'll try to generate human-readable text like "+1/+1 EOT"
-    // for PT buffs, and also include abilities/types if you want
-    // them to show as "Flying (PERM)" etc.
     const tempBuffs = [];
 
     for (const eff of state.activeEffects){
@@ -355,7 +436,6 @@ export const RulesStore = (() => {
         const k = eff.counter.kind || '';
         const qty = eff.counter.qty || 1;
         const dur   = eff.duration ? String(eff.duration).toUpperCase() : '';
-        // e.g. "+1/+1 x3", "Shield x1"
         const baseText = qty > 1 ? `${k} x${qty}` : k;
         const label = dur ? `${baseText} ${dur}` : baseText;
         tempBuffs.push({ text: label.trim() });
@@ -371,10 +451,6 @@ export const RulesStore = (() => {
     };
   }
 
- 
-
-
-  // expose (and also stick on window for debug)
   // ---------- listActiveEffectsGroupedByCard ----------
   // Build [{ cid, name, effects:[{id,label,duration},...] }, ...]
   function listActiveEffectsGroupedByCard(seatFilter=null){
@@ -424,7 +500,8 @@ export const RulesStore = (() => {
       const before = arr.length;
       const keep = arr.filter(e=>e.id!==effectId);
       if (keep.length !== before){
-        cardEffects.set(cid, keep);
+        if (keep.length) cardEffects.set(cid, keep);
+        else cardEffects.delete(cid);
         // optional: console.log('[RulesStore] removed effect', effectId, 'from', cid);
       }
     }
@@ -436,15 +513,14 @@ export const RulesStore = (() => {
     getResolvedState,
     resolveForCard,
     exportEffectsFor,
+    getEffectsBySource,
     removeEffectsBySource,
     clearEOT,
     importRemoteEffect,
     listActiveEffectsGroupedByCard,
-    removeEffect
+    removeEffect,
+    listEffectsBySource
   };
   window.RulesStore = api;
   return api;
 })();
-
-
-

@@ -2,9 +2,14 @@
 // Builds player/opponent zones and handles deck load + draw-to-hand behavior.
 // ALSO tracks graveyard / exile contents per seat and can open a scrollable
 // overlay browser to move cards back to the table/hand/etc.
+const __MOD = (import.meta?.url || 'unknown').split('/').pop();
+window.__modTime(__MOD, 'start');
 
 import { DeckLoading } from './deck.loading.js';
 import { CardPlacement } from './card.placement.math.js';
+import { RulesStore } from './rules.store.js';
+
+
 
 // Known card type buckets for filtering
 const TYPE_FILTERS = [
@@ -23,6 +28,11 @@ const TYPE_FILTERS = [
   'Aura',
   'Vehicle'
 ];
+
+
+
+
+
 
 export const Zones = (() => {
 	let _currentDeckList = []; // ← holds the loaded deck for magnifying-glass search
@@ -54,6 +64,74 @@ export const Zones = (() => {
       exile: [],
     }
   };
+
+// === [SAVE API] =============================================================
+// readonly snapshot of an owner zone (player|opponent, graveyard|exile)
+function exportOwnerZone(ownerKey, zoneName){
+  try{
+    const arr = state?.[ownerKey]?.[zoneName] || [];
+    return arr.map(x => ({ ...x })); // clone so callers can't mutate
+  }catch{ return []; }
+}
+
+// import a full array snapshot into a specific owner/zone, replacing existing
+function importOwnerZone(ownerKey, zoneName, list){
+  try{
+    if (!state[ownerKey] || !state[ownerKey][zoneName]) return false;
+    const arr = Array.isArray(list) ? list.map(x => ({ ...x })) : [];
+    state[ownerKey][zoneName].length = 0;      // preserve array identity
+    state[ownerKey][zoneName].push(...arr);    // fill with new
+    console.log('[Zones.importOwnerZone]', ownerKey, zoneName, { count: arr.length });
+    return true;
+  }catch(e){
+    console.warn('[Zones.importOwnerZone] failed', e);
+    return false;
+  }
+}
+
+// reset all zones for an owner (used by loader before restore)
+function resetOwnerZones(ownerKey){
+  try{
+    if (!state[ownerKey]) return false;
+    ['graveyard','exile'].forEach(z => {
+      if (Array.isArray(state[ownerKey][z])) state[ownerKey][z].length = 0;
+    });
+    console.log('[Zones.resetOwnerZones]', ownerKey);
+    return true;
+  }catch(e){
+    console.warn('[Zones.resetOwnerZones] failed', e);
+    return false;
+  }
+}
+
+
+// programmatic move helper used by deck-search overlay and other flows
+// payload: { name, img, cid?, typeLine? }  dest: 'graveyard'|'exile'
+// ownerSeat: numeric seat; we map to 'player' or 'opponent' by mySeat()
+function moveCardToZone(payload, dest, ownerSeat){
+  try{
+    const my = (typeof window.mySeat === 'function') ? window.mySeat() : 1;
+    const ownerKey = (Number(ownerSeat||my) === Number(my)) ? 'player' : 'opponent';
+    if (!state[ownerKey] || !state[ownerKey][dest]) {
+      console.warn('[Zones.moveCardToZone] bad dest/owner', ownerKey, dest);
+      return false;
+    }
+    const snap = {
+      cid:       payload?.cid || ('snap_' + Math.random().toString(36).slice(2,10)),
+      name:      payload?.name || '',
+      img:       payload?.img  || '',
+      typeLine:  payload?.typeLine || '',
+      ownerSeat: Number(ownerSeat||my)
+    };
+    state[ownerKey][dest].unshift(snap);
+    console.log('[Zones.moveCardToZone] →', ownerKey, dest, snap);
+    return true;
+  } catch(e){
+    console.warn('[Zones.moveCardToZone] failed', e);
+    return false;
+  }
+}
+
 
   // -----------------------------
   // HELPERS
@@ -112,8 +190,15 @@ export const Zones = (() => {
   function markDeckPresent(deckZone, has) {
     if (!deckZone) return;
     deckZone.classList.toggle('has-deck', !!has);
-    deckZone.style.backgroundImage = has ? `url('${DECK_IMG}')` : '';
+    if (has) {
+      deckZone.style.backgroundImage = `url('${DECK_IMG}')`;
+      deckZone.setAttribute('data-deck-back', DECK_IMG); // ← allow receivers to read a fallback
+    } else {
+      deckZone.style.backgroundImage = '';
+      deckZone.removeAttribute('data-deck-back');
+    }
   }
+
 
   // send deck-visual rtc
   function sendDeckVisual(has) {
@@ -126,29 +211,152 @@ export const Zones = (() => {
       console.warn('[Zones] deck-visual send failed', e);
     }
   }
+  
+    // -----------------------------
+  // RTC RECEIVE: deck-visual
+  // -----------------------------
+  (function installRecvDeckVisual(){
+    try {
+      // Utility: decide which deck zone to update given a sender seat
+      function _targetDeckZoneForSender(senderSeat){
+        const my = (typeof window.mySeat === 'function') ? window.mySeat() : 1;
+        const isMe = Number(senderSeat) === Number(my);
+        // If the sender is me, show on my local deck box; otherwise on opponent’s.
+        return document.getElementById(isMe ? 'pl-deck' : 'op-deck');
+      }
+
+      function _ensureDeckImg(zone){
+        if (!zone) return null;
+        let img = zone.querySelector('img.deck-visual-img');
+        if (!img) {
+          img = document.createElement('img');
+          img.className = 'deck-visual-img';
+          Object.assign(img.style, {
+            position: 'absolute',
+            inset: '0',
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            borderRadius: getComputedStyle(zone).borderRadius || '0',
+            pointerEvents: 'none',
+            zIndex: '0' // keep label/commander badge above
+          });
+          zone.appendChild(img);
+        }
+        return img;
+      }
+
+      function _pickUrl(msg, zone){
+        // Priority: msg.url → data-deck-back on the zone → DECK_IMG constant → nothing
+        const attr = zone?.getAttribute('data-deck-back') || '';
+        return msg?.url || attr || DECK_IMG || '';
+      }
+
+      function recvDeckVisual(msg){
+        if (!msg || msg.type !== 'deck-visual') return;
+        const zone = _targetDeckZoneForSender(msg.seat);
+        if (!zone) return;
+
+        if (msg.has) {
+          const img = _ensureDeckImg(zone);
+          const src = _pickUrl(msg, zone);
+          if (src) {
+            img.src = src;
+            zone.classList.add('has-deck');
+            zone.setAttribute('data-deck-back', src);
+            // keep CSS background in sync for any styles that reference it
+            zone.style.backgroundImage = `url('${src}')`;
+          }
+        } else {
+          // remove visual
+          const img = zone.querySelector('img.deck-visual-img');
+          if (img) img.remove();
+          zone.classList.remove('has-deck');
+          zone.style.backgroundImage = '';
+          zone.removeAttribute('data-deck-back');
+        }
+      }
+
+      // Install into a shared RTCApply namespace
+      window.RTCApply = window.RTCApply || {};
+      window.RTCApply.recvDeckVisual = recvDeckVisual;
+
+      // Optional: wire a generic message demux if you use a single entry point
+      // If you already dispatch messages elsewhere, skip this.
+      if (!window.__ZonesDeckVisualHookInstalled) {
+        window.__ZonesDeckVisualHookInstalled = true;
+        const oldRecv = window.RTCApply.recv || null;
+        window.RTCApply.recv = function(msg){
+          try { recvDeckVisual(msg); } catch {}
+          if (typeof oldRecv === 'function') return oldRecv(msg);
+        };
+      }
+    } catch (e) {
+      console.warn('[Zones] installRecvDeckVisual failed', e);
+    }
+  })();
+
 
   // -----------------------------
   // ZONE RECORDING (called by CardPlacement when card dies)
-  // -----------------------------
-  // ownerKey = 'player' | 'opponent'
-  // zoneName = 'graveyard' | 'exile'
-  // cardEl   = actual <img.table-card ...>
-  function recordCardToZone(ownerKey, zoneName, cardEl){
-    if (!ownerKey || !zoneName || !cardEl) return;
-    if (!state[ownerKey] || !state[ownerKey][zoneName]) return;
+// ownerKey = 'player' | 'opponent'
+// zoneName = 'graveyard' | 'exile'
+// cardEl   = actual <img.table-card ...>
+function recordCardToZone(ownerKey, zoneName, cardEl){
+  if (!ownerKey || !zoneName || !cardEl) return;
+  if (!state[ownerKey] || !state[ownerKey][zoneName]) return;
 
-    const snap = {
-      cid: cardEl.dataset.cid,
-      name: cardEl.dataset.name || cardEl.title || '',
-      img:  cardEl.currentSrc || cardEl.src || '',
-      // try to preserve card typeline for filtering
-      typeLine: cardEl.dataset.typeLine || '',
-      ownerSeat: (typeof window.mySeat === 'function') ? window.mySeat() : 1
-    };
+  const snap = {
+    cid: cardEl.dataset.cid,
+    name: cardEl.dataset.name || cardEl.title || '',
+    img:  cardEl.currentSrc || cardEl.src || '',
+    // try to preserve card typeline for filtering
+    typeLine: cardEl.dataset.typeLine || '',
+    ownerSeat: (typeof window.mySeat === 'function') ? window.mySeat() : 1
+  };
 
-    state[ownerKey][zoneName].unshift(snap); // newest first
-    console.log('[Zones.recordCardToZone]', ownerKey, zoneName, snap);
+  state[ownerKey][zoneName].unshift(snap); // newest first
+  console.log('[Zones.recordCardToZone]', ownerKey, zoneName, snap);
+
+    // 🔻 NEW: when a SOURCE leaves the battlefield, purge ALL effects it created
+  try {
+    const srcCid = String(snap.cid || '');
+    if (srcCid) {
+      // 1) Enumerate FIRST (store still has them so recvBuffRemove can find & prune)
+      const toPurge = (RulesStore.listEffectsBySource?.(srcCid) || []);
+
+      // 2) For each effect, locally mirror full cleanup (this removes from store too)
+      const sendFn = (window.rtcSend || window.peer?.send);
+      const toRefresh = new Set();
+
+      for (const r of toPurge) {
+        const pkt = { type:'buffRemove', effectId: r.effectId, targetCid: r.targetCid || null };
+
+        // Local: ensures removeEffectLocally() runs to nuke abilities/types/PT + dataset mirrors
+        try { window.RTCApply?.recvBuffRemove?.(pkt); } catch {}
+
+        // RTC broadcast so opponent purges too
+        try { sendFn?.(pkt); } catch {}
+
+        if (r.targetCid) toRefresh.add(String(r.targetCid));
+      }
+
+      // 3) UI refresh (belt + suspenders)
+      for (const cid of toRefresh) {
+        try { window.Badges?.refreshFor?.(cid); } catch {}
+        try { window.Tooltip?.refreshFor?.(cid); } catch {}
+      }
+
+      if (toPurge.length) {
+        console.log('[Zones] Purged effects linked to source (recv->store->ui path)', srcCid, toPurge);
+      }
+    }
+  } catch (e) {
+    console.warn('[Zones] purge-by-source failed', e);
   }
+
+}
+
 
   // helper to remove a card snapshot from a zone by cid
   function removeSnapshotFromZone(ownerKey, zoneName, cid){
@@ -582,6 +790,8 @@ renderList = () => {
     const grid = el('div', { class: 'zones' });
 
     const deckZ  = makeZone('op-deck', 'Deck', 'deck');
+	deckZ.setAttribute('data-deck-back', DECK_IMG);
+
     const cmdZ   = makeZone('op-commander', 'Commander', 'commander');
     const exileZ = makeZone('op-exile', 'Exile');
     const graveZ = makeZone('op-graveyard', 'Graveyard');
@@ -760,6 +970,8 @@ onClick(btnAdd,     () => { console.log('[Deck] ➕ open'); openAddAnyCardOverla
       deckZone.dataset.hasDeck = '1';
       deckZone.classList.add('has-deck');
       deckZone.style.backgroundImage = `url('${DECK_IMG}')`;
+      deckZone.setAttribute('data-deck-back', DECK_IMG); // ← mirror into attribute for receivers
+
 // Use the fully-built drawable library so the deck-search overlay
 // has name + image + typeLine available.
 const lib = (DeckLoading?.state?.library || []);
@@ -787,7 +999,8 @@ _currentDeckList = lib.map(c => ({
       // rtc "deck-visual"
       try{
         const fromSeat = (typeof window.mySeat === 'function') ? window.mySeat() : 1;
-        const payload = { type:'deck-visual', seat: fromSeat, has: true, who:'player' };
+        const payload = { type:'deck-visual', seat: fromSeat, has: true, who:'player', url: DECK_IMG };
+
         (window.rtcSend || window.peer?.send)?.(payload);
         console.log('%c[RTC:send]', 'color:#6cf', payload);
       }catch(e){
@@ -1786,10 +1999,22 @@ zone.appendChild(lab);
     recordCardToZone,
     openZoneBrowser,
     openDeckSearchOverlay,
-    openAddAnyCardOverlay    // ← ADD THIS LINE
+    openAddAnyCardOverlay,
+    setCommanderName,
+    markDeckPresent,
+    sendDeckVisual,
+    exportOwnerZone,
+    importOwnerZone,     // ← loader expects this
+    resetOwnerZones,     // ← loader expects this
+    moveCardToZone       // ← deck search overlay calls window.moveCardToZone()
   };
 })();
 
+
 // put Zones on window for CardPlacement.removeCard to reach it
 window.Zones = Zones;
+window.moveCardToZone = Zones.moveCardToZone; // allow global calls from overlays
 //window.Zones.openAddAnyCardOverlay();
+
+//window.Zones.openAddAnyCardOverlay();
+window.__modTime(__MOD, 'end');
