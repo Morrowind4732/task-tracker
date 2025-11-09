@@ -1,53 +1,248 @@
 // modules/hand.js
 // Hand UI (fan) + draw-in animation + swipe-up to play onto table.
+// + Opening hand (auto 7) with Mulligan overlay driven by a draw interceptor.
+//
 // - Center-pivot fan with dome arc
-// - Draw from DeckStore via fly animation from deck zone
+// - Draw from DeckLoading via fly animation from deck zone
 // - Auto-fetch Scryfall art if imageUrl is missing
 // - Swipe up on a hand card -> spawn on table at pointer via CardPlacement.spawnCardAtPointer
+// - First attempted 1-card draw is intercepted to run Opening Hand (7 + Mulligan)
+// - Press "No (Keep)" to resume normal single draws
 
 import { CardPlacement } from './card.placement.math.js';
 
+// ───────────────────────────────── Opening Hand + Mulligan (interceptor flow) ──────────────────────────────
+const DECK_EL_ID = 'pl-deck';
+let __openingHandPatched = false; // drawOneToHand patched?
+let __openingHandDone    = false; // user has kept a hand?
+
+function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+function ensureMulliganOverlay(){
+  if (document.getElementById('mulliganOverlay')) return;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'mulliganOverlay';
+  wrap.style.cssText = [
+    'position:fixed','inset:0','display:none',
+    'align-items:center','justify-content:center',
+    'background:rgba(0,0,0,.60)','z-index:100000'
+  ].join(';');
+
+  wrap.innerHTML = `
+    <div class="panel" style="
+      width:min(480px,92vw);
+      background:#1b1b1b;
+      color:#fff;
+      border:2px solid #3a3a3a;
+      border-radius:14px;
+      box-shadow:0 20px 70px rgba(0,0,0,.6);
+      padding:18px;
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
+      <div style="font-size:18px;font-weight:700;letter-spacing:.02em;margin-bottom:10px;text-align:center;">
+        Mulligan?
+      </div>
+      <div style="font-size:13px;opacity:.85;text-align:center;margin-bottom:16px;">
+        Draw 7 cards. If you don’t like it, reshuffle and draw 7 again.
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center">
+        <button id="btnMullYes" style="padding:10px 16px;border:0;border-radius:9px;background:#d6452e;color:#fff;font-weight:700;cursor:pointer">Yes (Reshuffle)</button>
+        <button id="btnMullNo"  style="padding:10px 16px;border:0;border-radius:9px;background:#2e7dd6;color:#fff;font-weight:700;cursor:pointer">No (Keep)</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+}
+
+function showMulliganOverlay(){ ensureMulliganOverlay(); const el = document.getElementById('mulliganOverlay'); if (el) el.style.display = 'flex'; }
+function hideMulliganOverlay(){ const el = document.getElementById('mulliganOverlay'); if (el) el.style.display = 'none'; }
+
+async function drawNToHand(n, deckEl){
+  const DL = window.DeckLoading;
+  if (!DL || !DL.drawOneToHand) return;
+  for (let i=0; i<n; i++){
+    DL.drawOneToHand(deckEl || document.getElementById(DECK_EL_ID));
+    await wait(60); // small stagger so fly-in doesn’t stack too tightly
+  }
+}
+
+function _entryFromHandImg(img){
+  // Mirrors the card entry shape used by DeckLoading.library items
+  const parseA = (s)=>{ try{ const v=JSON.parse(s||'[]'); return Array.isArray(v)?v:[]; }catch{ return []; } };
+  const name = img.dataset.cardName || img.dataset.name || img.title || img.alt || 'Card';
+  const imageUrl = img.currentSrc || img.src || (img.dataset.imgFront || '');
+
+  return {
+    name,
+    imageUrl,
+    typeLine: img.dataset.typeLine || '',
+    oracle:   img.dataset.oracle   || '',
+    power:     img.dataset.power     || '',
+    toughness: img.dataset.toughness || '',
+    loyalty:   img.dataset.loyalty   || '',
+    backLoyalty: img.dataset.backLoyalty || '',
+    untapsDuringUntapStep: (img.dataset.untapsDuringUntapStep !== 'false'),
+    baseTypes:     parseA(img.dataset.baseTypes),
+    baseAbilities: parseA(img.dataset.baseAbilities),
+    frontBaseTypes:      parseA(img.dataset.frontBaseTypes),
+    frontBaseAbilities:  parseA(img.dataset.frontBaseAbilities),
+    backBaseTypes:       parseA(img.dataset.backBaseTypes),
+    backBaseAbilities:   parseA(img.dataset.backBaseAbilities),
+    frontTypeLine: img.dataset.frontTypeLine || img.dataset.typeLine || '',
+    backTypeLine:  img.dataset.backTypeLine  || '',
+    frontOracle:   img.dataset.frontOracle   || img.dataset.oracle   || '',
+    backOracle:    img.dataset.backOracle    || '',
+    imgFront:      img.dataset.imgFront || imageUrl,
+    imgBack:       img.dataset.imgBack  || '',
+    currentSide:   img.dataset.currentSide || 'front'
+  };
+}
+
+async function returnEntireHandToLibrary({ shuffleAfter = true } = {}){
+  const DL = window.DeckLoading;
+  if (!DL || !DL.state) return;
+
+  const toReturn = window.Hand?.handCards ? [...window.Hand.handCards] : [];
+  const lib = DL.state.library || [];
+
+  for (const img of toReturn){
+    lib.unshift(_entryFromHandImg(img));
+    try {
+      const idx = window.Hand.handCards.indexOf(img);
+      if (idx >= 0) window.Hand.handCards.splice(idx,1);
+      img.remove();
+    } catch {}
+  }
+
+  try { window.Hand.updateHandFan(); } catch {}
+
+  if (shuffleAfter && typeof DL.shuffleLibrary === 'function'){
+    DL.shuffleLibrary();
+  }
+
+  try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
+}
+
+async function drawOpeningHandLoop(){
+  const deckEl = document.getElementById(DECK_EL_ID);
+
+  // First deal of 7
+  await drawNToHand(7, deckEl);
+  showMulliganOverlay();
+
+  // Wire overlay buttons (idempotent each loop enter)
+  const root = document.getElementById('mulliganOverlay');
+  const yes  = root?.querySelector('#btnMullYes');
+  const no   = root?.querySelector('#btnMullNo');
+  if (!yes || !no) return;
+
+  let busy = false;
+
+  yes.onclick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      await returnEntireHandToLibrary({ shuffleAfter: true });
+      await wait(100);
+      await drawNToHand(7, deckEl);
+    } finally { busy = false; }
+  };
+
+  no.onclick = () => {
+    hideMulliganOverlay();
+    __openingHandDone = true;
+    console.log('[OpeningHand] Kept hand — normal draw enabled');
+  };
+}
+
+// Intercept the very first attempt to draw a single card and run the opening-hand loop instead.
+// After the player presses “No (Keep)”, normal one-card draws resume automatically.
+function installOpeningHandInterceptor() {
+  if (__openingHandPatched) return;
+
+  const tryPatch = () => {
+    const DL = window.DeckLoading;
+    if (!DL || typeof DL.drawOneToHand !== 'function') return false;
+
+    const originalDrawOneToHand = DL.drawOneToHand.bind(DL);
+
+    DL.drawOneToHand = function patchedDrawOneToHand(deckEl) {
+      if (__openingHandDone) {
+        return originalDrawOneToHand(deckEl); // normal draws after keep
+      }
+
+      const lib = DL?.state?.library;
+      if (!Array.isArray(lib) || lib.length === 0) {
+        return originalDrawOneToHand(deckEl); // no deck yet, pass through
+      }
+
+      console.log('[OpeningHand] Intercepting first draw → starting Mulligan loop');
+      queueMicrotask(async () => {
+        try {
+          const el = deckEl || document.getElementById(DECK_EL_ID);
+          await drawOpeningHandLoop();
+        } catch (e) {
+          console.warn('[OpeningHand] Mulligan loop failed; falling back to single draw', e);
+          originalDrawOneToHand(deckEl);
+        }
+      });
+
+      // Cancel this single draw; loop will call drawNToHand(7)
+      return false;
+    };
+
+    __openingHandPatched = true;
+    console.log('[OpeningHand] drawOneToHand patched');
+    return true;
+  };
+
+  // Try now; if DeckLoading isn’t ready yet, poll briefly until it is.
+  if (!tryPatch()) {
+    let tries = 0;
+    const t = setInterval(() => {
+      tries++;
+      if (tryPatch() || tries > 60) clearInterval(t); // ~3.6s max
+    }, 60);
+  }
+}
+
+// Patch when the deck module reports state changes, and also at module load.
+window.addEventListener('deckloading:changed', () => setTimeout(installOpeningHandInterceptor, 0));
+setTimeout(installOpeningHandInterceptor, 0);
+
+// Optional manual hook
+if (!window.Hand) window.Hand = {};
+window.Hand.installOpeningHandInterceptor = installOpeningHandInterceptor;
+
+// ───────────────────────────────────────── Hand UI / Fan / Gestures ───────────────────────────────────────
+
 // pull current live UI tuning from UserInterface settings panel
 function getLiveSettings(){
-  // falls back to sane defaults if UI hasn't mounted yet
   const live = (window.UserInterface?._UISettingsLive) || {};
   return {
     handCardHeight:      live.handCardHeight      ?? 190,
     handSpreadPx:        live.handSpreadPx        ?? 64,
     tooltipOnDragExit:   live.showTooltipOnDragExitHand ?? true,
-    // these next two are still good as hard tunables, but we'll keep them here
     scrubPxPerStep:      46,
     upThresholdPx:       36,
   };
 }
 
 // Public globals (convenience)
-export const handCards = [];           // Array<HTMLImageElement> in the hand
-let focus = -1;                        // index of focused card
-let GHOST_AT = -1;                     // ghost slot index during draw
+export const handCards = [];
+let focus = -1;
+let GHOST_AT = -1;
 
-// ---- Tunables (dynamic via settings + static) ----
-// CARD_H, GAP, SCRUB_PX_PER_STEP, UP_THRESH all now come from getLiveSettings()
-// ROT_PER / ROT_CAP stay static curve style for now
-const ROT_PER = 10;                    // deg per step from center
-const ROT_CAP = 16;                    // clamp
+// static fan tunables
+const ROT_PER = 10;
+const ROT_CAP = 16;
 
-
-//// ---- Tunables ----
-//const CARD_H = 190;                    // CSS height for hand cards
-//const GAP    = 64;                     // spacing between slots
-//const ROT_PER = 10;                    // deg per step from center
-//const ROT_CAP = 16;                    // clamp
-//const SCRUB_PX_PER_STEP = 46;          // horizontal pixels -> 1 focus step
-//const UP_THRESH = 36;                  // px upward before starting swipe-up play
-
-// Tooltip follow
 let handTooltipActive = false;
 
-// Scryfall cache for art lookups on demand
+// Scryfall cache
 const ScryCache = new Map(); // name -> imageUrl(normal)
 
-// Unique id for hand cards so Save can find them with [data-cid]
+// Unique id for hand cards so Save can find them
 function uniqueCid(){
   return 'h_' + Math.random().toString(36).slice(2,10);
 }
@@ -70,137 +265,86 @@ export function focusLastDrawn(){
 }
 
 export function refanAll(){
-  // re-apply base style/height to every card in case size changed
-  for (const img of handCards){
-    styleHandCardBase(img);
-  }
+  for (const img of handCards){ styleHandCardBase(img); }
   renderHand();
 
-  // also resize the handZone height based on settings so the reserve bar grows/shrinks
   const live = getLiveSettings();
   const hz = document.getElementById('handZone');
   if (hz){
-    // UserInterface.applyLiveSettingsToCSSVars() will also set --hand-zone-height,
-    // but we double-set here inline so you see it instantly even if CSS var lagged.
     hz.style.height = live.handZoneHeight ? `${live.handZoneHeight}px` : hz.style.height;
   }
 }
 
-
 // Draw one (card: {name, imageUrl?} or {faces:[{name,imageUrl}]})
 export async function flyDrawToHand(card, deckEl){
-  // Normalize shape
   const name = card?.faces?.[0]?.name || card?.name || '';
   let url    = card?.faces?.[0]?.imageUrl || card?.imageUrl || '';
-
   if (!name) return;
 
-  // If no image provided, fetch from Scryfall now
   if (!url) url = await fetchCardImage(name);
 
-  // Insert ghost to the right of focus (or index 0 if empty)
   const insertAt = clamp((focus < 0) ? 0 : focus + 1, 0, handCards.length);
   insertGhostAt(insertAt);
   renderHand();
 
-  // Compute fly animation endpoints (screen coords)
   const from = deckCenterScreenPoint(deckEl);
   const to   = handCatchPoint({ toGhost:true });
 
   await flyCardToHand({ name, url, from, to });
 
-  // Swap ghost -> real element
-const img = document.createElement('img');
-img.className = 'hand-card';
-img.src = url;
-img.alt = img.title = name;
-img.draggable = false;
+  const img = document.createElement('img');
+  img.className = 'hand-card';
+  img.src = url;
+  img.alt = img.title = name;
+  img.draggable = false;
 
-// 🔥 REQUIRED so Save.state can detect & serialize hand cards:
-img.dataset.cid   = uniqueCid();
-img.dataset.owner = String((typeof window.mySeat === 'function' ? window.mySeat() : (window.__LOCAL_SEAT||1)));
-img.dataset.name  = name;
+  // REQUIRED so Save.state can detect & serialize hand cards:
+  img.dataset.cid   = uniqueCid();
+  img.dataset.owner = String((typeof window.mySeat === 'function' ? window.mySeat() : (window.__LOCAL_SEAT||1)));
+  img.dataset.name  = name;
 
-// Keep metadata you already had — DO NOT remove
-styleHandCardBase(img);
-attachHandGestures(img);
-
-
-  // 🔵 STASH FULL METADATA FOR BOTH FACES ON THE HAND CARD
-  // Everything here comes straight from DeckLoading's cardEntry:
-  //   {
-  //     name,
-  //     imageUrl,
-  //     untapsDuringUntapStep,
-  //     baseTypes, baseAbilities,                // current face
-  //     frontBaseTypes, frontBaseAbilities,
-  //     backBaseTypes,  backBaseAbilities,
-  //     frontTypeLine,  backTypeLine,
-  //     frontOracle,    backOracle,
-  //     imgFront,       imgBack,
-  //     currentSide: 'front' | 'back'
-  //   }
-
+  // STASH FULL METADATA FOR BOTH FACES ON THE HAND CARD
   try {
-    // raw identity
     if (card.name)              img.dataset.cardName = card.name;
-
-    // which face is active in-hand (DeckLoading sets 'front' initially)
     img.dataset.currentSide = card.currentSide || 'front';
-
-    // CURRENT FACE snapshot (mirrors how we'll badge it on table spawn)
-    // These are convenience mirrors so Tooltip/Baddies can just read data-* without guessing side.
     if (card.typeLine)          img.dataset.typeLine = card.typeLine;
     if (card.oracle)            img.dataset.oracle   = card.oracle;
     if (card.baseTypes)         img.dataset.baseTypes = JSON.stringify(card.baseTypes);
     if (card.baseAbilities)     img.dataset.baseAbilities = JSON.stringify(card.baseAbilities);
 
-    // UNTAP rule flag
     if (card.untapsDuringUntapStep !== undefined) {
       img.dataset.untapsDuringUntapStep = card.untapsDuringUntapStep ? 'true' : 'false';
     }
 
-    // --- BOTH FACES, for flip logic once it's on the table ---
-    // front face canonical info
     if (card.frontTypeLine)         img.dataset.frontTypeLine = card.frontTypeLine;
     if (card.frontOracle)           img.dataset.frontOracle   = card.frontOracle;
     if (card.frontBaseTypes)        img.dataset.frontBaseTypes = JSON.stringify(card.frontBaseTypes);
     if (card.frontBaseAbilities)    img.dataset.frontBaseAbilities = JSON.stringify(card.frontBaseAbilities);
 
-    // back face canonical info
     if (card.backTypeLine)          img.dataset.backTypeLine = card.backTypeLine;
     if (card.backOracle)            img.dataset.backOracle   = card.backOracle;
     if (card.backBaseTypes)         img.dataset.backBaseTypes = JSON.stringify(card.backBaseTypes);
     if (card.backBaseAbilities)     img.dataset.backBaseAbilities = JSON.stringify(card.backBaseAbilities);
 
-    // art for each face
     if (card.imgFront)              img.dataset.imgFront = card.imgFront;
     if (card.imgBack)               img.dataset.imgBack  = card.imgBack;
   } catch(e){
     console.warn('[Hand] failed to stash card metadata on hand img', e, card);
   }
 
-
-  // Place into DOM & array
   document.getElementById('handZone')?.appendChild(img);
   handCards.splice(insertAt, 0, img);
   clearGhost();
 
-  // refocus and redraw now that ghost is gone
   focus = insertAt;
+  styleHandCardBase(img);
+  attachHandGestures(img);
   renderHand();
 }
-
-
-
-
-
 
 window.flyDrawToHand = flyDrawToHand; // convenience for Zones
 
 // === Hand snapshot for Save/Restore ========================================
-// Export my visible hand as plain snapshots so a peer can request it for Save.
-// ownerKey is optional; only 'player' is valid here (opponent hand is not in my DOM).
 export function exportHandSnapshot(ownerKey = 'player'){
   if (ownerKey !== 'player') return [];
   return handCards.map(img => ({
@@ -233,9 +377,7 @@ export function exportHandSnapshot(ownerKey = 'player'){
   }));
 }
 
-// expose for Save.state.js
 window.exportHandSnapshot = exportHandSnapshot;
-
 
 // ---------- Render (fan) ----------
 function renderHand(){
@@ -252,12 +394,11 @@ function renderHand(){
   const zr = zone.getBoundingClientRect();
   const cx = Math.floor(zr.width / 2);
 
-  // pull live tuning
   const live = getLiveSettings();
   const GAP  = live.handSpreadPx;
 
   for (let i = 0, phys = 0; i < handCards.length; i++, phys++){
-    if (GHOST_AT >= 0 && phys === GHOST_AT) phys++;   // skip a slot for the ghost
+    if (GHOST_AT >= 0 && phys === GHOST_AT) phys++;
     const el = handCards[i];
     const rel = phys - focus;
 
@@ -280,8 +421,7 @@ function renderHand(){
   }
 }
 
-
-/// ---------- Gestures (mouse + touch unified) ----------
+// ---------- Gestures (mouse + touch unified) ----------
 function attachHandGestures(img) {
   img.addEventListener('pointerdown', (ev) => onHandPointerDown(ev, img), { passive: false });
 }
@@ -290,7 +430,6 @@ let scrubActive = false;
 let scrubStartX = 0, scrubAccum = 0;
 
 function onHandPointerDown(ev, img) {
-  // Ignore multitouch (only one finger)
   if (ev.pointerType === 'touch' && ev.isPrimary === false) return;
   ev.preventDefault(); ev.stopPropagation();
 
@@ -310,7 +449,6 @@ function onHandPointerDown(ev, img) {
   scrubStartX = startX;
   scrubAccum = 0;
 
-  // Show tooltip for selected card
   handTooltipActive = true;
   try { window.Tooltip?.showForHandFocus(handCards[focus]); } catch {}
 
@@ -323,7 +461,6 @@ function onHandPointerDown(ev, img) {
     const dy = e.clientY - startY;
     if (!moved && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) moved = true;
 
-    // Swipe-up → play onto table
     if (dy <= -UP_THRESH_PX) {
       scrubActive = false;
       cleanup();
@@ -331,7 +468,6 @@ function onHandPointerDown(ev, img) {
       return;
     }
 
-    // Horizontal scrub for focus
     if (scrubActive) {
       const stepDx = e.clientX - lastX;
       lastX = e.clientX;
@@ -345,7 +481,6 @@ function onHandPointerDown(ev, img) {
       }
     }
 
-    // Prevent page scroll during drag
     if (e.cancelable) e.preventDefault();
   };
 
@@ -355,7 +490,6 @@ function onHandPointerDown(ev, img) {
     scrubActive = false;
     ev.target.releasePointerCapture(pointerId);
 
-    // simple tap → refocus
     if (!moved) {
       const i = handCards.indexOf(img);
       if (i >= 0) {
@@ -376,25 +510,18 @@ function onHandPointerDown(ev, img) {
   document.addEventListener('pointercancel', onUp, { passive: true });
 }
 
-
-
-// Swipe-up → floating ghost follows pointer; release outside hand → spawn
 // Swipe-up → floating ghost follows pointer; release outside hand → spawn
 function startGhostDrag(img, ev, opts = {}){
   const name = img.title || '';
   const url  = img.currentSrc || img.src;
 
   const live = getLiveSettings();
-
-  // size info for the ghost visual while still over the hand
   const HAND_H   = parseFloat(getComputedStyle(img).height) || live.handCardHeight || 140;
   const TABLE_H  = getTableBaseHeightPx() * getCameraScaleForGhost();
 
-  // track whether we've "promoted" to a real table card yet
   let promoted = false;
-  let spawnedEl = null; // the real table-card once created
+  let spawnedEl = null;
 
-  // build the temporary ghost (this is only used BEFORE promotion)
   const ghost = document.createElement('img');
   ghost.className = 'hand-drag-ghost';
   Object.assign(ghost.style, {
@@ -410,64 +537,47 @@ function startGhostDrag(img, ev, opts = {}){
   ghost.alt = name;
   document.body.appendChild(ghost);
 
-  // we ALWAYS hide tooltip while finger is still in the hand zone starting drag
   handTooltipActive = false;
   try { window.Tooltip?.hide(); } catch {}
 
-  // fade card still sitting in hand so you know it's "picked up"
   img.style.opacity = '0.28';
 
-  // live pointer
   let sx = ev.clientX, sy = ev.clientY;
 
-
-  // we tap into Pointer Capture style drag: we already got pointerdown on the hand card,
-  // so now pointermove on document will drive either ghost or spawnedEl.
   const onMove = (e) => {
     sx = e.clientX;
     sy = e.clientY;
 
     const stillOverHand = isOverHandZone(sx, sy);
 
-    // CASE 1: not promoted yet, still dragging the ghost
     if (!promoted) {
-      // move ghost under cursor
       ghost.style.transform = `translate(${sx}px, ${sy}px) translate(-50%,-50%)`;
 
-      // first moment we LEAVE the hand area => PROMOTE
       if (!stillOverHand) {
         promoted = true;
-
         ghost.style.height = `${TABLE_H}px`;
 
-        // pull the FULL metadata we stashed in flyDrawToHand()
         const metaPayload = {
-          // identity
           name:                          img.dataset.cardName || name || '',
           currentSide:                   img.dataset.currentSide || 'front',
 
-          // convenience "current face" snapshot
           typeLine:                      img.dataset.typeLine || '',
           oracle:                        img.dataset.oracle || '',
           baseTypes:                     safeJsonParseArray(img.dataset.baseTypes),
           baseAbilities:                 safeJsonParseArray(img.dataset.baseAbilities),
 
-          // untap rule for upkeep logic
           untapsDuringUntapStep:         (img.dataset.untapsDuringUntapStep === 'true'),
 
-          // front face canonical info
           frontTypeLine:                 img.dataset.frontTypeLine || '',
           frontOracle:                   img.dataset.frontOracle || '',
           frontBaseTypes:                safeJsonParseArray(img.dataset.frontBaseTypes),
           frontBaseAbilities:            safeJsonParseArray(img.dataset.frontBaseAbilities),
 
-          // back face canonical info
           backTypeLine:                  img.dataset.backTypeLine || '',
           backOracle:                    img.dataset.backOracle || '',
           backBaseTypes:                 safeJsonParseArray(img.dataset.backBaseTypes),
           backBaseAbilities:             safeJsonParseArray(img.dataset.backBaseAbilities),
 
-          // art for both faces
           imgFront:                      img.dataset.imgFront || url || '',
           imgBack:                       img.dataset.imgBack  || ''
         };
@@ -475,7 +585,7 @@ function startGhostDrag(img, ev, opts = {}){
         try {
           spawnedEl = CardPlacement.spawnCardAtPointer({
             name,
-            img: url,   // this is the art we’re currently dragging (front face at draw time)
+            img: url,
             sx,
             sy,
             meta: metaPayload
@@ -487,7 +597,6 @@ function startGhostDrag(img, ev, opts = {}){
 
         try { ghost.remove(); } catch {}
 
-        // remove original from hand immediately
         const idx = handCards.indexOf(img);
         if (idx >= 0) handCards.splice(idx, 1);
         try { img.remove(); } catch {}
@@ -498,19 +607,14 @@ function startGhostDrag(img, ev, opts = {}){
         }
         renderHand();
 
-        // spawnedEl is now a legit table card (CardPlacement registered it,
-        // should've stamped datasets, badges hooked, etc.)
-
         if (spawnedEl && opts.SHOW_TOOLTIP_EARLY){
           try {
             if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
-              // lowProfile true while dragging so it hugs the card
               window.Tooltip.setLowProfile(true, spawnedEl);
             }
           } catch(e){}
         }
 
-        // actively drag the real thing under cursor
         if (spawnedEl) {
           const worldPos = CardPlacement._screenToWorld
             ? CardPlacement._screenToWorld(sx, sy)
@@ -525,15 +629,12 @@ function startGhostDrag(img, ev, opts = {}){
           spawnedEl.classList.add('is-dragging');
         }
 
-        return; // done with unpromoted branch
+        return;
       }
 
-
-
-      return; // done with unpromoted branch
+      return;
     }
 
-    // CASE 2: we've already promoted -> keep moving the REAL CARD
     if (spawnedEl) {
       const worldPos = CardPlacement._screenToWorld
         ? CardPlacement._screenToWorld(sx, sy)
@@ -551,7 +652,6 @@ function startGhostDrag(img, ev, opts = {}){
   const onUp = () => {
     cleanup();
 
-    // If we never promoted (user released while still over hand = cancel)
     if (!promoted) {
       try { ghost.remove(); } catch {}
       img.style.opacity = '';
@@ -559,53 +659,32 @@ function startGhostDrag(img, ev, opts = {}){
       return;
     }
 
-    // We DID promote. spawnedEl is already a legit table card, registered in CardPlacement,
-    // Badges + tooltip lowProfile already attached, and we manually dragged it.
-    // Now we just need to "drop" it like a normal table drag release.
-
     if (spawnedEl) {
-      // simulate the tail end of enableDrag()'s onUp() so ownership etc gets stamped,
-      // lowProfile tooltip flips off, and RTC final move/owner-swap goes out.
       try {
-        // hand off to the real drag system by faking a mouseup at its current spot:
-        // We can't directly call that inner onUp() from here (it's closed over),
-        // BUT spawnedEl is now sitting still and user lifted,
-        // so we just clear the dragging visuals + finalize ownership manually.
-
         spawnedEl.classList.remove('is-dragging');
         document.body.style.cursor = '';
 
-        // ownership / broadcast like enableDrag.onUp
         const ownershipSnapshot = window._applyOwnershipAfterDrop?.(spawnedEl);
         try {
           const ownerNow = ownershipSnapshot?.ownerCurrent || mySeat();
           const x = parseFloat(spawnedEl.style.left) || 0;
           const y = parseFloat(spawnedEl.style.top)  || 0;
-          const packetMove = {
-            type: 'move',
-            cid : spawnedEl.dataset.cid,
-            x,
-            y,
-            owner: ownerNow
-          };
+          const packetMove = { type: 'move', cid: spawnedEl.dataset.cid, x, y, owner: ownerNow };
           (window.rtcSend || window.peer?.send)?.(packetMove);
-          if (DBG.on) console.log('%c[Place:drag→send final move(promote)]', 'color:#6cf', packetMove);
         } catch(e){}
 
         try {
-          const ownershipSnapshot2 = window._applyOwnershipAfterDrop?.(spawnedEl);
+          const o2 = window._applyOwnershipAfterDrop?.(spawnedEl);
           const packetSwap = {
             type: 'owner-swap',
             cid : spawnedEl.dataset.cid,
-            ownerOriginal: ownershipSnapshot2?.ownerOriginal || null,
-            ownerCurrent : ownershipSnapshot2?.ownerCurrent  || null,
-            fieldSide    : ownershipSnapshot2?.fieldSide     || null
+            ownerOriginal: o2?.ownerOriginal || null,
+            ownerCurrent : o2?.ownerCurrent  || null,
+            fieldSide    : o2?.fieldSide     || null
           };
           (window.rtcSend || window.peer?.send)?.(packetSwap);
-          if (DBG.on) console.log('%c[Place:drag→send owner-swap(promote)]', 'color:#fc6', packetSwap);
         } catch(e){}
 
-        // exit low-profile mode so tooltip snaps under the card
         try {
           if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
             window.Tooltip.setLowProfile(false, spawnedEl);
@@ -626,9 +705,6 @@ function startGhostDrag(img, ev, opts = {}){
   document.addEventListener('pointerup',   onUp,   { passive:true  });
 }
 
-
-
-
 // ---------- Ghost helpers ----------
 function insertGhostAt(i){ GHOST_AT = clamp(i, 0, handCards.length); }
 function clearGhost(){ GHOST_AT = -1; }
@@ -640,23 +716,15 @@ function handCatchPoint({ toGhost } = {}){
 
   const n = handCards.length + (GHOST_AT >= 0 ? 1 : 0);
   if (n === 0){
-    return {
-      x: zr.left + zr.width / 2,
-      y: zr.bottom
-    };
+    return { x: zr.left + zr.width / 2, y: zr.bottom };
   }
 
-  // which logical slot are we aiming for? (ghost slot while animating in)
   const targetIndex = (toGhost && GHOST_AT >= 0) ? GHOST_AT : focus;
-
-  // how far from current focus is that slot
   const rel = targetIndex - focus;
 
-  // pull the current user-tuned spread
   const live = getLiveSettings();
   const GAP  = live.handSpreadPx;
 
-  // same dome arc math renderHand() uses
   const xOff = rel * GAP;
   const yOff = -Math.max(0, 26 - 6 * (rel * rel));
 
@@ -706,7 +774,6 @@ function styleHandCardBase(img){
   img.style.webkitUserDrag = 'none';
 }
 
-
 function isOverHandZone(sx, sy){
   const zone = document.getElementById('handZone');
   const r = zone.getBoundingClientRect();
@@ -723,20 +790,15 @@ function getWorldScale(){
   return (typeof window.scale === 'number' && window.scale > 0) ? window.scale : 1;
 }
 
-// NEW: true camera scale for matching on-table visual size during hand drag
+// true camera scale for matching on-table visual size during hand drag
 function getCameraScaleForGhost(){
-  // 1. Preferred: Camera.state.scale (what card.placement.math.js uses to scale <world>)
   if (window.Camera && window.Camera.state && typeof window.Camera.state.scale === 'number'){
     const s = window.Camera.state.scale;
     if (s > 0) return s;
   }
-
-  // 2. Fallback: legacy window.scale if something older is still updating that
   if (typeof window.scale === 'number' && window.scale > 0){
     return window.scale;
   }
-
-  // 3. Safety default
   return 1;
 }
 
@@ -753,7 +815,6 @@ function safeJsonParseArray(str){
   }
 }
 
-
 // ---------- Scryfall helper ----------
 async function fetchCardImage(name){
   if (ScryCache.has(name)) return ScryCache.get(name);
@@ -769,17 +830,15 @@ async function fetchCardImage(name){
     return url;
   } catch (e) {
     console.warn('[Hand] scryfall fetch failed for', name, e);
-    return ''; // fallback -> will still draw with missing art if necessary
+    return '';
   }
 }
-
 
 // ===== RESTORE: rebuild the hand from a saved snapshot (keeps order & fan) =====
 export function restoreHandFromSnapshot(handList, { append = false } = {}){
   const zone = document.getElementById('handZone');
   if (!zone) return;
 
-  // Wipe current hand unless appending
   if (!append){
     for (const el of handCards.splice(0)){
       try { el.remove(); } catch {}
@@ -790,19 +849,16 @@ export function restoreHandFromSnapshot(handList, { append = false } = {}){
   const seat = (typeof window.mySeat === 'function' ? window.mySeat() : (window.__LOCAL_SEAT || 1));
 
   for (const h of (handList || [])){
-    // h: { cid, owner, name, img, rules, computed }
     const img = document.createElement('img');
     img.className = 'hand-card';
     img.src = h.img || h?.rules?.front?.img || h?.rules?.back?.img || '';
     img.alt = img.title = h.name || '';
     img.draggable = false;
 
-    // REQUIRED so Save can see it
     img.dataset.cid   = h.cid   || ('h_' + Math.random().toString(36).slice(2,10));
     img.dataset.owner = String(h.owner ?? seat);
     img.dataset.name  = h.name || '';
 
-    // Restore “rules face” snapshot
     const r = h.rules || {};
     img.dataset.currentSide = r.currentSide || 'front';
     if (r.typeLine)      img.dataset.typeLine = r.typeLine;
@@ -810,7 +866,6 @@ export function restoreHandFromSnapshot(handList, { append = false } = {}){
     if (r.baseTypes)     img.dataset.baseTypes = JSON.stringify(r.baseTypes);
     if (r.baseAbilities) img.dataset.baseAbilities = JSON.stringify(r.baseAbilities);
 
-    // Front/back canon
     if (r.front){
       if (r.front.typeLine)       img.dataset.frontTypeLine = r.front.typeLine;
       if (r.front.oracle)         img.dataset.frontOracle = r.front.oracle;
@@ -832,15 +887,13 @@ export function restoreHandFromSnapshot(handList, { append = false } = {}){
     handCards.push(img);
   }
 
-  // Refocus to the rightmost card and fan
   if (handCards.length){
     focus = handCards.length - 1;
   }
   renderHand();
 }
 
-// expose in the debug/global helper too
-if (!window.Hand) window.Hand = {};
+// expose debug/global helpers
 Object.assign(window.Hand, {
   handCards,
   updateHandFan,
@@ -848,5 +901,8 @@ Object.assign(window.Hand, {
   focusLastDrawn,
   flyDrawToHand,
   refanAll,
-  restoreHandFromSnapshot,   // ⬅️ add this
+  restoreHandFromSnapshot,
+
+  // Opening hand helper
+  installOpeningHandInterceptor,
 });

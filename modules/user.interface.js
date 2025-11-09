@@ -718,10 +718,52 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
   outline-offset:2px;
 }
 
-/* Life number colors */
 .life-red   { color:#ff5c5c; font-weight:800; }
 .life-white { color:#ffffff; font-weight:800; }
 .life-green { color:#61d36e; font-weight:800; }
+
+/* Life Editor Overlay (compact 3-column: Life / Commander / Infect) */
+#lifeOverlay {
+  position: fixed; inset: 0; z-index: 2000;
+  display: none; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at 50% 40%, rgba(0,0,0,.65), rgba(0,0,0,.85));
+}
+#lifeOverlay[data-open="true"] { display: flex; }
+#lifeOverlay .panel{
+  width: 360px; max-width: calc(100% - 32px);
+  background: linear-gradient(180deg, var(--ui-deep-2), var(--ui-deep-1) 60%, var(--ui-deep-2));
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  border-radius: 12px; padding: 14px; color: var(--ui-text);
+  font: 600 13px/1.25 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+}
+#lifeOverlay .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+#lifeOverlay h4{margin:0;font-size:14px;letter-spacing:.25px;}
+#lifeOverlay .grid{
+  display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; text-align:center; margin-top:6px;
+}
+#lifeOverlay .label{opacity:.9; font-weight:700; margin-bottom:4px;}
+#lifeOverlay .arrow{
+  display:inline-flex; align-items:center; justify-content:center;
+  width: 36px; height: 28px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.12);
+  background: linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
+  user-select:none;
+}
+#lifeOverlay .value{
+  width:100%; height:34px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
+  background: rgba(12,22,36,.6); color: var(--ui-text); font-weight:800;
+  display:flex; align-items:center; justify-content:center;
+}
+#lifeOverlay .footer{display:flex; gap:8px; justify-content:flex-end; margin-top:12px;}
+#lifeOverlay .btn{
+  padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
+  background: linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
+  color: var(--ui-text); font-weight:700; cursor:pointer; user-select:none;
+}
+#lifeOverlay .btn.primary{ background: linear-gradient(180deg, #2f8dff, #1b68c6); }
+
+
 
 /* Rail slide-left when drawer open IF the rail is on the right edge */
 body.ui-drawer-open .ui-rail[data-side="right"] {
@@ -762,7 +804,48 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
     </span>
   </div>
 `;
-      document.body.appendChild(life);
+document.body.appendChild(life);
+
+// Life editor overlay (compact 3-column)
+if (!document.getElementById('lifeOverlay')) {
+  const ov = document.createElement('div');
+  ov.id = 'lifeOverlay';
+  ov.innerHTML = `
+    <div class="panel" role="dialog" aria-modal="true" aria-label="Edit Life">
+      <div class="hdr">
+        <h4 id="lifeOverlayTitle">Edit Life – P1</h4>
+        <button class="btn" id="lifeCloseBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="grid">
+        <div class="label">Life</div>
+        <div class="label">Commander</div>
+        <div class="label">Infect</div>
+
+        <div class="arrow" data-step="total:+1">▲</div>
+        <div class="arrow" data-step="mid:+1">▲</div>
+        <div class="arrow" data-step="poison:+1">▲</div>
+
+        <div class="value" id="lifeTotalValue">40</div>
+        <div class="value" id="lifeMidValue">21</div>
+        <div class="value" id="lifePoisonValue">0</div>
+
+        <div class="arrow" data-step="total:-1">▼</div>
+        <div class="arrow" data-step="mid:-1">▼</div>
+        <div class="arrow" data-step="poison:-1">▼</div>
+      </div>
+
+      <div class="footer">
+        <button class="btn" id="lifeCancelBtn">Cancel</button>
+        <button class="btn primary" id="lifeApplyBtn">Apply</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+}
+
+}
+
     }
 
     // Drawer shell
@@ -1290,7 +1373,7 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
       `;
       document.body.appendChild(railB);
     }
-  }
+  
 
   // ------------------------------------------------------------------
   // TAB SWITCHER (settings tabs swap visible panel)
@@ -1313,8 +1396,74 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
   // EVENT WIRING (TOUCH-FIRST / POINTERDOWN-FIRST)
   // ------------------------------------------------------------------
   function wireEvents() {
-    // helper to wire one rail's buttons by suffix ('a' or 'b')
-    function hookRail(suffix){
+  // 🔵 Life pills → open editor overlay
+  const pillP1 = document.getElementById('ui-p1-pill');
+  const pillP2 = document.getElementById('ui-p2-pill');
+  pillP1?.addEventListener('pointerdown', (e) => { if (!e.button) openLifeOverlay(1); });
+  pillP2?.addEventListener('pointerdown', (e) => { if (!e.button) openLifeOverlay(2); });
+
+  // Overlay controls (compact ▲ value ▼ layout)
+  const overlay      = document.getElementById('lifeOverlay');
+  const titleEl      = document.getElementById('lifeOverlayTitle');
+  const vTotal       = document.getElementById('lifeTotalValue');
+  const vMid         = document.getElementById('lifeMidValue');
+  const vPoison      = document.getElementById('lifePoisonValue');
+  const closeBtn     = document.getElementById('lifeCloseBtn');
+  const cancelBtn    = document.getElementById('lifeCancelBtn');
+  const applyBtn     = document.getElementById('lifeApplyBtn');
+
+  let editingSeat = 1;
+
+  function syncValuesForSeat(seat){
+    editingSeat = (Number(seat) === 2) ? 2 : 1;
+    titleEl.textContent = `Edit Life – P${editingSeat}`;
+    const cur = (editingSeat === 2) ? STATE.p2 : STATE.p1;
+    vTotal.textContent  = String(cur.total|0);
+    vMid.textContent    = String(cur.mid|0);
+    vPoison.textContent = String(cur.poison|0);
+  }
+  function showOverlay(){ overlay?.setAttribute('data-open','true'); }
+  function hideOverlay(){ overlay?.removeAttribute('data-open'); }
+
+  window.openLifeOverlay  = (seat)=>{ syncValuesForSeat(seat); showOverlay(); };
+  window.closeLifeOverlay = hideOverlay;
+
+  closeBtn?.addEventListener('click', hideOverlay);
+  cancelBtn?.addEventListener('click', hideOverlay);
+
+  // ▲ / ▼ handling using data-step="field:+/-N"
+  overlay?.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('[data-step]');
+    if (!btn) return;
+    const [field, stepStr] = String(btn.getAttribute('data-step')||'').split(':');
+    let step = parseInt(stepStr, 10);
+    if (!Number.isFinite(step)) return;
+
+    // Shift+click for ±5
+    if (ev.shiftKey) step *= 5;
+
+    const bump = (node, d) => {
+      node.textContent = String((parseInt(node.textContent||'0',10) || 0) + d);
+    };
+
+    if (field === 'total')  bump(vTotal,  step);
+    if (field === 'mid')    bump(vMid,    step);
+    if (field === 'poison') bump(vPoison, step);
+  });
+
+  // Apply → commit & broadcast (setLife() will render and _broadcastLife())
+  applyBtn?.addEventListener('click', () => {
+    const t = parseInt(vTotal.textContent||'0',10)  || 0;
+    const m = parseInt(vMid.textContent||'0',10)    || 0;
+    const p = parseInt(vPoison.textContent||'0',10) || 0;
+    setLife(editingSeat, t, m, p, 'ui');
+    hideOverlay();
+  });
+
+
+  // helper to wire one rail's buttons by suffix ('a' or 'b')
+  function hookRail(suffix){
+
   const tabBtn    = document.getElementById(`ui-tab-toggle-${suffix}`);
   const battleBtn = document.getElementById(`ui-btn-cross-${suffix}`);
   const endBtn    = document.getElementById(`ui-btn-end-${suffix}`);
@@ -2161,11 +2310,14 @@ function _broadcastLife(reason = 'ui'){
     p2: { ...STATE.p2 }
   };
   try {
-    window.RTC?.send?.(payload);
+    // Prefer your established peer sender; RTC shim optional.
+    (window.rtcSend || window.peer?.send || window.RTC?.send)?.(payload);
+    console.log('%c[UI→RTC life:update sent]', 'color:#6cf', payload);
   } catch (e) {
-    console.warn('[UI] RTC send (life:update) failed', e);
+    console.warn('[UI] RTC send (life:update) failed', e, payload);
   }
 }
+
 
 // Install a receiver exactly once. Applies remote numbers, re-renders.
 // If your RTC bus uses a dispatcher (switch on msg.type), this will work
@@ -2263,6 +2415,22 @@ function setupLifeRtc(){
     return out;
   }
 
+window.addEventListener('phase:enter:untap', () => UserInterface._updatePhase('Untap'));
+window.addEventListener('phase:enter:upkeep', () => UserInterface._updatePhase('Upkeep'));
+window.addEventListener('phase:enter:draw', () => UserInterface._updatePhase('Draw'));
+window.addEventListener('phase:enter:main1', () => UserInterface._updatePhase('Main 1'));
+window.addEventListener('phase:enter:combat', () => UserInterface._updatePhase('Combat'));
+window.addEventListener('phase:enter:main2_ending', () => UserInterface._updatePhase('End Step'));
+
+function _updatePhase(label){
+  STATE.phase = label;
+  const pill = document.getElementById('ui-turn-pill');
+  if (pill) {
+    pill.textContent = `Turn: ${STATE.turn} – ${STATE.playerLabel} – Phase: ${STATE.phase}`;
+  }
+}
+
+
   // expose
   return {
     mount,
@@ -2280,7 +2448,8 @@ function setupLifeRtc(){
     commitLiveSettings,
     pushSettingsToCSSVars,
 
-    dumpLiveSettings,   // <- console helper
+    dumpLiveSettings,
+  _updatePhase,    // <- console helper
 
     _markAttackerUI,
     _markDefenderUI,
@@ -2299,6 +2468,8 @@ function setupLifeRtc(){
   };
 
 })();
+
+
 
 // also expose globally so non-module code (host/join popup etc.) can flip immediately
 window.UserInterface = UserInterface;

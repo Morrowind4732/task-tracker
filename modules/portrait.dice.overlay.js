@@ -59,7 +59,11 @@ export const PortraitOverlay = (() => {
   let _rollLocked = { p1: false, p2: false };
 
   let _dice = { p1: { seed:null, value:null }, p2: { seed:null, value:null } };
-  let _outcomeShown = false;
+let _outcomeShown = false;
+
+// Burn effect: ensure we only fire once per outcome
+let _burnFired = false;
+
 
   // No autoClose flag present anymore.
   const _opts = {
@@ -119,6 +123,16 @@ export const PortraitOverlay = (() => {
   z-index:9; padding:8px 14px; border-radius:10px; font-weight:700; letter-spacing:.3px;
   color:#e5e7eb; background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.16); display:none; }
 
+.portrait-overlay .awaiting { position:absolute; inset:0; display:none; place-items:center; z-index:8; pointer-events:none;
+  font-weight:800; font-size:28px; letter-spacing:.6px; color:#e5e7eb; text-shadow:0 2px 12px rgba(0,0,0,.5); }
+.portrait-overlay .awaiting .pulse { animation: pulseGlow 1.2s ease-in-out infinite; }
+@keyframes pulseGlow {
+  0%{ opacity:.4; transform:scale(0.98); }
+  50%{ opacity:1;  transform:scale(1.00); }
+  100%{ opacity:.4; transform:scale(0.98); }
+}
+
+
 `;
   function injectStyleOnce(){
     if (document.getElementById('portrait-overlay-style')) return;
@@ -141,10 +155,14 @@ export const PortraitOverlay = (() => {
     overlay.style.pointerEvents = 'auto';
 
     const threeMount = document.createElement('div'); threeMount.className = 'three-mount';
-    const spinner = document.createElement('div'); spinner.className = 'spinner'; spinner.textContent = 'Loading / Processing…';
+    const spinner = document.createElement('div'); spinner.className = 'spinner'; spinner.textContent = ''; // no visible text
 
-    const badgeL = document.createElement('div'); badgeL.className = 'badge'; badgeL.textContent = '—';
-    const badgeR = document.createElement('div'); badgeR.className = 'badge'; badgeR.textContent = '—';
+const awaiting = document.createElement('div'); awaiting.className = 'awaiting';
+awaiting.innerHTML = `<div class="pulse">Awaiting Opponent&#8217;s Deck…</div>`;
+
+const badgeL = document.createElement('div'); badgeL.className = 'badge'; badgeL.textContent = '—';
+const badgeR = document.createElement('div'); badgeR.className = 'badge'; badgeR.textContent = '—';
+
 
     const cta = document.createElement('div'); cta.className = 'cta';
     const rollBtn = document.createElement('button'); rollBtn.id = 'portrait-roll'; rollBtn.textContent = 'Roll D20';
@@ -158,16 +176,19 @@ export const PortraitOverlay = (() => {
     const result = document.createElement('div'); result.className = 'result'; result.textContent = '';
 
     overlay.appendChild(threeMount);
-    overlay.appendChild(spinner);
-    overlay.appendChild(badgeL);
-    overlay.appendChild(badgeR);
-    overlay.appendChild(cta);
-    overlay.appendChild(closeBtn);
-    overlay.appendChild(result);
+overlay.appendChild(spinner);
+overlay.appendChild(awaiting);
+overlay.appendChild(badgeL);
+overlay.appendChild(badgeR);
+overlay.appendChild(cta);
+overlay.appendChild(closeBtn);
+overlay.appendChild(result);
+
 
     document.body.appendChild(overlay);
 
-    _DOM = { overlay, threeMount, spinner, badgeL, badgeR, rollBtn, closeBtn, result };
+    _DOM = { overlay, threeMount, spinner, awaiting, badgeL, badgeR, rollBtn, closeBtn, result };
+
     log('buildDOM:done');
 
     overlay.addEventListener('click', (e) => { e.stopPropagation(); });
@@ -184,23 +205,29 @@ export const PortraitOverlay = (() => {
     if (!_DOM.overlay) buildDOM();
     _DOM.overlay.classList.add('portrait-open');
     requestAnimationFrame(() => {
-      _DOM.overlay.classList.add('portrait-visible');
-      requestAnimationFrame(() => {
-        onResize();
-        log('show:open', { isOpen: isOpen(), isReady: isReady() });
-      });
-    });
+  _DOM.overlay.classList.add('portrait-visible');
+  requestAnimationFrame(() => {
+    onResize();
+    updateAwaitingStatus();
+    log('show:open', { isOpen: isOpen(), isReady: isReady() });
+  });
+});
+
   }
 
   function hide(){
-    // Prevent accidental close until both dice values exist (unless DEBUG)
-    const bothKnown = (typeof _dice?.p1?.value === 'number') && (typeof _dice?.p2?.value === 'number');
-    if (!bothKnown && !isDebugRoom()) return;
-    if (_DOM.overlay){
-      _DOM.overlay.classList.remove('portrait-visible');
-      setTimeout(() => { if (_DOM.overlay) _DOM.overlay.classList.remove('portrait-open'); }, 200);
-    }
+  const bothKnown = (typeof _dice?.p1?.value === 'number') && (typeof _dice?.p2?.value === 'number');
+  if (!bothKnown && !isDebugRoom()) return;
+  if (_DOM.overlay){
+    _DOM.overlay.classList.remove('portrait-visible');
+    setTimeout(() => {
+      if (_DOM.overlay) _DOM.overlay.classList.remove('portrait-open');
+      // Notify listeners that the overlay has closed
+      try { window.dispatchEvent(new CustomEvent('portraitOverlay:closed')); } catch {}
+    }, 200);
   }
+}
+
 
   function destroy(){
     cancelAnimationFrame(_frameReq); _frameReq = 0;
@@ -393,6 +420,253 @@ export const PortraitOverlay = (() => {
       transparent:true, depthWrite:false, alphaTest:0.01
     });
   }
+  
+  // Combined “Antique Fray + Burn” shader that preserves the depth displacement and wind.
+// We reuse AntiqueFrayShader.vertexShader verbatim, and augment the fragment with burn.
+const AntiqueFrayBurnShader = {
+  uniforms: {
+    // Original Antique Fray
+    map:        { value: null },
+    depthTex:   { value: null },
+    uTime:      { value: 0.0 },
+    uDepthScale:{ value: BASELINE.sliders.depthScale },
+    uWindAmp:   { value: BASELINE.sliders.wind },
+    uWindFreq:  { value: 1.7 },
+    uSepia:     { value: 0.6 },
+    uVignette:  { value: 0.85 },
+    uGrain:     { value: 0.18 },
+    uFray:      { value: 0.9 },
+    uEdgeSoft:  { value: 0.10 },
+
+    // Burn params
+    uBurn:      { value: 0.0 },        // 0..1 progress bottom->top
+    uNoiseAmp:  { value: 0.12 },       // jaggedness of the edge
+    uEdgeWidth: { value: 0.08 },       // softness of burn band
+    uGlow:      { value: 1.0 },        // glow intensity
+    uGlowCol:   { value: null }        // set in makeAntiqueFrayBurnMaterial
+  },
+  vertexShader: AntiqueFrayShader.vertexShader,
+  fragmentShader: `
+    varying vec2 vUv;
+    uniform sampler2D map;
+    uniform float uTime,uSepia,uVignette,uGrain,uFray,uEdgeSoft;
+
+    // burn uniforms
+    uniform float uBurn, uNoiseAmp, uEdgeWidth, uGlow;
+    uniform vec3  uGlowCol;
+
+    // Antique helpers
+    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+    float noise(vec2 p){ 
+      vec2 i=floor(p), f=fract(p);
+      float a=hash(i), b=hash(i+vec2(1.,0.));
+      float c=hash(i+vec2(0.,1.)), d=hash(i+vec2(1.,1.));
+      vec2 u=f*f*(3.-2.*f);
+      return mix(a,b,u.x)+(c-a)*u.y*(1.-u.x)+(d-b)*u.x*u.y;
+    }
+    float fbm(vec2 p){ float v=0.,a=.5; for(int i=0;i<5;i++){ v+=a*noise(p); p*=2.; a*=.5; } return v; }
+
+    void main(){
+      vec3 col=texture2D(map,vUv).rgb;
+
+      // --- Antique color treatment (same as original) ---
+      vec3 sep; sep.r=dot(col,vec3(.393,.769,.189)); sep.g=dot(col,vec3(.349,.686,.168)); sep.b=dot(col,vec3(.272,.534,.131));
+      col=mix(col,sep,clamp(uSepia,0.,1.));
+      float edge=min(min(vUv.x,vUv.y),min(1.-vUv.x,1.-vUv.y));
+      float nA=fbm(vUv*5.5+uTime*.08);
+      float chew=mix(0.,.24,uFray); float edgeTarget=chew*(.7+.3*nA); float soft=mix(.02,.14,uEdgeSoft);
+      float alphaAntique=smoothstep(edgeTarget,edgeTarget+soft,edge);
+      float burnTone=smoothstep(edgeTarget,edgeTarget+soft*.6,edge);
+      col*=mix(vec3(.40,.30,.22),vec3(1.),burnTone);
+      float frame=smoothstep(0.,.25,edge);
+      col*=mix(.62,1.,pow(frame,1.5)*(1.-(1.-uVignette)*.7));
+      float g=hash(vUv*1024.+uTime*.5); col=mix(col,col*(.85+.3*g),clamp(uGrain,0.,1.));
+
+      // --- Burn band (bottom->top), noisy edge ---
+      float y = vUv.y;
+      float nB = fbm(vec2(vUv.x*5.0 + uTime*0.35, vUv.y*5.0 - uTime*0.22));
+      float edgeB = uBurn + (nB - 0.5) * uNoiseAmp;
+
+// aBurn: keep area BELOW edge transparent, ABOVE edge opaque (x0 < x1)
+float aBurn = smoothstep(edgeB - uEdgeWidth, edgeB + uEdgeWidth, y);
+
+      // Ember glow on the moving edge
+      float glowBand = 1.0 - smoothstep(0.0, uEdgeWidth*1.5, abs(y - edgeB));
+      vec3  glowCol  = uGlow * glowBand * uGlowCol;
+
+// Char band: correct ordering (x0 < x1)
+float charMask = smoothstep(edgeB - uEdgeWidth*1.8, edgeB - uEdgeWidth*0.6, y);
+      vec3  charCol  = mix(col, col*vec3(0.25,0.15,0.10), charMask);
+
+      // Compose: start from antique-treated color, apply charring & glow where burn is active
+      vec3 rgb = mix(col, charCol + glowCol, 1.0 - aBurn);
+
+      // Kill pixels above front (so portrait “eats” away upwards), but keep antique edge alpha too
+      float finalAlpha = alphaAntique * aBurn;
+      if (finalAlpha < 0.02) discard;
+      gl_FragColor = vec4(rgb, finalAlpha);
+    }
+  `
+};
+
+// Factory for the combined material
+function makeAntiqueFrayBurnMaterial(mainTex, depthTex){
+  const THREE = _THREE;
+  const uniforms = THREE.UniformsUtils.clone(AntiqueFrayBurnShader.uniforms);
+  uniforms.map.value      = mainTex;
+  uniforms.depthTex.value = depthTex;
+  uniforms.uGlowCol.value = new THREE.Color(0xff7a1a); // ember orange
+  return new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: AntiqueFrayBurnShader.vertexShader,
+    fragmentShader: AntiqueFrayBurnShader.fragmentShader,
+    transparent: true,
+    depthWrite: false,
+    alphaTest: 0.01
+  });
+}
+
+
+// --- Burn Dissolve Shader (bottom -> top with noisy ember edge) ---
+const BurnDissolveShader = {
+  uniforms: {
+    map:        { value: null },  // source portrait texture
+    uTime:      { value: 0.0 },
+    uBurn:      { value: 0.0 },   // 0..1 (how far the burn has progressed from bottom to top)
+    uNoiseAmp:  { value: 0.12 },  // how jagged the burn edge is
+    uEdgeWidth: { value: 0.08 },  // softness of the transition band
+    uGlow:      { value: 1.0 },   // glow intensity at the edge
+    uGlowCol:   { value: null } // set later in makeBurnMaterial when THREE is available
+ // ember orange
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec2 vUv;
+    uniform sampler2D map;
+    uniform float uTime, uBurn, uNoiseAmp, uEdgeWidth, uGlow;
+    uniform vec3 uGlowCol;
+
+    // Cheap hash + noise
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+    float noise(vec2 p){
+      vec2 i=floor(p), f=fract(p);
+      float a=hash(i), b=hash(i+vec2(1.,0.));
+      float c=hash(i+vec2(0.,1.)), d=hash(i+vec2(1.,1.));
+      vec2 u = f*f*(3.-2.*f);
+      return mix(a,b,u.x) + (c-a)*u.y*(1.-u.x) + (d-b)*u.x*u.y;
+    }
+    float fbm(vec2 p){
+      float v=0.0, a=0.5;
+      for(int i=0;i<4;i++){ v += a*noise(p); p*=2.0; a*=0.5; }
+      return v;
+    }
+
+    void main(){
+      vec4 base = texture2D(map, vUv);
+
+      // vertical coordinate (0=bottom, 1=top)
+      float y = vUv.y;
+
+      // animated noise to jag the edge (scrolls sideways a bit)
+      float n = fbm(vec2(vUv.x*5.0 + uTime*0.35, vUv.y*5.0 - uTime*0.22));
+
+      // threshold line that rises from bottom to top
+      float edge = uBurn + (n - 0.5) * uNoiseAmp;
+
+      // smooth mask across edge band
+      float a = smoothstep(edge - uEdgeWidth, edge + uEdgeWidth, y);
+
+      // Ember band at the frontier
+      float glowBand = 1.0 - smoothstep(0.0, uEdgeWidth*1.5, abs(y - edge));
+      vec3  glowCol = uGlow * glowBand * uGlowCol;
+
+      // Darken charred areas slightly below edge
+      float charMask = smoothstep(edge - uEdgeWidth*1.8, edge - uEdgeWidth*0.6, y);
+      vec3  charCol  = mix(base.rgb, base.rgb*vec3(0.25,0.15,0.10), charMask);
+
+      // Compose: charred base + glow
+      vec3 rgb = mix(base.rgb, charCol + glowCol, 1.0 - a);
+
+      // Kill pixels above the burn front
+      if (a < 0.02) discard;
+
+      gl_FragColor = vec4(rgb, a);
+    }
+  `
+};
+
+function makeBurnMaterial(mainTex){
+  const THREE = _THREE;
+  const uniforms = THREE.UniformsUtils.clone(BurnDissolveShader.uniforms);
+  uniforms.map.value = mainTex;
+  // set glow color now that THREE is guaranteed
+  uniforms.uGlowCol.value = new THREE.Color(0xff7a1a);
+
+  return new THREE.ShaderMaterial({
+    uniforms,
+    vertexShader: BurnDissolveShader.vertexShader,
+    fragmentShader: BurnDissolveShader.fragmentShader,
+    transparent: true,
+    depthWrite: false
+  });
+}
+
+
+// Animate the burn on the *windy depth* material itself, but start INVISIBLE,
+// then reveal bottom→top, then remove.
+function playBurn(side, { duration=1400 } = {}){
+  const S = _S[side]; if (!S?.mesh || !S?.mainTex || !S?.depthTex) return;
+  try{
+    // Prepare combined material (windy depth + burn) with uBurn=0
+    // At uBurn=0 the whole portrait is visible; as uBurn rises, the bottom becomes transparent.
+    const burnMat = makeAntiqueFrayBurnMaterial(S.mainTex, S.depthTex);
+    if (burnMat?.uniforms){
+      burnMat.uniforms.uBurn.value       = 0.0;       // start fully visible
+      burnMat.uniforms.uTime.value       = 0.0;
+      burnMat.uniforms.uDepthScale.value = BASELINE.sliders.depthScale;
+      burnMat.uniforms.uWindAmp.value    = BASELINE.sliders.wind;
+    }
+
+    // Swap materials WITHOUT hiding the mesh (no reveal phase)
+    S.mesh.material?.dispose?.();
+    S.mesh.material = burnMat;
+
+    const t0 = performance.now();
+    function tick(t){
+      const e = Math.min(1, (t - t0) / duration);
+      const ease = 1.0 - Math.pow(1.0 - e, 3.0); // cubic ease-out
+
+      if (S.mesh?.material?.uniforms){
+        const u = S.mesh.material.uniforms;
+        u.uTime.value = (t * 0.001);
+        u.uBurn.value = ease;             // burn line climbs upward, HIDING the bottom
+        u.uDepthScale.value = BASELINE.sliders.depthScale;
+        u.uWindAmp.value    = BASELINE.sliders.wind;
+      }
+
+      if (e < 1){
+        requestAnimationFrame(tick);
+      } else {
+        // once fully burned, clean up that portrait mesh
+        try { disposePortrait(side); } catch {}
+      }
+    }
+    requestAnimationFrame(tick);
+
+  } catch(e){
+    warn('playBurn failed', e);
+  }
+}
+
+
+
+
 
   function tickShaderTime(t){
     for (const side of ['left','right']){
@@ -400,6 +674,15 @@ export const PortraitOverlay = (() => {
       m.material.uniforms.uTime.value = t;
     }
   }
+  
+  function updateAwaitingStatus(){
+  if (!_DOM.awaiting) return;
+  const haveLeft  = !!_S.left.url;
+  const haveRight = !!_S.right.url;
+  const waitingForOpponent = !(haveLeft && haveRight);
+  _DOM.awaiting.style.display = waitingForOpponent ? 'grid' : 'none';
+}
+
 
   function showSpinner(b){ if (_DOM.spinner) _DOM.spinner.style.display = b ? 'grid' : 'none'; }
 
@@ -415,18 +698,24 @@ export const PortraitOverlay = (() => {
   async function setPortrait(side, url){
     log('setPortrait:store-url', { side, url });
     _S[side].url = url || null;
-    _queued[side] = null;
-    await _maybeStartProcessingIfBothReady();
+_queued[side] = null;
+updateAwaitingStatus();
+await _maybeStartProcessingIfBothReady();
+
   }
 
   async function setBothPortraits(leftUrl, rightUrl){
     _S.left.url  = leftUrl  || null;
-    _S.right.url = rightUrl || null;
-    _queued.left = _queued.right = null;
-    await _maybeStartProcessingIfBothReady();
+_S.right.url = rightUrl || null;
+_queued.left = _queued.right = null;
+updateAwaitingStatus();
+await _maybeStartProcessingIfBothReady();
+
   }
 
   async function _maybeStartProcessingIfBothReady(){
+	  if (!_S.left.url || !_S.right.url) { updateAwaitingStatus(); return; }
+
     if (_processingBatch) return;
     if (!_S.left.url || !_S.right.url) return;
     _processingBatch = true;
@@ -436,6 +725,8 @@ export const PortraitOverlay = (() => {
   }
 
   async function startProcessingBatch(){
+	  updateAwaitingStatus(); // hides the message now that both URLs are present
+
     log('startProcessingBatch:begin', { leftUrl: !!_S.left.url, rightUrl: !!_S.right.url });
     if (!_DOM.overlay) buildDOM();
     await ensureThreeReady();
@@ -725,9 +1016,13 @@ export const PortraitOverlay = (() => {
   }
 
   function showBadge(side, value){
-    const el = (side === 'left') ? _DOM.badgeL : _DOM.badgeR;
-    if (!el) return; el.textContent = 'D20: ' + value; el.style.display = 'block';
-  }
+  const el = (side === 'left') ? _DOM.badgeL : _DOM.badgeR;
+  if (!el) return;
+  const label = (side === 'left') ? 'Player 1' : 'Player 2';
+  el.textContent = `${label}: ${value}`;
+  el.style.display = 'block';
+}
+
 
   function dropD20Deterministic(side, seed, value, opts = {}){
     const r0 = randomFromSeed(seed);
@@ -843,18 +1138,27 @@ export const PortraitOverlay = (() => {
 
     const tie = (v1 === v2);
 
-    // Winner / Tie banner
-    if (_DOM.result){
-      if (tie){
-        _DOM.result.textContent = `Tie — ${v1} vs ${v2}`;
-        _DOM.result.style.display = 'block';
-      } else {
-        const winnerSide = (v1 > v2) ? 'Left' : 'Right';
-        const hi = Math.max(v1, v2), lo = Math.min(v1, v2);
-        _DOM.result.textContent = `${winnerSide} wins — ${hi} > ${lo}`;
-        _DOM.result.style.display = 'block';
-      }
-    }
+   // Winner / Tie banner
+if (_DOM.result){
+  if (tie){
+    _DOM.result.textContent = `Tie — ${v1} vs ${v2}`;
+    _DOM.result.style.display = 'block';
+  } else {
+    const winnerLabel = (v1 > v2) ? 'Player 1' : 'Player 2';
+    const hi = Math.max(v1, v2), lo = Math.min(v1, v2);
+    _DOM.result.textContent = `${winnerLabel} wins — ${hi} > ${lo}`;
+    _DOM.result.style.display = 'block';
+  }
+}
+
+// NEW: Burn the losing portrait once, after outcome known (non-tie)
+if (!tie && !_burnFired){
+  _burnFired = true;
+  const loserSide = (v1 > v2) ? 'right' : 'left'; // P1 beats P2 -> burn 'right'; else burn 'left'
+  playBurn(loserSide, { duration: 1500 });
+}
+
+
 
     // Flip CTA (always enable here)
     if (_DOM.rollBtn){
@@ -1004,11 +1308,14 @@ export const PortraitOverlay = (() => {
   }
 
   async function init({ autoRandomIfUnset=false, onResult=null, onBothRolled=null, showOnInit=false, sendDiceRTC=null } = {}){
-    _opts.autoRandomIfUnset = !!autoRandomIfUnset;
-    _opts.onResult          = (typeof onResult === 'function') ? onResult : null;
-    _opts.onBothRolled      = (typeof onBothRolled === 'function') ? onBothRolled : null;
-    _opts.sendDiceRTC       = (typeof sendDiceRTC === 'function') ? sendDiceRTC : null;
+  _opts.autoRandomIfUnset = !!autoRandomIfUnset;
+  _opts.onResult          = (typeof onResult === 'function') ? onResult : null;
+  _opts.onBothRolled      = (typeof onBothRolled === 'function') ? onBothRolled : null;
 
+  // Preserve existing sender unless a new function is explicitly provided
+  if (typeof sendDiceRTC === 'function') {
+    _opts.sendDiceRTC = sendDiceRTC;
+  }
     if (!_DOM.overlay) buildDOM();
     if (showOnInit) show();
 
@@ -1017,7 +1324,9 @@ export const PortraitOverlay = (() => {
     _rollLocked = { p1:false, p2:false };
     _dice = { p1:{ seed:null, value:null }, p2:{ seed:null, value:null } };
     _outcomeShown = false;
-    log('init: reset state; waiting for rolls');
+_burnFired = false;
+log('init: reset state; waiting for rolls');
+
 
     if (_DOM.result){ _DOM.result.textContent = ''; _DOM.result.style.display = 'none'; }
     if (_DOM.rollBtn){

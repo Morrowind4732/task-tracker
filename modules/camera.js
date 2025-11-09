@@ -21,6 +21,18 @@ const PINCH_PAN_DAMP  = 0.10; // 2-finger pinch pan multiplier (10%)
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const apply = () => { if (W) W.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`; };
 
+  // --- BASELINE SCALING ---
+  // Given a baseline viewport (bw,bh) and baseline scale (bs),
+  // set scale so the visual framing matches across resolutions:
+  // scale_current = bs * (min(vpW,vpH) / min(bw,bh))
+  function applyBaselineScale({ bw, bh, bs }) {
+    if (!VP) return;
+    const vpW = VP.clientWidth, vpH = VP.clientHeight;
+    const f = Math.min(vpW, vpH) / Math.min(bw, bh);
+    state.scale = clamp(bs * f, minS, maxS);
+    apply();
+  }
+
   // keep world point under screen point (cx,cy) stable while scaling
   function zoomAt(factor, cx, cy){
     const prev = state.scale;
@@ -34,6 +46,55 @@ const PINCH_PAN_DAMP  = 0.10; // 2-finger pinch pan multiplier (10%)
     apply();
     //console.log('[CAM] zoomAt', { factor, cx, cy, scale: state.scale });
   }
+  
+  // Easing
+function _easeInOutCubic(t){ return t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
+
+// Compute a view for the *current* viewport from a 1920x1080-style baseline.
+// baseline: { bx, by, bs, bw, bh }  (b* = baseline x/y/scale/width/height)
+// returns { x, y, scale } for the current VP size.
+function _viewFromBaseline({ bx, by, bs, bw, bh }) {
+  if (!VP) return { x: bx, y: by, scale: bs };
+  const vpW = VP.clientWidth, vpH = VP.clientHeight;
+
+  // world center that baseline was framing at its viewport center
+  const wx = (bw/2 - bx) / bs;
+  const wy = (bh/2 - by) / bs;
+
+  // scale factor by “short side” ratio so framing is consistent across ARs
+  const f = Math.min(vpW, vpH) / Math.min(bw, bh);
+  const s = clamp(bs * f, minS, maxS);
+
+  // new offsets to keep the same world center at our viewport center
+  const x = (vpW/2) - wx * s;
+  const y = (vpH/2) - wy * s;
+  return { x, y, scale: s };
+}
+
+// Animate camera to a target view
+function animateTo({ x, y, scale }, { duration=800, ease=_easeInOutCubic } = {}) {
+  const start = performance.now();
+  const x0 = state.x, y0 = state.y, s0 = state.scale;
+  const xt = x, yt = y, st = clamp(scale, minS, maxS);
+
+  function frame(tms){
+    const t = Math.min(1, (tms - start) / duration);
+    const e = ease(t);
+    state.x = x0 + (xt - x0) * e;
+    state.y = y0 + (yt - y0) * e;
+    state.scale = s0 + (st - s0) * e;
+    apply();
+    if (t < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+// Convenience: animate to a *baseline* view adapted to current VP
+function animateToBaselineView({ bx, by, bs, bw=1920, bh=1080 }, opts={}) {
+  const v = _viewFromBaseline({ bx, by, bs, bw, bh });
+  animateTo(v, opts);
+}
+
 
   function panBy(dx, dy){
     state.x += dx; state.y += dy;
@@ -234,7 +295,15 @@ centerOnZoneCluster({ targetScale: 0.9 });
   mountWheel();
   mountTouch();
 
-  window.Camera = { state, set, panBy, zoomAt, centerOnCluster: centerOnZoneCluster };
+  window.Camera = {
+  state, set, panBy, zoomAt,
+  centerOnCluster: centerOnZoneCluster,
+  applyBaselineScale,
+  animateTo,
+  animateToBaselineView
+};
+
+
 
   //console.log('[CAM] mounted', { minScale: minS, maxScale: maxS, wheelStep });
 }
@@ -246,5 +315,20 @@ centerOnZoneCluster({ targetScale: 0.9 });
     apply();
   }
 
-  return { state, mount, set, panBy, zoomAt };
+return {
+    state,
+    mount,
+    set,
+    panBy,
+    zoomAt,
+    // newly exported helpers:
+    applyBaselineScale,
+    animateTo,
+    animateToBaselineView,
+    // name matches your table code expectation
+    centerOnCluster: centerOnZoneCluster,
+    // optional but handy for tooling/debug
+    _viewFromBaseline
+  };
 })();
+

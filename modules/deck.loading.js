@@ -725,6 +725,9 @@ function init({ onLoaded } = {}){
   const ta  = o.querySelector('#deckText');
   const src = (ta.value || '').trim() || DEFAULT_LIST;
 
+  // ✅ CLOSE THE DECK OVERLAY IMMEDIATELY ON CLICK
+  try { hide(); } catch {}
+
   // 1) SHOW PORTRAIT OVERLAY *IMMEDIATELY* (no waiting on data)
   try {
     const already = (typeof PortraitOverlay?.isReady === 'function') && PortraitOverlay.isReady();
@@ -743,7 +746,7 @@ function init({ onLoaded } = {}){
     console.warn('[DeckLoad] PortraitOverlay init/show failed, fallback UI only', e);
   }
 
-  // prevent double clicks
+  // prevent double clicks (safe even though overlay is hidden)
   try { if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; } } catch {}
 
   // 2) Parse once; commander FIRST — do NOT fetch deck art yet

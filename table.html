@@ -349,8 +349,7 @@ window.addEventListener('DOMContentLoaded', () => {
   const viewport = document.getElementById('viewport');
   const world    = document.getElementById('world');
 
-  // table zones & camera
-  Zones.mount(world);
+   Zones.mount(world);
 
   Camera.mount({
     viewport,
@@ -360,8 +359,40 @@ window.addEventListener('DOMContentLoaded', () => {
     wheelStep: 0.12
   });
 
+  // --- Responsive camera preset based on baseline (1920x1080) ---
+  // Use your Zoom1 as the baseline “looks perfect on 1080p”.
+  const BASE_CAM_1080 = {
+    x: -10020.029128080332,
+    y: -10972.932386428041,
+    scale: 1.093204378567833,
+    baseH: 1080
+  };
+
+  (function applyResponsiveCamFromBaseline() {
+    const vpH = viewport.clientHeight || window.innerHeight || BASE_CAM_1080.baseH;
+    const r   = vpH / BASE_CAM_1080.baseH;   // height-based ratio (matches your Zoom1→Zoom2)
+    const preset = {
+      x: BASE_CAM_1080.x * r,
+      y: BASE_CAM_1080.y * r,
+      scale: BASE_CAM_1080.scale * r
+    };
+    Camera.set(preset);
+  })();
+
+  // When the dice overlay closes, glide to the desired baseline view (1920×1080)
+  window.addEventListener('portraitOverlay:closed', () => {
+    Camera.animateToBaselineView({
+      bx: -5589.585896600531,
+      by: -5341.343128839692,
+      bs:  0.5825279612844435,
+      bw: 1920,
+      bh: 1080
+    }, { duration: 900 });
+  });
+
   // bring up RTC join/host popup / wire seats etc.
   initRTCConnectionUI();
+
 
   // --- seat/turn bootstrap ---------------------------------------
   // After host/join choice: flip life sides if I'm seat 2 (joiner),

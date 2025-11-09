@@ -51,25 +51,47 @@ export const RulesStore = (() => {
     return 'e_' + Math.random().toString(36).slice(2,9);
   }
 
-  // Internal generic removal helper; returns array of removed entries with context
-  // [{ effectId, targetCid, effect }]
-  function _removeEffectsByPredicate(pred){
-    const removed = [];
-    for (const [cid, arr] of cardEffects.entries()){
-      if (!Array.isArray(arr) || !arr.length) continue;
-      const keep = [];
-      for (const eff of arr){
-        if (pred(eff, cid)){
-          removed.push({ effectId: eff.id, targetCid: cid, effect: eff });
-        } else {
-          keep.push(eff);
+  
+
+  // NEW: fan-out a deterministic buffRemove for each removed effect (so remote mirrors drop too)
+  function _broadcastBuffRemovals(removed, meta = {}){
+    try {
+      const send = (window.rtcSend || window.peer?.send);
+      if (!send || !Array.isArray(removed) || removed.length === 0) return;
+
+      for (const row of removed){
+        const eff = row.effect || {};
+        // Construct a stable signature the remote fallback understands.
+        let signature = '';
+        if (eff.kind === 'ability' && eff.ability) signature = `ability:${eff.ability}`;
+        if (eff.kind === 'type'    && eff.typeAdd) signature = `type:${eff.typeAdd}`;
+        if (eff.kind === 'counter' && eff.counter && eff.counter.kind) signature = `counter:${eff.counter.kind}`;
+        if (eff.kind === 'pt' && (Number(eff.powDelta)||Number(eff.touDelta))){
+          // PT deltas: we’ll also include the exact pt label (e.g., "+1/+1")
+          const p = Number(eff.powDelta||0), t = Number(eff.touDelta||0);
+          const signP = (p>=0?'+':'')+p, signT = (t>=0?'+':'')+t;
+          signature = `label:${signP}/${signT}`;
         }
+
+        send({
+          type: 'buffRemove',
+          effectId  : row.effectId,                // preferred (stable if both sides set IDs)
+          targetCid : row.targetCid,
+          kind      : eff.kind || null,
+          ability   : eff.ability || null,
+          typeName  : eff.typeAdd || null,
+          counter   : (eff.counter && eff.counter.kind) ? eff.counter.kind : null,
+          pt        : null,                        // we use signature for PT
+          signature,
+          reason    : meta.reason || 'eot-clear',
+          ownerSeat : eff.ownerSeat ?? undefined
+        });
       }
-      if (keep.length) cardEffects.set(cid, keep);
-      else cardEffects.delete(cid);
+    } catch (e){
+      console.warn('[RulesStore] _broadcastBuffRemovals failed', e);
     }
-    return removed;
   }
+
 
   // ---------- addEffectForTargets ----------
   // payload:
@@ -331,16 +353,8 @@ export const RulesStore = (() => {
   }
 
 
-  // ---------- clearEOT ----------
-  // Call this at end of turn for a given seat.
-  // Kill effects whose duration === 'EOT' && ownerSeat===seat
-  function clearEOT(ownerSeat){
-    for (const [cid, arr] of cardEffects.entries()){
-      const keep = arr.filter(e => !(e.duration === 'EOT' && e.ownerSeat === ownerSeat));
-      if (keep.length) cardEffects.set(cid, keep);
-      else cardEffects.delete(cid);
-    }
-  }
+  
+
 
   // ---------- importRemoteEffect ----------
   // Opponent told us "I applied this buff".
@@ -507,6 +521,75 @@ export const RulesStore = (() => {
     }
   }
 
+  // Internal generic removal helper; returns array of removed entries with context
+// [{ effectId, targetCid, effect }]
+function _removeEffectsByPredicate(pred){
+  const removed = [];
+  for (const [cid, arr] of cardEffects.entries()){
+    if (!Array.isArray(arr) || !arr.length) continue;
+    const keep = [];
+    for (const eff of arr){
+      if (pred(eff, cid)){
+        removed.push({ effectId: eff.id, targetCid: cid, effect: eff });
+      } else {
+        keep.push(eff);
+      }
+    }
+    if (keep.length) cardEffects.set(cid, keep);
+    else cardEffects.delete(cid);
+  }
+  return removed;
+}
+
+// ---------- clearEOT ----------
+// End of *current* turn: remove ALL duration==='EOT' effects.
+// If ownerSeat is provided, you can still target a seat (legacy behavior).
+// Returns array: [{ effectId, targetCid, effect }]
+function clearEOT(ownerSeat){
+  if (ownerSeat == null) {
+    // no seat filter → clear ALL EOT effects
+    return _removeEffectsByPredicate((e) => e && e.duration === 'EOT');
+  }
+  // legacy: seat-scoped clear
+  const seatNum = Number(ownerSeat);
+  return _removeEffectsByPredicate(
+    (e) => e && e.duration === 'EOT' && Number(e.ownerSeat) === seatNum
+  );
+}
+
+// Clear + broadcast removals so remote mirrors drop too.
+function clearEOTAndBroadcast(ownerSeat, meta = {}){
+  const removed = clearEOT(ownerSeat);
+  if (removed && removed.length){
+    try {
+      const touched = new Set(removed.map(r => r.targetCid).filter(Boolean));
+      (async () => {
+        try {
+          const { Badges } = await import('./badges.js');
+          touched.forEach(cid => Badges.refreshFor?.(cid));
+        } catch {}
+      })();
+    } catch {}
+    _broadcastBuffRemovals(removed, meta);
+  }
+  return removed;
+}
+
+// Auto-EOT purge hooks
+// IMPORTANT: end step = end of the turn → clear ALL EOT regardless of who applied them.
+try {
+  window.addEventListener('phase:beginningOfEndStep', (e) => {
+    clearEOTAndBroadcast(undefined, { reason: 'phase:beginningOfEndStep' });
+  });
+} catch {}
+
+try {
+  window.addEventListener('phase:cleanup', (e) => {
+    clearEOTAndBroadcast(undefined, { reason: 'phase:cleanup' });
+  });
+} catch {}
+
+
   // expose (and also stick on window for debug)
   const api = {
     addEffectForTargets,
@@ -515,12 +598,14 @@ export const RulesStore = (() => {
     exportEffectsFor,
     getEffectsBySource,
     removeEffectsBySource,
-    clearEOT,
+    clearEOT,                // still available if you want silent clears
+    clearEOTAndBroadcast,    // ← use this if you’re clearing outside of phase events
     importRemoteEffect,
     listActiveEffectsGroupedByCard,
     removeEffect,
     listEffectsBySource
   };
+
   window.RulesStore = api;
   return api;
 })();

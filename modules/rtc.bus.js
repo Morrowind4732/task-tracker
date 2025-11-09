@@ -1449,7 +1449,17 @@ export function initRTCConnectionUI() {
             console.warn('[RTC:zones:sync] apply failed', e, msg);
           }
 
+        } else if (msg?.type === 'life:update') {
+          try {
+            // Forward to UI’s receiver (idempotent & safe)
+            window.__applyRemoteLifeUpdate?.(msg);
+            console.log('%c[RTC:recv life:update→applied]', 'color:#6cf', { from: msg.from, p1: msg.p1, p2: msg.p2 });
+          } catch (e) {
+            console.warn('[RTC:life:update] apply failed', e, msg);
+          }
+          return;
         } else {
+
 
           console.log('[RTC:recv] unhandled message', msg);
         }

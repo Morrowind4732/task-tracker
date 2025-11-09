@@ -293,25 +293,63 @@ function applyPhaseSetFromRTC(msg){
     const phase = String(msg?.phase||'');
     const txid  = Number(msg?.txid||0);
     if (txid && txid < _S.txid) return;
+
     if (seat !== mySeatNum()){
-      _S.phase = phase;
-      _S.txid  = txid || _S.txid;
-      fire(`phase:mirror:${phase}`, {seat,phase,txid});
+      // Mirror authoritative seat + phase from remote
+      _S.activeSeat = Number.isFinite(seat) ? seat : _S.activeSeat;
+      _S.phase      = phase;
+      _S.txid       = txid || _S.txid;
+
+      fire(`phase:mirror:${phase}`, { seat:_S.activeSeat, phase, txid });
+
+      // If THEY just entered their end step on their machine, mirror the
+      // "beginning of end step" + do our own cleanup so both sides drop EOT.
+      if (phase === Phase.MAIN2_ENDING) {
+        if (!_S.endStepFired){
+          _S.endStepFired = true;
+          // 🔴 CRITICAL: announce end step with the REMOTE seat that is ending the turn
+          fire('phase:beginningOfEndStep', { seat:_S.activeSeat, turn:_S.turn, txid:_S.txid });
+        }
+        _runCleanup();
+      }
     }
-  }catch{}
+  }catch(e){
+    console.warn('[TurnUpkeep] applyPhaseSetFromRTC failed', e);
+  }
 }
+
+
 
 // -----------------------------
 // Cleanup stub
 // -----------------------------
+// CTRL-F anchor: [TU:cleanup]
 function _runCleanup(){
   try{
-    // window.RulesStore?.clearMarkedDamageForSeat?.(mySeatNum());
-    // window.RulesStore?.expireEndOfTurnEffects?.();
-    // window.Hand?.discardDownToMax?.(mySeatNum());
-    fire('phase:cleanup', {seat:_S.activeSeat, turn:_S.turn});
-  }catch(e){ console.warn('[TurnUpkeep] cleanup stub error', e); }
+    // 1) Clear EOT effects for the seat whose turn is ending
+    const seat = Number(_S.activeSeat) || mySeatNum();
+    try { window.RulesStore?.clearEOT?.(seat); } catch {}
+
+    // 2) Refresh visuals (badges/tooltips) so the removals are visible immediately
+    try {
+      document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
+        const cid = n.dataset.cid;
+        window.Badges?.refreshFor?.(cid);
+        window.Tooltip?.refreshFor?.(cid);
+      });
+    } catch {}
+
+    // 3) Any additional end-step housekeeping you want to add later
+    // window.RulesStore?.clearMarkedDamageForSeat?.(seat);
+    // window.Hand?.discardDownToMax?.(seat);
+
+    // 4) Fire a standard cleanup event for any other subscribers
+    fire('phase:cleanup', { seat, turn:_S.turn });
+  }catch(e){
+    console.warn('[TurnUpkeep] cleanup error', e);
+  }
 }
+
 
 // -----------------------------
 // Tallies recorders
@@ -678,3 +716,20 @@ export const TurnUpkeep = {
 
 window.TurnUpkeep = TurnUpkeep;
 window.TU = TU;
+
+// CTRL-F anchor: [TU:phase-events]
+window.addEventListener('phase:beginningOfEndStep', (ev) => {
+  try {
+    const seat = Number(ev?.detail?.seat) || mySeatNum();
+    window.RulesStore?.clearEOT?.(seat);
+    // Refresh visuals after the purge
+    document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
+      const cid = n.dataset.cid;
+      window.Badges?.refreshFor?.(cid);
+      window.Tooltip?.refreshFor?.(cid);
+    });
+    console.log('[TurnUpkeep] EOT cleared on beginningOfEndStep for seat', seat);
+  } catch (e) {
+    console.warn('[TurnUpkeep] EOT listener failed', e);
+  }
+});
