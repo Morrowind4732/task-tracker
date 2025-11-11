@@ -767,15 +767,36 @@ function _normalizeAbilityKey(s){
     .toLowerCase();
 }
 
+// NEW: normalized key for type-name comparisons (case-insensitive)
+function _normalizeTypeKey(s){
+  return String(s || '')
+    .replace(/\s+/g,' ')
+    .trim()
+    .toLowerCase();
+}
+
+
 function _upsertGrant(rec, name, duration, source){
   if (!name) return;
   const grants = _ensureGrantsArray(rec);
   const key = _normalizeAbilityKey(name);
-  const row = { name: String(name).trim(), duration: String(duration||'').toUpperCase() };
+  const row = { name: String(name).trim(), duration: String(duration||'').toUpperCase(), kind:'ability' };
   if (source) row.source = String(source);
-  const i = grants.findIndex(g => _normalizeAbilityKey(g?.name||'') === key);
+  const i = grants.findIndex(g => _normalizeAbilityKey(g?.name||'') === key && (g?.kind||'ability') === 'ability');
   if (i >= 0) grants[i] = row; else grants.push(row);
 }
+
+// NEW: upsert for TYPE grants (mirrors ability grants)
+function _upsertTypeGrant(rec, name, duration, source){
+  if (!name) return;
+  const grants = _ensureGrantsArray(rec);
+  const key = _normalizeTypeKey(name);
+  const row = { name: String(name).trim(), duration: String(duration||'').toUpperCase(), kind:'type' };
+  if (source) row.source = String(source);
+  const i = grants.findIndex(g => _normalizeTypeKey(g?.name||'') === key && (g?.kind||'type') === 'type');
+  if (i >= 0) grants[i] = row; else grants.push(row);
+}
+
 
 function _removeGrantByName(rec, name){
   if (!Array.isArray(rec?.grants)) return;
@@ -905,13 +926,21 @@ try {
       rec.grants = rec.grants.filter(g => abilSet.has(_normalizeAbilityKey(g?.name||'')));
     }
 
-    // types
-    rec.types = Array.isArray(rec.types) ? rec.types.slice() : [];
-    if (grantTypeNorm){
-      if (!rec.types.includes(grantTypeNorm)) {
-        rec.types.push(grantTypeNorm);
-      }
-    }
+    // types: keep ONLY the printed/base types here.
+// Do NOT echo granted types into rec.types[] (prevents duplicate badges).
+rec.types = Array.isArray(rec.types) ? rec.types.slice() : [];
+
+// Record granted type solely as a structured grant row.
+if (grantTypeNorm){
+  const dur = (payload.typeDuration || payload.duration || '').toUpperCase(); // 'EOT' | 'SOURCE' | 'PERM'
+  const src = payload.srcCid || payload.sourceCid || null;
+  if (dur) _upsertTypeGrant(rec, grantTypeNorm, dur, src);
+}
+
+// (No pruning of type grants based on rec.types — grants are authoritative.)
+
+
+
 
     // counters (merge/SET ABSOLUTE); payload.counter = { kind, qty }
     // Build a union from CA.counters and remoteAttrs.counters so we never wipe
@@ -984,7 +1013,7 @@ try {
   } else {
     // no CardAttributes? fall back to payload-only merges
     if (grantAbilityNorm) mergedAbilities.push(grantAbilityNorm);
-    if (grantTypeNorm)    mergedTypes.push(grantTypeNorm);
+// Do NOT push grantType into mergedTypes (keep it only as a grant)
     if (payload.counter && payload.counter.kind) {
       mergedCounters.push({ kind:String(payload.counter.kind).trim(), qty:parseInt(payload.counter.qty||0,10) });
       if (String(payload.counter.kind).toLowerCase() === 'loyalty') {
@@ -994,11 +1023,15 @@ try {
     }
 
     // ⬇ NEW: still record a structured grant so Badges can render "(L)" / "(E)"
-    const dur = String(payload.abilityDuration || payload.duration || '').toUpperCase();
-    const src = payload.srcCid || payload.sourceCid || null;
-    if (grantAbilityNorm && dur) {
-      mergedGrants.push({ name: grantAbilityNorm, duration: dur, source: src });
-    }
+const dur = String(payload.abilityDuration || payload.duration || '').toUpperCase();
+const src = payload.srcCid || payload.sourceCid || null;
+if (grantAbilityNorm && dur) {
+  mergedGrants.push({ kind:'ability', name: grantAbilityNorm, duration: dur, source: src });
+}
+const durType = String(payload.typeDuration || payload.duration || '').toUpperCase();
+if (grantTypeNorm && durType) {
+  mergedGrants.push({ kind:'type', name: grantTypeNorm, duration: durType, source: src });
+}
   }
 
 } catch(err){
@@ -1018,9 +1051,32 @@ try {
       let remoteObj = {};
 try { remoteObj = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch { remoteObj = {}; }
 
-// Take the canonical values we just computed/updated:
-const nextAbilities = mergedAbilities.slice();
-const nextTypes     = mergedTypes.slice();
+// Take the canonical values we just computed/updated, but UNION with any existing remote arrays
+// so multiple applies don't clobber previous grants when CardAttributes is absent.
+function _unionCaseInsensitive(a, b){
+  const seen = new Set();
+  const out = [];
+  [...(a||[]), ...(b||[])].forEach(v => {
+    const s = String(v || '').trim();
+    if (!s) return;
+    const key = s.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(s);
+  });
+  return out;
+}
+
+let prevRemote = {};
+try { prevRemote = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch {}
+
+const prevAbilities = Array.isArray(prevRemote.abilities) ? prevRemote.abilities : [];
+const prevTypes     = Array.isArray(prevRemote.types)     ? prevRemote.types     : [];
+
+const nextAbilities = _unionCaseInsensitive(prevAbilities, mergedAbilities.slice());
+let   nextTypes     = _unionCaseInsensitive(prevTypes,     mergedTypes.slice());
+
+
 
 // mergedCounters already includes the union we stored in rec.counters above.
 // But to be belt-and-suspenders, union again with any existing remote counters.
@@ -1034,9 +1090,8 @@ function _unionCounters(a,b){
   });
   return Array.from(byKind.values());
 }
-let prevRemote = {};
-try { prevRemote = el.dataset.remoteAttrs ? (JSON.parse(el.dataset.remoteAttrs) || {}) : {}; } catch {}
-const prevCounters = Array.isArray(prevRemote.counters) ? prevRemote.counters : [];
+let prevRemote2 = prevRemote;
+const prevCounters = Array.isArray(prevRemote2.counters) ? prevRemote2.counters : [];
 
 // NEW should overwrite OLD, so list OLD first, then NEW:
 const nextCounters = _unionCounters(prevCounters, mergedCounters.slice());
@@ -1077,6 +1132,17 @@ try {
 } catch {}
 
 nextGrants = Array.from(byName.values());
+
+// SCRUB: ensure grant types are NOT duplicated in base types array.
+// If a type exists as a grant, remove it from nextTypes so only the (E)/(L) chip shows.
+try {
+  const grantTypeSet = new Set(
+    nextGrants
+      .filter(g => (g?.kind||'') === 'type' && g?.name)
+      .map(g => _normalizeTypeKey(g.name))
+  );
+  nextTypes = nextTypes.filter(t => !grantTypeSet.has(_normalizeTypeKey(t)));
+} catch {}
 
 
 el.dataset.remoteAttrs = JSON.stringify({
@@ -1317,10 +1383,18 @@ function removeEffectLocally(cardCid, effect){
     }
 
     // ---------- GRANTS ----------
-    if (key && Array.isArray(rec.grants)){
-      rec.grants = rec.grants.filter(g => _normalizeAbilityKey(g?.name||'') !== key);
-      if (rec.grants.length === 0) delete rec.grants;
-    }
+if (Array.isArray(rec.grants)){
+  // ability grants
+  if (key){
+    rec.grants = rec.grants.filter(g => !((g?.kind||'ability')==='ability' && _normalizeAbilityKey(g?.name||'') === key));
+  }
+  // NEW: type grants
+  if (keyType){
+    rec.grants = rec.grants.filter(g => !((g?.kind||'type')==='type' && _normalizeTypeKey(g?.name||'') === keyType));
+  }
+  if (rec.grants.length === 0) delete rec.grants;
+}
+
 
     // ---------- TYPES ----------
     if (keyType && Array.isArray(rec.types)){
@@ -1352,9 +1426,17 @@ function removeEffectLocally(cardCid, effect){
       let   grants    = Array.isArray(rec.grants)    ? rec.grants.slice()    : [];
 
       // **ALWAYS nuke matching grants in remoteAttrs, even if rec.grants is missing**
-      if (key && Array.isArray(remote.grants)){
-        remote.grants = remote.grants.filter(g => _normalizeAbilityKey(g?.name||'') !== key);
-      }
+if (Array.isArray(remote.grants)){
+  // ability grants
+  if (key){
+    remote.grants = remote.grants.filter(g => !((g?.kind||'ability')==='ability' && _normalizeAbilityKey(g?.name||'') === key));
+  }
+  // NEW: type grants
+  if (keyType){
+    remote.grants = remote.grants.filter(g => !((g?.kind||'type')==='type' && _normalizeTypeKey(g?.name||'') === keyType));
+  }
+}
+
 
       // **ALWAYS nuke abilities in remoteAttrs if mirrored**
       if (key && Array.isArray(remote.abilities)){

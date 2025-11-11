@@ -575,17 +575,49 @@ function clearEOTAndBroadcast(ownerSeat, meta = {}){
   return removed;
 }
 
+// Remove any duration:'SOURCE' effects whose sourceCid is no longer on table.
+// Returns array: [{ effectId, targetCid, effect }]
+function sweepDanglingLinkedSources(){
+  const removed = [];
+  try {
+    const isLiveCid = (cid) => !!document.querySelector(`img.table-card[data-cid="${cid}"]`);
+    const gone = (e) => String(e?.duration||'').toUpperCase()==='SOURCE' && e?.sourceCid && !isLiveCid(e.sourceCid);
+    removed.push(..._removeEffectsByPredicate(gone));
+  } catch {}
+  return removed;
+}
+
+function sweepDanglingLinkedSourcesAndBroadcast(meta = {}){
+  const removed = sweepDanglingLinkedSources();
+  if (removed && removed.length){
+    try {
+      const touched = new Set(removed.map(r => r.targetCid).filter(Boolean));
+      (async () => {
+        try {
+          const { Badges } = await import('./badges.js');
+          touched.forEach(cid => Badges.refreshFor?.(cid));
+        } catch {}
+      })();
+    } catch {}
+    _broadcastBuffRemovals(removed, meta);
+  }
+  return removed;
+}
+
+
 // Auto-EOT purge hooks
 // IMPORTANT: end step = end of the turn → clear ALL EOT regardless of who applied them.
 try {
   window.addEventListener('phase:beginningOfEndStep', (e) => {
     clearEOTAndBroadcast(undefined, { reason: 'phase:beginningOfEndStep' });
+    sweepDanglingLinkedSourcesAndBroadcast({ reason:'phase:beginningOfEndStep' });
   });
 } catch {}
 
 try {
   window.addEventListener('phase:cleanup', (e) => {
     clearEOTAndBroadcast(undefined, { reason: 'phase:cleanup' });
+    sweepDanglingLinkedSourcesAndBroadcast({ reason:'phase:cleanup' });
   });
 } catch {}
 

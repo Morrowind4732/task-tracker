@@ -8,7 +8,8 @@ window.__modTime(__MOD, 'start');
 import { DeckLoading } from './deck.loading.js';
 import { CardPlacement } from './card.placement.math.js';
 import { RulesStore } from './rules.store.js';
-
+import { ScryOverlay } from './scry.js';
+import { Cascade } from './cascade.engine.js';
 
 
 // Known card type buckets for filtering
@@ -897,7 +898,7 @@ function makeDeckBtn(label, area, extraStyle = {}) {
 
 // main vertical stack (all 60×60 automatically)
 const btnDraw    = makeDeckBtn('Draw X',    'north');
-const btnCenter  = makeDeckBtn('🃏',        'center');
+const btnCenter  = makeDeckBtn('Scry X',        'center');
 const btnCascade = makeDeckBtn('Cascade X', 'south');
 
 // side buttons — keep them centered vertically; push them out a bit to clear the bigger size
@@ -949,12 +950,62 @@ const onClick = (btn, fn) => {
   });
 };
 
-// wire actions (placeholders for now; replace with your real flows)
-onClick(btnDraw,    () => openNumberPad('Draw X',    n => console.log('[Deck] Draw', n)));
-onClick(btnCascade, () => openNumberPad('Cascade X', n => console.log('[Deck] Cascade', n)));
-onClick(btnCenter,  () => console.log('[Deck] Center action'));
+// small pacing gap so multiple draws animate sanely (and RTC doesn’t choke)
+const DRAW_GAP_MS = 30;
+
+// wire actions (live)
+onClick(btnDraw, () => {
+  openNumberPad('Draw X', async (key) => {
+    // Allow 1–9 directly; 'X' opens a quick prompt for any number.
+    let count = 0;
+    if (key === 'X') {
+      const v = window.prompt('Draw how many cards?', '2');
+      count = Math.max(1, Math.floor(Number(v) || 0));
+    } else {
+      count = Math.max(1, Math.floor(Number(key) || 1));
+    }
+
+    // If no deck yet, open the loader instead of doing nothing.
+    if (deckZone.dataset.hasDeck !== '1') {
+      openLoader();
+      return;
+    }
+
+    // Draw N to hand using the same path as single-tap draws.
+    for (let i = 0; i < count; i++) {
+  const ok = DeckLoading.drawOneToHand(deckZone);
+  if (!ok) break;
+
+  // 🔵 NEW: phase advance signal per draw
+  try {
+    const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+    window.TurnUpkeep?.recordDraw?.(seatNow, 1);
+    window.dispatchEvent(new CustomEvent('turn:localDraw', { detail: { seat: seatNow }}));
+  } catch {}
+
+  await new Promise(r => setTimeout(r, DRAW_GAP_MS));
+}
+
+  });
+});
+
+
+onClick(btnCascade, async () => {
+  try {
+    Cascade.init({ combatAnchorSelector: '.mid-gap', offsetX: -32, zBase: 50000 });
+    await Cascade.openQuickPick(); // opens 1–9, X, Special and runs the flow
+  } catch (e) {
+    console.warn('[Cascade] failed', e);
+  }
+});
+
+onClick(btnCenter, () => {
+  ScryOverlay.open();
+});
+
 onClick(btnSearch,  () => { console.log('[Deck] 🔍 open'); openDeckSearchOverlay(); });
 onClick(btnAdd,     () => { console.log('[Deck] ➕ open'); openAddAnyCardOverlay(); });
+
 
 
 
@@ -1014,8 +1065,17 @@ _currentDeckList = lib.map(c => ({
     DeckLoading.open('');
   };
   const drawOne = () => {
-    if (deckZone.dataset.hasDeck === '1') DeckLoading.drawOneToHand(deckZone);
-  };
+  if (deckZone.dataset.hasDeck !== '1') return;
+  const ok = DeckLoading.drawOneToHand(deckZone);
+  if (ok) {
+    try {
+      const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+      window.TurnUpkeep?.recordDraw?.(seatNow, 1);
+        try { window.dispatchEvent(new CustomEvent('turn:localDraw')); } catch {}
+    } catch {}
+  }
+};
+
 
   // Click/touch: if empty -> open loader, else -> draw
   deckZone.addEventListener('click', (e) => {

@@ -77,6 +77,18 @@ const PANEL_SCALE_MAX = 1.00;
 const STICKER_SCALE_MIN = 0.55;
 const STICKER_SCALE_MAX = 1.20;
 
+// --- Badge fade vs Camera scale (opacity only affects the RIGHT badge panel)
+// Badges start fading as we approach the cutoff, and are fully invisible at/under it.
+const BADGE_FADE_CUTOFF = 0.3067789490223631; // fully invisible at/under this scale
+const BADGE_FADE_RANGE  = 0.12;                // start fading at (cutoff + range)
+
+// --- Sticker fade vs Camera scale (P/T + Loyalty + buff bubble)
+// Stickers start fading as we approach the cutoff, and are fully invisible at/under it.
+// (Set independently from BADGE_* so you can tune them separately.)
+const STICKER_FADE_CUTOFF = 0.30567789490223631;
+const STICKER_FADE_RANGE  = 0.12;
+
+
 // --- Visibility gating (must be well on-screen to show)
 const VIS_SHOW_RATIO = 0.60; // need ≥60% of the card visible to show
 const VIS_HIDE_RATIO = 0.40; // hide when it falls ≤40% visible
@@ -419,17 +431,51 @@ if (Array.isArray(row.buffs))     out.buffs     = row.buffs.slice();    // NEW: 
   } catch {}
 
   // RTC remoteAttrs fallback
-  try {
-    const raw = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : null;
-    if (raw) {
-      if (Array.isArray(raw.abilities)) out.abilities = raw.abilities.slice();
-if (Array.isArray(raw.types))     out.types     = raw.types.slice();
-if (Array.isArray(raw.counters))  out.counters  = raw.counters.slice();
-if (Array.isArray(raw.grants))    out.grants    = raw.grants.slice();   // NEW
-if (Array.isArray(raw.buffs))     out.buffs     = raw.buffs.slice();    // NEW
+try {
+  const raw = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : null;
 
+  // helpers: case-insensitive union for strings, and by-kind union for counters
+  const _unionCI = (a = [], b = []) => {
+    const seen = new Set(a.map(s => String(s).trim().toLowerCase()));
+    const out  = a.slice();
+    (b || []).forEach(s => {
+      const t = String(s || '').trim();
+      if (!t) return;
+      const k = t.toLowerCase();
+      if (!seen.has(k)) { seen.add(k); out.push(t); }
+    });
+    return out;
+  };
+  const _unionCounters = (a = [], b = []) => {
+    const by = new Map();
+    (a || []).forEach(c => {
+      const k = String(c?.kind || c?.name || '').trim().toLowerCase();
+      if (k) by.set(k, { kind: c.kind || c.name, qty: Number(c.qty || 0) });
+    });
+    (b || []).forEach(c => {
+      const k = String(c?.kind || c?.name || '').trim().toLowerCase();
+      if (!k) return;
+      // NEW should overwrite OLD
+      by.set(k, { kind: c.kind || c.name, qty: Number(c.qty || 0) });
+    });
+    return Array.from(by.values());
+  };
+  const _mergeGrants = (a = [], b = []) => {
+    const by = new Map();
+    const key = s => String(s || '').trim().toLowerCase();
+    (a || []).forEach(g => { if (g?.name) by.set(key(g.name), g); });
+    (b || []).forEach(g => { if (g?.name) by.set(key(g.name), g); }); // remote wins
+    return Array.from(by.values());
+  };
 
-      if (raw.pt && typeof raw.pt === 'string'){
+  if (raw) {
+    if (Array.isArray(raw.abilities)) out.abilities = _unionCI(out.abilities, raw.abilities);
+    if (Array.isArray(raw.types))     out.types     = _unionCI(out.types,     raw.types);
+    if (Array.isArray(raw.counters))  out.counters  = _unionCounters(out.counters, raw.counters);
+    if (Array.isArray(raw.grants))    out.grants    = _mergeGrants(out.grants, raw.grants); // keep both Elf & Wizard
+    if (Array.isArray(raw.buffs))     out.buffs     = raw.buffs.slice(); // legacy passthrough
+
+    if (raw.pt && typeof raw.pt === 'string'){
         const [p,t] = raw.pt.split('/').map(x=>Number(x));
         if (Number.isFinite(p)) out._pow = p;
         if (Number.isFinite(t)) out._tou = t;
@@ -579,7 +625,7 @@ function ensurePanelFor(el){
       border-radius:0;
       color:var(--ui-text);
       font: 600 13px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-      display:flex; flex-direction:column; gap:6px; z-index:8999;
+      display:flex; flex-direction:column; gap:6px; z-index:900;
       pointer-events:none;
       transform-origin: left center;
     `;
@@ -595,15 +641,16 @@ function ensurePanelFor(el){
     st.dataset.cid = cid;
     st.textContent = '';
     st.style.cssText = `
-      position:fixed; z-index:99999; pointer-events:none;
-      background:linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
-      color:var(--ui-text); border:1px solid var(--ui-border);
-      border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.45);
-      font-weight:900; font-variant-numeric: tabular-nums;
-      padding:4px 8px; min-width:44px; text-align:center;
-      transform:translateZ(0); transform-origin: right bottom;
-      display:none;
-    `;
+  position:fixed; z-index:900; pointer-events:none;
+  background:linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
+  color:var(--ui-text); border:1px solid var(--ui-border);
+  border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.45);
+  font-weight:900; font-variant-numeric: tabular-nums;
+  padding:4px 8px; min-width:44px; text-align:center;
+  transform:translateZ(0); transform-origin: left top; /* top-left anchoring */
+  display:none;
+`;
+
     document.body.appendChild(st);
     info.sticker = st;
 
@@ -614,7 +661,7 @@ function ensurePanelFor(el){
       ls.dataset.cid = cid;
       ls.textContent = '';
       ls.style.cssText = `
-        position:fixed; z-index:99999; pointer-events:none;
+        position:fixed; z-index:900; pointer-events:none;
         background:linear-gradient(180deg, rgba(60,45,10,.9), rgba(40,30,8,.9));
         color:#fff; border:1px solid #fbbf24; /* amber-400 */
         border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.45);
@@ -643,7 +690,7 @@ function ensurePanelFor(el){
       b.textContent = label;
       b.dataset.cid = cid;
       b.style.cssText = `
-        position:fixed; z-index:99998;
+        position:fixed; z-index:900;
         width:${LBTN_SIZE_BASE}px; height:${LBTN_SIZE_BASE}px;
         border-radius:999px; display:flex; align-items:center; justify-content:center;
         border:1px solid var(--ui-border);
@@ -661,10 +708,11 @@ function ensurePanelFor(el){
     };
 
     // Wand
-    const btnWand = makeBtn('🪄');
-    btnWand.title = 'Abilities / Attributes';
-    // Anchor scaling to the LEFT edge so it doesn’t drift with zoom
-    btnWand.style.transformOrigin = 'left center';
+const btnWand = makeBtn('🪄');
+btnWand.title = 'Abilities / Attributes';
+// Anchor to TOP-LEFT so vertical top baseline never moves while scaling
+btnWand.style.transformOrigin = 'left top';
+
 
     btnWand.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -744,10 +792,11 @@ function ensurePanelFor(el){
     });
 
     // Tap
-    const btnTap = makeBtn('{T}');
-    btnTap.title = 'Tap / Untap';
-    // Anchor scaling to the RIGHT edge (already assumed by your math)
-    btnTap.style.transformOrigin = 'right center';
+const btnTap = makeBtn('{T}');
+btnTap.title = 'Tap / Untap';
+// Anchor to TOP-RIGHT so vertical top baseline never moves while scaling
+btnTap.style.transformOrigin = 'right top';
+
 
     btnTap.dataset.mana = '{T}';
     try {
@@ -906,9 +955,16 @@ function renderPanel(el, info){
   const durAbilsFromRules = (rulesAdds.abilities || []).map(o => ({ name: titleCase(o.name), duration: o.duration || '' }));
 
   // Duration-based grants from CardAttributes.grants
-  const durGrantsFromAttrs = (Array.isArray(grant.grants) ? grant.grants : [])
-    .map(g => ({ name: titleCase(g?.name||''), duration: String(g?.duration||'').toUpperCase(), source: g?.source }))
-    .filter(g => g.name);
+const durGrantsFromAttrs = (Array.isArray(grant.grants) ? grant.grants : [])
+  .map(g => ({
+    kind: String(g?.kind || 'ability'),
+    name: titleCase(g?.name || ''),
+    duration: String(g?.duration || '').toUpperCase(),
+    source: g?.source
+  }))
+  .filter(g => g.name);
+
+
 
   // 🔹 Seed a local name→duration map so legacy strings can pick up durations
   const _durByName = new Map();
@@ -999,12 +1055,10 @@ function renderPanel(el, info){
   }
 
   // ---- RENDER LEGACY GRANTED TYPES (no duration metadata) -------------------
-  for (const tRaw of legacyGrantedTypes){
-    const key = String(tRaw).trim();
-    if (!key || seenBaseType.has(canon(key))) continue;
-    seenBaseType.add(canon(key));
-    if (appendPillUnique(rows, 'type', titleCase(key), '')) { count++; }
-  }
+// DISABLED: Type pills must come from RulesStore so EOT / Linked cleanup works.
+// (We still accept base typeline and RulesStore duration types below.)
+/* no-op */
+
 
   // ---- RENDER RULES TYPES WITH DURATION ------------------------------------
   for (const t of durTypesFromRules){
@@ -1034,9 +1088,14 @@ function renderPanel(el, info){
   }
 
   // ---- RENDER ATTRS.GRANTS WITH DURATION + LINKED SOURCE -------------------
-  for (const g of durGrantsFromAttrs){
-    if (appendPillUnique(rows, 'abil', g.name, g.duration, g.source || null)) { count++; }
-  }
+// Only render ability-style grants from attrs; type grants must mirror RulesStore.
+// This ensures type adds vanish when RulesStore clears them.
+for (const g of durGrantsFromAttrs){
+  if (String(g.kind).toLowerCase() === 'type') continue; // ignore type grants from attrs
+  if (appendPillUnique(rows, 'abil', g.name, g.duration, g.source || null)) { count++; }
+}
+
+
 
 
   // --- COUNTERS (loyalty / +1/+1 / etc.) ---  [DEDUPED + GUARDED]
@@ -1241,7 +1300,38 @@ function followLoop(info){
     }
 
     // --- RIGHT BADGE PANEL POSITION
-    info.panel.style.transform = `scale(${sPanel})`;
+info.panel.style.transform = `scale(${sPanel})`;
+
+// Fade the RIGHT badge panel based on Camera zoom
+{
+  const camScale = (window.Camera?.state?.scale ?? 1);
+  // Linear fade: 1.0 when camScale >= cutoff+range, 0.0 when camScale <= cutoff
+  let alpha = (camScale - BADGE_FADE_CUTOFF) / BADGE_FADE_RANGE;
+  alpha = clamp(alpha, 0, 1);
+  info.panel.style.opacity = String(alpha);
+}
+
+// Fade STICKERS (P/T + Loyalty) and the buff bubble independently
+{
+  const camScale = (window.Camera?.state?.scale ?? 1);
+  let alphaS = (camScale - STICKER_FADE_CUTOFF) / STICKER_FADE_RANGE;
+  alphaS = clamp(alphaS, 0, 1);
+
+  // PT sticker
+  if (info.sticker) {
+    info.sticker.style.opacity = String(alphaS);
+  }
+  // Loyalty sticker
+  if (info.loySticker) {
+    info.loySticker.style.opacity = String(alphaS);
+  }
+  // Buff bubble follows stickers so it fades with them too
+  if (info.buffWrap) {
+    info.buffWrap.style.opacity = String(alphaS);
+  }
+}
+
+
 
     // panel center Y target = card center
     const desiredCY = (r.top + r.bottom) / 2;
@@ -1372,23 +1462,38 @@ function followLoop(info){
       info.sticker.style.borderColor = boostedOrNerfedColor || baseBorderColor;
     }
 
-    info.sticker.style.transform = `translateZ(0) scale(${sSticker})`;
-    info.sticker.style.fontSize  = `${18 * sSticker}px`;
-    info.sticker.style.padding   = `${4 * sSticker}px ${8 * sSticker}px`;
+    // Scale only via transform. Keep intrinsic metrics constant so offsetWidth/Height
+// stay unscaled and our math (× sSticker) is exact.
+info.sticker.style.transform = `translateZ(0) scale(${sSticker})`;
+info.sticker.style.fontSize  = `18px`;
+info.sticker.style.padding   = `4px 8px`;
 
-    // position sticker near card corner with user offsets
-    const inset = 6;
-    const stW = info.sticker.offsetWidth;
-    const stH = info.sticker.offsetHeight;
 
-    const sxBase = r.right  - stW - inset;
-    const syBase = r.bottom - stH - inset;
+// position sticker near card corner with user offsets
+const inset = 6;
+const stWUnscaled = info.sticker.offsetWidth;   // unscaled box
+const stHUnscaled = info.sticker.offsetHeight;
 
-    const sx = clamp(sxBase + cfgPTOffsetX(), 0, window.innerWidth  - stW);
-    const sy = clamp(syBase + cfgPTOffsetY(), 0, window.innerHeight - stH);
+const stWScaled = stWUnscaled * sSticker;
+const stHScaled = stHUnscaled * sSticker;
 
-    info.sticker.style.left = `${sx}px`;
-    info.sticker.style.top  = `${sy}px`;
+// Because transform-origin is TOP-LEFT, compute top-left that yields a bottom-right hug
+const sxBase = r.right  - stWScaled - inset;
+const syBase = r.bottom - stHScaled - inset;
+
+const sx = clamp(sxBase + cfgPTOffsetX(), 0, window.innerWidth  - stWScaled);
+const sy = clamp(syBase + cfgPTOffsetY(), 0, window.innerHeight - stHScaled);
+
+info.sticker.style.left = `${sx}px`;
+info.sticker.style.top  = `${sy}px`;
+
+// expose scale for buff bubble to match PT sticker’s visual size
+info.__stickerScale = sSticker;
+
+
+// expose scale for buff bubble
+info.__stickerScale = sSticker;
+
 
     // --- LOYALTY STICKER (gold, bottom-right stacked above PT)
 try {
@@ -1404,33 +1509,37 @@ try {
       // scale similar to PT, but keep its own knob
       let sLoy = clamp((r.height / 180), STICKER_SCALE_MIN, STICKER_SCALE_MAX) * cfgLOYScale();
 
-      ls.style.display = '';
-      ls.textContent   = loyText;
+ls.style.display = '';
+ls.textContent   = loyText;
 
-      // keep amber look
-      ls.style.color       = '#fff';
-      ls.style.borderColor = '#fbbf24';
+ls.style.color       = '#fff';
+ls.style.borderColor = '#fbbf24';
 
-      ls.style.transform = `translateZ(0) scale(${sLoy})`;
-      ls.style.fontSize  = `${16 * sLoy}px`;
-      ls.style.padding   = `${4 * sLoy}px ${8 * sLoy}px`;
+// Same principle: transform handles visual scale; keep base metrics fixed
+ls.style.transform = `translateZ(0) scale(${sLoy})`;
+ls.style.fontSize  = `16px`;
+ls.style.padding   = `4px 8px`;
 
-      // position at bottom-right, stacked just ABOVE the PT sticker
-      // we already computed PT sticker position as (sx, sy) with dimensions (stW, stH)
-      const inset = 6;
-      const loyW = ls.offsetWidth;
-      const loyH = ls.offsetHeight;
 
-      // Base: same X as PT; Y sits just above the PT bubble with a small gap
-      const STACK_GAP = 4;
-      const lxBase = (sx + (stW - loyW));            // right-align with PT
-      const lyBase = (sy - loyH - STACK_GAP);        // stacked above PT
+// position at bottom-right, stacked just ABOVE the PT sticker (scale-aware)
+const STACK_GAP = 4;
 
-      const lx = clamp(lxBase + cfgLOYOffsetX(), 0, window.innerWidth  - loyW);
-      const ly = clamp(lyBase + cfgLOYOffsetY(), 0, window.innerHeight - loyH);
+// Read unscaled sizes then convert to *visual* scaled sizes
+const loyWUnscaled = ls.offsetWidth;
+const loyHUnscaled = ls.offsetHeight;
+const loyWScaled   = loyWUnscaled * sLoy;
+const loyHScaled   = loyHUnscaled * sLoy;
 
-      ls.style.left = `${lx}px`;
-      ls.style.top  = `${ly}px`;
+// We already computed PT (sx, sy) and scaled dims (stWScaled, stHScaled) above
+const lxBase = sx + (stWScaled - loyWScaled);   // right-align with scaled PT
+const lyBase = sy - loyHScaled - STACK_GAP;     // stacked above scaled PT
+
+const lx = clamp(lxBase + cfgLOYOffsetX(), 0, window.innerWidth  - loyWScaled);
+const ly = clamp(lyBase + cfgLOYOffsetY(), 0, window.innerHeight - loyHScaled);
+
+ls.style.left = `${lx}px`;
+ls.style.top  = `${ly}px`;
+
     }
   }
 } catch {}

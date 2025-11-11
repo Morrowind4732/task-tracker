@@ -8,12 +8,12 @@ import { UserInterface } from './user.interface.js';
 
 const Phase = Object.freeze({
   UNTAP: 'untap',
-  UPKEEP: 'upkeep',
-  DRAW: 'draw',
+  UPKEEP_DRAW: 'upkeep_draw', // ← single combined phase
   MAIN1: 'main1',
   COMBAT: 'combat',
   MAIN2_ENDING: 'main2_ending'
 });
+
 
 // -----------------------------
 // Internal state
@@ -166,30 +166,26 @@ function _enterPhase(next, meta={}){
   _S.phase = next;
   _S.txid++;
 
-  if (next===Phase.UNTAP && _S.activeSeat===mySeatNum()){
-    _resetTalliesForNewTurn();
-  }
-
+  // keep UI roles + pill accurate locally
   try{
     const UI = UserInterface;
     if (UI && UI._STATE){
       if (_S.activeSeat === UI._STATE.seat) UI._markAttackerUI();
       else UI._markDefenderUI();
+      UI.setPhase?.(next, _S.activeSeat); // ← update center pill
     }
   }catch{}
 
-  fire(`phase:exit:${prev}`, {prev,next,...meta});
-  fire(`phase:enter:${next}`, {prev,next,...meta});
+  fire(`phase:exit:${prev}`, {prev,next,meta});
+  fire(`phase:enter:${next}`, {prev,next,meta});
 
   switch(next){
     case Phase.UNTAP:
       _autoUntapEligible();
-      _enterPhase(Phase.UPKEEP, {reason:'untap-complete'});
-      break;
-    case Phase.UPKEEP:
+      _enterPhase(Phase.UPKEEP_DRAW, {reason:'untap-complete'});
+      return; // already advanced
+    case Phase.UPKEEP_DRAW:
       _S.endStepFired = false;
-      break;
-    case Phase.DRAW:
       break;
     case Phase.MAIN1:
       break;
@@ -203,8 +199,10 @@ function _enterPhase(next, meta={}){
       break;
   }
 
-  _broadcastPhase();
+  _broadcastPhase(); // ← mirror to opponent each hop
 }
+
+
 
 function _autoUntapEligible(){
   const mine = String(mySeatNum());
@@ -248,7 +246,24 @@ function endTurnFrom(seatWhoEnded){
   _runCleanup();
 
   _S.turn = (Number(_S.turn)||1) + 1;
-  _S.activeSeat = nextSeat;
+_S.activeSeat = nextSeat;
+
+if (stateUI){
+  stateUI.turn = _S.turn;
+  stateUI.activeSeat = _S.activeSeat;
+  stateUI.playerLabel = (nextSeat===1)?'Player 1':'Player 2';
+  UI.setTurn(stateUI.turn, stateUI.playerLabel);
+  if (stateUI.activeSeat===stateUI.seat) UI._markAttackerUI(); else UI._markDefenderUI();
+  UI.setPhase?.(Phase.UNTAP, _S.activeSeat); // pill bumps immediately; _enterPhase will follow
+}
+
+if (_S.activeSeat === mySeatNum()) {
+  _enterPhase(Phase.UNTAP, { reason: 'local-ended-turn' });
+} else {
+  _enterPhase(Phase.MAIN2_ENDING, { reason: 'waiting-for-opponent' });
+}
+
+
 
   if (stateUI){
     stateUI.turn = _S.turn;
@@ -268,8 +283,13 @@ function endTurnFrom(seatWhoEnded){
   }catch(err){ console.warn('[TurnUpkeep] rtcSend turn_pass failed', err); }
 }
 
-function clickDraw(){ if (_S.phase!==Phase.UPKEEP) return; _enterPhase(Phase.DRAW,{reason:'player-clicked-draw'}); }
-function finishDraw(){ if (_S.phase!==Phase.DRAW) return; _enterPhase(Phase.MAIN1,{reason:'finish-draw'}); }
+// Call this after a successful local draw (e.g., DeckLoading.drawOneToHand returns true)
+function noteLocalDraw(){
+  if (_S.phase === Phase.UPKEEP_DRAW) {
+    _enterPhase(Phase.MAIN1, { reason:'local-draw' });
+  }
+}
+
 function clickCombat(){
   if (_S.phase!==Phase.MAIN1) return;
   _enterPhase(Phase.COMBAT,{reason:'player-pressed-combat'});
@@ -295,24 +315,24 @@ function applyPhaseSetFromRTC(msg){
     if (txid && txid < _S.txid) return;
 
     if (seat !== mySeatNum()){
-      // Mirror authoritative seat + phase from remote
-      _S.activeSeat = Number.isFinite(seat) ? seat : _S.activeSeat;
-      _S.phase      = phase;
-      _S.txid       = txid || _S.txid;
+  _S.activeSeat = Number.isFinite(seat) ? seat : _S.activeSeat;
+  _S.phase      = phase;
+  _S.txid       = txid || _S.txid;
 
-      fire(`phase:mirror:${phase}`, { seat:_S.activeSeat, phase, txid });
+  // reflect in our UI immediately
+  try { UserInterface?.setPhase?.(phase, _S.activeSeat); } catch {}
 
-      // If THEY just entered their end step on their machine, mirror the
-      // "beginning of end step" + do our own cleanup so both sides drop EOT.
-      if (phase === Phase.MAIN2_ENDING) {
-        if (!_S.endStepFired){
-          _S.endStepFired = true;
-          // 🔴 CRITICAL: announce end step with the REMOTE seat that is ending the turn
-          fire('phase:beginningOfEndStep', { seat:_S.activeSeat, turn:_S.turn, txid:_S.txid });
-        }
-        _runCleanup();
-      }
+  fire(`phase:mirror:${phase}`, { seat:_S.activeSeat, phase, txid });
+
+  if (phase === Phase.MAIN2_ENDING) {
+    if (!_S.endStepFired){
+      _S.endStepFired = true;
+      fire('phase:beginningOfEndStep', { seat:_S.activeSeat, turn:_S.turn, txid:_S.txid });
     }
+    _runCleanup();
+  }
+}
+
   }catch(e){
     console.warn('[TurnUpkeep] applyPhaseSetFromRTC failed', e);
   }
@@ -324,13 +344,53 @@ function applyPhaseSetFromRTC(msg){
 // Cleanup stub
 // -----------------------------
 // CTRL-F anchor: [TU:cleanup]
+// CTRL-F anchor: [TU:cleanup]
 function _runCleanup(){
   try{
-    // 1) Clear EOT effects for the seat whose turn is ending
-    const seat = Number(_S.activeSeat) || mySeatNum();
-    try { window.RulesStore?.clearEOT?.(seat); } catch {}
+    // 1) Canonical: RulesStore nukes all EOT and broadcasts removals
+    try { window.RulesStore?.clearEOTAndBroadcast?.(undefined, { reason:'turnupkeep:_runCleanup' }); } catch {}
 
-    // 2) Refresh visuals (badges/tooltips) so the removals are visible immediately
+    // 2) Also sweep dangling linked-to-source effects (SOURCE) whose source left play
+    try { window.RulesStore?.sweepDanglingLinkedSourcesAndBroadcast?.({ reason:'turnupkeep:_runCleanup' }); } catch {}
+
+    // 3) Hard DOM sweep for any leftover EOT mirrors in datasets (defensive)
+    try {
+      const cards = document.querySelectorAll('img.table-card[data-cid]');
+      cards.forEach(n => {
+        const cid = n.dataset.cid;
+
+        // remoteAttrs.grants: strip any { duration:"EOT" } (e.g., {name:"Elf",duration:"EOT"})
+        try{
+          const attrs = JSON.parse(n.dataset.remoteAttrs || '{}');
+          if (Array.isArray(attrs.grants)){
+            attrs.grants = attrs.grants.filter(g => String(g?.duration||'').toUpperCase() !== 'EOT');
+          }
+          // also, if a plain types[] mirror still contains the granted type, and it only existed due to EOT, drop it
+          if (Array.isArray(attrs.types)){
+            // If we ever marked temp types with a sentinel, they’d be removed here;
+            // conservative approach: keep attrs.types as-is unless a grant said EOT.
+            // (No-op beyond grant removal)
+          }
+          n.dataset.remoteAttrs = JSON.stringify(attrs);
+        }catch{}
+
+        // rules.tempBuffs: drop any " ... EOT" notes that feed badges
+        try{
+          const rules = JSON.parse(n.dataset.rules || '{}');
+          if (Array.isArray(rules.tempBuffs)){
+            rules.tempBuffs = rules.tempBuffs.filter(row => {
+              const txt = (typeof row === 'string') ? row : row?.text;
+              return !/EOT\b/i.test(String(txt||''));
+            });
+            n.dataset.rules = JSON.stringify(rules);
+          }
+        }catch{}
+
+        // badgesView/grant caches are derived; we just refresh visuals below
+      });
+    } catch {}
+
+    // 4) Refresh visuals (badges/tooltips) so the removals are visible immediately
     try {
       document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
         const cid = n.dataset.cid;
@@ -339,16 +399,19 @@ function _runCleanup(){
       });
     } catch {}
 
-    // 3) Any additional end-step housekeeping you want to add later
+    // 5) Any additional end-step housekeeping you want to add later
     // window.RulesStore?.clearMarkedDamageForSeat?.(seat);
     // window.Hand?.discardDownToMax?.(seat);
 
-    // 4) Fire a standard cleanup event for any other subscribers
+    // 6) Fire a standard cleanup event for any other subscribers
+    const seat = Number(_S.activeSeat) || mySeatNum();
     fire('phase:cleanup', { seat, turn:_S.turn });
   }catch(e){
     console.warn('[TurnUpkeep] cleanup error', e);
   }
 }
+
+
 
 
 // -----------------------------
@@ -679,8 +742,7 @@ export const TurnUpkeep = {
   Phase,
   state,
   endTurnFrom,
-  clickDraw,
-  finishDraw,
+  noteLocalDraw, 
   clickCombat,
   onCombatFinishedFromRTC,
   applyTurnPassFromRTC,
@@ -720,16 +782,14 @@ window.TU = TU;
 // CTRL-F anchor: [TU:phase-events]
 window.addEventListener('phase:beginningOfEndStep', (ev) => {
   try {
-    const seat = Number(ev?.detail?.seat) || mySeatNum();
-    window.RulesStore?.clearEOT?.(seat);
-    // Refresh visuals after the purge
-    document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
-      const cid = n.dataset.cid;
-      window.Badges?.refreshFor?.(cid);
-      window.Tooltip?.refreshFor?.(cid);
-    });
-    console.log('[TurnUpkeep] EOT cleared on beginningOfEndStep for seat', seat);
+    _runCleanup(); // same robust path
+    console.log('[TurnUpkeep] EOT cleared (robust) on beginningOfEndStep');
   } catch (e) {
     console.warn('[TurnUpkeep] EOT listener failed', e);
   }
 });
+
+
+// near the bottom of the file, once:
+window.addEventListener('turn:localDraw', () => { try{ noteLocalDraw(); }catch{} });
+

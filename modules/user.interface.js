@@ -248,7 +248,7 @@ body { color: var(--ui-text); }
   right: 0;
   top: 0;
   height: var(--ui-life-h);
-  z-index: 1000;
+  z-index: 10000;
   background: linear-gradient(180deg, var(--ui-deep-2), var(--ui-deep-1));
   border-bottom: 1px solid rgba(255,255,255,.08);
   box-shadow: 0 8px 20px rgba(0,0,0,.25);
@@ -301,7 +301,7 @@ body { color: var(--ui-text); }
   flex-direction: column;
   padding: 12px 16px 16px;
   box-sizing: border-box;
-  z-index: 900; /* under life bar, above table */
+  z-index: 9000; /* under life bar, above table */
 }
 body.ui-drawer-open .ui-drawer { transform: translateX(0); }
 
@@ -654,7 +654,7 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
   display:grid;
   justify-items:center;
   gap:12px;
-  z-index:950;
+  z-index:9500;
   transition:transform 300ms cubic-bezier(.22,.61,.36,1);
   pointer-events:none;
 }
@@ -724,7 +724,7 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
 
 /* Life Editor Overlay (compact 3-column: Life / Commander / Infect) */
 #lifeOverlay {
-  position: fixed; inset: 0; z-index: 2000;
+  position: fixed; inset: 0; z-index: 20000;
   display: none; align-items: center; justify-content: center;
   background: radial-gradient(ellipse at 50% 40%, rgba(0,0,0,.65), rgba(0,0,0,.85));
 }
@@ -740,7 +740,15 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
 #lifeOverlay .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 #lifeOverlay h4{margin:0;font-size:14px;letter-spacing:.25px;}
 #lifeOverlay .grid{
-  display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; text-align:center; margin-top:6px;
+  display:grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap:10px;
+  text-align:center;
+  margin-top:6px;
+
+  /* Center every cell’s content so ▲/▼ align to the VALUE box centerline */
+  justify-items:center;   /* horizontal centering per column */
+  align-items:center;     /* vertical centering of row items */
 }
 #lifeOverlay .label{opacity:.9; font-weight:700; margin-bottom:4px;}
 #lifeOverlay .arrow{
@@ -749,12 +757,24 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
   border: 1px solid rgba(255,255,255,.12);
   background: linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
   user-select:none;
+
+  /* ensure the arrow is centered to the same axis as the value box */
+  justify-self:center;
 }
 #lifeOverlay .value{
-  width:100%; height:34px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
-  background: rgba(12,22,36,.6); color: var(--ui-text); font-weight:800;
+  width:100%;
+  max-width:140px;              /* gives a box width “anchor” the arrows center against */
+  height:34px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
+  background: rgba(12,22,36,.6);
+  color: var(--ui-text); font-weight:800;
   display:flex; align-items:center; justify-content:center;
 }
+
+/* per-column value colors */
+#lifeOverlay #lifeTotalValue  { color:#ff5c5c; }  /* Life – red */
+#lifeOverlay #lifeMidValue    { color:#ffffff; }  /* Commander – white */
+#lifeOverlay #lifePoisonValue { color:#61d36e; }  /* Infect – green */
+
 #lifeOverlay .footer{display:flex; gap:8px; justify-content:flex-end; margin-top:12px;}
 #lifeOverlay .btn{
   padding:9px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.12);
@@ -763,6 +783,9 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
 }
 #lifeOverlay .btn.primary{ background: linear-gradient(180deg, #2f8dff, #1b68c6); }
 
+#lifeTotalValue  { color: #ff4d4d; }   /* Life = red */
+#lifeMidValue    { color: #ffffff; }   /* Commander = white */
+#lifePoisonValue { color: #4cff72; }   /* Infect = green */
 
 
 /* Rail slide-left when drawer open IF the rail is on the right edge */
@@ -1398,9 +1421,22 @@ if (!document.getElementById('lifeOverlay')) {
   function wireEvents() {
   // 🔵 Life pills → open editor overlay
   const pillP1 = document.getElementById('ui-p1-pill');
-  const pillP2 = document.getElementById('ui-p2-pill');
-  pillP1?.addEventListener('pointerdown', (e) => { if (!e.button) openLifeOverlay(1); });
-  pillP2?.addEventListener('pointerdown', (e) => { if (!e.button) openLifeOverlay(2); });
+const pillP2 = document.getElementById('ui-p2-pill');
+
+// open the editor for whichever seat the pill CURRENTLY represents
+pillP1?.addEventListener('pointerdown', (e) => {
+  if (e.button && e.button !== 0) return;
+  e.preventDefault();
+  const seat = Number(pillP1.getAttribute('data-seat')) || 1;
+  openLifeOverlay(seat);
+});
+pillP2?.addEventListener('pointerdown', (e) => {
+  if (e.button && e.button !== 0) return;
+  e.preventDefault();
+  const seat = Number(pillP2.getAttribute('data-seat')) || 2;
+  openLifeOverlay(seat);
+});
+
 
   // Overlay controls (compact ▲ value ▼ layout)
   const overlay      = document.getElementById('lifeOverlay');
@@ -2180,17 +2216,56 @@ document.getElementById('ui-btn-load')?.addEventListener('pointerdown', async (e
     if (tn) tn.textContent = `Turn: ${STATE.turn} – ${STATE.playerLabel} – Phase: ${STATE.phase || ''}`;
 
     // 🔵 NEW: green highlight ring around active seat's pill (handles flipSides)
-    const leftIsSeat  = STATE.flipSides ? 2 : 1;
-    const rightIsSeat = STATE.flipSides ? 1 : 2;
+const leftIsSeat  = STATE.flipSides ? 2 : 1;
+const rightIsSeat = STATE.flipSides ? 1 : 2;
 
-    left?.classList.toggle('is-active',  STATE.activeSeat === leftIsSeat);
-    right?.classList.toggle('is-active', STATE.activeSeat === rightIsSeat);
+// expose which seat each pill represents right now (used by click handler)
+if (left)  left.setAttribute('data-seat', String(leftIsSeat));
+if (right) right.setAttribute('data-seat', String(rightIsSeat));
+
+left?.classList.toggle('is-active',  STATE.activeSeat === leftIsSeat);
+right?.classList.toggle('is-active', STATE.activeSeat === rightIsSeat);
+
   }
 
 
   // ------------------------------------------------------------------
   // PUBLIC SETTERS (called from game logic)
   // ------------------------------------------------------------------
+  function setPhase(phaseKey, activeSeatNow) {
+  // Normalize polite label
+  const LABEL = {
+    untap:         'Untap',
+    upkeep_draw:   'Upkeep/Draw',  // ← exact text you wanted
+    main1:         'Main 1',
+    combat:        'Combat',
+    main2_ending:  'Main 2 / End'
+  };
+  const txt = LABEL[String(phaseKey).toLowerCase()] || String(phaseKey);
+
+  STATE.phase = txt;
+  if (Number.isFinite(activeSeatNow)) STATE.activeSeat = Number(activeSeatNow);
+
+  // center pill text
+  try {
+    const pill = document.getElementById('ui-pill-phase');
+    if (pill) pill.textContent = txt;
+  } catch {}
+
+  // green ring for active seat
+  try {
+    const leftPill  = document.getElementById('ui-pill-left');
+    const rightPill = document.getElementById('ui-pill-right');
+    const mySeat    = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+
+    // who is active vs me determines which pill gets ring
+    const isMine = (STATE.activeSeat === mySeat);
+    leftPill?.classList.toggle('is-active', isMine && mySeat === 1 || (!isMine && mySeat !== 1));
+    rightPill?.classList.toggle('is-active', isMine && mySeat === 2 || (!isMine && mySeat !== 2));
+  } catch {}
+}
+
+  
   function setTurn(turnNumber, playerLabel, activeSeatNow, phaseName) {
     // update turn counter + label text in life bar
     if (Number.isFinite(turnNumber)) {

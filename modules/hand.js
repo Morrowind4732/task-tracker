@@ -13,58 +13,114 @@ import { CardPlacement } from './card.placement.math.js';
 
 // ───────────────────────────────── Opening Hand + Mulligan (interceptor flow) ──────────────────────────────
 const DECK_EL_ID = 'pl-deck';
-let __openingHandPatched = false; // drawOneToHand patched?
+
 let __openingHandDone    = false; // user has kept a hand?
 
 function wait(ms){ return new Promise(r => setTimeout(r, ms)); }
 
-function ensureMulliganOverlay(){
-  if (document.getElementById('mulliganOverlay')) return;
+ // AFTER — ensureMulliganOverlay() centered wrapper
+ function ensureMulliganOverlay(){
+   if (document.getElementById('mulliganOverlay')) return;
 
-  const wrap = document.createElement('div');
-  wrap.id = 'mulliganOverlay';
-  wrap.style.cssText = [
-    'position:fixed','inset:0','display:none',
-    'align-items:center','justify-content:center',
-    'background:rgba(0,0,0,.60)','z-index:100000'
-  ].join(';');
+   // Centered, non-blocking wrapper (no silhouette)
+   const wrap = document.createElement('div');
+   wrap.id = 'mulliganOverlay';
+   Object.assign(wrap.style, {
+     position: 'fixed',
+     inset: '0',                 // fill viewport
+     display: 'none',            // toggled to 'flex' when shown
+     alignItems: 'center',       // vertical center
+     justifyContent: 'center',   // horizontal center
+     pointerEvents: 'none',      // wrapper does NOT block the table
+     zIndex: 100000
+   });
 
-  wrap.innerHTML = `
-    <div class="panel" style="
-      width:min(480px,92vw);
-      background:#1b1b1b;
-      color:#fff;
-      border:2px solid #3a3a3a;
-      border-radius:14px;
-      box-shadow:0 20px 70px rgba(0,0,0,.6);
-      padding:18px;
-      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;">
-      <div style="font-size:18px;font-weight:700;letter-spacing:.02em;margin-bottom:10px;text-align:center;">
-        Mulligan?
-      </div>
-      <div style="font-size:13px;opacity:.85;text-align:center;margin-bottom:16px;">
-        Draw 7 cards. If you don’t like it, reshuffle and draw 7 again.
-      </div>
-      <div style="display:flex;gap:10px;justify-content:center">
-        <button id="btnMullYes" style="padding:10px 16px;border:0;border-radius:9px;background:#d6452e;color:#fff;font-weight:700;cursor:pointer">Yes (Reshuffle)</button>
-        <button id="btnMullNo"  style="padding:10px 16px;border:0;border-radius:9px;background:#2e7dd6;color:#fff;font-weight:700;cursor:pointer">No (Keep)</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(wrap);
-}
+   const panel = document.createElement('div');
+   panel.className = 'panel';
+   panel.setAttribute('role', 'dialog');
+   panel.setAttribute('aria-label', 'Mulligan');
+   Object.assign(panel.style, {
+     width: 'min(460px, 92vw)',
+     background: 'linear-gradient(180deg,#151a22,#0d1117)',
+     color: '#eaf2ff',
+     border: '1px solid rgba(255,255,255,.12)',
+     borderRadius: '12px',
+     boxShadow: '0 24px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(0,128,255,.12) inset',
+     padding: '16px',
+     fontFamily: 'ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial',
+     pointerEvents: 'auto'       // only the panel receives clicks
+   });
+
+   panel.innerHTML = `
+     <div style="font-size:16px;font-weight:800;letter-spacing:.02em;margin-bottom:8px;text-align:center">
+       Mulligan?
+     </div>
+     <div style="font-size:13px;opacity:.9;text-align:center;margin-bottom:12px">
+       Draw 7 cards. If you don’t like it, reshuffle and draw 7 again.
+     </div>
+     <div style="display:flex;gap:10px;justify-content:center">
+       <button id="btnMullYes" style="padding:8px 14px;border:0;border-radius:9px;background:#d6452e;color:#fff;font-weight:800;cursor:pointer">Yes (Reshuffle)</button>
+       <button id="btnMullNo"  style="padding:8px 14px;border:0;border-radius:9px;background:#2e7dd6;color:#fff;font-weight:800;cursor:pointer">No (Keep)</button>
+     </div>
+   `;
+
+   wrap.appendChild(panel);
+   document.body.appendChild(wrap);
+ }
+
+
 
 function showMulliganOverlay(){ ensureMulliganOverlay(); const el = document.getElementById('mulliganOverlay'); if (el) el.style.display = 'flex'; }
 function hideMulliganOverlay(){ const el = document.getElementById('mulliganOverlay'); if (el) el.style.display = 'none'; }
 
 async function drawNToHand(n, deckEl){
   const DL = window.DeckLoading;
-  if (!DL || !DL.drawOneToHand) return;
-  for (let i=0; i<n; i++){
-    DL.drawOneToHand(deckEl || document.getElementById(DECK_EL_ID));
-    await wait(60); // small stagger so fly-in doesn’t stack too tightly
+  const deckNode = deckEl || document.getElementById(DECK_EL_ID);
+  if (!DL) { console.warn('[OpeningHand] DeckLoading missing'); return; }
+
+  const hasDrawOne       = typeof DL.drawOne === 'function';
+  const hasDrawOneToHand = typeof DL.drawOneToHand === 'function';
+
+  if (!hasDrawOne && !hasDrawOneToHand) {
+    console.warn('[OpeningHand] No draw API found on DeckLoading (need drawOne or drawOneToHand)');
+    return;
   }
+
+  for (let i = 0; i < n; i++) {
+  let drew = false;
+
+  if (hasDrawOne) {
+    const card = DL.drawOne();
+    if (!card || !card.name) {
+      console.warn('[OpeningHand] library empty or card invalid at i=', i);
+      break;
+    }
+    await flyDrawToHand(card, deckNode);
+    drew = true;
+  } else {
+    const ok = DL.drawOneToHand(deckNode);
+    if (!ok) {
+      console.warn('[OpeningHand] drawOneToHand failed at i=', i);
+      break;
+    }
+    drew = true;
+    await wait(60);
+  }
+
+  // 🔵 NEW: tell TurnUpkeep a real draw happened → flips Upkeep/Draw → Main 1
+  try {
+    const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+    window.TurnUpkeep?.recordDraw?.(seatNow, 1);
+    window.dispatchEvent(new CustomEvent('turn:localDraw', { detail: { seat: seatNow }}));
+  } catch {}
+
+  try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
+  await wait(60);
 }
+
+}
+
+
 
 function _entryFromHandImg(img){
   // Mirrors the card entry shape used by DeckLoading.library items
@@ -102,19 +158,21 @@ async function returnEntireHandToLibrary({ shuffleAfter = true } = {}){
   const DL = window.DeckLoading;
   if (!DL || !DL.state) return;
 
-  const toReturn = window.Hand?.handCards ? [...window.Hand.handCards] : [];
+  // Use the module-scoped truth, not window.Hand.handCards
+  const toReturn = [...handCards];
   const lib = DL.state.library || [];
 
   for (const img of toReturn){
-    lib.unshift(_entryFromHandImg(img));
+    lib.unshift(_entryFromHandImg(img));  // put back on top (then shuffle)
     try {
-      const idx = window.Hand.handCards.indexOf(img);
-      if (idx >= 0) window.Hand.handCards.splice(idx,1);
+      const idx = handCards.indexOf(img);
+      if (idx >= 0) handCards.splice(idx, 1);
       img.remove();
     } catch {}
   }
 
-  try { window.Hand.updateHandFan(); } catch {}
+  // re-fan (now empty) and shuffle if requested
+  try { updateHandFan(); } catch {}
 
   if (shuffleAfter && typeof DL.shuffleLibrary === 'function'){
     DL.shuffleLibrary();
@@ -122,6 +180,7 @@ async function returnEntireHandToLibrary({ shuffleAfter = true } = {}){
 
   try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
 }
+
 
 async function drawOpeningHandLoop(){
   const deckEl = document.getElementById(DECK_EL_ID);
@@ -155,64 +214,68 @@ async function drawOpeningHandLoop(){
   };
 }
 
-// Intercept the very first attempt to draw a single card and run the opening-hand loop instead.
-// After the player presses “No (Keep)”, normal one-card draws resume automatically.
-function installOpeningHandInterceptor() {
-  if (__openingHandPatched) return;
+// Intercept the *first real draw click on the deck box* AFTER the deck card-back appears.
+// Zones sets this via: deckZone.dataset.hasDeck = '1' and adds .has-deck + background image.
+// Ignore clicks on the deck's button cluster (.deck-cluster) — those should never trigger Mulligan.
 
-  const tryPatch = () => {
-    const DL = window.DeckLoading;
-    if (!DL || typeof DL.drawOneToHand !== 'function') return false;
-
-    const originalDrawOneToHand = DL.drawOneToHand.bind(DL);
-
-    DL.drawOneToHand = function patchedDrawOneToHand(deckEl) {
-      if (__openingHandDone) {
-        return originalDrawOneToHand(deckEl); // normal draws after keep
-      }
-
-      const lib = DL?.state?.library;
-      if (!Array.isArray(lib) || lib.length === 0) {
-        return originalDrawOneToHand(deckEl); // no deck yet, pass through
-      }
-
-      console.log('[OpeningHand] Intercepting first draw → starting Mulligan loop');
-      queueMicrotask(async () => {
-        try {
-          const el = deckEl || document.getElementById(DECK_EL_ID);
-          await drawOpeningHandLoop();
-        } catch (e) {
-          console.warn('[OpeningHand] Mulligan loop failed; falling back to single draw', e);
-          originalDrawOneToHand(deckEl);
-        }
-      });
-
-      // Cancel this single draw; loop will call drawNToHand(7)
-      return false;
-    };
-
-    __openingHandPatched = true;
-    console.log('[OpeningHand] drawOneToHand patched');
-    return true;
-  };
-
-  // Try now; if DeckLoading isn’t ready yet, poll briefly until it is.
-  if (!tryPatch()) {
-    let tries = 0;
-    const t = setInterval(() => {
-      tries++;
-      if (tryPatch() || tries > 60) clearInterval(t); // ~3.6s max
-    }, 60);
-  }
+function deckIsMounted(){
+  const el = document.getElementById(DECK_EL_ID);
+  return !!el && el.dataset.hasDeck === '1';
+}
+function clickIsFromDeckCluster(ev){
+  return !!(ev?.target && ev.target.closest('.deck-cluster'));
 }
 
-// Patch when the deck module reports state changes, and also at module load.
-window.addEventListener('deckloading:changed', () => setTimeout(installOpeningHandInterceptor, 0));
-setTimeout(installOpeningHandInterceptor, 0);
+function armOpeningHandOnce(){
+  if (__openingHandDone) return;
+
+  const deckEl = document.getElementById(DECK_EL_ID);
+  if (!deckEl) { setTimeout(armOpeningHandOnce, 100); return; }
+
+  const handler = (ev) => {
+    if (__openingHandDone) { detach(); return; }
+
+    // If the deck isn't mounted yet, this click is the "open deck loader" — pass through.
+    if (!deckIsMounted()) return;
+
+    // If the click is on the cluster (Draw X / Cascade X / 🔍 / ➕), ignore it.
+    if (clickIsFromDeckCluster(ev)) return;
+
+    // This is the first *draw* click on the actual deck card-back. Intercept and run Mulligan.
+    try { ev.stopImmediatePropagation(); } catch {}
+    try { ev.stopPropagation(); } catch {}
+    if (ev.cancelable) ev.preventDefault();
+
+    detach();
+    drawOpeningHandLoop();
+  };
+
+  function detach(){
+    deckEl.removeEventListener('touchstart', handler, true);
+    deckEl.removeEventListener('pointerdown', handler, true);
+    deckEl.removeEventListener('click',       handler, true);
+  }
+
+  // Capture-phase listeners so we pre-empt Zones' own click handlers.
+  // Use touchstart + pointerdown + click to cover mobile + desktop.
+  deckEl.addEventListener('touchstart', handler, { capture: true, passive: false });
+  deckEl.addEventListener('pointerdown', handler, { capture: true });
+  deckEl.addEventListener('click',       handler, { capture: true });
+
+  console.log('[OpeningHand] armed — waiting for first deck card-back click (dataset.hasDeck="1")');
+}
+
+// Re-arm when the deck inventory changes (Zones emits this) and on module load.
+window.addEventListener('deckloading:changed', () => setTimeout(armOpeningHandOnce, 0));
+setTimeout(armOpeningHandOnce, 0);
+
+
+
 
 // Optional manual hook
 if (!window.Hand) window.Hand = {};
-window.Hand.installOpeningHandInterceptor = installOpeningHandInterceptor;
+window.Hand.armOpeningHandOnce = armOpeningHandOnce;
+
 
 // ───────────────────────────────────────── Hand UI / Fan / Gestures ───────────────────────────────────────
 
@@ -259,6 +322,8 @@ export function setHandFocus(target){
   renderHand();
 }
 export function focusLastDrawn(){
+	  // 🔵 Inform TurnUpkeep that a local draw completed
+  try { window.dispatchEvent(new CustomEvent('turn:localDraw')); } catch {}
   if (!handCards.length) return;
   focus = handCards.length - 1;
   renderHand();
@@ -650,51 +715,67 @@ function startGhostDrag(img, ev, opts = {}){
   };
 
   const onUp = () => {
-    cleanup();
+  cleanup();
 
-    if (!promoted) {
-      try { ghost.remove(); } catch {}
-      img.style.opacity = '';
-      renderHand();
-      return;
-    }
+  if (!promoted) {
+    try { ghost.remove(); } catch {}
+    img.style.opacity = '';
+    renderHand();
+    return;
+  }
 
-    if (spawnedEl) {
+  if (spawnedEl) {
+    try {
+      spawnedEl.classList.remove('is-dragging');
+      document.body.style.cursor = '';
+
+      // Ownership snapshot + a final lite move (kept)
+      const ownershipSnapshot = window._applyOwnershipAfterDrop?.(spawnedEl);
       try {
-        spawnedEl.classList.remove('is-dragging');
-        document.body.style.cursor = '';
+        const ownerNow = ownershipSnapshot?.ownerCurrent || mySeat();
+        const x = parseFloat(spawnedEl.style.left) || 0;
+        const y = parseFloat(spawnedEl.style.top)  || 0;
+        const packetMove = { type: 'move', cid: spawnedEl.dataset.cid, x, y, owner: ownerNow };
+        (window.rtcSend || window.peer?.send)?.(packetMove);
+      } catch(e){}
 
-        const ownershipSnapshot = window._applyOwnershipAfterDrop?.(spawnedEl);
-        try {
-          const ownerNow = ownershipSnapshot?.ownerCurrent || mySeat();
-          const x = parseFloat(spawnedEl.style.left) || 0;
-          const y = parseFloat(spawnedEl.style.top)  || 0;
-          const packetMove = { type: 'move', cid: spawnedEl.dataset.cid, x, y, owner: ownerNow };
-          (window.rtcSend || window.peer?.send)?.(packetMove);
-        } catch(e){}
+      // Owner-swap echo (kept)
+      try {
+        const o2 = window._applyOwnershipAfterDrop?.(spawnedEl);
+        const packetSwap = {
+          type: 'owner-swap',
+          cid : spawnedEl.dataset.cid,
+          ownerOriginal: o2?.ownerOriginal || null,
+          ownerCurrent : o2?.ownerCurrent  || null,
+          fieldSide    : o2?.fieldSide     || null
+        };
+        (window.rtcSend || window.peer?.send)?.(packetSwap);
+      } catch(e){}
 
-        try {
-          const o2 = window._applyOwnershipAfterDrop?.(spawnedEl);
-          const packetSwap = {
-            type: 'owner-swap',
-            cid : spawnedEl.dataset.cid,
-            ownerOriginal: o2?.ownerOriginal || null,
-            ownerCurrent : o2?.ownerCurrent  || null,
-            fieldSide    : o2?.fieldSide     || null
-          };
-          (window.rtcSend || window.peer?.send)?.(packetSwap);
-        } catch(e){}
-
-        try {
-          if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
-            window.Tooltip.setLowProfile(false, spawnedEl);
-          }
-        } catch(e){}
-      } catch(e){
-        console.warn('[Hand→Table] finalize drop failed', e);
+      // ⬅️ NEW: run the SAME zone routing finalizeDrop uses
+      try {
+        const CP = window.CardPlacement || {};
+        if (typeof CP.evaluateDropZones === 'function') {
+          CP.evaluateDropZones(spawnedEl);
+        } else {
+          // Fallback to local helper if export missing (shouldn’t happen after patch)
+          window.evaluateDropZones?.(spawnedEl);
+        }
+      } catch (e) {
+        console.warn('[Hand→Table] evaluateDropZones failed', e);
       }
+
+      // Tooltip cleanup
+      try {
+        if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
+          window.Tooltip.setLowProfile(false, spawnedEl);
+        }
+      } catch(e){}
+    } catch(e){
+      console.warn('[Hand→Table] finalize drop failed', e);
     }
-  };
+  }
+};
 
   function cleanup(){
     document.removeEventListener('pointermove', onMove, { passive:false });
@@ -894,6 +975,7 @@ export function restoreHandFromSnapshot(handList, { append = false } = {}){
 }
 
 // expose debug/global helpers
+if (!window.Hand) window.Hand = {};
 Object.assign(window.Hand, {
   handCards,
   updateHandFan,
@@ -903,6 +985,6 @@ Object.assign(window.Hand, {
   refanAll,
   restoreHandFromSnapshot,
 
-  // Opening hand helper
-  installOpeningHandInterceptor,
+  // Opening hand helper (new)
+  armOpeningHandOnce,
 });

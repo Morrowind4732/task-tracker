@@ -368,6 +368,44 @@ async function __disablePortraitOverlayIfDebug(roomName) {
   }
 }
 
+// ── Opponent cascade popup (read-only, dismissible) ──
+// CTRL-F anchor: [CASCADE:oppPopup]
+function showOpponentCascadePopup(name, img){
+  let wrap = document.getElementById('oppCascadePopup');
+  if (!wrap){
+    wrap = document.createElement('div');
+    wrap.id = 'oppCascadePopup';
+    wrap.style.cssText =
+      'position:fixed; right:16px; bottom:16px; z-index:999999; display:grid; gap:12px;';
+    document.body.appendChild(wrap);
+  }
+  const card = document.createElement('div');
+  card.className = 'opp-cascade-card';
+  card.style.cssText =
+    'width:min(320px,40vw); background:#0c1a2b; border:1px solid rgba(255,255,255,.2); ' +
+    'border-radius:12px; color:#eaf2ff; box-shadow:0 18px 36px rgba(0,0,0,.6); overflow:hidden;';
+  const head = document.createElement('div');
+  head.style.cssText =
+    'display:flex; align-items:center; justify-content:space-between; padding:10px 12px; font-weight:800;';
+  head.innerHTML = `<span>${name || 'Card'}</span>`;
+  const close = document.createElement('button');
+  close.textContent = '×';
+  Object.assign(close.style, {
+    background:'transparent', color:'#eaf2ff', border:'0', fontSize:'20px',
+    cursor:'pointer', lineHeight:'1'
+  });
+  close.onclick = () => card.remove();
+  head.appendChild(close);
+
+  const imgEl = document.createElement('img');
+  imgEl.src = img || '';
+  imgEl.alt = name || '';
+  imgEl.style.cssText = 'width:100%; display:block; border-top:1px solid rgba(255,255,255,.15)';
+
+  card.append(head, imgEl);
+  wrap.appendChild(card);
+}
+
 
 export function initRTCConnectionUI() {
 
@@ -1064,7 +1102,55 @@ export function initRTCConnectionUI() {
           }
 
 
-        } else if (msg?.type === 'attrs') {
+                // ── CASCADE MIRRORING ─────────────────────────────────────────────
+        } else if (msg?.type === 'cascade:reveal') {
+          // Opponent revealed this index/name/img
+          try {
+            const mySeat = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+            // Only mirror opponent’s reveals
+            if (Number(msg.seat) !== mySeat) {
+              window.__CascadeRemote?.spawn(Number(msg.idx)||0, String(msg.name||''), String(msg.img||''));
+            }
+          } catch (e) {
+            console.warn('[RTC:cascade:reveal] failed', e, msg);
+          }
+          return;
+
+        } else if (msg?.type === 'cascade:prompt') {
+  try {
+    const mySeat = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+    if (Number(msg.seat) !== mySeat) {
+      const n = String(msg.name || '');
+      const u = String(msg.img  || '');
+      // Show a dismissible, non-blocking popup for the opponent
+      showOpponentCascadePopup(n, u); // [CASCADE:oppPopup]
+    }
+  } catch (e) {
+    console.warn('[RTC:cascade:prompt] failed', e, msg);
+  }
+  return;
+}
+ else if (msg?.type === 'cascade:result') {
+          try {
+            const mySeat = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+            if (Number(msg.seat) !== mySeat) {
+              // Clear mirrored reveals and banner. We do not mutate zones/hand here.
+              window.__CascadeRemote?.clear();
+              // Optional: toast
+              try {
+                const casted = !!msg.cast && msg?.chosen?.name;
+                if (casted) {
+                  console.log('[RTC] Opponent cast for free:', msg.chosen.name);
+                } else {
+                  console.log('[RTC] Opponent declined or no hit; others sent to:', msg.dest);
+                }
+              } catch {}
+            }
+          } catch (e) {
+            console.warn('[RTC:cascade:result] failed', e, msg);
+          }
+          return;
+		} else if (msg?.type === 'attrs') {
           try {
             const el = document.querySelector(`img.table-card[data-cid="${msg.cid}"]`);
             if (el && msg.attrs) {
@@ -1520,3 +1606,100 @@ export function initRTCConnectionUI() {
   }
 })();
 window.__modTime(__MOD, 'end');
+
+// ────────────────────────────────────────────────────────────
+// Cascade RTC sender injection (safe to re-run)
+// ────────────────────────────────────────────────────────────
+(async () => {
+  try {
+    const mod = await import('./cascade.engine.js');
+    const { Cascade } = mod;
+    Cascade?.setSendCascadeRTC?.((packet) => {
+      try {
+        console.log('%c[RTC:send cascade]', 'color:#09f;font-weight:bold', packet);
+        window.peer?.send?.(packet);
+      } catch(e) {
+        console.warn('[RTC] failed to send cascade', e, packet);
+      }
+    });
+  } catch (e) {
+    console.warn('[RTC] cascade sender inject failed', e);
+  }
+})();
+
+// ────────────────────────────────────────────────────────────
+// Remote Cascade visuals (read-only mirror)
+// ────────────────────────────────────────────────────────────
+(function installRemoteCascadeMirror(){
+  if (window.__REMOTE_CASCADE_INSTALLED) return;
+  window.__REMOTE_CASCADE_INSTALLED = true;
+
+  const NODES = [];  // [{el, idx}]
+  const ZBASE = 49000;
+  const OFFSET_X = -32;
+
+  function combatAnchor(){
+    const sel = '.mid-gap';
+    const a = document.querySelector(sel);
+    if (!a) return document.body;
+    const cs = getComputedStyle(a);
+    if (cs.position === 'static') a.style.position = 'relative';
+    return a;
+  }
+
+  function spawn(idx, name, img){
+    const anchor = combatAnchor();
+    const el = document.createElement('img');
+    el.className = 'cascade-reveal-remote';
+    el.alt = name || '';
+    el.title = name || '';
+    el.draggable = false;
+    el.src = img || '';
+    Object.assign(el.style, {
+      position:'absolute',
+      left:'50%', top:'50%',
+      transform:`translate(-50%, -50%) translateX(${idx * OFFSET_X}px)`,
+      width:'var(--card-w, 222px)',
+      height:'auto',
+      borderRadius:'8px',
+      border:'1px solid rgba(255,255,255,.28)',
+      boxShadow:'0 18px 36px rgba(0,0,0,.7)',
+      zIndex: String(ZBASE + idx),
+      pointerEvents:'none',
+      userSelect:'none',
+      opacity:'0.96'
+    });
+    anchor.appendChild(el);
+    NODES.push({ el, idx });
+  }
+
+  function clear(){
+    while (NODES.length){
+      try { NODES.pop().el.remove(); } catch {}
+    }
+    try {
+      document.querySelectorAll('.cascade-remote-banner').forEach(n=>n.remove());
+    } catch {}
+  }
+
+  function banner(text){
+    // passive banner; not interactive, dismissed on result
+    const dim = document.createElement('div');
+    dim.className = 'cascade-remote-banner';
+    Object.assign(dim.style, {
+      position:'fixed', inset:0, display:'grid', placeItems:'center',
+      background:'rgba(0,0,0,.35)', zIndex: 999998, pointerEvents:'none'
+    });
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      background:'#0c1a2b', color:'#eaf2ff',
+      border:'1px solid rgba(255,255,255,.2)',
+      borderRadius:'12px', padding:'12px 16px', fontWeight:'700'
+    });
+    panel.textContent = text;
+    dim.appendChild(panel);
+    document.body.appendChild(dim);
+  }
+
+  window.__CascadeRemote = { spawn, clear, banner };
+})();

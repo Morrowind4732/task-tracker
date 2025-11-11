@@ -541,17 +541,40 @@ console.groupCollapsed('%c[RESULTS]', 'color:#f88;font-weight:bold;');
 for (const line of damageLog){ console.log(line); }
 console.groupEnd();
 
-// 🔵 NEW: explicit end-of-combat packet so turn/phase can advance
+// 🔵 PHASE ADVANCE: after damage, push to Main 2 for the active seat and notify peer
 try {
-  const seat = Number(window.UserInterface?._STATE?.activeSeat) || 1;
+  const activeSeat = Number(window.UserInterface?._STATE?.activeSeat) || 1;
+  const mySeat     = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+  const iAmAttacker = (mySeat === activeSeat);
+
+  if (iAmAttacker) {
+    // Try Turn/Phase controller first (preferred)
+    try { window.TurnUpkeep?.clickMain2?.(); } catch {}
+
+    // Fallback: directly nudge the UI phase pill if available
+    try { window.UserInterface?.setPhase?.('Main 2'); } catch {}
+
+    // (Optional) If you want an immediate hop to End Step instead, uncomment:
+    // try { window.TurnUpkeep?.clickEndStep?.(); } catch {}
+    // try { window.UserInterface?.setPhase?.('End Step'); } catch {}
+  }
+
+  // Tell opponent we’re done with combat and what phase we moved into
   (window.rtcSend || window.peer?.send)?.({
     type: 'combat:end',
-    seat
+    seat: activeSeat,
+    nextPhase: 'Main 2'
   });
-  console.log('%c[Battle] sent combat:end', 'color:#9cf;font-weight:bold;', { seat });
+
+  console.log('%c[Battle] combat:end + phase→Main 2', 'color:#9cf;font-weight:bold;', {
+    activeSeat,
+    mySeat,
+    iAmAttacker
+  });
 } catch (e) {
-  console.warn('[Battle] failed to send combat:end', e);
+  console.warn('[Battle] phase advance/combat:end send failed', e);
 }
+
 
 }
 
@@ -1332,21 +1355,24 @@ function _snapAttackersToGuideLine() {
 
 
   function beginAttackSelection(){
-    // Only the active seat (attacker) can start this
-    if (_mySeat() !== _activeSeat()){
-      console.warn('[Battle] beginAttackSelection but not my turn');
-      return;
-    }
+  // Only the active seat (attacker) can start this
+  if (_mySeat() !== _activeSeat()){
+    console.warn('[Battle] beginAttackSelection but not my turn');
+    return;
+  }
 
-    // NEW: slim tooltip during combat UI
-    try { window.Tooltip?.setBattleMode?.(true); } catch {}
+  // 🔵 Phase: entering combat locally (will mirror via TurnUpkeep)
+  try { window.TurnUpkeep?.clickCombat?.(); } catch {}
 
+  // NEW: slim tooltip during combat UI
+  try { window.Tooltip?.setBattleMode?.(true); } catch {}
 
-    mode = 'attacking';
-    currentAttackers   = [];
-    blockAssignments   = {};
-    activeBlockTarget  = null;
-    eligibleAttackers  = new Set(); // reset each combat
+  mode = 'attacking';
+  currentAttackers   = [];
+  blockAssignments   = {};
+  activeBlockTarget  = null;
+  eligibleAttackers  = new Set(); // reset each combat
+
 
     // When we first enter attacker mode, lock out confirm until we know it's legal
     _setConfirmAttackEnabled(false);

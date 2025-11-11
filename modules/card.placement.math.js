@@ -571,53 +571,55 @@ try{
 }catch{}
 
 
-  // Broadcast spawn after 1 frame so Tooltip/meta stamping can land first
-try {
-  requestAnimationFrame(() => {
-    const ownerNow = el.dataset.ownerCurrent || el.dataset.owner || String(mySeat());
-    const px = parseFloat(el.style.left) || 0;
-    const py = parseFloat(el.style.top)  || 0;
+  // Defer spawn broadcast until we know the final drop.
+  // This prevents leaking the card if the user drags it back over the hand.
+  try {
+    el.dataset.pendingSpawn = 'true';
+    el._finalizeSpawn = () => {
+      if (el.dataset.pendingSpawn !== 'true') return; // already finalized/cancelled
+      el.dataset.pendingSpawn = 'false';
 
-    const mc   = _calcManaColorPayload(el);
-    const sick = (el.dataset.hasSummoningSickness === 'true') ? 'true' : 'false';
+      const ownerNow = el.dataset.ownerCurrent || el.dataset.owner || String(mySeat());
+      const px = parseFloat(el.style.left) || 0;
+      const py = parseFloat(el.style.top)  || 0;
 
-    const snap = _snapshotRules(el);
+      const mc   = _calcManaColorPayload(el);
+      const sick = (el.dataset.hasSummoningSickness === 'true') ? 'true' : 'false';
+      const snap = _snapshotRules(el);
 
-    const pkt = {
-      senderSeat       : String(mySeat()) || '1',
-      type                 : 'spawn',
-      origin               : 'hand',
-      cid                  : id,
-      name,
-      img,
-      x                    : px,
-      y                    : py,
-      owner                : ownerNow,
-      ownerOriginal        : el.dataset.ownerOriginal || null,
-      ownerCurrent         : el.dataset.ownerCurrent  || ownerNow || null,
-      fieldSide            : el.dataset.fieldSide     || null,
-      inCommandZone        : el.dataset.inCommandZone || null,
-      hasSummoningSickness : sick,
+      const pkt = {
+        senderSeat       : String(mySeat()) || '1',
+        type                 : 'spawn',
+        origin               : 'hand',
+        cid                  : id,
+        name,
+        img,
+        x                    : px,
+        y                    : py,
+        owner                : ownerNow,
+        ownerOriginal        : el.dataset.ownerOriginal || null,
+        ownerCurrent         : el.dataset.ownerCurrent  || ownerNow || null,
+        fieldSide            : el.dataset.fieldSide     || null,
+        inCommandZone        : el.dataset.inCommandZone || null,
+        hasSummoningSickness : sick,
+        manaCostRaw          : mc.manaCostRaw,
+        colors               : mc.colors,
+        typeLine             : snap.typeLine || null,
+        oracle               : snap.oracle   || null,
+        baseAbilities        : snap.baseAbilities || [],
+        baseTypes            : snap.baseTypes     || []
+      };
 
-      manaCostRaw          : mc.manaCostRaw,
-      colors               : mc.colors,
+      console.log('%c[RTC:spawn SEND]', 'color:#0cf;font-weight:bold',
+        { cid:id, name, baseAbilities:pkt.baseAbilities, baseTypes:pkt.baseTypes, typeLine:pkt.typeLine });
 
-      // rules snapshot (now guaranteed non-null when possible)
-      typeLine             : snap.typeLine || null,
-      oracle               : snap.oracle   || null,
-      baseAbilities        : snap.baseAbilities || [],
-      baseTypes            : snap.baseTypes     || []
+      (window.rtcSend || window.peer?.send)?.(pkt);
+
+      // LOCAL: count cast immediately (lands auto-skipped)
+      _emitCastFor(el, mySeat());
     };
+  } catch {}
 
-    console.log('%c[RTC:spawn SEND]', 'color:#0cf;font-weight:bold',
-      { cid:id, name, baseAbilities:pkt.baseAbilities, baseTypes:pkt.baseTypes, typeLine:pkt.typeLine });
-
-    (window.rtcSend || window.peer?.send)?.(pkt);
-
-    // LOCAL: count cast immediately (lands auto-skipped)
-    _emitCastFor(el, mySeat());
-  });
-} catch {}
 
 
   return el;
@@ -789,6 +791,136 @@ function _snapToCommanderZone(el){
   //  });
   //}
 }
+
+// ↓↓↓ ADD THIS HELPER (shared by enableDrag() and hand.js promoted drops)
+function __overZoneCenter(el, zoneId) {
+  const z = document.getElementById(zoneId);
+  if (!z) return false;
+  const zr = z.getBoundingClientRect();
+  const cr = el.getBoundingClientRect();
+  const cx = cr.left + cr.width/2;
+  const cy = cr.top  + cr.height/2;
+  return (cx >= zr.left && cx <= zr.right && cy >= zr.top && cy <= zr.bottom);
+}
+
+// rectangle intersection test with optional upward tolerance
+function __overZoneByIntersect(el, zoneId, tol = 0) {
+  const z = document.getElementById(zoneId);
+  if (!z) return false;
+  const zr = z.getBoundingClientRect();
+  const cr = el.getBoundingClientRect();
+
+  const zl = zr.left, zrgt = zr.right;
+  const zt = zr.top - tol, zb = zr.bottom;
+
+  const cl = cr.left, crgt = cr.right;
+  const ct = cr.top,  cb  = cr.bottom;
+
+  const horiz = (cl < zrgt) && (crgt > zl);
+  const vert  = (ct < zb)   && (cb > zt);
+  return horiz && vert;
+}
+
+// Public-ish helper that evaluates drop routing *as if* finalizeDrop() ran.
+// It finalizes pending spawn, handles "back to hand", pl/op grave/exile, and pl-deck popup.
+function evaluateDropZones(el) {
+  if (!el || !el.classList.contains('table-card')) return;
+
+  // If spawn was deferred while dragging from hand, finalize it now
+  const inHandNow = __overZoneByIntersect(el, 'handZone', /*tol*/12);
+  if (el.dataset.pendingSpawn === 'true' && !inHandNow) {
+    try { el._finalizeSpawn?.(); } catch {}
+  }
+
+  // 1) Back to MY hand (intersection + tolerance)
+  if (inHandNow) {
+    try {
+      window.Tooltip?.hide?.();
+      window.flyDrawToHand?.(
+        { name: el.title || '', imageUrl: el.currentSrc || el.src },
+        null
+      );
+    } catch {}
+    // mirror finalizeDrop's removeCard(null,'player')
+    try {
+      (function removeToHand() {
+        const cidVal = el.dataset.cid;
+        try { window.Badges?.detach?.(el); } catch {}
+        try { el.remove(); } catch {}
+        try { (window.CardPlacement || {}).state?.byCid?.delete?.(cidVal); } catch {}
+        (window.rtcSend || window.peer?.send)?.({ type: 'remove', cid: cidVal, zone: '', ownerSide:'player' });
+      })();
+    } catch {}
+    return;
+  }
+
+  // helpers that mirror finalizeDrop’s internals:
+  const sendRemove = (finalZone, ownerSide) => {
+    const cidVal = el.dataset.cid;
+    // Stamp owner to match target pile
+    try {
+      const my = (typeof window.mySeat === 'function') ? String(window.mySeat()) : '1';
+      const other = (my === '1' ? '2' : '1');
+      el.dataset.ownerCurrent = (ownerSide === 'player') ? my : other;
+      el.dataset.owner        = el.dataset.ownerCurrent;
+    } catch {}
+
+    // Record to Zones for grave/exile visual browser
+    try {
+      if (finalZone === 'graveyard' || finalZone === 'exile') {
+        window.Zones?.recordCardToZone?.(ownerSide, finalZone, el);
+      }
+    } catch {}
+
+    try { window.Tooltip?.hide?.(); } catch {}
+    try { window.Badges?.detach?.(el); } catch {}
+    try { el.remove(); } catch {}
+    try { (window.CardPlacement || {}).state?.byCid?.delete?.(cidVal); } catch {}
+
+    (window.rtcSend || window.peer?.send)?.({
+      type: 'remove', cid: cidVal, zone: finalZone, ownerSide
+    });
+  };
+
+  // 2) MY graveyard / exile
+  if (__overZoneCenter(el, 'pl-graveyard')) {
+    try { window.TurnUpkeep?.noteGrave?.(); } catch {}
+    return sendRemove('graveyard','player');
+  }
+  if (__overZoneCenter(el, 'pl-exile')) {
+    try { window.TurnUpkeep?.noteExile?.(); } catch {}
+    return sendRemove('exile','player');
+  }
+
+  // 3) OPPONENT graveyard / exile
+  if (__overZoneCenter(el, 'op-graveyard')) {
+    try { window.TurnUpkeep?.noteGrave?.(); } catch {}
+    return sendRemove('graveyard','opponent');
+  }
+  if (__overZoneCenter(el, 'op-exile')) {
+    try { window.TurnUpkeep?.noteExile?.(); } catch {}
+    return sendRemove('exile','opponent');
+  }
+
+  // 4) MY deck: open modal then remove to 'deck'
+  if (__overZoneCenter(el, 'pl-deck')) {
+    // re-use existing modal helper if present on this module
+    try {
+      // Existing showDeckInsertOptions closure lives inside enableDrag,
+      // so we fall back to the DeckLoading API directly:
+      const pos = 'top'; // default top if no popup available here
+      let ok = false;
+      if (typeof window.DeckLoading?.insertFromTable === 'function') {
+        ok = !!window.DeckLoading.insertFromTable(el, pos);
+      }
+      if (!ok) console.warn('[DropZones] insertFromTable failed; still removing');
+    } catch(e) {
+      console.warn('[DropZones] deck insert failed', e);
+    }
+    return sendRemove('deck','player');
+  }
+}
+
 
 // NEW: pull mana cost + color identity for this card so we can include it in RTC packets.
 // - manaCostRaw: string like "{1}{U}{B}{R}" (or "")
@@ -1336,58 +1468,114 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
         const cx2 = rect2.left + rect2.width / 2;
         const cy2 = rect2.top  + rect2.height / 2;
 
-        // helper that checks overlap for arbitrary zone id using cx2/cy2
-        const overZone = (zoneId) => {
-          const z = document.getElementById(zoneId);
-          if (!z) return false;
-          const zr = z.getBoundingClientRect();
-          return (
-            cx2 >= zr.left &&
-            cx2 <= zr.right &&
-            cy2 >= zr.top &&
-            cy2 <= zr.bottom
-          );
-        };
+        // helper: generic center-point test (kept for most zones)
+const overZoneCenter = (zoneId) => {
+  const z = document.getElementById(zoneId);
+  if (!z) return false;
+  const zr = z.getBoundingClientRect();
+  return (
+    cx2 >= zr.left &&
+    cx2 <= zr.right &&
+    cy2 >= zr.top &&
+    cy2 <= zr.bottom
+  );
+};
 
-        // 1. Hand (goes back to MY hand, not anyone's grave/exile)
-        if (overZone('handZone')) {
-          try {
-            window.flyDrawToHand?.(
-              { name: el.title || '', imageUrl: el.currentSrc || el.src },
-              null
-            );
-          } catch {}
-          removeCard(null, 'player'); // no zone tag but conceptually "back to me"
-        }
+// helper: rectangle intersection test between the card and a zone
+// tol expands the zone upward a bit (so near-edge drops still count)
+const overZoneByIntersect = (zoneId, tol = 0) => {
+  const z = document.getElementById(zoneId);
+  if (!z) return false;
+
+  const zr = z.getBoundingClientRect();
+  const cr = el.getBoundingClientRect();
+
+  // expand zone upward by tol to make catching easier at top edge
+  const zl = zr.left;
+  const zrgt = zr.right;
+  const zt = zr.top - tol;
+  const zb = zr.bottom;
+
+  const cl = cr.left;
+  const crgt = cr.right;
+  const ct = cr.top;
+  const cb = cr.bottom;
+
+  const horiz = (cl < zrgt) && (crgt > zl);
+  const vert  = (ct < zb)   && (cb > zt);
+  return horiz && vert;
+};
+
+
+        // Before any zone action, if spawn is still pending and we're NOT in hand, finalize it.
+if (el.dataset.pendingSpawn === 'true' && !overZoneByIntersect('handZone', 12)) {
+  try { el._finalizeSpawn?.(); } catch {}
+}
+
+
+// 1. Hand (goes back to MY hand, not anyone's grave/exile)
+// Use rectangle intersection for Hand so drops near the top edge still count.
+if (overZoneByIntersect('handZone', /*tol=*/12)) {
+  if (el.dataset.pendingSpawn === 'true') {
+    // CANCEL the spawn entirely: do NOT broadcast spawn or send a remove.
+    // Just clean up the temp table element and animate back to hand.
+    try { window.Tooltip?.hide?.(); } catch {}
+    try {
+      window.flyDrawToHand?.(
+        { name: el.title || '', imageUrl: el.currentSrc || el.src },
+        null
+      );
+    } catch {}
+    try { el.remove(); } catch {}
+    try { state.byCid.delete(el.dataset.cid); } catch {}
+    el.dataset.pendingSpawn = 'false'; // consumed
+    return; // short-circuit: nothing else to do
+  } else {
+    // Normal path (card had already been spawned): send a remove packet like before.
+    try {
+      window.flyDrawToHand?.(
+        { name: el.title || '', imageUrl: el.currentSrc || el.src },
+        null
+      );
+    } catch {}
+    removeCard(null, 'player'); // no zone tag but conceptually "back to me"
+  }
+}
+
+
 
         // 2. MY graveyard / exile
-        else if (overZone('pl-graveyard')) {
+        else if (overZoneCenter('pl-graveyard')) {
   removeCard('graveyard', 'player');
   try { window.TurnUpkeep?.noteGrave?.(); } catch {}
 }
 
-        else if (overZone('pl-exile')) {
+
+else if (overZoneCenter('pl-exile')) {
   removeCard('exile', 'player');
   try { window.TurnUpkeep?.noteExile?.(); } catch {}
 }
 
 
+
         // 3. OPPONENT graveyard / exile
         //    NOTE: zones.js builds ids "op-graveyard" / "op-exile"
         //    (NOT "opp-...")
-        else if (overZone('op-graveyard')) {
+        else if (overZoneCenter('op-graveyard')) {
   removeCard('graveyard', 'opponent');
   try { window.TurnUpkeep?.noteGrave?.(); } catch {}
 }
 
-        else if (overZone('op-exile')) {
+
+        else if (overZoneCenter('op-exile')) {
   removeCard('exile', 'opponent');
   try { window.TurnUpkeep?.noteExile?.(); } catch {}
 }
 
 
+
         // 4. MY deck (top/bottom/random popup then remove from table)
-        else if (overZone('pl-deck')) {
+else if (overZoneCenter('pl-deck')) {
   showDeckInsertOptions(el, (choice) => {
     const pos = String(choice || 'top').toLowerCase(); // 'top' | 'bottom' | 'random'
     let ok = false;
@@ -2119,7 +2307,8 @@ function forceSendToGraveyard(el, ownerSide = 'player'){
     clearSummoningSicknessForMyBoard,
 
     // NEW: let combat resolver clean up deaths after combat
-    sendToGraveyardLocal: forceSendToGraveyard
+    sendToGraveyardLocal: forceSendToGraveyard,
+    evaluateDropZones 
   };
 
   window.CardPlacement = api;

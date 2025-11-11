@@ -379,7 +379,7 @@ window.addEventListener('DOMContentLoaded', () => {
     Camera.set(preset);
   })();
 
-  // When the dice overlay closes, glide to the desired baseline view (1920×1080)
+   // When the dice overlay closes, glide to the desired baseline view (1920×1080)
   window.addEventListener('portraitOverlay:closed', () => {
     Camera.animateToBaselineView({
       bx: -5589.585896600531,
@@ -388,7 +388,32 @@ window.addEventListener('DOMContentLoaded', () => {
       bw: 1920,
       bh: 1080
     }, { duration: 900 });
-  });
+
+    // 🔒 After the animation, trigger exactly ONE synthetic deck click
+    // to kick off Opening Hand — but only if mulligan isn't already open
+    // and the hand is still empty (prevents drawing an 8th card).
+    const triggerOpeningOnce = () => {
+      try {
+        // If mulligan UI already opened elsewhere, do nothing
+        if (window.__MULLIGAN_OPEN) return;
+
+        // If any hand card exists already, do nothing
+        const hz = document.getElementById('handZone');
+        const haveHandCards = !!(hz && hz.querySelector('.hand-card'));
+        if (haveHandCards) return;
+
+        // Fire the same path as a real deck click
+        const deckEl = document.getElementById('pl-deck');
+        if (deckEl && typeof deckEl.click === 'function') {
+          deckEl.click();
+        }
+      } catch {}
+    };
+
+    // Small buffer past the camera animation
+    setTimeout(triggerOpeningOnce, 920);
+  }, { once: true });  // ensure this handler runs only once
+
 
   // bring up RTC join/host popup / wire seats etc.
   initRTCConnectionUI();

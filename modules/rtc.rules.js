@@ -170,80 +170,109 @@ export const RTCApply = (() => {
 
   // ---------- receive buffRemove ----------
   async function recvBuffRemove(pkt){
-    const effectId = pkt?.effectId;
-    if (!effectId) return;
+  const effectId = pkt?.effectId;
+  if (!effectId) return;
 
-    const hits = _cardsWithEffect(effectId);
+  const hits = _cardsWithEffect(effectId);
 
-    for (const { cid, el, list } of hits){
-      const eff = list.find(e => e.id === effectId);
-      if (!eff) continue;
+  for (const { cid, el, list } of hits){
+    const eff = list.find(e => e.id === effectId);
+    if (!eff) continue;
 
-      // 1) Remove from remoteAttrs standard areas
-      _pruneRemoteAttrsForEffect(el, eff);
+    // 1) Remove from remoteAttrs standard areas (your helper)
+    _pruneRemoteAttrsForEffect(el, eff);
 
-      // 2) *** REMOVE EVERY GRANT WITH THE SAME ABILITY NAME ***
-      if (eff.ability){
-        let attrs = {};
-        try { attrs = JSON.parse(el.dataset.remoteAttrs || '{}'); } catch {}
-        if (Array.isArray(attrs.grants)){
-          attrs.grants = attrs.grants.filter(g => g.name !== eff.ability);
-        }
-        el.dataset.remoteAttrs = JSON.stringify(attrs);
+    // Build a list of grant names we should purge (ability OR typeAdd)
+    const namesToPurge = [];
+    if (eff.ability) namesToPurge.push(String(eff.ability));
+    if (eff.typeAdd) namesToPurge.push(String(eff.typeAdd));
+
+    // 2) *** REMOVE EVERY GRANT WITH THE SAME ABILITY/TYPE NAME ***
+    if (namesToPurge.length){
+      let attrs = {};
+      try { attrs = JSON.parse(el.dataset.remoteAttrs || '{}'); } catch {}
+
+      // Purge matching rows from grants[]
+      if (Array.isArray(attrs.grants)){
+        const kset = new Set(namesToPurge.map(s => s.trim().toLowerCase()));
+        attrs.grants = attrs.grants.filter(g => !kset.has(String(g?.name||'').trim().toLowerCase()));
       }
 
-      // 3) *** REMOVE from CardAttributes (all mirrors) ***
-      try {
-        const CA = window.CardAttributes;
-        if (CA) {
-          // abilities
-          if (CA.removeAbility) CA.removeAbility(cid, eff.ability);
-          // grants
-          if (CA.removeGrant) CA.removeGrant(cid, eff.ability);
-
-          // Hard fallback if internal maps exist
-          if (CA._grants && CA._grants[cid]){
-            CA._grants[cid] = (CA._grants[cid] || []).filter(g => g.name !== eff.ability);
-            if (CA._grants[cid].length === 0) delete CA._grants[cid];
-          }
-          if (CA._abilities && CA._abilities[cid]){
-            CA._abilities[cid] = (CA._abilities[cid] || []).filter(a => a !== eff.ability);
-            if (CA._abilities[cid].length === 0) delete CA._abilities[cid];
-          }
-        }
-      } catch(err){
-        console.warn('[RTCApply.recvBuffRemove] CardAttributes grant scrub fail', err);
+      // Also remove plain mirrors in attrs.types[] if they exist (defensive)
+      if (Array.isArray(attrs.types) && eff.typeAdd){
+        const tkey = String(eff.typeAdd).trim().toLowerCase();
+        attrs.types = attrs.types.filter(t => String(t).trim().toLowerCase() !== tkey);
       }
+
+      el.dataset.remoteAttrs = JSON.stringify(attrs);
     }
 
-    // 4) Remove from RulesStore
+    // 3) *** REMOVE from CardAttributes (all mirrors) ***
     try {
-      RulesStore.removeEffect(effectId);
-    } catch (e){
-      console.warn('[RTCApply.recvBuffRemove] RulesStore.removeEffect failed', e, pkt);
+      const CA = window.CardAttributes;
+      if (CA) {
+        // abilities
+        if (eff.ability) {
+          if (CA.removeAbility) CA.removeAbility(cid, eff.ability);
+          if (CA.removeGrant)   CA.removeGrant(cid, eff.ability);
+        }
+        // types (use removeGrant path; your CA keeps grants by name)
+        if (eff.typeAdd) {
+          if (CA.removeGrant) CA.removeGrant(cid, eff.typeAdd);
+        }
+
+        // Hard fallbacks if internal maps exist
+        if (CA._grants && CA._grants[cid]){
+          const kset = new Set([eff.ability, eff.typeAdd].filter(Boolean));
+          CA._grants[cid] = (CA._grants[cid] || []).filter(g => !kset.has(g?.name));
+          if (CA._grants[cid].length === 0) delete CA._grants[cid];
+        }
+        if (CA._abilities && CA._abilities[cid] && eff.ability){
+          CA._abilities[cid] = (CA._abilities[cid] || []).filter(a => a !== eff.ability);
+          if (CA._abilities[cid].length === 0) delete CA._abilities[cid];
+        }
+        // Optional defensive: if CA._types exists, scrub the typeAdd mirror
+        if (CA._types && CA._types[cid] && eff.typeAdd){
+          CA._types[cid] = (CA._types[cid] || []).filter(t => t !== eff.typeAdd);
+          if (CA._types[cid].length === 0) delete CA._types[cid];
+        }
+      }
+    } catch(err){
+      console.warn('[RTCApply.recvBuffRemove] CardAttributes grant scrub fail', err);
     }
-
-    // 5) Refresh visuals
-    const targetHint = pkt.targetCid ? String(pkt.targetCid) : null;
-    const toRefresh = new Set(hits.map(h => h.cid));
-    if (targetHint) toRefresh.add(targetHint);
-
-    for (const cid of toRefresh){
-      try { window.Badges?.refreshFor?.(cid); } catch {}
-      try { window.Tooltip?.refreshFor?.(cid); } catch {}
-    }
-
-    if (toRefresh.size === 0){
-      try {
-        document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
-          const c = n.dataset.cid;
-          window.Badges?.refreshFor?.(c);
-        });
-      } catch {}
-    }
-
-    console.log('%c[RTC:recv buffRemove→FULL ability purge]', 'color:#ff5', { effectId, refreshed: Array.from(toRefresh) });
   }
+
+  // 4) Remove from RulesStore
+  try {
+    RulesStore.removeEffect(effectId);
+  } catch (e){
+    console.warn('[RTCApply.recvBuffRemove] RulesStore.removeEffect failed', e, pkt);
+  }
+
+  // 5) Refresh visuals
+  const targetHint = pkt.targetCid ? String(pkt.targetCid) : null;
+  const toRefresh = new Set(hits.map(h => h.cid));
+  if (targetHint) toRefresh.add(targetHint);
+
+  for (const cid of toRefresh){
+    try { window.Badges?.refreshFor?.(cid); } catch {}
+    try { window.Tooltip?.refreshFor?.(cid); } catch {}
+  }
+
+  if (toRefresh.size === 0){
+    try {
+      document.querySelectorAll('img.table-card[data-cid]').forEach(n => {
+        const c = n.dataset.cid;
+        window.Badges?.refreshFor?.(c);
+      });
+    } catch {}
+  }
+
+  console.log('%c[RTC:recv buffRemove→FULL ability+type purge]', 'color:#ff5', {
+    effectId, refreshed: Array.from(toRefresh)
+  });
+}
+
 
   const api = { broadcastBuff, recvBuff, recvBuffRemove };
   window.RTCApply = api;

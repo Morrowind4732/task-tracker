@@ -726,25 +726,31 @@ function init({ onLoaded } = {}){
   const src = (ta.value || '').trim() || DEFAULT_LIST;
 
   // ✅ CLOSE THE DECK OVERLAY IMMEDIATELY ON CLICK
-  try { hide(); } catch {}
+try { hide(); } catch {}
 
-  // 1) SHOW PORTRAIT OVERLAY *IMMEDIATELY* (no waiting on data)
-  try {
-    const already = (typeof PortraitOverlay?.isReady === 'function') && PortraitOverlay.isReady();
-    if (!already) {
-      console.log('[DeckLoad] Preparing PortraitOverlay (show on init)…');
-      await PortraitOverlay.init({
-        autoRandomIfUnset: false,
-        autoCloseOnBothRolled: true,
-        enableRTC: true,
-        showOnInit: true // open now
-      });
-    } else if (typeof PortraitOverlay?.isOpen === 'function' && !PortraitOverlay.isOpen()) {
-      PortraitOverlay.show();
-    }
-  } catch (e) {
-    console.warn('[DeckLoad] PortraitOverlay init/show failed, fallback UI only', e);
+// 🔒 Block *manual* deck clicks briefly while mulligan/opening hand spins up.
+_tLoadStarted = Date.now();           // <— track when load started
+_blockClicks(4000);
+
+
+// 1) SHOW PORTRAIT OVERLAY *IMMEDIATELY* (no waiting on data)
+try {
+  const already = (typeof PortraitOverlay?.isReady === 'function') && PortraitOverlay.isReady();
+  if (!already) {
+    console.log('[DeckLoad] Preparing PortraitOverlay (show on init)…');
+    await PortraitOverlay.init({
+      autoRandomIfUnset: false,
+      autoCloseOnBothRolled: true,
+      enableRTC: true,
+      showOnInit: true // open now
+    });
+  } else if (typeof PortraitOverlay?.isOpen === 'function' && !PortraitOverlay.isOpen()) {
+    PortraitOverlay.show();
   }
+} catch (e) {
+  console.warn('[DeckLoad] PortraitOverlay init/show failed, fallback UI only', e);
+}
+
 
   // prevent double clicks (safe even though overlay is hidden)
   try { if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; } } catch {}
@@ -791,6 +797,13 @@ function init({ onLoaded } = {}){
     commanderMeta: enrichedCommanderMeta
   });
   _syncLibGlobals();
+  
+  // Let listeners (hand.js, zones, etc.) know the loader is usable
+try {
+  if (!window.DeckLoading) window.DeckLoading = DeckLoading; // safety
+  window.dispatchEvent(new CustomEvent('deckloading:ready', { detail: { at: 'init' } }));
+} catch {}
+
 
   // 6) SEND URL TO OPPONENT **BEFORE** ANY LOCAL PROCESSING; THEN PROCESS LOCALLY
   try {
@@ -927,19 +940,45 @@ function init({ onLoaded } = {}){
 
 
   function drawOneToHand(deckEl){
-    try{
-      const card = drawOne();
-      if (!card) return false;
-      // Defer to hand.js – it will fetch art if imageUrl is empty
-      if (typeof window.flyDrawToHand === 'function'){
-        window.flyDrawToHand(card, deckEl || document.getElementById('pl-deck'));
-      }
-      return true;
-    }catch(e){
-      console.warn('[DeckLoading] drawOneToHand failed', e);
+  try{
+    // If mulligan is open, never allow manual draws.
+    if (_mulliganOpen && deckEl) {
+      console.log('[DeckLoading] manual deck click suppressed (mulligan open)');
       return false;
     }
+
+    // Strong manual suppression while global block is on
+    if (_blockManualDraw && deckEl) {
+      console.log('[DeckLoading] manual deck click suppressed until mulligan/opening-hand done');
+      return false;
+    }
+
+    // Extra safety: eat exactly ONE early "first click" that happens
+    // soon after load, even if caller didn't pass deckEl.
+    // This covers handlers that call drawOneToHand() with no args.
+    const withinLoadWindow = (Date.now() - _tLoadStarted) < 15000; // 15s safety
+    if (!_firstDrawSuppressed && !_mulliganOpen && withinLoadWindow) {
+      // Heuristic: treat this as "manual-ish" if either a deckEl was passed
+      // OR it's the very first draw attempt after load.
+      console.log('[DeckLoading] first post-load draw suppressed (pre-mulligan)');
+      _firstDrawSuppressed = true;
+      return false;
+    }
+
+    const card = drawOne();
+    if (!card) return false;
+
+    if (typeof window.flyDrawToHand === 'function'){
+      window.flyDrawToHand(card, deckEl || document.getElementById('pl-deck'));
+    }
+    return true;
+  }catch(e){
+    console.warn('[DeckLoading] drawOneToHand failed', e);
+    return false;
   }
+}
+
+
 
   // ---- Overlay read-only accessors (non-breaking) ----
   function enumerateDeck(){
@@ -1054,6 +1093,56 @@ function _syncLibGlobals(){
     console.warn('[DeckLoading] _syncLibGlobals failed', e);
   }
 }
+
+/* ────────────────────────────────────────────────────────────
+   Manual draw suppression so first deck click doesn't add +1
+   on top of opening-hand (mulligan) seven.
+
+   Changes:
+   - We now track the deck-load moment and suppress the *first* draw
+     even if caller doesn't pass deckEl.
+   - We also listen for mulligan events to clear suppression.
+──────────────────────────────────────────────────────────── */
+let _blockManualDraw = false;          // general "no manual draws"
+let _firstDrawSuppressed = false;      // eat exactly one early manual-ish draw
+let _mulliganOpen = false;             // mulligan UI state (from events)
+let _tLoadStarted = 0;                 // ms since epoch of "Load Deck" click
+
+function _blockClicks(ms = 0){
+  _blockManualDraw = true;
+  if (ms > 0) setTimeout(() => { _blockManualDraw = false; }, ms);
+}
+function _allowClicks(){ _blockManualDraw = false; }
+
+(function installMulliganGuards(){
+  if (typeof window === 'undefined') return;
+  if (window.__DECK_DRAW_GUARDS) return;
+  window.__DECK_DRAW_GUARDS = 1;
+
+  window.addEventListener('mulligan:open', () => {
+    _mulliganOpen = true;
+    _blockManualDraw = true;
+    window.__MULLIGAN_OPEN = true;
+  });
+  window.addEventListener('mulligan:closed', () => {
+    _mulliganOpen = false;
+    _blockManualDraw = false;
+    window.__MULLIGAN_OPEN = false;
+  });
+  window.addEventListener('openinghand:done', () => {
+    _mulliganOpen = false;
+    _blockManualDraw = false;
+    window.__MULLIGAN_OPEN = false;
+  });
+
+  // Console helpers
+  try {
+    window.DeckLoadingAllowClicks = _allowClicks;
+    window.DeckLoadingBlockClicks = _blockClicks;
+  } catch {}
+})();
+
+
 
 // ────────────────────────────────────────────────────────────
 // RTC: deck art snapshot (send-only; receiver will be added later)
@@ -1310,3 +1399,9 @@ return {
 })();
 
 try { window.DeckLoadingHydrate = (snap) => DeckLoading.hydrateFromSave(snap); } catch {}
+
+// ---- Global exposure + "ready" signal (idempotent) ----
+try {
+  if (!window.DeckLoading) window.DeckLoading = DeckLoading;
+  window.dispatchEvent(new CustomEvent('deckloading:ready', { detail: { at: 'module-load' } }));
+} catch {}
