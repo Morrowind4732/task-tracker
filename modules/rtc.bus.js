@@ -762,8 +762,31 @@ export function initRTCConnectionUI() {
 
           // we've fully handled this message, don't fall through to card logic
           return;
+
+        // ---- PHASE SET ---------------------------------------------------
+        } else if (msg?.type === 'phase:set') {
+          try {
+            // Preferred: delegate to UI’s dedicated phase receiver
+            if (typeof window.__applyRemotePhaseSet === 'function') {
+              window.__applyRemotePhaseSet(msg);
+            } else if (window.UserInterface) {
+              // Fallback: minimal application using existing UI APIs
+              const seat  = Number(msg.seat)  || 1;
+              const phase = String(msg.phase || '');
+              // keep active-seat ring correct
+              window.UserInterface.setTurn?.(undefined, undefined, seat);
+              // let UI map the label if it supports the key, else set raw
+              window.UserInterface.setPhase?.(phase);
+            }
+            console.log('%c[RTC:recv phase:set→UI]', 'color:#9cf', msg);
+          } catch (e){
+            console.warn('[RTC phase:set] handler error', e, msg);
+          }
+          return;
+
         // ---- LIFE UPDATE -------------------------------------------------
         } else if (msg?.type === 'life:update') {
+
           try {
             // Preferred: delegate to the UI module’s dedicated handler (no re-broadcast).
             if (typeof window.__applyRemoteLifeUpdate === 'function') {
@@ -999,107 +1022,95 @@ export function initRTCConnectionUI() {
 
           window.CardPlacement?.applyRemoteMove?.(msg);
 
-        } else if (msg?.type === 'remove') {
-          // Remote says: "cid left the battlefield. zone = graveyard/exile/deck/etc."
-          //
-          // We must:
-          // 1. Snapshot that card into the CORRECT graveyard/exile bucket on THIS client
-          //    (player vs opponent is POV-dependent, not sender-dependent)
-          // 2. Clean up DOM and overlays
-          try {
-            const cidRaw = msg.cid;
-            if (!cidRaw) {
-              console.warn('[RTC:remove] missing cid', msg);
-              return;
-            }
-            const cid = String(cidRaw);
-            // 🔒 Use CSS.escape so attribute selector works for any cid characters
-            const sel = `img.table-card[data-cid="${CSS.escape(cid)}"]`;
+} else if (msg?.type === 'remove') {
+  try {
+    const z = (msg.zone || '').toString().toLowerCase().trim();
+    const finalZone = (z === 'grave' || z === 'gy') ? 'graveyard'
+                    : (z === 'exiled')               ? 'exile'
+                    : z;
 
-            // Normalize zone synonyms to our canonical keys
-            const z = (msg.zone || '').toString().toLowerCase().trim();
-            const finalZone = (
-              z === 'grave' || z === 'gy' ? 'graveyard' :
-              z === 'exiled'              ? 'exile'     :
-              z
-            ); // 'graveyard','exile','deck',''
+    // Deck-origin removal: no DOM node / no cid → record snapshot directly
+    if (!msg.cid) {
+      const seatNum = Number(msg.seat || 1);
+      const payload = (msg.card && typeof msg.card === 'object') ? msg.card : null;
+      if (payload && (finalZone === 'graveyard' || finalZone === 'exile')) {
+        window.Zones?.moveCardToZone?.(payload, finalZone, seatNum);
+        console.log('%c[RTC:remove→deck-snapshot]', 'color:#f66',
+          { seat: seatNum, zone: finalZone, name: payload.name || '' });
+      } else {
+        console.warn('[RTC:remove] missing payload or invalid zone for deck discard', msg);
+      }
+      return; // deck path handled
+    }
 
-            const node = document.querySelector(sel);
+    // ✅ Define cid before using it
+    const cid = String(msg.cid);
 
-            if (!node) {
-              console.warn('[RTC:remove] element not found; selector miss?', { sel, cid, zone: finalZone, msg });
-            } else {
-              // Figure out who *owned* that card, from this client's POV.
-              // Prefer dataset.ownerCurrent/owner; fall back to message owner fields if present.
-              let snapBucket = null;
+    // 🔒 Safe selector (CSS.escape may not exist in all engines)
+    const esc = (window.CSS && typeof CSS.escape === 'function')
+      ? CSS.escape(cid)
+      : cid.replace(/"/g, '\\"');
+    const sel = `img.table-card[data-cid="${esc}"]`;
 
-              // Decide if we should snapshot (only for gy/exile)
-              const shouldSnapshot = (finalZone === 'graveyard' || finalZone === 'exile');
+    const node = document.querySelector(sel);
 
-              if (shouldSnapshot) {
-                try {
-                  const ownerSeatStr = (node.dataset.ownerCurrent
-                                      || node.dataset.owner
-                                      || (msg.ownerCurrent != null ? String(msg.ownerCurrent)
-                                         : (msg.owner != null ? String(msg.owner) : ''))
-                                      || '').trim();
+    if (!node) {
+      console.warn('[RTC:remove] element not found; selector miss?', { sel, cid, zone: finalZone, msg });
+    } else {
+      // Figure out who *owned* that card, from this client's POV.
+      let snapBucket = null;
+      const shouldSnapshot = (finalZone === 'graveyard' || finalZone === 'exile');
 
-                  const meSeatNum = (function(){
-                    try {
-                      return String(
-                        typeof window.mySeat === 'function' ? window.mySeat() : 1
-                      ).trim();
-                    } catch {
-                      return '1';
-                    }
-                  })();
+      if (shouldSnapshot) {
+        try {
+          const ownerSeatStr = (node.dataset.ownerCurrent
+                             || node.dataset.owner
+                             || (msg.ownerCurrent != null ? String(msg.ownerCurrent)
+                                : (msg.owner != null ? String(msg.owner) : ''))
+                             || '').trim();
 
-                  snapBucket = (ownerSeatStr && meSeatNum && ownerSeatStr === meSeatNum)
-                    ? 'player'
-                    : 'opponent';
+          const meSeatNum = (function(){
+            try { return String(typeof window.mySeat === 'function' ? window.mySeat() : 1).trim(); }
+            catch { return '1'; }
+          })();
 
-                  // Record snapshot in correct bucket for THIS viewer.
-                  window.Zones?.recordCardToZone?.(snapBucket, finalZone, node);
+          snapBucket = (ownerSeatStr && meSeatNum && ownerSeatStr === meSeatNum) ? 'player' : 'opponent';
 
-                  console.log('[RTC:remove] recorded zone snapshot', {
-                    bucket    : snapBucket,
-                    zone      : finalZone,
-                    cid,
-                    ownerSeat : ownerSeatStr,
-                    meSeatNum,
-                    name      : node?.dataset?.name || node?.title || '',
-                    img       : node?.currentSrc    || node?.src || '',
-                    typeLine  : node?.dataset?.typeLine || ''
-                  });
-                } catch (zoneErr) {
-                  console.warn('[RTC:remove] recordCardToZone failed', zoneErr, { cid, finalZone });
-                }
-              }
+          window.Zones?.recordCardToZone?.(snapBucket, finalZone, node);
 
-              // Clean up overlays before nuking node
-              try { if (window.Tooltip?.hide) window.Tooltip.hide(); } catch {}
+          console.log('[RTC:remove] recorded zone snapshot', {
+            bucket    : snapBucket,
+            zone      : finalZone,
+            cid,
+            ownerSeat : ownerSeatStr,
+            meSeatNum,
+            name      : node?.dataset?.name || node?.title || '',
+            img       : node?.currentSrc    || node?.src || '',
+            typeLine  : node?.dataset?.typeLine || ''
+          });
+        } catch (zoneErr) {
+          console.warn('[RTC:remove] recordCardToZone failed', zoneErr, { cid, finalZone });
+        }
+      }
 
-              try {
-                if (window.Badges?.detach) window.Badges.detach(node);
-              } catch (e) {
-                console.warn('[RTC:remove] Badges.detach fail', e);
-              }
+      // Clean up overlays before removing
+      try { window.Tooltip?.hide?.(); } catch {}
+      try { window.Badges?.detach?.(node); } catch (e) { console.warn('[RTC:remove] Badges.detach fail', e); }
 
-              // Remove the actual mirrored DOM card
-              try { node.remove(); } catch {}
+      // Remove the actual mirrored DOM card
+      try { node.remove(); } catch {}
 
-              // Safety: kill any legacy .card elements with same cid
-              try {
-                document
-                  .querySelectorAll(`.card[data-cid="${CSS.escape(cid)}"]`)
-                  .forEach(n => n.remove());
-              } catch {}
-            }
+      // Safety: kill any legacy .card elements with same cid
+      try {
+        document.querySelectorAll(`.card[data-cid="${esc}"]`).forEach(n => n.remove());
+      } catch {}
+    }
 
-            console.log('%c[RTC:remove→applied]', 'color:#f66', { cid, zone: finalZone, hadNode: !!node, raw: msg });
-          } catch (err) {
-            console.warn('[RTC:remove] handler error', err, msg);
-          }
+    console.log('%c[RTC:remove→applied]', 'color:#f66', { cid, zone: finalZone, hadNode: !!node, raw: msg });
+  } catch (err) {
+    console.warn('[RTC:remove] handler error', err, msg);
+  }
+
 
 
                 // ── CASCADE MIRRORING ─────────────────────────────────────────────
@@ -1414,10 +1425,66 @@ export function initRTCConnectionUI() {
         // 🔵 NEW: explicit end-of-combat → advance phase on both clients
         } else if (msg?.type === 'combat:end') {
           try {
-            // Optional hook if you add it; safe to call even if missing.
             (await import('./turn.upkeep.js')).TurnUpkeep?.onCombatFinishedFromRTC?.(msg);
           } catch (e) {
             console.warn('[RTC:combat:end] handler error', e, msg);
+          }
+          return;
+
+        // 🔔 NEW: Opponent "Combat Initiated" zoom-pop notification (click/tap/keydown to dismiss)
+        } else if (msg?.type === 'notify:combat') { // CTRL-F anchor: [RTC:notify:combat]
+          try {
+            const mod = await import('./notification.js');
+            const Notif = mod?.Notification || mod?.default?.Notification || mod?.default;
+            if (Notif && typeof Notif.show === 'function') {
+              const handle = Notif.show({
+                top     : msg.top    || 'COMBAT',
+                bottom  : msg.bottom || 'INITIATED',
+                accent  : '#ffd700',
+                backdrop: 'rgba(0,0,0,.25)',
+                keep    : true // stay open until user action
+              }); // keep/remove API lives here: notification.js show() → returns handle.remove()
+              // Dismiss on first user interaction anywhere
+              const dismiss = () => {
+                try { handle?.remove?.(); } catch {}
+                window.removeEventListener('pointerdown', dismiss, true);
+                window.removeEventListener('touchstart', dismiss, true);
+                window.removeEventListener('keydown', dismiss, true);
+              };
+              window.addEventListener('pointerdown', dismiss, { once:true, capture:true });
+              window.addEventListener('touchstart', dismiss, { once:true, capture:true });
+              window.addEventListener('keydown',     dismiss, { once:true, capture:true });
+            }
+          } catch (e) {
+            console.warn('[RTC:notify:combat] failed', e, msg);
+          }
+          return;
+
+        // 🔔 NEW: Opponent "TURN PASSED" notification (click/tap/keydown to dismiss)
+        } else if (msg?.type === 'notify:turn') { // CTRL-F anchor: [RTC:notify:turn]
+          try {
+            const mod = await import('./notification.js');
+            const Notif = mod?.Notification || mod?.default?.Notification || mod?.default;
+            if (Notif && typeof Notif.show === 'function') {
+              const handle = Notif.show({
+                top     : msg.top    || 'TURN',
+                bottom  : msg.bottom || 'PASSED',
+                accent  : '#7cdfff',
+                backdrop: 'rgba(0,0,0,.25)',
+                keep    : true
+              });
+              const dismiss = () => {
+                try { handle?.remove?.(); } catch {}
+                window.removeEventListener('pointerdown', dismiss, true);
+                window.removeEventListener('touchstart', dismiss, true);
+                window.removeEventListener('keydown', dismiss, true);
+              };
+              window.addEventListener('pointerdown', dismiss, { once:true, capture:true });
+              window.addEventListener('touchstart', dismiss, { once:true, capture:true });
+              window.addEventListener('keydown',     dismiss, { once:true, capture:true });
+            }
+          } catch (e) {
+            console.warn('[RTC:notify:turn] failed', e, msg);
           }
           return;
 
@@ -1627,6 +1694,36 @@ window.__modTime(__MOD, 'end');
   }
 })();
 
+// -----------------------------
+// RTC RECEIVE: discard (mirror zone snapshot)
+// -----------------------------
+(function installRecvDiscard(){
+  try {
+    function recvDiscard(msg){
+      if (!msg || msg.type !== 'discard') return;
+      const zone = (msg.zone === 'exile') ? 'exile' : 'graveyard';
+      const seat = Number(msg.seat || 1);
+      const card = msg.card || null;
+      if (!card) return;
+      window.Zones?.moveCardToZone?.(card, zone, seat); // snapshot push:contentReference[oaicite:4]{index=4}
+    }
+    window.RTCApply = window.RTCApply || {};
+    window.RTCApply.recvDiscard = recvDiscard;
+
+    if (!window.__ZonesDiscardHookInstalled) {
+      window.__ZonesDiscardHookInstalled = true;
+      const oldRecv = window.RTCApply.recv || null;
+      window.RTCApply.recv = function(msg){
+        try { recvDiscard(msg); } catch {}
+        if (typeof oldRecv === 'function') return oldRecv(msg);
+      };
+    }
+  } catch (e) {
+    console.warn('[Zones] installRecvDiscard failed', e);
+  }
+})();
+
+
 // ────────────────────────────────────────────────────────────
 // Remote Cascade visuals (read-only mirror)
 // ────────────────────────────────────────────────────────────
@@ -1656,19 +1753,22 @@ window.__modTime(__MOD, 'end');
     el.draggable = false;
     el.src = img || '';
     Object.assign(el.style, {
-      position:'absolute',
-      left:'50%', top:'50%',
-      transform:`translate(-50%, -50%) translateX(${idx * OFFSET_X}px)`,
-      width:'var(--card-w, 222px)',
-      height:'auto',
-      borderRadius:'8px',
-      border:'1px solid rgba(255,255,255,.28)',
-      boxShadow:'0 18px 36px rgba(0,0,0,.7)',
-      zIndex: String(ZBASE + idx),
-      pointerEvents:'none',
-      userSelect:'none',
-      opacity:'0.96'
-    });
+  position:'absolute',
+  left:'50%', top:'50%',
+  transform:`translate(-50%, -50%) translateX(${idx * OFFSET_X}px)`,
+  height:'var(--card-height-table)',
+  width:'auto',
+  aspectRatio:'var(--card-aspect, 0.714)',
+  objectFit:'cover',
+  borderRadius:'8px',
+  border:'1px solid rgba(255,255,255,.28)',
+  boxShadow:'0 18px 36px rgba(0,0,0,.7)',
+  zIndex: String(ZBASE + idx),
+  pointerEvents:'none',
+  userSelect:'none',
+  opacity:'0.96'
+});
+
     anchor.appendChild(el);
     NODES.push({ el, idx });
   }

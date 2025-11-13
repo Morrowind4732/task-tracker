@@ -533,6 +533,53 @@ function resolveCombat(attackers, assignments){
   } catch (e){
     console.warn('[Battle] life application failed', e);
   }
+  
+    // -------------------------
+  // NEW: AUTO-TAP SURVIVING ATTACKERS
+  // -------------------------
+  try {
+    // survivors = attackers that did NOT die during this combat
+    const survivors = (Array.isArray(attackers) ? attackers : []).filter(cid => !casualties.has(cid));
+
+    // helper mirrors the tap button behavior: local visual + RTC 'tap'
+    function tapLikeButton(el, toTapped = true) {
+      if (!el) return;
+      let handled = false;
+      try {
+        if (window.CardActions?.tapUntap) { // preferred path (same as {T} button)
+          el.classList.add('tap-anim'); // match button animation class
+          window.CardActions.tapUntap(el, toTapped);
+          handled = true;
+        } else if (window.tapCard) { // legacy fallback
+          el.classList.add('tap-anim');
+          window.tapCard(el, toTapped);
+          handled = true;
+        }
+      } catch {}
+
+      // final visual fallback (same CSS as RTC remote apply)
+      if (!handled) {
+        try { el.classList.add('tap-anim'); } catch {}
+        el.dataset.tapped = toTapped ? '1' : '0';
+        el.style.rotate   = toTapped ? '90deg' : '0deg';
+        el.classList.toggle('is-tapped', !!toTapped);
+      }
+
+      // broadcast the same packet Badges' {T} button sends
+      try {
+        const cid   = el.dataset.cid;
+        const owner = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : mySeatNum();
+        (window.rtcSend || window.peer?.send)?.({ type:'tap', cid, tapped: toTapped ? 1 : 0, owner });
+      } catch {}
+    }
+
+    for (const cid of survivors) {
+      const el = document.querySelector(`img.table-card[data-cid="${cid}"]`);
+      if (el) tapLikeButton(el, true); // force tapped
+    }
+  } catch (e) {
+    console.warn('[Battle] auto-tap attackers failed', e);
+  }
 
 // -------------------------
 // FINAL RESULTS LOG
@@ -1791,6 +1838,20 @@ if (currentAttackers.includes(cid)){
       console.warn('[Battle] rtcSend combat_charge failed', err);
     }
 
+    // NEW: Also ping opponent with a persistent "COMBAT / INITIATED" notification
+    try {
+      const my = window.mySeat?.() ?? 1;
+      (window.rtcSend || window.peer?.send)?.({
+        type     : 'notify:combat',
+        top      : 'COMBAT',
+        bottom   : 'INITIATED',
+        fromSeat : my
+      });
+    } catch (err) {
+      console.warn('[Battle] rtcSend notify:combat failed', err);
+    }
+
+
     // After confirm, no need to keep confirm button hot
     _setConfirmAttackEnabled(false);
 
@@ -2373,44 +2434,14 @@ function applyRemoteBlocks(map){
   // ------------------------------------------------------------------
 
   function showResolutionPreview(attackerList, blockMap){
-    let html = '<div style="font-family:sans-serif;color:#fff;padding:16px;">';
-    html += `<div style="font-weight:700;margin-bottom:8px;">Combat Preview</div>`;
-
-    attackerList.forEach(attCid => {
-      const aEl   = _getCardEl(attCid);
-      const aName = aEl?.dataset?.name || aEl?.title || `Attacker ${attCid}`;
-      const blockers = blockMap[attCid] || [];
-
-      if (!blockers.length){
-        html += `<div style="margin:4px 0 12px 0;">
-          <div>${aName} is UNBLOCKED → damage to defending player</div>
-        </div>`;
-      } else {
-        html += `<div style="margin:4px 0 12px 0;">
-          <div>${aName} is blocked by:</div>`;
-        blockers.forEach((bCid,i) => {
-          const bEl   = _getCardEl(bCid);
-          const bName = bEl?.dataset?.name || bEl?.title || `Blocker ${bCid}`;
-          html += `<div style="margin-left:12px;">${i+1}. ${bName}</div>`;
-        });
-        html += `</div>`;
-      }
-    });
-
-    // (footer removed)
-
-    html += `</div>`;
-    _showOverlay(html);
-
-    // Auto-resolve immediately after preview renders.
-    try {
-      // Equivalent to:
-      // Battle.resolveCombat(Battle._debug.state().currentAttackers, Battle._debug.state().blockAssignments)
-      resolveCombat(attackerList, blockMap);
-    } catch (err){
-      console.warn('[Battle] auto resolve after preview failed:', err);
-    }
+  try {
+    // Instantly resolve without showing overlay
+    resolveCombat(attackerList, blockMap);
+  } catch (err){
+    console.warn('[Battle] auto resolve failed:', err);
   }
+}
+
 
 
   // Simple click-to-dismiss overlay

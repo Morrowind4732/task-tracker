@@ -1550,6 +1550,19 @@ pillP2?.addEventListener('pointerdown', (e) => {
     try {
       const mine = (window.mySeat && window.mySeat()) || STATE.seat || 1;
       window.TurnUpkeep?.endTurnFrom(mine);
+
+      // NEW: ping opponent with a persistent TURN/PASSED notification
+      // CTRL-F anchor: [notify:turn:send]
+      try {
+        (window.rtcSend || window.peer?.send)?.({
+          type     : 'notify:turn',
+          top      : 'TURN',
+          bottom   : 'PASSED',
+          fromSeat : mine
+        });
+      } catch (e2) {
+        console.warn('[UI:endturn] notify:turn send failed', e2);
+      }
     } catch(err){
       console.warn('[UI] End Turn failed', err);
     }

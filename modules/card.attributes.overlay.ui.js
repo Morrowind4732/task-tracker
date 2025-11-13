@@ -91,7 +91,16 @@ export const CardOverlayUI = (() => {
     display:grid; grid-template-rows:auto 1fr auto;
   }
   .ovlBack[aria-hidden="false"] .ovl{ transform:none; opacity:1; }
-  .ovlHead{ display:flex; align-items:center; gap:12px; padding:12px 14px; border-bottom:1px solid var(--line); }
+  /* allow wrapping so last tabs (e.g., Copy) don't get pushed off-screen */
+.ovlHead{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:12px 14px;
+  border-bottom:1px solid var(--line);
+  flex-wrap: wrap;          /* NEW */
+}
+
   .title{ font-weight:700; letter-spacing:.3px; }
   .cid{ margin-left:auto; font-size:12px; color:var(--mut); }
   .xBtn{ appearance:none; border:1px solid var(--line); background:#101820; color:var(--ink); border-radius:10px; padding:8px 12px; cursor:pointer; }
@@ -300,10 +309,12 @@ export const CardOverlayUI = (() => {
     <button class="tabBtn" data-tab="apply">Apply</button>
     <button class="tabBtn" data-tab="active">Active</button>
     <button class="tabBtn" data-tab="manage">Manage</button>
+    <button class="tabBtn" data-tab="copy">Copy</button>
   </div>
   <div class="cid"></div>
   <button class="xBtn" data-act="close">Close</button>
 </header>
+
 
 <div class="ovlBody">
   <aside class="preview">
@@ -342,6 +353,36 @@ export const CardOverlayUI = (() => {
                 </div>
               </div>
             </div>
+			
+			<!-- Copy -->
+<div class="panel" data-pane="copy" aria-hidden="true">
+  <div class="group" style="display:grid; gap:12px; max-width:480px;">
+    <div class="label">Quantity</div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button class="btn" data-copy="decr" title="-1">−</button>
+      <input class="ipt" data-copy="qty" type="number" min="1" value="1" style="width:90px; text-align:center;" />
+      <button class="btn" data-copy="incr" title="+1">+</button>
+    </div>
+
+    <div class="label" style="margin-top:8px;">Actions</div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+      <button class="btn btnPrimary" data-copy="spawn">Create Copy</button>
+      <button class="btn" data-copy="spawnToken">Create Token Copy</button>
+    </div>
+
+    <div style="font-size:12px; color:var(--mut); line-height:1.4;">
+      Creates exact visual copies of the currently open card and spawns them directly on the table.
+      Copies are tagged as <b>Copy</b>; token copies are tagged as <b>Copy</b> and <b>Token</b> for badge display.
+    </div>
+  </div>
+</div>
+
+<!-- NEW -->
+<div class="tabPanel" data-tab="copy" aria-hidden="true">
+  <div class="copyPane">
+
+  </div>
+</div>
 
             <!-- Apply -->            <!-- Apply -->
             <div class="panel" data-pane="apply" aria-hidden="true">
@@ -610,6 +651,8 @@ export const CardOverlayUI = (() => {
           <button class="btn btnPrimary" data-act="apply-root">Apply</button>
         </footer>
       </section>
+	  
+	  
 
       <!-- Radial picker -->
       <div class="radialBack" aria-hidden="true">
@@ -634,6 +677,134 @@ export const CardOverlayUI = (() => {
 back.querySelectorAll('.ovlHead .tabBtn').forEach(btn => {
   btn.addEventListener('click', () => setTab(btn.dataset.tab));
 });
+
+// ─────────────────────────────────────────────────────────────
+// Copy tab logic
+// ─────────────────────────────────────────────────────────────
+const qtyIpt = back.querySelector('[data-copy="qty"]');
+const btnDec = back.querySelector('[data-copy="decr"]');
+const btnInc = back.querySelector('[data-copy="incr"]');
+const btnSpawn = back.querySelector('[data-copy="spawn"]');
+const btnSpawnToken = back.querySelector('[data-copy="spawnToken"]');
+
+function _clampQty(n){ n = Number(n)||1; return Math.max(1, Math.min(99, n)); }
+function _getQty(){ return _clampQty(qtyIpt?.value); }
+function _setQty(n){ if (qtyIpt) qtyIpt.value = String(_clampQty(n)); }
+
+btnDec?.addEventListener('click', () => _setQty(_getQty() - 1));
+btnInc?.addEventListener('click', () => _setQty(_getQty() + 1));
+
+// Helper: find active card element from active cid
+function _activeEl(){
+  const cid = STATE.activeCid;
+  if (!cid) return null;
+  return document.querySelector(`img.table-card[data-cid="${cid}"]`);
+}
+
+// Helper: add type tags into remoteAttrs so Badges can render them
+// Now we also mirror as structured GRANTS (kind:'type') so the panel shows Copy/Token.
+function _addTypesToEl(el, typesArr){
+  if (!el || !typesArr?.length) return;
+
+  // NEW: never tag the source/original card (the one the overlay was opened on)
+  try {
+    if (STATE?.activeCid && el?.dataset?.cid === STATE.activeCid) return;
+  } catch {}
+
+  let raw = {};
+  try { raw = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : {}; } catch {}
+
+  // legacy list (kept for back-compat)
+  const base = Array.isArray(raw.types) ? raw.types.slice() : [];
+  const seen = new Set(base.map(s => String(s).trim().toLowerCase()));
+
+  // structured grants list
+  let grants = Array.isArray(raw.grants) ? raw.grants.slice() : [];
+
+  // upsert helper for grants (by normalized type name)
+  const norm = s => String(s||'').trim().toLowerCase();
+  const idxOfGrant = (name) => grants.findIndex(g => String(g?.kind||'')==='type' && norm(g?.name)===norm(name));
+
+  for (const t of typesArr){
+    const s = String(t||'').trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+
+    // keep legacy types for older UIs (safe)
+    if (!seen.has(k)) { seen.add(k); base.push(s); }
+
+    // ensure a structured type-grant exists (persistent → duration:'')
+    const i = idxOfGrant(s);
+    if (i < 0) {
+      grants.push({ kind:'type', name:s, duration:'PERM' });
+    }
+  }
+
+  raw.types  = base;
+  raw.grants = grants;
+
+  el.dataset.remoteAttrs = JSON.stringify(raw);
+  try { window.Badges?.refreshFor?.(el.dataset.cid); } catch {}
+}
+
+
+
+// Spawner: use the same local spawn path as Zones → “Table” button
+async function _spawnCopies(extraTypes){
+  const src = _activeEl();
+  if (!src) return;
+  const qty = _getQty();
+
+  const name   = src.dataset?.name || src.title || '';
+  const img    = src.currentSrc || src.src || '';
+  const origCid = src.dataset?.cid || null; // NEW: remember source cid
+
+  for (let i=0; i<qty; i++){
+    let spawned = null;
+    try {
+      spawned = window.CardPlacement?.spawnCardLocal?.({ name, img });
+    } catch (e) { console.warn('[CopyTab] spawnCardLocal failed', e); }
+
+    // Give DOM a moment to stamp data-cid on the new node (if created asynchronously)
+    // This prevents selecting the original card in the fallback path.
+    try { await new Promise(r => setTimeout(r, 10)); } catch {}
+
+    // If spawnCardLocal returns the element and it's not the original, tag it now
+    if (spawned && spawned instanceof Element) {
+      if (!origCid || spawned.dataset?.cid !== origCid) {
+        _addTypesToEl(spawned, extraTypes);
+        continue; // done for this iteration
+      }
+      // else fall through to fallback search
+    }
+
+    // Fallback: pick the newest card with same name that is NOT the original
+    try {
+      const candidates = Array.from(document.querySelectorAll('img.table-card'))
+        .filter(el =>
+          (el.dataset?.name || el.title || '') === name &&
+          (!origCid || el.dataset?.cid !== origCid)
+        )
+        .sort((a,b) => (b.dataset?.cid||'').localeCompare(a.dataset?.cid||'')); // newest first
+
+      // Additionally prefer ones without a Copy/Token grant yet (optional)
+      const pick = candidates.find(el => {
+        try {
+          const ra = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : {};
+          const hasGrant = Array.isArray(ra?.grants) && ra.grants.some(g => g?.kind === 'type' && (/^copy$/i.test(g?.name) || /^token$/i.test(g?.name)));
+          return !hasGrant;
+        } catch { return true; }
+      }) || candidates[0];
+
+      if (pick) _addTypesToEl(pick, extraTypes);
+    } catch {}
+  }
+}
+
+btnSpawn?.addEventListener('click', () => _spawnCopies(['Copy']));
+btnSpawnToken?.addEventListener('click', () => _spawnCopies(['Copy','Token']));
+
+
 
 
     // Scope buttons → swap targeting mode (card list vs by-type) and maybe rebuild list
@@ -1944,16 +2115,21 @@ function _resolveOverlayZ() {
 function openAnyCardOverlayPrefilled(opts = {}) {
   // opts: { name, qty, colors?:['white'|'blue'|'black'|'red'|'green'|'colorless'], abilities?:['Flying', ...] }
 
-  // --- Sanitizer helpers (robust against leading "X" and colors) ---
+// --- Sanitizer helpers (robust against qty/PT/colors and named/tokens) ---
 function _stripLeadingVarX(s){
   // Drop a leading variable X only when it introduces PT or color words.
   // e.g. "X 2/2 white Cat" -> "2/2 white Cat"
   return s.replace(/^\s*[Xx]\b(?=\s*(\d+\s*\/\s*\d+|\bwhite\b|\bblue\b|\bblack\b|\bred\b|\bgreen\b|\bcolorless\b))/i,'').trim();
 }
+function _stripLeadingQty(s){           // NEW: "1x " → ""
+  return s.replace(/^\s*\d+\s*x\b\s*/i, '');
+}
 function _stripLeadingPT(s){ return s.replace(/^\s*\d+\s*\/\s*\d+\s*/, ''); }
 function _stripWithTail(s){ return s.replace(/\bwith\b.*$/i, ''); }
 function _stripArticlesAndToken(s){
-  return s.replace(/^(?:a|an)\s+/i,'').replace(/^\s*token\s+/i,'');
+  return s
+    .replace(/^(?:a|an)\s+/i,'')
+    .replace(/^\s*token\s+/i,'');       // only when "token" starts the phrase
 }
 function _stripLeadingColors(s){
   let t = s.trim();
@@ -1966,20 +2142,27 @@ function _stripLeadingColors(s){
   }
   return t.trim();
 }
+function _stripTrailingCreatureToken(s){ // NEW: "... Serpent creature token" → "Serpent"
+  return s.replace(/\s*\b(?:creature\s+token|token)\b\s*$/i, '').trim();
+}
 function sanitizeTokenQuery(q){
   let s = String(q || '').trim();
   if (!s) return '';
   const original = s;
   s = _stripWithTail(s);
-  s = _stripLeadingVarX(s);   // <-- NEW: kill leading variable X
+  s = _stripLeadingVarX(s);
+  s = _stripLeadingQty(s);              // NEW
   s = _stripLeadingPT(s);
   s = _stripArticlesAndToken(s);
   s = _stripLeadingColors(s);
-  s = s.replace(/\b\s+X\s+\b/gi,' ');     // "White X Cat" -> "White Cat" (belt & suspenders)
+  s = _stripTrailingCreatureToken(s);   // NEW
+  s = s.replace(/\b\s+X\s+\b/gi,' ');   // "White X Cat" -> "White Cat" (belt & suspenders)
   s = s.replace(/\s{2,}/g,' ').trim();
   console.log('[AddAnyCard][SANITIZE]', { original, sanitized:s });
   return s;
 }
+
+
 
 
   const nameRaw = String(opts.name || '').trim();
@@ -2294,6 +2477,7 @@ function cleanActionLabel(lbl){
 function deriveTokenMeta(a){
   const d = a?.data || {};
   const lbl = String(a?.label || '');
+
   // qty: prefer structured, else look for "xN" or a bare X (variable)
   let qty = Number(d.qty || d.count || d.quantity);
   if (!qty || Number.isNaN(qty)) {
@@ -2302,27 +2486,18 @@ function deriveTokenMeta(a){
     else if (/\bX\b/i.test(lbl)) qty = NaN; // variable → will coerce to 1 later
   }
 
-  // token-ish name base: cut off leading "Create ..." and trim at "with ..."
-  let nameGuess = lbl.replace(/^.*?\bcreate\b/i,'').trim();
-  nameGuess = nameGuess.replace(/\bwith\b.*$/i,'').trim();
-  nameGuess = nameGuess.replace(/^[xX]\b/,'').trim(); // "X 2/2 ..."
-  nameGuess = nameGuess.replace(/^\s*\d+\s*\/\s*\d+\s*/,'').trim(); // strip P/T
-  // normalize colors out of the front, keep the type word
-  nameGuess = nameGuess.replace(/^(white|blue|black|red|green|colorless)\s+/i,'').trim();
-
-  // derive colors set for overlay filter
+  // Colors for overlay filter (unchanged)
   const colors = [];
   (lbl.match(/\b(white|blue|black|red|green|colorless)\b/gi) || []).forEach(c=>{
     const lc = c.toLowerCase();
     if (!colors.includes(lc)) colors.push(lc);
   });
 
-  // abilities after "with ..." that we recognize
+  // Abilities after "with ..." (unchanged)
   const withTail = (lbl.match(/\bwith\b(.*)$/i) || [,''])[1];
   const abilities = [];
-  withTail.split(/[,;]+/).forEach(chunk=>{
+  withTail.split(/[,]+/).forEach(chunk=>{
     const t = chunk.toLowerCase().trim();
-    // try to match any of our known ability words inside the chunk
     ABILITY_WORDS.forEach(word=>{
       if (new RegExp(`\\b${word}\\b`,'i').test(t)) {
         const nice = titleCaseWords(word);
@@ -2331,15 +2506,41 @@ function deriveTokenMeta(a){
     });
   });
 
-  const name = (function(){
-    // Use provided structured name if present, else sanitize guess
-    const raw = String(d.name || d.token || nameGuess || '').trim();
-    // Reuse the central sanitizer used by the Add-Any overlay
-    try { return sanitizeTokenQuery(raw); } catch { return raw; }
-  })();
+  // Prefer explicit "token named ____" if present on the label
+  const mNamed = lbl.match(/\btoken\s+named\s+([A-Za-z0-9'’\- ]+)/i);
+  let named = '';
+  if (mNamed && mNamed[1]) {
+    named = mNamed[1].replace(/\s*[.,;:]?\s*$/, ''); // trim trailing punctuation
+  }
+
+  // NEW: If the label didn’t include it, fall back to the hydrated Oracle text box
+  if (!named) {
+    try {
+      const oracleBox = STATE?.root?.querySelector('[data-scan="oracle"]');
+      const oracleTxt = oracleBox?.innerText || '';
+      const m2 = oracleTxt.match(/\btoken\s+named\s+([A-Za-z0-9'’\- ]+)/i);
+      if (m2 && m2[1]) {
+        named = m2[1].replace(/\s*[.,;:]?\s*$/, '');
+      }
+    } catch {}
+  }
+
+  // Otherwise, fall back to the type words after "Create"
+  let nameGuess = lbl.replace(/^.*?\bcreate\b/i,'').trim();
+  nameGuess = nameGuess.replace(/\bwith\b.*$/i,'').trim();
+  nameGuess = nameGuess.replace(/^[xX]\b/,'').trim();                  // "X 2/2 ..."
+  nameGuess = nameGuess.replace(/^\s*\d+\s*\/\s*\d+\s*/,'').trim();    // strip P/T
+  nameGuess = nameGuess.replace(/^\s*\d+\s*x\b\s*/i,'').trim();        // strip "1x "
+  nameGuess = nameGuess.replace(/^(white|blue|black|red|green|colorless)\s+/i,'').trim();
+
+  const raw = String(d.name || d.token || (named || nameGuess) || '').trim();
+  let name;
+  try { name = sanitizeTokenQuery(raw); } catch { name = raw; }
 
   return { name, qty: qty, colors, abilities };
+
 }
+
 
 /** Parse a counter quick-action. */
 function parseCounterAction(a){

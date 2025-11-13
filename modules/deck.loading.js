@@ -26,31 +26,81 @@ export const DeckLoading = (() => {
   let overlay = null;
   const el = (t,a={},h='') => { const e=document.createElement(t); for(const k in a){k==='class'?e.className=a[k]:e.setAttribute(k,a[k]);} if(h)e.innerHTML=h; return e; };
   function ensureOverlay(){
-    if (overlay) return overlay;
-    overlay = el('div',{id:'deckOverlay'});
-    overlay.innerHTML = `
-      <style>
-        #deckOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:99999}
-        #deckOverlay .panel{width:min(800px,92vw);background:#1b1b1b;color:#fff;border:2px solid #3a3a3a;border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.6);padding:16px;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-        #deckOverlay h3{margin:0 0 10px;font-size:18px;letter-spacing:.02em}
-        #deckText{width:100%;min-height:360px;resize:vertical;background:#0f0f0f;color:#eee;border:1px solid #333;border-radius:8px;padding:10px;font-size:14px;line-height:1.3;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-        #deckOverlay .row{display:flex;gap:8px;margin-top:12px}
-        #deckOverlay button{padding:10px 14px;border:0;border-radius:8px;background:#2e7dd6;color:#fff;font-weight:700;cursor:pointer}
-        #deckOverlay .ghost{background:transparent;border:1px solid #555;color:#ddd}
-      </style>
-      <div class="panel">
-        <h3>Load Deck List</h3>
-        <textarea id="deckText" spellcheck="false" placeholder="Paste your deck list here..."></textarea>
-        <div class="row">
-          <button id="btnLoadDeck">Load Deck</button>
-          <button id="btnCancel" class="ghost">Cancel</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    overlay.addEventListener('click', (e)=>{ if(e.target===overlay) hide(); });
-    overlay.querySelector('#btnCancel').onclick = hide;
-    return overlay;
+  if (overlay) return overlay;
+  overlay = el('div',{id:'deckOverlay'});
+  overlay.innerHTML = `
+    <style>
+      #deckOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:99999}
+      #deckOverlay .panel{width:min(800px,92vw);background:#1b1b1b;color:#fff;border:2px solid #3a3a3a;border-radius:12px;box-shadow:0 20px 70px rgba(0,0,0,.6);padding:16px;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+      #deckOverlay h3{margin:0 0 10px;font-size:18px;letter-spacing:.02em}
+      #deckText{width:100%;min-height:360px;resize:vertical;background:#0f0f0f;color:#eee;border:1px solid #333;border-radius:8px;padding:10px;font-size:14px;line-height:1.3;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      #deckOverlay .row{display:flex;gap:8px;margin-top:12px}
+      #deckOverlay button{padding:10px 14px;border:0;border-radius:8px;background:#2e7dd6;color:#fff;font-weight:700;cursor:pointer}
+      #deckOverlay .ghost{background:transparent;border:1px solid #555;color:#ddd}
+    </style>
+    <div class="panel">
+      <!-- TOP PASTE BUTTON (before header) -->
+      <div class="row">
+        <button id="btnPasteTop">Paste</button>
+      </div>
+
+      <h3>Load Deck List</h3>
+
+      <textarea id="deckText" spellcheck="false" placeholder="Paste your deck list here..."></textarea>
+
+      <div class="row">
+        <!-- BOTTOM PASTE BUTTON (before Load Deck) -->
+        <button id="btnPasteBottom">Paste</button>
+        <button id="btnLoadDeck">Load Deck</button>
+        <button id="btnCancel" class="ghost">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // close on backdrop click
+  overlay.addEventListener('click', (e)=>{ if(e.target===overlay) hide(); });
+  overlay.querySelector('#btnCancel').onclick = hide;
+
+  // helper to paste clipboard into textarea, then auto-"Load Deck"
+  async function __pasteIntoTextarea(){
+    try{
+      const ta = overlay.querySelector('#deckText');
+      if (!ta) return;
+      const txt = await navigator.clipboard.readText();
+      if (typeof txt === 'string' && txt.length){
+        ta.value = txt;
+        ta.focus();
+        try { ta.selectionStart = ta.selectionEnd = ta.value.length; } catch {}
+
+        // AUTO-TRIGGER the same flow as pressing "Load Deck"
+        const loadBtn = overlay.querySelector('#btnLoadDeck');
+        if (loadBtn){
+          // let the textarea render/update first
+          setTimeout(() => {
+            // guard: only auto-load if there's actually content
+            if ((ta.value || '').trim().length) {
+              loadBtn.click();
+            }
+          }, 0);
+        }
+      }
+    }catch(err){
+      console.warn('[DeckLoading] Clipboard paste failed (requires user gesture + https)', err);
+    }
   }
+
+  // wire the paste buttons
+  const topBtn = overlay.querySelector('#btnPasteTop');
+  const botBtn = overlay.querySelector('#btnPasteBottom');
+  if (topBtn) topBtn.onclick = __pasteIntoTextarea;
+  if (botBtn) botBtn.onclick = __pasteIntoTextarea;
+
+
+  
+
+  return overlay;
+}
+
 function open(prefill=''){ const o=ensureOverlay(), ta=o.querySelector('#deckText'); ta.value=prefill||ta.value||''; o.style.display='flex'; setTimeout(()=>ta.focus(),0); }
 function hide(){ if(overlay) overlay.style.display='none'; }
 
@@ -981,14 +1031,55 @@ try {
 
 
   // ---- Overlay read-only accessors (non-breaking) ----
-  function enumerateDeck(){
+  // enumerateDeck({ mode: 'slim' | 'full' } = {})
+  // - 'slim' (default): { name, img }
+  // - 'full'          : full card meta (name, imageUrl, typeLine, oracle, baseTypes, baseAbilities, faces, stats, etc.)
+  function enumerateDeck(opts = {}){
+    const mode = (opts.mode || 'slim').toLowerCase();
     try {
-      // Remaining drawable library (top -> bottom)
+      if (mode === 'full') {
+        // Remaining drawable library (top -> bottom), preserving all fields we build in fetchDeckImages()
+        return state.library.map(c => ({
+          // primary
+          name:       c?.name || 'Card',
+          imageUrl:   c?.imageUrl || '',
+          typeLine:   c?.typeLine || '',
+          oracle:     c?.oracle || '',
+          untapsDuringUntapStep: !!c?.untapsDuringUntapStep,
+
+          // stats / loyalty
+          power:       c?.power ?? '',
+          toughness:   c?.toughness ?? '',
+          loyalty:     c?.loyalty ?? '',
+          backLoyalty: c?.backLoyalty ?? '',
+
+          // base pills (front/back kept for parity with flip logic)
+          baseTypes:        Array.isArray(c?.baseTypes) ? [...c.baseTypes] : [],
+          baseAbilities:    Array.isArray(c?.baseAbilities) ? [...c.baseAbilities] : [],
+          frontBaseTypes:   Array.isArray(c?.frontBaseTypes) ? [...c.frontBaseTypes] : [],
+          frontBaseAbilities:Array.isArray(c?.frontBaseAbilities) ? [...c.frontBaseAbilities] : [],
+          backBaseTypes:    Array.isArray(c?.backBaseTypes) ? [...c.backBaseTypes] : [],
+          backBaseAbilities:Array.isArray(c?.backBaseAbilities) ? [...c.backBaseAbilities] : [],
+
+          // faces
+          frontTypeLine: c?.frontTypeLine || c?.typeLine || '',
+          backTypeLine:  c?.backTypeLine  || '',
+          frontOracle:   c?.frontOracle   || c?.oracle   || '',
+          backOracle:    c?.backOracle    || '',
+          imgFront:      c?.imgFront      || c?.imageUrl || '',
+          imgBack:       c?.imgBack       || '',
+          currentSide:   c?.currentSide   || 'front'
+        }));
+      }
+
+      // Default SLIM shape for existing callers
       return state.library.map(c => ({
         name: c?.name || 'Card',
         img:  c?.imageUrl || ''
       }));
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   function deckCount(){
@@ -998,9 +1089,11 @@ try {
   // Also expose on a stable global for non-module callers
   try {
     window.DeckAccess = window.DeckAccess || {};
-    window.DeckAccess.enumerate = enumerateDeck;
+    // Pass-through options so old and new call styles both work:
+    window.DeckAccess.enumerate = (opts) => enumerateDeck(opts);
     window.DeckAccess.count = deckCount;
   } catch {}
+
   
     // ---------- Return-to-deck (from a live table <img.table-card>) ----------
   function _entryFromTableCardEl(cardEl){

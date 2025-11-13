@@ -79,13 +79,13 @@ const STICKER_SCALE_MAX = 1.20;
 
 // --- Badge fade vs Camera scale (opacity only affects the RIGHT badge panel)
 // Badges start fading as we approach the cutoff, and are fully invisible at/under it.
-const BADGE_FADE_CUTOFF = 0.3067789490223631; // fully invisible at/under this scale
+const BADGE_FADE_CUTOFF = 0.4067789490223631; // fully invisible at/under this scale
 const BADGE_FADE_RANGE  = 0.12;                // start fading at (cutoff + range)
 
 // --- Sticker fade vs Camera scale (P/T + Loyalty + buff bubble)
 // Stickers start fading as we approach the cutoff, and are fully invisible at/under it.
 // (Set independently from BADGE_* so you can tune them separately.)
-const STICKER_FADE_CUTOFF = 0.30567789490223631;
+const STICKER_FADE_CUTOFF = 0.40567789490223631;
 const STICKER_FADE_RANGE  = 0.12;
 
 
@@ -405,7 +405,7 @@ async function getGrantedFromStore(el){
 
   // Local CardAttributes row (authoritative if present)
   try {
-    const mod = await import('./card.attributes.js');
+    //const mod = await import('./card.attributes.js');
     const row = mod.CardAttributes?.get?.(cid);
     if (row) {
       if (Array.isArray(row.abilities)) out.abilities = row.abilities.slice();
@@ -1061,9 +1061,19 @@ const durGrantsFromAttrs = (Array.isArray(grant.grants) ? grant.grants : [])
 
 
   // ---- RENDER RULES TYPES WITH DURATION ------------------------------------
-  for (const t of durTypesFromRules){
-    if (appendPillUnique(rows, 'type', t.name, t.duration)) { count++; }
-  }
+for (const t of durTypesFromRules){
+  if (appendPillUnique(rows, 'type', t.name, t.duration)) { count++; }
+}
+
+// ---- RENDER ATTRS TYPE-GRANTS (persistent or with duration) --------------
+// We now allow structured type-grants from CardAttributes/remoteAttrs.grants.
+// This enables persistent “Copy” and “Token” pills for spawned copies.
+for (const g of durGrantsFromAttrs){
+  if (String(g.kind||'').toLowerCase() !== 'type') continue;
+  // g.duration: '' (persistent), 'EOT', or 'SOURCE'
+  if (appendPillUnique(rows, 'type', g.name, g.duration || '', g.source || null)) { count++; }
+}
+
 
   // ---- RENDER LEGACY GRANTED ABILITIES (no duration metadata) --------------
   for (const aRaw of legacyGrantedAbilities){

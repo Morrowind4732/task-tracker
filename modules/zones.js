@@ -368,6 +368,76 @@ function recordCardToZone(ownerKey, zoneName, cardEl){
   if (idx >= 0) arr.splice(idx, 1);  // mutate the same array
 }
 
+///* =========================================================================
+// * NEW: removeCardFromTableByCid(cid, finalZone='deck', ownerSide?)
+// * Mirror the single-card drop flow: detach UI, remove DOM, clear local state,
+// * and broadcast an RTC {type:'remove', cid, zone:finalZone, ownerSide}.
+// * Returns true if a table or hand element was found and removed.
+// * ========================================================================= */
+//function removeCardFromTableByCid(cid, finalZone='deck', ownerSide){
+//  try{
+//    if (!cid) return false;
+//
+//    // Prefer an actual table card image element
+//    let el = document.querySelector(`img.table-card[data-cid="${cid}"]`);
+//
+//    // If not found on table, try the hand (various selectors used in your codebase)
+//    if (!el) {
+//      el = document.querySelector([
+//        `[data-zone="hand"] [data-cid="${cid}"]`,
+//        `.hand .hand-card[data-cid="${cid}"]`,
+//        `img.hand-card[data-cid="${cid}"]`,
+//        `img.card[data-cid="${cid}"]`
+//      ].join(','));
+//    }
+//
+//    if (!el) {
+//      console.warn('[Zones.removeCardFromTableByCid] element not found for cid', cid);
+//      return false;
+//    }
+//
+//    // Determine ownerSide if not given
+//    if (!ownerSide){
+//      try {
+//        const my = String(window.mySeat?.() || '1');
+//        const cur = String(el.dataset.owner || el.dataset.ownerCurrent || my);
+//        ownerSide = (cur === my) ? 'player' : 'opponent';
+//      } catch { ownerSide = 'player'; }
+//    }
+//
+//    // If moving to grave/exile, record a zone snapshot like finalizeDrop does
+//    try {
+//      if (finalZone === 'graveyard' || finalZone === 'exile') {
+//        window.Zones?.recordCardToZone?.(ownerSide, finalZone, el);
+//      }
+//    } catch {}
+//
+//    // UI/DOM cleanup identical to single-card path
+//    try { window.Tooltip?.hide?.(); } catch {}
+//    try { window.Badges?.detach?.(el); } catch {}
+//    try { el.remove(); } catch {}
+//
+//    try { (window.CardPlacement || {}).state?.byCid?.delete?.(cid); } catch {}
+//
+//    // Broadcast RTC so the remote removes their copy
+//    try {
+//      (window.rtcSend || window.peer?.send)?.({
+//        type: 'remove',
+//        cid,
+//        zone: finalZone,
+//        ownerSide
+//      });
+//    } catch (e) {
+//      console.warn('[Zones.removeCardFromTableByCid] RTC send failed', e);
+//    }
+//
+//    return true;
+//  } catch (e) {
+//    console.warn('[Zones.removeCardFromTableByCid] failed', e);
+//    return false;
+//  }
+//}
+
 
   // -----------------------------
   // OVERLAY BROWSER
@@ -898,49 +968,121 @@ function makeDeckBtn(label, area, extraStyle = {}) {
 
 // main vertical stack (all 60×60 automatically)
 const btnDraw    = makeDeckBtn('Draw X',    'north');
-const btnCenter  = makeDeckBtn('Scry X',        'center');
+const btnCenter  = makeDeckBtn('Scry‎‎‎ ‎  X',        'center');
 const btnCascade = makeDeckBtn('Cascade X', 'south');
 
-// side buttons — keep them centered vertically; push them out a bit to clear the bigger size
+// side buttons — centered vertically; plus NE/SE extensions
 const SIDE_OFFSET = `-${BTN_SIZE + 16}px`; // 60px button + 16px breathing room
 
+// existing east/west
 const btnSearch  = makeDeckBtn('🔍', 'east', { position:'absolute', right: SIDE_OFFSET, top:'50%', transform:'translateY(-50%)' });
 const btnAdd     = makeDeckBtn('➕', 'west',  { position:'absolute', left:  SIDE_OFFSET, top:'50%', transform:'translateY(-50%)' });
 
+const btnDiscard = makeDeckBtn('Discard X', 'north-east', {
+  position: 'absolute',
+  right: SIDE_OFFSET,
+  top: 0,
+  transform: 'translateY(0%)', // Reduced from -80% to -50%
+});
+const btnReturn = makeDeckBtn('Return X', 'south-east', {
+  position: 'absolute',
+  right: SIDE_OFFSET,
+  bottom: 0,
+  transform: 'translateY(0%)', // Reduced from 80% to 50%
+});
 
 
-    // lightweight number pad
-    function openNumberPad(label, onPick) {
-      const dim = document.createElement('div');
-      Object.assign(dim.style, {
-        position:'fixed', inset:0, background:'rgba(0,0,0,.7)',
-        display:'grid', placeItems:'center', zIndex:999_999
+
+
+
+   // lightweight number pad; optional destination toggle (Graveyard/Exile)
+function openNumberPad(label, onPick, opts = {}) {
+  const showDest = opts.showDest !== false; // default true (keep old behavior)
+
+  const dim = document.createElement('div');
+  Object.assign(dim.style, {
+    position:'fixed', inset:0, background:'rgba(0,0,0,.7)',
+    display:'grid', placeItems:'center', zIndex:999_999
+  });
+
+  const wrap = document.createElement('div');
+  Object.assign(wrap.style, {
+    background:'#0c1a2b',
+    border:'1px solid rgba(255,255,255,.2)',
+    borderRadius:'12px',
+    padding:'16px',
+    display:'grid',
+    gridTemplateRows: showDest ? 'auto auto' : 'auto',
+    gap:'10px',
+    minWidth:'280px'
+  });
+
+  // ── Optional: Graveyard / Exile toggle
+  let dest = 'graveyard';
+  if (showDest) {
+    const toggle = document.createElement('div');
+    Object.assign(toggle.style, { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px' });
+
+    function mkChip(txt, selected) {
+      const b = document.createElement('button');
+      b.textContent = txt;
+      Object.assign(b.style, {
+        padding:'8px 10px',
+        border:'1px solid ' + (selected ? 'rgba(93,168,255,.9)' : 'rgba(255,255,255,.25)'),
+        background: selected ? '#1b2f4d' : 'linear-gradient(180deg,#102a46,#060e1f)',
+        color:'#e9f2ff', fontWeight:'900', borderRadius:'10px', cursor:'pointer'
       });
-      const pad = document.createElement('div');
-      Object.assign(pad.style, {
-        background:'#0c1a2b', border:'1px solid rgba(255,255,255,.2)',
-        borderRadius:'12px', padding:'16px',
-        display:'grid', gridTemplateColumns:'repeat(5,40px)', gap:'8px'
-      });
-
-      const keys = ['1','2','3','4','5','6','7','8','9','X'];
-      for (const k of keys) {
-        const b = document.createElement('button');
-        b.textContent = k;
-        Object.assign(b.style, {
-          width:'40px', height:'40px', borderRadius:'8px',
-          border:'1px solid rgba(255,255,255,.25)',
-          background:'linear-gradient(180deg,#102a46,#060e1f)',
-          color:'#fff', fontWeight:'700', cursor:'pointer'
-        });
-        b.onclick = () => { dim.remove(); onPick(k); };
-        pad.appendChild(b);
-      }
-      dim.onclick = (e) => { if (e.target === dim) dim.remove(); };
-      dim.addEventListener('pointerdown', (e)=>e.stopPropagation(), true);
-      document.body.appendChild(dim);
-      dim.appendChild(pad);
+      b.dataset.selected = selected ? '1' : '0';
+      return b;
     }
+
+    const btnGY = mkChip('Graveyard', true);
+    const btnEX = mkChip('Exile',     false);
+
+    btnGY.onclick = () => { dest = 'graveyard'; /* …style flips… */ };
+    btnEX.onclick = () => { dest = 'exile';     /* …style flips… */ };
+
+    toggle.appendChild(btnGY);
+    toggle.appendChild(btnEX);
+    wrap.appendChild(toggle);
+  }
+
+  // ── Number grid (unchanged styles)
+  const pad = document.createElement('div');
+  Object.assign(pad.style, { display:'grid', gridTemplateColumns:'repeat(5,40px)', gap:'8px', justifyContent:'center' });
+
+  const keys = ['1','2','3','4','5','6','7','8','9','X'];
+  for (const k of keys) {
+    const b = document.createElement('button');
+    b.textContent = k;
+    Object.assign(b.style, { width:'40px', height:'40px', borderRadius:'8px',
+      border:'1px solid rgba(255,255,255,.25)',
+      background:'linear-gradient(180deg,#102a46,#060e1f)',
+      color:'#fff', fontWeight:'700', cursor:'pointer'
+    });
+    b.onclick = () => {
+      let count;
+      if (k === 'X') {
+        const v = window.prompt(`${label} — How many?`, '2');
+        count = Math.max(1, Math.floor(Number(v) || 0));
+      } else {
+        count = Math.max(1, Math.floor(Number(k) || 1));
+      }
+      dim.remove();
+      // Only provide dest if we showed the toggle
+      onPick(showDest ? { count, dest } : { count });
+    };
+    pad.appendChild(b);
+  }
+
+  dim.onclick = (e) => { if (e.target === dim) dim.remove(); };
+  dim.addEventListener('pointerdown', (e)=>e.stopPropagation(), true);
+
+  document.body.appendChild(dim);
+  dim.appendChild(wrap);
+  wrap.appendChild(pad);
+}
+
 
     // Helper to keep clicks from bubbling to the deck zone
 const onClick = (btn, fn) => {
@@ -953,41 +1095,69 @@ const onClick = (btn, fn) => {
 // small pacing gap so multiple draws animate sanely (and RTC doesn’t choke)
 const DRAW_GAP_MS = 30;
 
-// wire actions (live)
-onClick(btnDraw, () => {
-  openNumberPad('Draw X', async (key) => {
-    // Allow 1–9 directly; 'X' opens a quick prompt for any number.
-    let count = 0;
-    if (key === 'X') {
-      const v = window.prompt('Draw how many cards?', '2');
-      count = Math.max(1, Math.floor(Number(v) || 0));
-    } else {
-      count = Math.max(1, Math.floor(Number(key) || 1));
-    }
-
-    // If no deck yet, open the loader instead of doing nothing.
-    if (deckZone.dataset.hasDeck !== '1') {
-      openLoader();
-      return;
-    }
-
-    // Draw N to hand using the same path as single-tap draws.
-    for (let i = 0; i < count; i++) {
-  const ok = DeckLoading.drawOneToHand(deckZone);
-  if (!ok) break;
-
-  // 🔵 NEW: phase advance signal per draw
+// Helper: discard top N cards from deck to a zone ('graveyard' | 'exile')
+// - Mutates DeckLoading.state.library (top = shift())
+// - Pushes zone snapshots via Zones.moveCardToZone(...)
+// - Notifies UI/RTC
+function discardTopNTo(zoneName, n) {
   try {
-    const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
-    window.TurnUpkeep?.recordDraw?.(seatNow, 1);
-    window.dispatchEvent(new CustomEvent('turn:localDraw', { detail: { seat: seatNow }}));
-  } catch {}
+    const lib = (window.DeckLoading?.state?.library || []);
+    if (!Array.isArray(lib) || !lib.length) return;
 
-  await new Promise(r => setTimeout(r, DRAW_GAP_MS));
+    const mySeat = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+    const take = Math.max(1, Math.floor(Number(n) || 1));
+
+    for (let i = 0; i < take; i++) {
+      if (!lib.length) break;
+      const top = lib.shift();
+
+      const payload = {
+        name:     top?.name || '',
+        img:      top?.img || top?.image || top?.imageUrl || '',
+        typeLine: top?.type_line || top?.typeLine || ''
+      };
+
+      // Local snapshot into my grave/exile (same as before)
+      window.Zones?.moveCardToZone?.(payload, zoneName, mySeat);
+
+      // RTC: style like "remove" so rtc.bus.js handles uniformly
+      try {
+        (window.rtcSend || window.peer?.send)?.({
+          type: 'remove',
+          zone: zoneName,        // 'graveyard' | 'exile'
+          seat: mySeat,          // so receiver can resolve owner POV
+          fromDeck: true,        // <- mark that there is no DOM node/cid
+          card: payload          // snapshot payload for receiver to record
+          // no cid on purpose
+        });
+      } catch {}
+    }
+
+    try { window.dispatchEvent?.(new CustomEvent('deckloading:changed')); } catch {}
+  } catch (e) {
+    console.warn('[discardTopNTo] failed', e);
+  }
 }
 
-  });
+
+
+// wire actions (live)
+onClick(btnDraw, () => {
+  openNumberPad('Draw X', async ({ count }) => {
+    if (deckZone.dataset.hasDeck !== '1') { openLoader(); return; }
+    for (let i = 0; i < Math.max(1, Number(count) || 1); i++) {
+      const ok = DeckLoading.drawOneToHand(deckZone);
+      if (!ok) break;
+      try {
+        const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+        window.TurnUpkeep?.recordDraw?.(seatNow, 1);
+        window.dispatchEvent(new CustomEvent('turn:localDraw', { detail: { seat: seatNow }}));
+      } catch {}
+      await new Promise(r => setTimeout(r, DRAW_GAP_MS));
+    }
+  }, { showDest: false });
 });
+
 
 
 onClick(btnCascade, async () => {
@@ -1005,6 +1175,26 @@ onClick(btnCenter, () => {
 
 onClick(btnSearch,  () => { console.log('[Deck] 🔍 open'); openDeckSearchOverlay(); });
 onClick(btnAdd,     () => { console.log('[Deck] ➕ open'); openAddAnyCardOverlay(); });
+
+// attach handlers
+// NEW: Discard X (north-east)
+onClick(btnDiscard, () => {
+  openNumberPad('Discard X', ({ count, dest }) => {
+    // dest is 'graveyard' | 'exile'
+    discardTopNTo(dest, count);
+  });
+});
+
+
+onClick(btnReturn, () => {
+  openNumberPad('Return X', (key) => {
+    const count = key === 'X'
+      ? Math.max(1, Math.floor(Number(prompt('Return how many?', '1')) || 1))
+      : Number(key);
+    console.log(`[DeckCluster] Return ${count}`);
+    window.dispatchEvent(new CustomEvent('deck:return', { detail:{ count } }));
+  });
+});
 
 
 
@@ -1025,12 +1215,21 @@ onClick(btnAdd,     () => { console.log('[Deck] ➕ open'); openAddAnyCardOverla
 
 // Use the fully-built drawable library so the deck-search overlay
 // has name + image + typeLine available.
+// Normalize common field names so filters always work.
 const lib = (DeckLoading?.state?.library || []);
 _currentDeckList = lib.map(c => ({
-  name: c?.name || '',
-  img:  c?.imageUrl || '',
-  typeLine: c?.typeLine || ''
+  name:     c?.name || '',
+  img:      c?.img || c?.image || c?.imageUrl || '',
+  
+  // ✅ Always derive a correct typeLine:
+  typeLine: c?.type_line || c?.typeLine || '',
+  
+  // ✅ Normalize base types so type filters actually match:
+  baseTypes:       Array.isArray(c?.baseTypes) ? c.baseTypes : [],
+  frontBaseTypes:  Array.isArray(c?.frontBaseTypes) ? c.frontBaseTypes : [],
+  backBaseTypes:   Array.isArray(c?.backBaseTypes) ? c.backBaseTypes : []
 }));
+
 
 
       if (commander){
@@ -1672,17 +1871,34 @@ console.log('[AddAny] Scryfall query:', adv, '(include_extras=true)');
 // ============ (B) Search Current Deck (magnifying glass) ============
 function openDeckSearchOverlay(){
   // —— helper: get a *live* view of the library, not the initial snapshot
-  function _liveDeckItems(){
-    try {
-      if (DeckLoading && typeof DeckLoading.enumerate === 'function') {
-        return DeckLoading.enumerate() || [];
-      }
-      // fallback to initial snapshot if enumerate missing
-      return Array.isArray(_currentDeckList) ? _currentDeckList : [];
-    } catch { 
-      return Array.isArray(_currentDeckList) ? _currentDeckList : [];
-    }
+function _liveDeckItems(){
+  try {
+    // Prefer the actual live source your app uses (DeckAccess), then fall back.
+    const raw =
+      (window.DeckAccess && typeof window.DeckAccess.enumerate === 'function' && window.DeckAccess.enumerate({ mode: 'full' })) ||
+      (DeckLoading && typeof DeckLoading.enumerate === 'function' && DeckLoading.enumerate()) ||
+      (DeckLoading?.state?.library) ||
+      _currentDeckList ||
+      [];
+
+    // Normalize each row so downstream filters always see the same keys.
+    return (Array.isArray(raw) ? raw : []).map(c => ({
+      // keep original object around but ensure common keys exist
+      ...c,
+      name:     c?.name || '',
+      img:      c?.img || c?.image || c?.imageUrl || '',
+      typeLine: c?.typeLine || c?.type_line || '',
+      // normalize meta arrays for type filtering
+      baseTypes:       Array.isArray(c?.baseTypes) ? c.baseTypes : [],
+      frontBaseTypes:  Array.isArray(c?.frontBaseTypes) ? c.frontBaseTypes : [],
+      backBaseTypes:   Array.isArray(c?.backBaseTypes) ? c.backBaseTypes : []
+    }));
+  } catch (e) {
+    console.warn('[DeckSearch] _liveDeckItems() failed, using snapshot', e);
+    return Array.isArray(_currentDeckList) ? _currentDeckList : [];
   }
+}
+
   // —— helper: remove ONE copy by name from the live library
   function _decrementFromLibraryByName(name){
     try {
@@ -1722,10 +1938,181 @@ function openDeckSearchOverlay(){
 
   const ui = _mkPanel({ title:`Deck — P${(window.mySeat?.()||1)}` });
 
+  // Intercept *this* overlay’s close to ask about shuffling first — styled popup
+  try {
+    const __origRemove = ui.wrap.remove.bind(ui.wrap);
+
+    // Styled modal (matches your deck-insert modal aesthetic) → returns Promise<boolean>
+    function showShufflePopup(){
+      return new Promise((resolve) => {
+        // guard: only one at a time
+        if (document.getElementById('deckInsertBackdrop')) {
+          resolve(false);
+          return;
+        }
+
+        // backdrop
+        const backdrop = document.createElement('div');
+backdrop.id = 'deckInsertBackdrop';
+Object.assign(backdrop.style, {
+  position: 'fixed',
+  inset: '0',
+  background: 'rgba(2, 6, 23, 0.55)',
+  backdropFilter: 'blur(6px)',
+  WebkitBackdropFilter: 'blur(6px)',
+  zIndex: '2147482999'  // raised above all table UI
+});
+
+
+        // modal shell
+        const modal = document.createElement('div');
+modal.id = 'deckInsertModal';
+Object.assign(modal.style, {
+  position: 'fixed',
+  left: '50%',
+  top: '50%',
+  transform: 'translate(-50%,-50%)',
+  width: 'min(420px, 92vw)',
+  borderRadius: '16px',
+  background: 'linear-gradient(180deg, rgba(30,41,59,.95), rgba(15,23,42,.95))',
+  boxShadow: '0 20px 60px rgba(0,0,0,.55), 0 0 0 1px rgba(148,163,184,.15)',
+  color: '#e2e8f0',
+  zIndex: '2147483000',  // raised above everything (above backdrop)
+  padding: '18px'
+});
+
+// header & hint (remove Esc)
+const header = document.createElement('div');
+header.innerHTML = `
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">
+    <h3 style="margin:0;font-size:16px;font-weight:700;letter-spacing:.2px;">Shuffle the deck now?</h3>
+    <span style="opacity:.75;font-size:12px;">Y / N</span>
+  </div>
+  <p style="margin:0 0 12px;font-size:13px;line-height:1.35;color:#cbd5e1;opacity:.9">
+    Shuffling randomizes the current library order.
+  </p>
+`;
+
+
+        // options grid
+        const grid = document.createElement('div');
+        Object.assign(grid.style, {
+          display: 'grid',
+          gridTemplateColumns: '1fr',
+          gap: '10px'
+        });
+
+        const mkBtn = (label, sub, key, variant = 'primary') => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'deckInsertBtn';
+          btn.dataset.choice = label;
+          Object.assign(btn.style, {
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            padding: '12px 14px',
+            borderRadius: '12px',
+            border: '1px solid rgba(148,163,184,.18)',
+            background: variant === 'ghost'
+              ? 'rgba(15,23,42,.6)'
+              : 'linear-gradient(180deg, rgba(51,65,85,.9), rgba(30,41,59,.9))',
+            color: '#e5e7eb',
+            fontWeight: 700,
+            fontSize: '14px',
+            cursor: 'pointer',
+            transition: 'transform .06s ease, background .12s ease, border-color .12s ease'
+          });
+          btn.onmouseenter = () => {
+            btn.style.transform = 'translateY(-1px)';
+            btn.style.borderColor = 'rgba(148,163,184,.35)';
+          };
+          btn.onmouseleave = () => {
+            btn.style.transform = 'none';
+            btn.style.borderColor = 'rgba(148,163,184,.18)';
+          };
+          btn.onmousedown = () => (btn.style.transform = 'translateY(0)');
+          btn.onmouseup = () => (btn.style.transform = 'translateY(-1px)');
+
+          btn.innerHTML = `
+            <span style="display:flex;align-items:center;gap:10px">
+              <span>${label === 'Yes' ? '🔀' : label === 'No' ? '✖️' : '✖️'}</span>
+              <span>${label}</span>
+              <span style="opacity:.75;font-size:12px;font-weight:600">${sub || ''}</span>
+            </span>
+            ${key ? `<kbd style="
+              font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              font-size:12px;padding:2px 6px;border-radius:6px;
+              background: rgba(2,6,23,.6); border:1px solid rgba(148,163,184,.25);
+              color:#cbd5e1; letter-spacing:.3px;">${key}</kbd>` : ''}
+          `;
+          return btn;
+        };
+
+        const btnYes   = mkBtn('Yes', 'Shuffle library now', 'Y');
+const btnNo    = mkBtn('No',  'Leave order as is',   'N', 'ghost');
+
+[btnYes, btnNo].forEach(b => grid.appendChild(b));
+
+
+        modal.appendChild(header);
+        modal.appendChild(grid);
+
+        document.body.appendChild(backdrop);
+        document.body.appendChild(modal);
+
+        // close helpers
+const teardown = (val=false) => {
+  try { modal.remove(); } catch {}
+  try { backdrop.remove(); } catch {}
+  resolve(val);
+};
+
+// actions (only Yes/No)
+const act = (choice) => {
+  if (choice === 'Yes') { teardown(true);  return; }
+  if (choice === 'No')  { teardown(false); return; }
+};
+
+// backdrop click = No
+backdrop.addEventListener('click', () => act('No'));
+btnYes.addEventListener('click',    () => act('Yes'));
+btnNo.addEventListener('click',     () => act('No'));
+
+
+        // keyboard shortcuts (Y / N only)
+const onKey = (e) => {
+  if (!document.body.contains(modal)) {
+    window.removeEventListener('keydown', onKey);
+    return;
+  }
+  const k = e.key.toLowerCase();
+  if (k === 'y') { e.preventDefault(); act('Yes'); return; }
+  if (k === 'n') { e.preventDefault(); act('No');  return; }
+};
+window.addEventListener('keydown', onKey, { passive: true });
+
+      });
+    }
+
+    ui.wrap.remove = async function(){
+      try {
+        const yes = await showShufflePopup();
+        if (yes && window.DeckLoading && typeof DeckLoading.shuffleLibrary === 'function') {
+          DeckLoading.shuffleLibrary();
+        }
+      } catch {}
+      return __origRemove();
+    };
+  } catch {}
+
+
   const q = _input(); q.placeholder = 'Search name…';
   const sel = document.createElement('select');
-  Object.assign(sel.style, { background:'#0a0f16', color:'#e7efff', border:'1px solid rgba(255,255,255,.08)', borderRadius:'10px', padding:'8px' });
-  ['All','Creature','Instant','Sorcery','Artifact','Enchantment','Planeswalker','Land','Token','Battle','Other']
+  Object.assign(sel.style, { background:'#0a0f16', color:'#e7efff', border:'1px solid rgba(255,255,255,0.8)', borderRadius:'10px', padding:'8px' });
+  (Array.isArray(TYPE_FILTERS) ? TYPE_FILTERS : ['All'])
     .forEach(t=>{ const o=document.createElement('option'); o.value=t; o.textContent=t; sel.appendChild(o); });
 
   const top = document.createElement('div');
@@ -1735,24 +2122,59 @@ function openDeckSearchOverlay(){
 
   const list = document.createElement('div'); ui.body.appendChild(list);
 
-  // bucket helper
-  function bucket(typeLine=''){
-    const tl = String(typeLine).toLowerCase();
-    if (tl.includes('creature')) return 'Creature';
-    if (tl.includes('artifact')) return 'Artifact';
-    if (tl.includes('instant')) return 'Instant';
-    if (tl.includes('sorcery')) return 'Sorcery';
-    if (tl.includes('enchantment')) return 'Enchantment';
-    if (tl.includes('planeswalker')) return 'Planeswalker';
-    if (tl.includes('land')) return 'Land';
-    if (tl.includes('token')) return 'Token';
-    if (tl.includes('battle')) return 'Battle';
-    return 'Other';
-  }
 
+
+   // ...
   function _escape(s){
     var map = { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' };
     return String(s || '').replace(/[&<>"']/g, ch => map[ch]);
+  }
+
+  // Local extraction similar to Add Any Card overlay: derive core type tokens
+  function _extractConcreteInnateDeck(typeLine){
+    const out = [];
+    const raw = String(typeLine||'').split('—')[0] || ''; // only the left side matters for super/primary types
+    raw.split(/\s+/).forEach(w=>{
+      const cleaned = w.replace(/[^A-Za-z]/g,'').trim();
+      if (!cleaned) return;
+      const cap = cleaned.charAt(0).toUpperCase() + cleaned.slice(1).toLowerCase();
+      out.push(cap);
+    });
+    // normalize uniqueness & keep common tokens as-is (Creature, Instant, Legendary, Aura, Vehicle, Token, etc.)
+    return [...new Set(out)];
+  }
+
+  // precise type matcher: compute types from local typeLine and match canonical tokens
+  function _matchesType(card, want){
+    const W = String(want||'All').toLowerCase();
+    if (W === 'all') return true;
+
+    // prefer explicit meta if present, otherwise derive from type line
+    const metaTypes = []
+      .concat(card?.baseTypes || [])
+      .concat(card?.frontBaseTypes || [])
+      .concat(card?.backBaseTypes || [])
+      .map(s => String(s).toLowerCase());
+
+    if (metaTypes.includes(W)) return true;
+
+    // derive from whichever typeLine keys we have on deck items
+    const tlCombined = String(
+      (card?.type_line || card?.typeLine || card?.frontTypeLine || '') +
+      ' ' +
+      (card?.backTypeLine || '')
+    );
+
+    const derived = _extractConcreteInnateDeck(tlCombined).map(s=>s.toLowerCase());
+
+    // Special case: Token filter should match explicit token cards in the deck list as well.
+    if (W === 'token') {
+      const isToken = /\btoken\b/i.test(tlCombined);
+      if (isToken) return true;
+    }
+
+    return derived.includes(W)
+        || tlCombined.toLowerCase().includes(W); // final safety net for rare strings like "Planeswalker" / "Battle"
   }
 
   function render(){
@@ -1762,15 +2184,17 @@ function openDeckSearchOverlay(){
     const live = _liveDeckItems();
 
     const query = (q.value||'').toLowerCase();
-    const want = sel.value;
+    const want  = sel.value;
 
     const items = live.filter(c=>{
       const n = (c?.name||'').toLowerCase();
-      const t = (c?.type_line||c?.typeLine||'');
       const okN = !query || n.includes(query);
-      const okT = want==='All' ? true : (bucket(t)===want);
+      const okT = _matchesType(c, want);
       return okN && okT;
     });
+  // ...
+
+
 
     if (!items.length){
       const d = document.createElement('div'); d.textContent = 'No matches.'; d.style.opacity = '.8';
@@ -2066,7 +2490,9 @@ zone.appendChild(lab);
     exportOwnerZone,
     importOwnerZone,     // ← loader expects this
     resetOwnerZones,     // ← loader expects this
-    moveCardToZone       // ← deck search overlay calls window.moveCardToZone()
+    moveCardToZone,       // ← deck search overlay calls window.moveCardToZone()
+    //removeCardFromTableByCid  // ← used by Return Multiple flow to mirror single-card behavior
+
   };
 })();
 

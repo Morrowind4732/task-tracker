@@ -366,10 +366,15 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
   }
 
   // figure out where to pin when LOW_PROFILE == true
+  // NOW: avoid overlapping HUD rails (drawer/cross/end) by downshifting (and, if needed, shoving left of the rail).
   function _dockLowProfile(){
     if (!root) return;
     const { tooltipDockEdge } = getLiveUISettings();
 
+    // ensure sizing is up to date so offsetWidth/Height are correct
+    _applySizingForMode();
+
+    // Reset all anchors
     root.style.position = 'fixed';
     root.style.transform = '';
     root.style.left   = '';
@@ -377,25 +382,119 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
     root.style.top    = '';
     root.style.bottom = '';
 
+    // Measure tooltip (ensure it's display:block for measurement)
+    const prevDisplay = root.style.display;
+    if (prevDisplay === 'none') root.style.display = 'block';
+
+    const tipW = root.offsetWidth || 0;
+    const tipH = root.offsetHeight || 0;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    // Helper builders
+    const clampXY = ({x,y}) => ({
+      x: Math.max(8, Math.min(x, vw - tipW - 8)),
+      y: Math.max(8, Math.min(y, vh - tipH - 8)),
+    });
+    const makeRect = ({x,y}) => ({ left:x, top:y, right:x+tipW, bottom:y+tipH });
+    const obstacles = _getHudObstacleRects();
+    const hitsHud = (r)=> obstacles.some(ob => _rectsIntersect(r, ob));
+
+    // Base dock positions (pixel coords instead of 50% + translate)
+    let xy;
     if (tooltipDockEdge === 'left'){
-      root.style.left   = '16px';
-      root.style.top    = '50%';
-      root.style.transform = 'translateY(-50%)';
+      xy = { x: 16, y: (vh - tipH) / 2 };
     } else if (tooltipDockEdge === 'top'){
-      root.style.left   = '50%';
-      root.style.top    = '16px';
-      root.style.transform = 'translateX(-50%)';
+      xy = { x: (vw - tipW) / 2, y: 16 };
     } else if (tooltipDockEdge === 'bottom'){
-      root.style.left    = '50%';
-      root.style.bottom  = '16px';
-      root.style.transform = 'translateX(-50%)';
+      xy = { x: (vw - tipW) / 2, y: vh - tipH - 16 };
     } else {
       // default 'right'
-      root.style.right  = '16px';
-      root.style.top    = '50%';
-      root.style.transform = 'translateY(-50%)';
+      xy = { x: vw - tipW - 16, y: (vh - tipH) / 2 };
     }
+    xy = clampXY(xy);
+    let tipRect = makeRect(xy);
+
+    // === Avoid HUD rails (downshift-first strategy) ===
+
+    // 1) Try vertical downshift below deepest overlapping obstacle
+    let guard = 0;
+    while (guard < 4 && hitsHud(tipRect)) {
+      let maxBottom = null;
+      for (const ob of obstacles) {
+        if (_rectsIntersect(tipRect, ob)) {
+          maxBottom = Math.max(maxBottom ?? -Infinity, ob.bottom);
+        }
+      }
+      if (maxBottom != null) {
+        xy.y = maxBottom + 12;
+        xy = clampXY(xy);
+        tipRect = makeRect(xy);
+      }
+      guard++;
+    }
+
+    // 2) If still colliding, try parking above the top-most overlapping obstacle
+    if (hitsHud(tipRect)) {
+      let highestTop = Infinity;
+      for (const ob of obstacles) {
+        if (_rectsIntersect(tipRect, ob)) {
+          highestTop = Math.min(highestTop, ob.top);
+        }
+      }
+      if (Number.isFinite(highestTop)) {
+        xy.y = (highestTop - tipH) - 12;
+        xy = clampXY(xy);
+        tipRect = makeRect(xy);
+      }
+    }
+
+    // 3) If still colliding and dock edge is a side (right/left), shove horizontally away from the rail stack
+    if (hitsHud(tipRect) && (tooltipDockEdge === 'right' || tooltipDockEdge === undefined)) {
+      // Find the rightmost left edge among overlapping obstacles and park to its left
+      let rightmostLeft = -Infinity;
+      for (const ob of obstacles) {
+        if (_rectsIntersect(tipRect, ob)) {
+          rightmostLeft = Math.max(rightmostLeft, ob.left);
+        }
+      }
+      if (rightmostLeft > -Infinity) {
+        xy.x = (rightmostLeft - tipW) - 12;
+        xy = clampXY(xy);
+        tipRect = makeRect(xy);
+      }
+    } else if (hitsHud(tipRect) && tooltipDockEdge === 'left') {
+      // Mirror for left rail: park to the right of the leftmost overlapping obstacle
+      let leftmostRight = Infinity;
+      for (const ob of obstacles) {
+        if (_rectsIntersect(tipRect, ob)) {
+          leftmostRight = Math.min(leftmostRight, ob.right);
+        }
+      }
+      if (Number.isFinite(leftmostRight)) {
+        xy.x = leftmostRight + 12;
+        xy = clampXY(xy);
+        tipRect = makeRect(xy);
+      }
+    }
+
+    // 4) Final fallback for tiny screens: pin to top-left gutter
+    if (hitsHud(tipRect)) {
+      xy = clampXY({ x: 8, y: 8 });
+      tipRect = makeRect(xy);
+    }
+
+    // Commit style (no transforms for slim mode)
+    root.style.left = `${Math.round(xy.x)}px`;
+    root.style.top  = `${Math.round(xy.y)}px`;
+    root.style.right = '';
+    root.style.bottom = '';
+    root.style.transform = '';
+
+    // restore prior display state if needed
+    if (prevDisplay === 'none') root.style.display = 'none';
   }
+
 
   // helper we expose so settings sliders/dropdowns can force a re-dock live
   function redockIfSlim(){
@@ -485,7 +584,7 @@ let root, nameN, costN, typeN, oraN, ogPT, livePT, ogLOY, liveLOY, flipBtn;
     position:fixed; display:none;
     background:linear-gradient(180deg, var(--ui-deep-2), var(--ui-deep-1));
     color:var(--ui-text); border:1px solid var(--ui-border);
-    border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.55); z-index:9000;
+    border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,.55); z-index:11000;
     max-width:min(var(--tt-max-width), 92vw); max-height:min(80vh, 680px); overflow:auto;
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
     font-size:var(--tt-font-size);
@@ -623,367 +722,142 @@ flipBtn= root.querySelector('#ttFlip');
     if (root) root.style.display = 'none';
     stopFollowing();
   }
+  
+  // Collect visible HUD button rects (drawer tab, combat, end turn) on both rails.
+function _getHudObstacleRects(){
+  const sels = [
+    '#ui-tab-toggle-a', '#ui-btn-cross-a', '#ui-btn-end-a',
+    '#ui-tab-toggle-b', '#ui-btn-cross-b', '#ui-btn-end-b'
+  ];
+  const els = sels
+    .map(s => document.querySelector(s))
+    .filter(el =>
+      el &&
+      el.isConnected &&
+      el.offsetParent !== null &&                       // not display:none / detached
+      getComputedStyle(el).visibility !== 'hidden'      // not visibility:hidden
+    );
 
- // -----------------------
-// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
+  return els.map(el => el.getBoundingClientRect());
+}
+
+// Basic rect intersection helper (same semantics as your local one).
+function _rectsIntersect(a, b){
+  return !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
+}
+
+
+// -----------------------
+// positionNear (normal mode) — auto-flips + avoids HUD buttons (Y + X shove)
 // -----------------------
 function positionNear(anchorEl, { mode = 'right' } = {}){
   if (!root) return;
 
-  // Slim while either battle-mode OR low-profile
+  // Slim / battle mode: just dock
   if (_isSlim()){
     _applySizingForMode();
     _dockLowProfile();
     return;
   }
 
-
-  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
-
+  _applySizingForMode();
   if (!anchorEl) return;
 
   const cardRect = anchorEl.getBoundingClientRect();
   const tipW = root.offsetWidth;
   const tipH = root.offsetHeight;
 
-  // Helper: compute desired x/y for a mode without writing styles
   const calcXY = (m) => {
     if (m === 'bottom') {
       const extraGap = 48;
-      return {
-        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
-        y: cardRect.bottom + extraGap
-      };
+      return { x: (cardRect.left + cardRect.right)/2 - tipW/2, y: cardRect.bottom + extraGap };
     }
-    if (m === 'top') {
-      return {
-        x: cardRect.left,
-        y: cardRect.top - tipH - 12
-      };
-    }
-    if (m === 'left') {
-      return {
-        x: cardRect.left - tipW - 12,
-        y: cardRect.top
-      };
-    }
-    // default 'right'
-    return {
-      x: cardRect.right + 12,
-      y: cardRect.top
-    };
+    if (m === 'top')   return { x: cardRect.left,              y: cardRect.top - tipH - 12 };
+    if (m === 'left')  return { x: cardRect.left - tipW - 12,  y: cardRect.top };
+    /* right */        return { x: cardRect.right + 12,        y: cardRect.top };
   };
 
-  // Helper: clamp to viewport (leaves an 8px gutter)
-  const clampXY = ({x, y}) => ({
+  const clampXY = ({x,y}) => ({
     x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
-    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
+    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8)),
   });
 
-  // Helper: simulate tooltip rect at x/y
-  const makeRect = ({x, y}) => ({
-    left: x, top: y, right: x + tipW, bottom: y + tipH
-  });
+  const makeRect = ({x,y}) => ({ left:x, top:y, right:x+tipW, bottom:y+tipH });
+  const overlaps = (a,b)=>!(b.left>=a.right||b.right<=a.left||b.top>=a.bottom||b.bottom<=a.top);
 
-  // Helper: intersection test
-  const intersects = (a, b) =>
-    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
-
-  // Start with requested mode
   let preferred = mode || 'right';
   let xy = clampXY(calcXY(preferred));
   let tipRect = makeRect(xy);
 
-  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
-  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
-    const alt = preferred === 'bottom' ? 'top' : 'bottom';
+  // Flip for vertical overlap with the card
+  if ((preferred==='bottom'||preferred==='top') && overlaps(cardRect, tipRect)){
+    const alt = preferred==='bottom' ? 'top' : 'bottom';
     const xyAlt = clampXY(calcXY(alt));
     const rectAlt = makeRect(xyAlt);
-    // choose the alt if it removes overlap; otherwise keep clamped preferred
-    if (!intersects(cardRect, rectAlt)) {
-      preferred = alt;
-      xy = xyAlt;
-      tipRect = rectAlt;
+    if (!overlaps(cardRect, rectAlt)){ preferred = alt; xy = xyAlt; tipRect = rectAlt; }
+  }
+
+  // Avoid HUD: drawer tab, Combat, End Turn (both rails)
+  const obstacles = _getHudObstacleRects();
+  const hitsHud = (r)=> obstacles.some(ob => _rectsIntersect(r, ob));
+
+  // 1) Try vertical downshift below deepest obstacle
+  let tries = 0;
+  while (tries < 3 && hitsHud(tipRect)) {
+    let maxBottom = null;
+    for (const ob of obstacles) if (_rectsIntersect(tipRect, ob))
+      maxBottom = Math.max(maxBottom ?? -Infinity, ob.bottom);
+    if (maxBottom != null) {
+      xy.y = maxBottom + 12;
+      xy = clampXY(xy);
+      tipRect = makeRect(xy);
     }
+    tries++;
+  }
+
+  // 2) If still colliding, try above the top-most obstacle
+  if (hitsHud(tipRect)) {
+    let highestTop = Infinity;
+    for (const ob of obstacles) if (_rectsIntersect(tipRect, ob))
+      highestTop = Math.min(highestTop, ob.top);
+    if (Number.isFinite(highestTop)) {
+      xy.y = (highestTop - tipH) - 12;
+      xy = clampXY(xy);
+      tipRect = makeRect(xy);
+    }
+  }
+
+  // 3) If we STILL collide (common case near right rail), shove LEFT of the rail.
+  if (hitsHud(tipRect)) {
+    // Find the rightmost obstacle we collide with and park to its left.
+    let rightmostLeft = -Infinity;
+    for (const ob of obstacles) {
+      if (_rectsIntersect(tipRect, ob)) {
+        rightmostLeft = Math.max(rightmostLeft, ob.left);
+      }
+    }
+    if (rightmostLeft > -Infinity) {
+      xy.x = (rightmostLeft - tipW) - 12;  // move left of rail stack
+      xy = clampXY(xy);
+      tipRect = makeRect(xy);
+    }
+  }
+
+  // 4) Final fallback: if still intersecting (tiny screens), shove to extreme left gutter.
+  if (hitsHud(tipRect)) {
+    xy.x = 8;
+    xy = clampXY(xy);
+    tipRect = makeRect(xy);
   }
 
   root.style.position = 'fixed';
-  root.style.left  = `${xy.x}px`;
-  root.style.top   = `${xy.y}px`;
+  root.style.left = `${xy.x}px`;
+  root.style.top  = `${xy.y}px`;
   root.style.right = '';
-  root.style.bottom= '';
+  root.style.bottom = '';
   root.style.transform = '';
 }
 
- // -----------------------
-// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
-// -----------------------
-function positionNear(anchorEl, { mode = 'right' } = {}){
-  if (!root) return;
-
-  // LOW_PROFILE mode ignores anchor and just docks to edge
-  if (LOW_PROFILE){
-    _applySizingForMode();
-    _dockLowProfile();
-    return;
-  }
-
-  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
-
-  if (!anchorEl) return;
-
-  const cardRect = anchorEl.getBoundingClientRect();
-  const tipW = root.offsetWidth;
-  const tipH = root.offsetHeight;
-
-  // Helper: compute desired x/y for a mode without writing styles
-  const calcXY = (m) => {
-    if (m === 'bottom') {
-      const extraGap = 48;
-      return {
-        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
-        y: cardRect.bottom + extraGap
-      };
-    }
-    if (m === 'top') {
-      return {
-        x: cardRect.left,
-        y: cardRect.top - tipH - 12
-      };
-    }
-    if (m === 'left') {
-      return {
-        x: cardRect.left - tipW - 12,
-        y: cardRect.top
-      };
-    }
-    // default 'right'
-    return {
-      x: cardRect.right + 12,
-      y: cardRect.top
-    };
-  };
-
-  // Helper: clamp to viewport (leaves an 8px gutter)
-  const clampXY = ({x, y}) => ({
-    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
-    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
-  });
-
-  // Helper: simulate tooltip rect at x/y
-  const makeRect = ({x, y}) => ({
-    left: x, top: y, right: x + tipW, bottom: y + tipH
-  });
-
-  // Helper: intersection test
-  const intersects = (a, b) =>
-    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
-
-  // Start with requested mode
-  let preferred = mode || 'right';
-  let xy = clampXY(calcXY(preferred));
-  let tipRect = makeRect(xy);
-
-  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
-  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
-    const alt = preferred === 'bottom' ? 'top' : 'bottom';
-    const xyAlt = clampXY(calcXY(alt));
-    const rectAlt = makeRect(xyAlt);
-    // choose the alt if it removes overlap; otherwise keep clamped preferred
-    if (!intersects(cardRect, rectAlt)) {
-      preferred = alt;
-      xy = xyAlt;
-      tipRect = rectAlt;
-    }
-  }
-
-  root.style.position = 'fixed';
-  root.style.left  = `${xy.x}px`;
-  root.style.top   = `${xy.y}px`;
-  root.style.right = '';
-  root.style.bottom= '';
-  root.style.transform = '';
-}
-
- // -----------------------
-// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
-// -----------------------
-function positionNear(anchorEl, { mode = 'right' } = {}){
-  if (!root) return;
-
-  // LOW_PROFILE mode ignores anchor and just docks to edge
-  if (LOW_PROFILE){
-    _applySizingForMode();
-    _dockLowProfile();
-    return;
-  }
-
-  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
-
-  if (!anchorEl) return;
-
-  const cardRect = anchorEl.getBoundingClientRect();
-  const tipW = root.offsetWidth;
-  const tipH = root.offsetHeight;
-
-  // Helper: compute desired x/y for a mode without writing styles
-  const calcXY = (m) => {
-    if (m === 'bottom') {
-      const extraGap = 48;
-      return {
-        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
-        y: cardRect.bottom + extraGap
-      };
-    }
-    if (m === 'top') {
-      return {
-        x: cardRect.left,
-        y: cardRect.top - tipH - 12
-      };
-    }
-    if (m === 'left') {
-      return {
-        x: cardRect.left - tipW - 12,
-        y: cardRect.top
-      };
-    }
-    // default 'right'
-    return {
-      x: cardRect.right + 12,
-      y: cardRect.top
-    };
-  };
-
-  // Helper: clamp to viewport (leaves an 8px gutter)
-  const clampXY = ({x, y}) => ({
-    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
-    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
-  });
-
-  // Helper: simulate tooltip rect at x/y
-  const makeRect = ({x, y}) => ({
-    left: x, top: y, right: x + tipW, bottom: y + tipH
-  });
-
-  // Helper: intersection test
-  const intersects = (a, b) =>
-    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
-
-  // Start with requested mode
-  let preferred = mode || 'right';
-  let xy = clampXY(calcXY(preferred));
-  let tipRect = makeRect(xy);
-
-  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
-  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
-    const alt = preferred === 'bottom' ? 'top' : 'bottom';
-    const xyAlt = clampXY(calcXY(alt));
-    const rectAlt = makeRect(xyAlt);
-    // choose the alt if it removes overlap; otherwise keep clamped preferred
-    if (!intersects(cardRect, rectAlt)) {
-      preferred = alt;
-      xy = xyAlt;
-      tipRect = rectAlt;
-    }
-  }
-
-  root.style.position = 'fixed';
-  root.style.left  = `${xy.x}px`;
-  root.style.top   = `${xy.y}px`;
-  root.style.right = '';
-  root.style.bottom= '';
-  root.style.transform = '';
-}
-
- // -----------------------
-// positionNear (normal mode) — auto-flips top/bottom to avoid overlap
-// -----------------------
-function positionNear(anchorEl, { mode = 'right' } = {}){
-  if (!root) return;
-
-  // LOW_PROFILE mode ignores anchor and just docks to edge
-  if (LOW_PROFILE){
-    _applySizingForMode();
-    _dockLowProfile();
-    return;
-  }
-
-  _applySizingForMode(); // ensure we have correct root.offsetWidth/Height
-
-  if (!anchorEl) return;
-
-  const cardRect = anchorEl.getBoundingClientRect();
-  const tipW = root.offsetWidth;
-  const tipH = root.offsetHeight;
-
-  // Helper: compute desired x/y for a mode without writing styles
-  const calcXY = (m) => {
-    if (m === 'bottom') {
-      const extraGap = 48;
-      return {
-        x: (cardRect.left + cardRect.right) / 2 - (tipW / 2),
-        y: cardRect.bottom + extraGap
-      };
-    }
-    if (m === 'top') {
-      return {
-        x: cardRect.left,
-        y: cardRect.top - tipH - 12
-      };
-    }
-    if (m === 'left') {
-      return {
-        x: cardRect.left - tipW - 12,
-        y: cardRect.top
-      };
-    }
-    // default 'right'
-    return {
-      x: cardRect.right + 12,
-      y: cardRect.top
-    };
-  };
-
-  // Helper: clamp to viewport (leaves an 8px gutter)
-  const clampXY = ({x, y}) => ({
-    x: Math.max(8, Math.min(x, window.innerWidth  - tipW - 8)),
-    y: Math.max(8, Math.min(y, window.innerHeight - tipH - 8))
-  });
-
-  // Helper: simulate tooltip rect at x/y
-  const makeRect = ({x, y}) => ({
-    left: x, top: y, right: x + tipW, bottom: y + tipH
-  });
-
-  // Helper: intersection test
-  const intersects = (a, b) =>
-    !(b.left >= a.right || b.right <= a.left || b.top >= a.bottom || b.bottom <= a.top);
-
-  // Start with requested mode
-  let preferred = mode || 'right';
-  let xy = clampXY(calcXY(preferred));
-  let tipRect = makeRect(xy);
-
-  // If requested mode is vertical (top/bottom), auto-flip to avoid overlap with the card
-  if ((preferred === 'bottom' || preferred === 'top') && intersects(cardRect, tipRect)) {
-    const alt = preferred === 'bottom' ? 'top' : 'bottom';
-    const xyAlt = clampXY(calcXY(alt));
-    const rectAlt = makeRect(xyAlt);
-    // choose the alt if it removes overlap; otherwise keep clamped preferred
-    if (!intersects(cardRect, rectAlt)) {
-      preferred = alt;
-      xy = xyAlt;
-      tipRect = rectAlt;
-    }
-  }
-
-  root.style.position = 'fixed';
-  root.style.left  = `${xy.x}px`;
-  root.style.top   = `${xy.y}px`;
-  root.style.right = '';
-  root.style.bottom= '';
-  root.style.transform = '';
-}
 
 
   // -----------------------
@@ -1094,12 +968,21 @@ if (ogLOY && liveLOY) {
 
     root.style.display = 'block';
 
-    // refresh sizing for current mode
-    _applySizingForMode();
+// make sure we are NOT stuck in slim/docked mode after a prior drag
+if (!BATTLE_MODE && LOW_PROFILE) {
+  LOW_PROFILE = false;
+}
 
-    // anchor + follow
-    const anchor = anchorEl || el;
-    const isTableCard = !!anchor?.classList?.contains('table-card');
+// refresh sizing for current mode
+_applySizingForMode();
+
+// anchor + follow
+const anchor = anchorEl || el;
+const isTableCard = !!anchor?.classList?.contains('table-card');
+
+// position immediately (HUD avoidance and x/y shove will now be allowed)
+positionNear(anchor, { mode: isTableCard ? 'bottom' : (opts.mode || 'right') });
+
 
     // position immediately
     positionNear(anchor, { mode: isTableCard ? 'bottom' : (opts.mode || 'right') });

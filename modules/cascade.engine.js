@@ -135,39 +135,75 @@ Object.assign(node.style, {
 
   // ------- Confirm dialogs -------
   function confirmCastModal(hit){
-    return new Promise(resolve => {
-      const dim = el('div');
-      Object.assign(dim.style, { position:'fixed', inset:0, background:'rgba(0,0,0,.6)', display:'grid', placeItems:'center', zIndex:999999 });
-      const panel = el('div');
-      Object.assign(panel.style, {
-        width:'min(520px, 92vw)', background:'#0c1a2b', border:'1px solid rgba(255,255,255,.2)',
-        borderRadius:'12px', padding:'16px', display:'grid', gap:'12px', color:'#eaf2ff'
-      });
-      const img = el('img', { alt:hit.name });
-      Object.assign(img.style, { width:'100%', height:'auto', borderRadius:'8px', border:'1px solid rgba(255,255,255,.25)' });
-      img.src = hit.img || '';
-
-      const row = el('div'); 
-      Object.assign(row.style, { display:'grid', gridTemplateColumns:'1fr auto auto', gap:'8px', alignItems:'center' });
-
-      const invalid = el('button'); invalid.textContent = 'Invalid'; Object.assign(invalid.style, btnS()); // left
-      const no      = el('button'); no.textContent = 'No'; Object.assign(no.style, btnS());               // right mid
-      const yes     = el('button'); yes.textContent = 'Cast (free)'; Object.assign(yes.style, btnS(true));// right
-
-      row.append(invalid, no, yes);
-
-      panel.append(el('div',{}, `<strong>Cast this for free?</strong><div style="opacity:.85">${hit.name}</div>`));
-      panel.append(img, row);
-      dim.append(panel);
-
-      function close(v){ try{ dim.remove(); }catch{} resolve(v); }
-      invalid.onclick = () => close('invalid');
-      no.onclick      = () => close(false);
-      yes.onclick     = () => close(true);
-      dim.onclick     = (e)=>{ if (e.target===dim) close(false); };
-      document.body.appendChild(dim);
+  return new Promise(resolve => {
+    const dim = el('div');
+    Object.assign(dim.style, {
+      position:'fixed',
+      inset:0,
+      background:'rgba(0,0,0,6)',
+      display:'grid',
+      placeItems:'center',
+      zIndex:999999
     });
-  }
+
+    const panel = el('div');
+    Object.assign(panel.style, {
+      width:'min(520px, 92vw)',
+      maxHeight:'92vh',                  // prevent off-screen growth
+      background:'#0c1a2b',
+      border:'1px solid rgba(255,255,255,2)',
+      borderRadius:'12px',
+      padding:'16px',
+      display:'grid',
+      gap:'12px',
+      color:'#eaf2ff',
+      overflow:'auto',                   // allow scrolling if needed
+      gridTemplateRows:'auto 1fr auto'  // title / image grows / buttons fixed
+    });
+
+    const header = el('div', {}, `<strong>Cast this for free?</strong><div style="opacity:.85">${hit.name}</div>`);
+
+    const img = el('img', { alt:hit.name });
+    Object.assign(img.style, {
+      width:'100%',
+      height:'auto',
+      maxHeight:'58vh',                  // protect buttons space on short screens
+      objectFit:'contain',
+      borderRadius:'8px',
+      border:'1px solid rgba(255,255,255,25)'
+    });
+    img.src = hit.img || '';
+
+    const row = el('div');
+    Object.assign(row.style, {
+      display:'grid',
+      gridTemplateColumns:'1fr auto auto',
+      gap:'8px',
+      alignItems:'center',
+      position:'sticky',                 // keep buttons visible when scrolling
+      bottom:0,
+      background:'linear-gradient(180deg, rgba(12,26,43,0.92), rgba(12,26,43,1))',
+      paddingTop:'8px'
+    });
+
+    const invalid = el('button'); invalid.textContent = 'Invalid'; Object.assign(invalid.style, btnS());
+    const no      = el('button'); no.textContent = 'No';           Object.assign(no.style,      btnS());
+    const yes     = el('button'); yes.textContent = 'Cast (free)'; Object.assign(yes.style,     btnS(true));
+
+    row.append(invalid, no, yes);
+
+    panel.append(header, img, row);
+    dim.append(panel);
+
+    function close(v){ try{ dim.remove(); }catch{} resolve(v); }
+    invalid.onclick = () => close('invalid');
+    no.onclick      = () => close(false);
+    yes.onclick     = () => close(true);
+    dim.onclick     = (e)=>{ if (e.target===dim) close(false); };
+    document.body.appendChild(dim);
+  });
+}
+
 
   function btnS(primary=false){
     return {
@@ -253,42 +289,55 @@ Object.assign(node.style, {
         }
 
         // cleanup destination for the *other* cards
-        const others = revealed.slice(0, -1); // all except last
-        removeNodes(nodes);
+const others = revealed.slice(0, -1); // all except last
+removeNodes(nodes);
 
-        if (others.length){
-          const dest = await chooseCleanupDestModal();
-          putRevealsSomewhere(others.map(o => ({ name:o.name, img:o.img })), dest || 'bottom');
+if (others.length){
+  const dest = await chooseCleanupDestModal();
+  putRevealsSomewhere(others.map(o => ({ name:o.name, img:o.img })), dest || 'bottom');
 
-          try {
-            __sendCascadeRTC({
-              type: 'cascade:result',
-              seat: seatNow(),
-              cast: (decision === true),
-              chosen: { name, img:imageUrl },
-              others: others.map(o => ({ name:o.name, img:o.img })),
-              dest: dest || 'bottom'
-            });
-          } catch {}
-        }
+  try {
+    __sendCascadeRTC({
+      type: 'cascade:result',
+      seat: seatNow(),
+      cast: (decision === true),
+      chosen: { name, img:imageUrl },
+      others: others.map(o => ({ name:o.name, img:o.img })),
+      dest: dest || 'bottom'
+    });
+  } catch {}
+} else {
+  // 🔧 NEW: even when there are no "others", still tell remote to CLEAR
+  try {
+    __sendCascadeRTC({
+      type: 'cascade:result',
+      seat: seatNow(),
+      cast: (decision === true),
+      chosen: { name, img:imageUrl },
+      others: [],            // none to place
+      dest: 'bottom'         // placeholder; remote only uses this to log
+    });
+  } catch {}
+}
 
-        if (decision === true){
-          try { window.flyDrawToHand?.({ name, imageUrl }, null); } catch {}
-        } else {
-          const dest = await chooseCleanupDestModal();
-          putRevealsSomewhere([{ name, img:imageUrl }], dest || 'bottom');
+if (decision === true){
+  try { window.flyDrawToHand?.({ name, imageUrl }, null); } catch {}
+} else {
+  const dest = await chooseCleanupDestModal();
+  putRevealsSomewhere([{ name, img:imageUrl }], dest || 'bottom');
 
-          try {
-            __sendCascadeRTC({
-              type: 'cascade:result',
-              seat: seatNow(),
-              cast: false,
-              chosen: { name, img:imageUrl },
-              others: [{ name, img:imageUrl }],
-              dest: dest || 'bottom'
-            });
-          } catch {}
-        }
+  try {
+    __sendCascadeRTC({
+      type: 'cascade:result',
+      seat: seatNow(),
+      cast: false,
+      chosen: { name, img:imageUrl },
+      others: [{ name, img:imageUrl }],
+      dest: dest || 'bottom'
+    });
+  } catch {}
+}
+
 
         return; // done
       }
@@ -351,15 +400,41 @@ Object.assign(node.style, {
 
   // ------- UIs -------
   function quickPick(){
-    return new Promise(resolve=>{
-      const dim = el('div'); Object.assign(dim.style, { position:'fixed', inset:0, display:'grid', placeItems:'center', background:'rgba(0,0,0,.65)', zIndex:999999 });
-      const panel = el('div'); Object.assign(panel.style, { background:'#0c1a2b', border:'1px solid rgba(255,255,255,.2)', borderRadius:'12px', padding:'16px', color:'#eaf2ff' });
-      const grid = el('div'); Object.assign(grid.style, { display:'grid', gridTemplateColumns:'repeat(5,60px)', gap:'8px' });
-      const mk = (t)=>{ const b=el('button'); b.textContent=t; Object.assign(b.style, btnS()); b.onclick=()=>{ try{dim.remove();}catch{} resolve(t); }; return b; };
-      ['1','2','3','4','5','6','7','8','9','X','Special'].forEach(v => grid.append(mk(v)));
-      panel.append(el('div',{},'<strong>Cascade: choose value</strong>'), grid); dim.append(panel); document.body.appendChild(dim);
+  return new Promise(resolve=>{
+    const dim = el('div');
+    Object.assign(dim.style, { position:'fixed', inset:0, display:'grid',
+      placeItems:'center', background:'rgba(0,0,0,.65)', zIndex:999999 });
+
+    const panel = el('div');
+    Object.assign(panel.style, {
+      background:'#0c1a2b', border:'1px solid rgba(255,255,255,.2)',
+      borderRadius:'12px', padding:'16px', color:'#eaf2ff'
     });
-  }
+
+    const grid = el('div');
+    Object.assign(grid.style, { display:'grid',
+      gridTemplateColumns:'repeat(5,60px)', gap:'8px' });
+
+    const mk = (t)=>{
+      const b=el('button');
+      b.textContent=t;
+      Object.assign(b.style, btnS());
+      b.onclick=()=>{ try{dim.remove();}catch{} resolve(t); };
+      return b;
+    };
+    ['1','2','3','4','5','6','7','8','9','X','Special']
+      .forEach(v => grid.append(mk(v)));
+
+    panel.append(el('div',{},'<strong>Cascade: choose value</strong>'), grid);
+    dim.append(panel);
+    document.body.appendChild(dim);
+
+    dim.addEventListener('click', e=>{
+      if(e.target===dim){ try{dim.remove();}catch{} resolve(null); }
+    });
+  });
+}
+
 
   function specialPicker(){
     return new Promise(resolve=>{
@@ -396,6 +471,15 @@ Object.assign(node.style, {
 
       panel.append(el('div',{},'<strong>Special Reveal</strong>'), sel, valInput, landSel, go);
       dim.append(panel); document.body.appendChild(dim);
+	  
+	  // Close when clicking outside the panel (like Draw X)
+dim.addEventListener('click', (e) => {
+  if (e.target === dim) {
+    try { dim.remove(); } catch {}
+    resolve(null);
+  }
+});
+
     });
   }
 

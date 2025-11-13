@@ -1098,11 +1098,11 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
       }
     };
 
-    // -------------------------------------------------
-    // DROP / RELEASE
-    // -------------------------------------------------
-    // popup helper lives OUTSIDE finalizeDrop just like before
-    const showDeckInsertOptions = (cardEl, onDone) => {
+// -------------------------------------------------
+// DROP / RELEASE
+// -------------------------------------------------
+// popup helper lives OUTSIDE finalizeDrop just like before
+const showDeckInsertOptions = (cardEl, onDone) => {
   // guard: only one at a time
   if (document.getElementById('deckInsertBackdrop')) return;
 
@@ -1140,10 +1140,10 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
   header.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;">
       <h3 style="margin:0;font-size:16px;font-weight:700;letter-spacing:.2px;">Put card into library</h3>
-      <span style="opacity:.75;font-size:12px;">T / B / R • Esc</span>
+      <span style="opacity:.75;font-size:12px;">T / B / M • Esc</span>
     </div>
     <p style="margin:0 0 12px;font-size:13px;line-height:1.35;color:#cbd5e1;opacity:.9">
-      Choose where to place it. You can shuffle after <em>Random</em>.
+      Choose where to place it, or <em>Return Multiple…</em> to handle a batch.
     </p>
   `;
 
@@ -1189,12 +1189,13 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
     btn.onmousedown = () => (btn.style.transform = 'translateY(0)');
     btn.onmouseup = () => (btn.style.transform = 'translateY(-1px)');
 
+    // icon set: Top / Bottom / Return Multiple… / Cancel
     btn.innerHTML = `
       <span style="display:flex;align-items:center;gap:10px">
         <span>${
-          label === 'Top'    ? '⬆️' :
-          label === 'Bottom' ? '⬇️' :
-          label === 'Random' ? '🔀' : '✖️'
+          label === 'Top'             ? '⬆️' :
+          label === 'Bottom'          ? '⬇️' :
+          label === 'Return Multiple…'? '📦' : '✖️'
         }</span>
         <span>${label}</span>
         <span style="opacity:.75;font-size:12px;font-weight:600">${sub || ''}</span>
@@ -1208,12 +1209,12 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
     return btn;
   };
 
-  const btnTop    = mkBtn('Top',    'Place on top of library',     'T');
-  const btnBottom = mkBtn('Bottom', 'Place on bottom of library',  'B');
-  const btnRandom = mkBtn('Random', 'Insert at random position',   'R');
-  const btnCancel = mkBtn('Cancel', 'Close without changes',       'Esc', 'ghost');
+  const btnTop     = mkBtn('Top',              'Place on top of library',     'T');
+  const btnBottom  = mkBtn('Bottom',           'Place on bottom of library',  'B');
+  const btnMulti   = mkBtn('Return Multiple…', 'Open multi-return overlay',   'M');
+  const btnCancel  = mkBtn('Cancel',           'Close without changes',       'Esc', 'ghost');
 
-  [btnTop, btnBottom, btnRandom, btnCancel].forEach(b => grid.appendChild(b));
+  [btnTop, btnBottom, btnMulti, btnCancel].forEach(b => grid.appendChild(b));
 
   modal.appendChild(header);
   modal.appendChild(grid);
@@ -1235,9 +1236,11 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
   const act = async (choice) => {
     if (!choice || choice === 'Cancel') { teardown('cancel'); return; }
 
-    if (choice === 'Random') {
-      const ok = confirm('Shuffle after placing randomly?');
-      if (ok) console.log('[Deck] Shuffle after random insert (requested)');
+    // NEW: Return Multiple… opens the overlay and *does not* call onDone here.
+    if (choice === 'Return Multiple…') {
+      teardown(choice);
+      openReturnMultipleOverlay(); // ← defined below
+      return;
     }
 
     console.log(`[Deck] Insert card to: ${choice}`);
@@ -1247,12 +1250,12 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
 
   // events
   backdrop.addEventListener('click', () => teardown('cancel'));
-  btnTop.addEventListener('click',    () => act('Top'));
-  btnBottom.addEventListener('click', () => act('Bottom'));
-  btnRandom.addEventListener('click', () => act('Random'));
-  btnCancel.addEventListener('click', () => teardown('cancel'));
+  btnTop.addEventListener('click',     () => act('Top'));
+  btnBottom.addEventListener('click',  () => act('Bottom'));
+  btnMulti.addEventListener('click',   () => act('Return Multiple…'));
+  btnCancel.addEventListener('click',  () => teardown('cancel'));
 
-  // keyboard shortcuts
+  // keyboard shortcuts (T / B / M)
   const onKey = (e) => {
     if (!document.body.contains(modal)) {
       window.removeEventListener('keydown', onKey);
@@ -1262,10 +1265,450 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
     if (k === 'escape') { e.preventDefault(); teardown('cancel'); return; }
     if (k === 't') { e.preventDefault(); act('Top'); return; }
     if (k === 'b') { e.preventDefault(); act('Bottom'); return; }
-    if (k === 'r') { e.preventDefault(); act('Random'); return; }
+    if (k === 'm') { e.preventDefault(); act('Return Multiple…'); return; }
   };
   window.addEventListener('keydown', onKey, { passive: true });
 };
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// Return Multiple Overlay (inline, Scry-style lanes: Top / Bottom + source radios)
+// ────────────────────────────────────────────────────────────────────────────
+function openReturnMultipleOverlay(){
+  if (document.getElementById('rm-dim')) return;
+
+  // ---------- CSS (inline; namespaced) ----------
+  const css = document.createElement('style');
+  css.id = 'rm-css';
+  css.textContent = `
+    .rm-dim{position:fixed;inset:0;background:#050b13;z-index:2147483000;
+      display:flex;flex-direction:row;gap:14px;padding:12px 12px 14px 12px;}
+    .rm-rail{width:220px;display:flex;flex-direction:column;gap:10px;align-items:stretch}
+    .rm-btn{background:#263548;color:#e8f1ff;border:1px solid #5b7aa7;border-radius:10px;
+      padding:8px 10px;font-weight:800;cursor:pointer}
+    .rm-btn:active{transform:translateY(1px)}
+    .rm-group{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+      border-radius:10px;padding:10px;color:#cfe1ff}
+    .rm-main{position:relative;flex:1;border:1px solid rgba(255,255,255,.15);
+      border-radius:12px;overflow:hidden;background:
+        linear-gradient(180deg,#0d141f 0%, #0b1626 45%, #0a1422 45%, #0a1422 100%);}
+    .rm-preview{position:absolute;left:0;top:0;right:0;height:55%;pointer-events:none;}
+    .rm-lanes{position:absolute;left:0;right:0;bottom:0;top:55%;
+      display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding:8px}
+    .rm-lane{position:relative;border:1px solid rgba(255,255,255,.18);border-radius:12px;
+      background:linear-gradient(180deg,#0e1826 0%, #08111e 100%);box-shadow:inset 0 0 24px rgba(0,0,0,.35)}
+    .rm-lane .lab{position:absolute;left:50%;top:6px;transform:translateX(-50%);
+      font:700 12px/1 system-ui,sans-serif;color:#cfe1ff;opacity:.85;pointer-events:none}
+    .rm-card{position:absolute;width:240px;aspect-ratio:.714;user-select:none;border-radius:10px;
+      border:1px solid rgba(255,255,255,.25);box-shadow:0 18px 40px rgba(0,0,0,.8);cursor:grab;touch-action:none;pointer-events:auto}
+    .rm-small{width:120px}
+  `;
+  document.head.appendChild(css);
+
+  // ---------- state ----------
+  const S = {
+    root:null, stage:null, preview:null, lanesWrap:null,
+    cards:new Map(), lanes:{}, nextCid:1,
+    previewBaseX:null, previewIdx:0,
+  };
+
+  // ---------- helpers ----------
+  const rect = el => el.getBoundingClientRect();
+  const clamp = (n,a,b)=>Math.max(a,Math.min(b,n));
+  const pos = (el,x,y)=>{ el.style.left = `${x}px`; el.style.top = `${y}px`; };
+  const anim = (el,x,y,ms=180)=>{
+    el.style.transition = `left ${ms}ms cubic-bezier(.2,.8,.2,1), top ${ms}ms cubic-bezier(.2,.8,.2,1)`;
+    requestAnimationFrame(()=>pos(el,x,y));
+    setTimeout(()=>{ el.style.transition=''; }, ms+20);
+  };
+
+  // ---------- build UI ----------
+  const dim = document.createElement('div'); dim.id='rm-dim'; dim.className='rm-dim';
+  const rail = document.createElement('div'); rail.className='rm-rail';
+
+  // Source radios
+  const srcBox = document.createElement('div'); srcBox.className='rm-group';
+  srcBox.innerHTML = `<div style="font-weight:800;margin-bottom:6px">Source</div>
+    <label style="display:block;margin:6px 0"><input type="radio" name="rm-src" value="hand" checked> Hand</label>
+    <label style="display:block;margin:6px 0"><input type="radio" name="rm-src" value="table"> Table</label>
+    <label style="display:block;margin:6px 0"><input type="radio" name="rm-src" value="graveyard"> Graveyard</label>
+    <label style="display:block;margin:6px 0"><input type="radio" name="rm-src" value="exile"> Exile</label>
+    <div style="opacity:.7;font-size:12px;margin-top:6px">Drag from preview into a lane.</div>`;
+
+  const btnApply = document.createElement('button'); btnApply.className='rm-btn'; btnApply.textContent='Apply / Close';
+  const btnCancel= document.createElement('button'); btnCancel.className='rm-btn'; btnCancel.textContent='Cancel';
+
+  rail.append(srcBox, btnApply, btnCancel);
+
+  const main = document.createElement('div'); main.className='rm-main';
+  const preview = document.createElement('div'); preview.className='rm-preview';
+  const lanes = document.createElement('div'); lanes.className='rm-lanes';
+
+  const mkLane = (k,lab)=>{
+    const z = document.createElement('div'); z.className='rm-lane'; z.dataset.key=k;
+    const l = document.createElement('div'); l.className='lab'; l.textContent=lab;
+    z.appendChild(l); lanes.appendChild(z);
+    S.lanes[k] = { el:z, cards:[] };
+  };
+  mkLane('top','Top of Deck');
+  mkLane('bottom','Bottom of Deck');
+
+  main.append(preview, lanes);
+  dim.append(rail, main);
+  document.body.appendChild(dim);
+
+  S.root=dim; S.stage=main; S.preview=preview; S.lanesWrap=lanes;
+
+  // right-click to close
+  dim.addEventListener('contextmenu', e => { e.preventDefault(); teardown(); });
+
+  // ---------- card spawn / drag ----------
+  function spawnCard(data, from){
+    const el = document.createElement('img');
+    el.className='rm-card';
+    el.src = data.img||'';
+    el.alt = el.title = data.name||'Card';
+
+    S.stage.appendChild(el);
+    const cid = `rm_${S.nextCid++}`;
+    const rec = { cid, el, name:data.name||'Card', img:data.img||'', zone:null, source:data.__source||'' };
+    S.cards.set(cid, rec);
+
+    const stg = rect(S.stage);
+    const startX = (from?.x ?? (stg.left + 90));
+    const startY = (from?.y ?? (stg.top  + 90));
+    const x = startX - stg.left - 120;
+    const y = startY - stg.top  - 168;
+    pos(el,x,y);
+
+    // land in preview, fanning to the right
+    const pv = rect(S.preview);
+    const targetY = pv.top - stg.top + 24;
+    if (S.previewBaseX == null){
+      const base = (pv.left - stg.left) + 24;
+      S.previewBaseX = clamp(base, 12, stg.width - 240 - 12);
+    }
+    const FAN = Math.round(240 * 0.22);
+    const idx = S.previewIdx++;
+    const targetX = clamp(S.previewBaseX + idx*FAN, 12, stg.width - 240 - 12);
+    anim(el, targetX, targetY, 180);
+
+    enableDrag(rec);
+  }
+
+  function enableDrag(card){
+    let ox=0, oy=0, pid=0, dragging=false;
+    const down = e=>{
+      e.preventDefault();
+      pid = e.pointerId; card.el.setPointerCapture?.(pid);
+      const r=rect(card.el); ox=e.clientX-r.left; oy=e.clientY-r.top;
+      card.el.style.cursor='grabbing'; card.el.style.zIndex='1000';
+      card.el.classList.remove('rm-small');
+      dragging=true;
+      window.addEventListener('pointermove', move, {passive:false});
+      window.addEventListener('pointerup', up, {passive:false, once:true});
+    };
+    const move = e=>{
+      if(!dragging) return;
+      const stg=rect(S.stage);
+      pos(card.el, e.clientX - stg.left - ox, e.clientY - stg.top - oy);
+    };
+    const up = e=>{
+      dragging=false;
+      try{ card.el.releasePointerCapture?.(pid); }catch{}
+      card.el.style.cursor='grab'; card.el.style.zIndex='100';
+      window.removeEventListener('pointermove', move);
+
+      const dz = whichLane(card.el);
+      if (dz){
+        placeInto(card, dz);
+        card.el.classList.add('rm-small');
+      } else {
+        if (card.zone){
+          const arr = S.lanes[card.zone].cards;
+          const i = arr.indexOf(card); if (i>=0) arr.splice(i,1);
+          card.zone = null; refanAll();
+        }
+      }
+    };
+    card.el.addEventListener('pointerdown', down);
+  }
+
+  const whichLane = (el)=>{
+    const c = rect(el); const center = { x:c.left + c.width/2, y:c.top + c.height/2 };
+    for (const k of Object.keys(S.lanes)){
+      const r = rect(S.lanes[k].el);
+      if (center.x>=r.left && center.x<=r.right && center.y>=r.top && center.y<=r.bottom) return k;
+    }
+    return null;
+  };
+
+  const placeInto = (card, key)=>{
+    if (card.zone){
+      const prev = S.lanes[card.zone].cards;
+      const i = prev.indexOf(card); if (i>=0) prev.splice(i,1);
+    }
+    card.zone = key;
+    S.lanes[key].cards.push(card);
+    refan(key);
+  };
+
+  const refan = (key)=>{
+    const lane = S.lanes[key]; const r = rect(lane.el); const stg = rect(S.stage);
+    const cw = 120; const ch = cw/0.714;
+    const padTop=26, padBottom=12; const maxH = Math.max(0, r.height - padTop - padBottom);
+    const n = lane.cards.length;
+    let overlap = (n<=1) ? 0 : (maxH - ch) / (n-1);
+    overlap = Math.max(12, Math.min(overlap, ch*0.6));
+    lane.cards.forEach((c,i)=>{
+      const x = (r.left - stg.left) + (r.width - cw)/2;
+      const y = (r.top  - stg.top)  + padTop + i*overlap;
+      c.el.classList.add('rm-small');
+      c.el.style.zIndex = String(200 + i);
+      anim(c.el, x, y, 180);
+    });
+  };
+  const refanAll = ()=>{ for (const k of Object.keys(S.lanes)) refan(k); };
+
+  // ---------- data adapters ----------
+  const myKey = (()=>{ try{ return (String(window.mySeat?.()||'1') === '1') ? 'player' : 'opponent'; } catch { return 'player'; } })();
+
+  function collectFromHand(){
+  const out = [];
+  try{
+    const imgs = (window.Hand?.handCards || []);
+    for (const img of imgs){
+      const cid = img?.dataset?.cid || null;
+      out.push({
+        name   : img?.alt || img?.title || 'Card',
+        img    : img?.src || '',
+        __source: 'hand',
+        __ref  : img,        // keep identity when it matches
+        __cid  : cid         // use this when identity breaks
+      });
+    }
+  }catch{}
+  return out;
+}
+
+
+  function collectFromTable(){
+    const out = [];
+    try{
+      const all = document.querySelectorAll('img.table-card');
+      const my = String(window.mySeat?.() || '1');
+      for (const el of all){
+        const owner = el.dataset.ownerCurrent || el.dataset.owner || my;
+        if (owner === my){
+          out.push({ name: el.title||el.alt||'Card', img: el.currentSrc||el.src||'', __source:'table', __ref: el });
+        }
+      }
+    }catch{}
+    return out;
+  }
+
+  function collectFromZone(zoneName){
+    const out = [];
+    try{
+      const list = window.Zones?.exportOwnerZone?.(myKey, zoneName) || [];
+      for (const r of list){
+        out.push({ name: r?.name||'Card', img: r?.img||'', __source:zoneName, __snap:r });
+      }
+    }catch{}
+    return out;
+  }
+
+  function loadPreview(source){
+    // clear existing
+    S.cards.forEach(c=>{ try{ c.el.remove(); }catch{} });
+    S.cards.clear(); S.previewBaseX=null; S.previewIdx=0;
+
+    let rows = [];
+    if (source==='hand') rows = collectFromHand();
+    else if (source==='table') rows = collectFromTable();
+    else if (source==='graveyard') rows = collectFromZone('graveyard');
+    else if (source==='exile') rows = collectFromZone('exile');
+
+    const stg = rect(S.stage);
+    const seed = { x: stg.left + 120, y: stg.top + 140 };
+    rows.forEach((r,i)=> spawnCard(r, seed));
+  }
+
+  // initial load
+  loadPreview('hand');
+
+  // source change
+  srcBox.addEventListener('change', (e)=>{
+    const v = (e.target && e.target.name==='rm-src') ? e.target.value : null;
+    if (!v) return;
+    loadPreview(v);
+  });
+
+  // ---------- resolve ----------
+  function laneList(key){
+    return (S.lanes[key]?.cards||[]).map(c => ({
+      name: c.name, img: c.img, __source: c.source, __ref: c.__ref, __snap: c.__snap
+    }));
+  }
+
+  // ==== queue-style helpers (1:1 with your console command logic) ====
+  function snapshotAll(el){
+    const dsRaw = {}; for (const k of Object.keys(el.dataset||{})) dsRaw[k] = el.dataset[k];
+    const attrs = {}; for (const a of Array.from(el.attributes||[])) attrs[a.name] = a.value;
+    return { dsRaw, attrs };
+  }
+  function detachBadges(el){
+    try { window.Badges?.detach?.(el); return; } catch {}
+    try { window.Badges?.detachFor?.(el); return; } catch {}
+    const cid = el?.dataset?.cid; if (!cid) return;
+    try { document.querySelectorAll(`[data-for-cid="${CSS.escape(cid)}"]`).forEach(n => n.remove()); } catch {}
+  }
+  function buildRemovePacket(el, zone){
+    const ds = el?.dataset || {};
+    return {
+      type: 'remove',
+      cid : String(ds.cid || ''),
+      zone: String(zone || ''),
+      owner        : ds.owner ?? undefined,
+      ownerOriginal: ds.ownerOriginal ?? undefined,
+      ownerCurrent : ds.ownerCurrent ?? undefined,
+      fieldSide    : ds.fieldSide ?? undefined,
+      inCommandZone: ds.inCommandZone ?? undefined,
+    };
+  }
+  function hardRemove(el){
+    try { window.Tooltip?.hide?.(); } catch {}
+    detachBadges(el);
+    try { if (el.__dragStreamStop) el.__dragStreamStop(); } catch {}
+
+    // Tell opponent to clear mirror
+    try {
+      const pkt = buildRemovePacket(el, 'deck'); // both Top & Bottom are to deck
+      window.peer?.send?.(pkt);
+      console.log('%c[RTC:send remove]', 'color:#09f;font-weight:bold', pkt);
+    } catch (e) {
+      console.warn('[ReturnMultiple] RTC remove send failed', e);
+    }
+
+    // Local DOM + registries cleanup
+    const cid = el?.dataset?.cid || null;
+    const wasHand = el?.classList?.contains('hand-card') || el?.closest?.('[data-zone="hand"]');
+    try { el.remove(); } catch {}
+
+    try {
+      if (wasHand && Array.isArray(window.Hand?.handCards)) {
+        const HC = window.Hand.handCards;
+        const idx = HC.indexOf(el);
+        if (idx >= 0) HC.splice(idx, 1);
+        window.Hand?.updateHandFan?.();
+      }
+    } catch {}
+
+    try { if (cid && window.CardPlacement?.state?.byCid) delete window.CardPlacement.state.byCid[cid]; } catch {}
+    try { if (cid && window.RulesStore?.pruneAllForCid) window.RulesStore.pruneAllForCid(cid); } catch {}
+  }
+
+  function insertExact(el, preSnap, where /* 'top' | 'bottom' */){
+    if (!window.DeckLoading || typeof window.DeckLoading.insertFromTable !== 'function') {
+      console.warn('[ReturnMultiple] DeckLoading.insertFromTable not available.');
+      return { ok:false, entry:null, deckSize:0 };
+    }
+    const ok = window.DeckLoading.insertFromTable(el, where);
+    let entryRef = null, deckSize = 0;
+    try {
+      const lib = window.DeckLoading.state?.library || [];
+      deckSize = lib.length;
+      entryRef = (where === 'bottom') ? lib[lib.length - 1] : lib[0];
+      if (entryRef && typeof entryRef === 'object') {
+        entryRef.__cid          = el?.dataset?.cid || '';
+        entryRef.__datasetRaw   = { ...(preSnap?.dsRaw || {}) };
+        entryRef.__attributesRaw= { ...(preSnap?.attrs || {}) };
+      }
+    } catch {}
+    return { ok, entry: entryRef, deckSize };
+  }
+
+  function richestNodeForCid(cid){
+    const nodes = Array.from(document.querySelectorAll(`[data-cid="${CSS.escape(String(cid))}"]`));
+    if (!nodes.length) return null;
+    const score = (n) => {
+      const dsCount = n.dataset ? Object.keys(n.dataset).length : 0;
+      const attrCount = n.attributes ? n.attributes.length : 0;
+      return dsCount * 3 + attrCount;
+    };
+    nodes.sort((a,b)=> score(b) - score(a));
+    return nodes[0];
+  }
+
+  function resolveDomForItem(item){
+    // Prefer captured ref; otherwise resolve by cid on table/hand
+    if (item.__ref && document.body.contains(item.__ref)) return item.__ref;
+    const cid = item.__ref?.dataset?.cid || item.__cid || null;
+    if (cid) return richestNodeForCid(cid);
+    // last-ditch: try to find by name+img on table
+    try {
+      const q = document.querySelector(`.table-card[data-name="${CSS.escape(item.name)}"]`);
+      if (q) return q;
+    } catch {}
+    return null;
+  }
+
+  // Ordered batch send for lane → 'top' or 'bottom'
+  function sendBatchTo(list, where){
+    const results = [];
+    // Maintain visual left→right ordering *as queued on the lane*:
+    // - For TOP: process from last→first so final top card is the leftmost user-picked
+    // - For BOTTOM: process from first→last so final bottom order matches lane order
+    const indices = (where === 'top')
+      ? Array.from({length:list.length}, (_,i)=> list.length-1-i)
+      : Array.from({length:list.length}, (_,i)=> i);
+
+    for (const idx of indices){
+      const item = list[idx];
+      const el = resolveDomForItem(item);
+      if (!el) { console.warn('[ReturnMultiple] Missing DOM for', item?.name); continue; }
+
+      const pre = snapshotAll(el);
+      const { ok, entry, deckSize } = insertExact(el, pre, where);
+      if (!ok) { console.warn('[ReturnMultiple] insert failed for', item?.name); continue; }
+
+      hardRemove(el);
+
+      const dsKeys = Object.keys(pre.dsRaw);
+      const missing = entry ? dsKeys.filter(k => !(k in entry)) : dsKeys;
+      console.log(`[ReturnMultiple:${where}] ✔`, {
+        cid: el.dataset?.cid, deckSize, dsKeyCount: dsKeys.length,
+        notFirstClassOnEntry: missing.slice(0, 30)
+      });
+
+      results.push({ cid: el.dataset?.cid || null, deckSize });
+    }
+
+    // Let deck UI/listeners refresh
+    try { window.dispatchEvent?.(new CustomEvent('deckloading:changed')); } catch {}
+    return results;
+  }
+
+  function applyAndClose(){
+    const tops = laneList('top');
+    const bots = laneList('bottom');
+    if (!tops.length && !bots.length) { teardown(); return; }
+
+    if (tops.length) sendBatchTo(tops, 'top');
+    if (bots.length) sendBatchTo(bots, 'bottom');
+
+    teardown();
+  }
+  
+    function teardown(){
+    try{ document.getElementById('rm-css')?.remove(); }catch{}
+    try{ S.root?.remove(); }catch{}
+  }
+
+  btnApply.addEventListener('click', applyAndClose);
+  btnCancel.addEventListener('click', teardown);
+}
+
 
 
     const finalizeDrop = () => {
@@ -2294,7 +2737,57 @@ function forceSendToGraveyard(el, ownerSide = 'player'){
   }
 }
 
+/* =========================================================================
+ * PUBLIC HELPER (exact single-card drop semantics)
+ * removeCardLikeFinalize(el, finalZone='deck', ownerSide='player')
+ *   - stamps owner
+ *   - records to Zones for grave/exile
+ *   - hides tooltip, detaches badges
+ *   - removes DOM, deletes from byCid
+ *   - RTC {type:'remove', cid, zone:finalZone, ownerSide}
+ * ========================================================================= */
+function removeCardLikeFinalize(el, finalZone = 'graveyard', ownerSide = 'player'){
+  if (!el || !el.dataset?.cid) return;
+  const cidVal = el.dataset.cid;
 
+  // Stamp owner to match target pile
+  try {
+    const my = (typeof window.mySeat === 'function') ? String(window.mySeat()) : '1';
+    const other = (my === '1' ? '2' : '1');
+    el.dataset.ownerCurrent = (ownerSide === 'player') ? my : other;
+    el.dataset.owner        = el.dataset.ownerCurrent;
+  } catch {}
+
+  // Record to Zones for grave/exile visual browser
+  try {
+    if (finalZone === 'graveyard' || finalZone === 'exile') {
+      window.Zones?.recordCardToZone?.(ownerSide, finalZone, el);
+    }
+  } catch {}
+
+  try { window.Tooltip?.hide?.(); } catch {}
+  try { window.Badges?.detach?.(el); } catch {}
+  try { el.remove(); } catch {}
+  try { state.byCid.delete(cidVal); } catch {}
+
+  try {
+    (window.rtcSend || window.peer?.send)?.({
+      type: 'remove', cid: cidVal, zone: finalZone, ownerSide
+    });
+  } catch {}
+}
+
+
+   function removeFromTable(list){
+  try{
+    for (const row of list){
+      const el = row.__ref;
+      if (!el) continue;
+      // Use the exact single-card remover semantics:
+      window.CardPlacement?.removeCardLikeFinalize?.(el, 'deck', 'player');
+    }
+  }catch{}
+}
   // ---------- export ----------
   const api = {
     spawnCommanderLocal,
@@ -2308,7 +2801,13 @@ function forceSendToGraveyard(el, ownerSide = 'player'){
 
     // NEW: let combat resolver clean up deaths after combat
     sendToGraveyardLocal: forceSendToGraveyard,
-    evaluateDropZones 
+    evaluateDropZones,
+    removeCardLikeFinalize,  
+
+    // 🔧 tiny internal hook so external UIs can clear the local cid index safely
+    _deleteCid(cid) {
+      try { state.byCid.delete(String(cid)); } catch {}
+    }
   };
 
   window.CardPlacement = api;
