@@ -982,13 +982,27 @@ const btnDiscard = makeDeckBtn('Discard X', 'north-east', {
   position: 'absolute',
   right: SIDE_OFFSET,
   top: 0,
-  transform: 'translateY(0%)', // Reduced from -80% to -50%
+  transform: 'translateY(0%)',
 });
 const btnReturn = makeDeckBtn('Return X', 'south-east', {
   position: 'absolute',
   right: SIDE_OFFSET,
   bottom: 0,
-  transform: 'translateY(0%)', // Reduced from 80% to 50%
+  transform: 'translateY(0%)',
+});
+
+// ⬇⬇ NEW: mirror to the WEST side (NW / SW)
+const btnRules = makeDeckBtn('Rules…', 'north-west', {
+  position: 'absolute',
+  left: SIDE_OFFSET,
+  top: 0,
+  transform: 'translateY(0%)',
+});
+const btnStats = makeDeckBtn('Stats', 'south-west', {
+  position: 'absolute',
+  left: SIDE_OFFSET,
+  bottom: 0,
+  transform: 'translateY(0%)',
 });
 
 
@@ -1037,10 +1051,24 @@ function openNumberPad(label, onPick, opts = {}) {
     }
 
     const btnGY = mkChip('Graveyard', true);
-    const btnEX = mkChip('Exile',     false);
+const btnEX = mkChip('Exile',     false);
 
-    btnGY.onclick = () => { dest = 'graveyard'; /* …style flips… */ };
-    btnEX.onclick = () => { dest = 'exile';     /* …style flips… */ };
+function updateHighlight(sel) {
+  const gySel = sel === 'graveyard';
+  const exSel = sel === 'exile';
+  Object.assign(btnGY.style, {
+    border: '1px solid ' + (gySel ? 'rgba(93,168,255,.9)' : 'rgba(255,255,255,.25)'),
+    background: gySel ? '#1b2f4d' : 'linear-gradient(180deg,#102a46,#060e1f)'
+  });
+  Object.assign(btnEX.style, {
+    border: '1px solid ' + (exSel ? 'rgba(93,168,255,.9)' : 'rgba(255,255,255,.25)'),
+    background: exSel ? '#1b2f4d' : 'linear-gradient(180deg,#102a46,#060e1f)'
+  });
+}
+
+btnGY.onclick = () => { dest = 'graveyard'; updateHighlight(dest); };
+btnEX.onclick = () => { dest = 'exile';     updateHighlight(dest); };
+
 
     toggle.appendChild(btnGY);
     toggle.appendChild(btnEX);
@@ -1068,10 +1096,13 @@ function openNumberPad(label, onPick, opts = {}) {
       } else {
         count = Math.max(1, Math.floor(Number(k) || 1));
       }
+	  
       dim.remove();
       // Only provide dest if we showed the toggle
       onPick(showDest ? { count, dest } : { count });
     };
+	
+
     pad.appendChild(b);
   }
 
@@ -1110,6 +1141,8 @@ function discardTopNTo(zoneName, n) {
     for (let i = 0; i < take; i++) {
       if (!lib.length) break;
       const top = lib.shift();
+  // 🔹 one card left the library
+  try { window.TurnUpkeep?.noteLibrary?.(-1, { reason:'leave', via:'discardTopNTo', to: zoneName }); } catch {}
 
       const payload = {
         name:     top?.name || '',
@@ -1118,19 +1151,30 @@ function discardTopNTo(zoneName, n) {
       };
 
       // Local snapshot into my grave/exile (same as before)
-      window.Zones?.moveCardToZone?.(payload, zoneName, mySeat);
+window.Zones?.moveCardToZone?.(payload, zoneName, mySeat);
 
-      // RTC: style like "remove" so rtc.bus.js handles uniformly
-      try {
-        (window.rtcSend || window.peer?.send)?.({
-          type: 'remove',
-          zone: zoneName,        // 'graveyard' | 'exile'
-          seat: mySeat,          // so receiver can resolve owner POV
-          fromDeck: true,        // <- mark that there is no DOM node/cid
-          card: payload          // snapshot payload for receiver to record
-          // no cid on purpose
-        });
-      } catch {}
+// NEW: bump TurnUpkeep tallies per card
+try {
+  if (zoneName === 'graveyard') {
+    window.TurnUpkeep?.noteGrave?.();
+  } else if (zoneName === 'exile') {
+    window.TurnUpkeep?.noteExile?.();
+  }
+} catch {}
+
+// RTC: style like "remove" so rtc.bus.js handles uniformly
+try {
+  (window.rtcSend || window.peer?.send)?.({
+    type: 'remove',
+    zone: zoneName,        // 'graveyard' | 'exile'
+    seat: mySeat,
+    fromDeck: true,
+    card: payload,
+    // OPTIONAL: hint for remote to also tally (safe to ignore if unhandled)
+    tally: (zoneName === 'graveyard' || zoneName === 'exile') ? zoneName : undefined
+  });
+} catch {}
+
     }
 
     try { window.dispatchEvent?.(new CustomEvent('deckloading:changed')); } catch {}
@@ -1148,6 +1192,9 @@ onClick(btnDraw, () => {
     for (let i = 0; i < Math.max(1, Number(count) || 1); i++) {
       const ok = DeckLoading.drawOneToHand(deckZone);
       if (!ok) break;
+	    // 🔹 one card left the library (draw)
+  try { window.TurnUpkeep?.noteLibrary?.(-1, { reason:'leave', via:'draw' }); } catch {}
+
       try {
         const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
         window.TurnUpkeep?.recordDraw?.(seatNow, 1);
@@ -1185,7 +1232,6 @@ onClick(btnDiscard, () => {
   });
 });
 
-
 onClick(btnReturn, () => {
   openNumberPad('Return X', (key) => {
     const count = key === 'X'
@@ -1195,6 +1241,19 @@ onClick(btnReturn, () => {
     window.dispatchEvent(new CustomEvent('deck:return', { detail:{ count } }));
   });
 });
+
+// ⬇⬇ NEW
+onClick(btnRules, () => {
+  console.log('[Deck] 📜 Rules overlay');
+  openRulesOverlay();
+});
+
+onClick(btnStats, () => {
+  console.log('[Deck] 📊 Turn stats + snapshot overlay');
+  openStatsOverlay();
+});
+
+
 
 
 
@@ -1778,29 +1837,41 @@ console.log('[AddAny] Scryfall query:', adv, '(include_extras=true)');
           };
         }
 
-        async function fetchMetaExact(name){
-          if (!name) return null;
-          try{
-            const r = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`, { cache:'no-store' });
-            if (!r.ok) throw new Error('scryfall error');
-            return await r.json();
-          }catch(e){
-            console.warn('[send] scryfall fetch failed', name, e);
-            return null;
-          }
-        }
+        // helper: fetch meta, prefer exact card ID when present, else fall back to name
+async function fetchMeta(payload){
+  try{
+    if (payload?.id) {
+      const r = await fetch(`https://api.scryfall.com/cards/${payload.id}`, { cache:'no-store' });
+      if (!r.ok) throw new Error('scryfall id fetch error');
+      return await r.json();
+    }
+    const name = payload?.name || '';
+    if (!name) return null;
+    const r = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`, { cache:'no-store' });
+    if (!r.ok) throw new Error('scryfall name fetch error');
+    return await r.json();
+  }catch(e){
+    console.warn('[send] scryfall fetch failed', payload, e);
+    return null;
+  }
+}
 
-        return async function send(dest){
-          const seatNow   = (window.mySeat?.() || 1);
-          const mySeatNow = (window.mySeat?.() || 1);
-          const ownerKey  = (Number(seatNow) === Number(mySeatNow)) ? 'player' : 'opponent';
+return async function send(dest){
+  const seatNow   = (window.mySeat?.() || 1);
+  const mySeatNow = (window.mySeat?.() || 1);
+  const ownerKey  = (Number(seatNow) === Number(mySeatNow)) ? 'player' : 'opponent';
 
-          const nameWanted = payload?.name || '';
-          const imgHint    = payload?.img  || '';
+  const nameWanted = payload?.name || '';
+  const imgHint    = payload?.img  || '';
 
-          const j = await fetchMetaExact(nameWanted);
-          const meta = j ? buildMetaFromScryfall(j, nameWanted) : null;
-          const imgNow = meta?.typeLine ? (meta?.currentFaceImg || imgHint || '') : (imgHint || '');
+  // NEW: fetch meta using payload.id if we have it
+  const j = await fetchMeta(payload);
+  const meta = j ? buildMetaFromScryfall(j, nameWanted) : null;
+
+  // NEW: never override the user-picked image; only fall back to meta image
+  const imgNow = imgHint || (meta?.currentFaceImg || '');
+
+
 
           if (dest === 'table'){
             try {
@@ -1867,6 +1938,41 @@ console.log('[AddAny] Scryfall query:', adv, '(include_extras=true)');
   document.body.appendChild(ui.wrap);
 
 }
+
+// ============ (A.2) Rules Overlay Open Helper ============
+async function openRulesOverlay(){
+  const ui = _mkPanel({ title: 'Rules', width: 'min(1100px, 96vw)', height: 'min(90vh, 820px)' });
+  document.body.appendChild(ui.wrap);
+  try {
+    const mod = await import('./stats.rules.overlay.js');
+    // Mount the two-tab Rules builder into the overlay body
+    mod.StatsRulesOverlay?.mount?.(ui.body);
+  } catch (e) {
+    console.warn('[RulesOverlay] failed to load', e);
+    try { ui?.pop?.(); } catch {}
+  }
+}
+
+// ============ (A.3) Turn Stats Overlay Open Helper ============
+async function openStatsOverlay(){
+  const ui = _mkPanel({
+    title: 'Turn Stats & Snapshot',
+    width:  'min(1100px, 96vw)',
+    height: 'min(90vh, 820px)'
+  });
+
+  document.body.appendChild(ui.wrap);
+
+  try {
+    const mod = await import('./turn.stats.overlay.js');
+    // Mount the stats viewer into the overlay body
+    mod.TurnStatsOverlay?.mount?.(ui.body);
+  } catch (e) {
+    console.warn('[StatsOverlay] failed to load', e);
+    try { ui?.pop?.(); } catch {}
+  }
+}
+
 
 // ============ (B) Search Current Deck (magnifying glass) ============
 function openDeckSearchOverlay(){
@@ -2483,7 +2589,8 @@ zone.appendChild(lab);
     recordCardToZone,
     openZoneBrowser,
     openDeckSearchOverlay,
-    openAddAnyCardOverlay,
+	openAddAnyCardOverlay,
+    openRulesOverlay,            // ⬅️ NEW (optional export)
     setCommanderName,
     markDeckPresent,
     sendDeckVisual,

@@ -4,7 +4,8 @@
 
 import { manaCostHtml } from './mana.master.js';
 
-const Cache = new Map(); // nameLower -> { faces:[{title,cost,type,oracle,power,toughness,img}], hasBack }
+const Cache = new Map(); // key: "<nameLower>|<imageUrlLower>" or "<nameLower>"
+
 
 // --- tiny util ---
 function getLiveUISettings(){
@@ -19,51 +20,167 @@ function getLiveUISettings(){
   };
 }
 
-async function fetchMeta(name){
-  const key = String(name||'').toLowerCase();
+// Build a stronger cache key so "Dog" with different art doesn't collide.
+function _cacheKeyFrom(name, imgUrl){
+  const n = String(name || '').toLowerCase();
+  const i = String(imgUrl || '').toLowerCase();
+  return i ? `${n}|${i}` : n;
+}
+
+// Try to extract the Scryfall UUID from a cards.scryfall.io URL.
+// Works for .../art_crop/front/..../<uuid>.jpg and other sizes, with or without query.
+function _extractScryIdFromImgUrl(url){
+  if (!url) return null;
+  // match 8-4-4-4-12 hex UUID anywhere in the path
+  const m = String(url).match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0] : null;
+}
+
+// Fetch the exact printing by ID. We NEVER override the chosen art (imgHint).
+async function _fetchMetaById(id, imgHint){
+  const key = _cacheKeyFrom(id, imgHint || '');
   if (Cache.has(key)) return Cache.get(key);
-  if (!key) return null;
+  if (!id) return null;
+
   try{
-    const r = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`, {cache:'no-store'});
-    if (!r.ok) throw new Error('scryfall error');
+    const r = await fetch(`https://api.scryfall.com/cards/${id}`, { cache:'no-store' });
+    if (!r.ok) throw new Error('scryfall id fetch error');
     const j = await r.json();
+
     let faces = [];
     if (Array.isArray(j.card_faces) && j.card_faces.length){
       faces = j.card_faces.map(f => ({
-  title: f.name || j.name || name,
-  cost:  f.mana_cost || '',
-  type:  f.type_line || j.type_line || '',
-  oracle:f.oracle_text || '',
-  power: f.power ?? '',
-  toughness: f.toughness ?? '',
-  loyalty: f.loyalty ?? '',
-  img:   f.image_uris?.normal || ''
-}));
-
+        title: f.name || j.name || '',
+        cost:  f.mana_cost || '',
+        type:  f.type_line || j.type_line || '',
+        oracle:f.oracle_text || '',
+        power: f.power ?? '',
+        toughness: f.toughness ?? '',
+        loyalty: f.loyalty ?? '',
+        img:   imgHint || f.image_uris?.normal || ''
+      }));
     } else {
       faces = [{
-  title: j.name || name,
-  cost:  j.mana_cost || '',
-  type:  j.type_line || '',
-  oracle:j.oracle_text || '',
-  power: j.power ?? '',
-  toughness: j.toughness ?? '',
-  loyalty: j.loyalty ?? '',
-  img:   j.image_uris?.normal || ''
-}];
-
+        title: j.name || '',
+        cost:  j.mana_cost || '',
+        type:  j.type_line || '',
+        oracle:j.oracle_text || '',
+        power: j.power ?? '',
+        toughness: j.toughness ?? '',
+        loyalty: j.loyalty ?? '',
+        img:   imgHint || j.image_uris?.normal || ''
+      }];
     }
     const meta = { faces, hasBack: faces.length > 1 };
     Cache.set(key, meta);
     return meta;
   }catch(e){
-    console.warn('[Tooltip] scryfall fetch failed', name, e);
-    const meta = { faces: [{ title: name, cost:'', type:'', oracle:'', power:'', toughness:'', loyalty:'', img:'' }], hasBack:false };
-
+    console.warn('[Tooltip] scryfall id fetch failed', id, e);
+    const meta = { faces: [{ title:'', cost:'', type:'', oracle:'', power:'', toughness:'', loyalty:'', img: imgHint || '' }], hasBack:false };
     Cache.set(key, meta);
     return meta;
   }
 }
+
+
+// Fallback: fetch by NAME (never override the chosen art; we only fill text fields)
+async function _fetchMetaByName(name, imgHint){
+  const key = _cacheKeyFrom(name, imgHint);
+  if (Cache.has(key)) return Cache.get(key);
+  if (!name) return null;
+
+  try{
+    const r = await fetch(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`, { cache:'no-store' });
+    if (!r.ok) throw new Error('scryfall error');
+    const j = await r.json();
+
+    let faces = [];
+    if (Array.isArray(j.card_faces) && j.card_faces.length){
+      faces = j.card_faces.map(f => ({
+        title: f.name || j.name || name,
+        cost:  f.mana_cost || '',
+        type:  f.type_line || j.type_line || '',
+        oracle:f.oracle_text || '',
+        power: f.power ?? '',
+        toughness: f.toughness ?? '',
+        loyalty: f.loyalty ?? '',
+        // IMPORTANT: keep the art the user actually spawned (imgHint) if we have it
+        img:   imgHint || f.image_uris?.normal || ''
+      }));
+    } else {
+      faces = [{
+        title: j.name || name,
+        cost:  j.mana_cost || '',
+        type:  j.type_line || '',
+        oracle:j.oracle_text || '',
+        power: j.power ?? '',
+        toughness: j.toughness ?? '',
+        loyalty: j.loyalty ?? '',
+        img:   imgHint || j.image_uris?.normal || ''
+      }];
+    }
+
+    const meta = { faces, hasBack: faces.length > 1 };
+    Cache.set(key, meta);
+    return meta;
+  } catch(e){
+    console.warn('[Tooltip] scryfall fetch failed', name, e);
+    const meta = { faces: [{ title: name, cost:'', type:'', oracle:'', power:'', toughness:'', loyalty:'', img: imgHint || '' }], hasBack:false };
+    Cache.set(key, meta);
+    return meta;
+  }
+}
+
+// Primary entry: prefer the <img> we actually spawned (datasets + src) and only fill gaps.
+// Primary entry: prefer the <img> we actually spawned (datasets + src) and only fill gaps.
+async function fetchMetaForEl(el){
+  if (!el) return null;
+
+  const name   = el.dataset?.name || el.title || el.alt || '';
+  const imgUrl = el.currentSrc || el.src || el.dataset?.imageUrl || '';
+  const key    = _cacheKeyFrom(name || el.dataset?.scryfallId || '', imgUrl);
+  if (Cache.has(key)) return Cache.get(key);
+
+  // 0) If the image URL contains a Scryfall ID, fetch that exact printing first.
+  const idFromImg = _extractScryIdFromImgUrl(imgUrl);
+  if (idFromImg){
+    const byId = await _fetchMetaById(idFromImg, imgUrl);
+    if (byId && Array.isArray(byId.faces) && byId.faces.length){
+      Cache.set(key, byId);
+      return byId;
+    }
+  }
+
+  // 1) If we already have rich datasets on the element, synthesize meta without fetching.
+  const ds = el.dataset || {};
+  const faceFromDatasets = {
+    title:  name,
+    cost:   ds.manaCostRaw || ds.manaCost || '',
+    type:   ds.typeLine || '',
+    oracle: ds.oracle || '',
+    power:  ds.power ?? '',
+    toughness: ds.toughness ?? '',
+    loyalty: ds.loyalty ?? '',
+    img:    imgUrl || ''
+  };
+
+  const hasEnough =
+    (faceFromDatasets.type && faceFromDatasets.oracle) ||
+    (faceFromDatasets.cost !== '' || (faceFromDatasets.power !== '' && faceFromDatasets.toughness !== ''));
+
+  if (hasEnough){
+    const meta = { faces: [faceFromDatasets], hasBack: !!(ds.hasFlip || ds.faceIndex) };
+    Cache.set(key, meta);
+    return meta;
+  }
+
+  // 2) Otherwise, fall back to NAME (never override the chosen art).
+  const fetched = await _fetchMetaByName(name, imgUrl);
+  Cache.set(key, fetched);
+  return fetched;
+}
+
+
 
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
@@ -894,9 +1011,14 @@ function positionNear(anchorEl, { mode = 'right' } = {}){
     const name = el.dataset.name || el.title || el.alt || '';
     if (!name) return;
 
-    // Fetch meta (faces) if not cached
-    const meta = await fetchMeta(name);
-    const faces = meta?.faces || [{ title:name, cost:'', type:'', oracle:'', power:'', toughness:'', img:'' }];
+// Fetch meta using the actual element (image + datasets) to avoid name collisions
+const meta = await fetchMetaForEl(el);
+
+    
+ const faces = Array.isArray(meta?.faces) && meta.faces.length
+   ? meta.faces
+   : [{ title:name, cost:'', type:'', oracle:'', power:'', toughness:'', img: el.currentSrc || el.src || '' }];
+
     const hasBack = faces.length > 1;
 // Choose the most appropriate face for first render.
 let faceIdx;
@@ -980,8 +1102,6 @@ _applySizingForMode();
 const anchor = anchorEl || el;
 const isTableCard = !!anchor?.classList?.contains('table-card');
 
-// position immediately (HUD avoidance and x/y shove will now be allowed)
-positionNear(anchor, { mode: isTableCard ? 'bottom' : (opts.mode || 'right') });
 
 
     // position immediately

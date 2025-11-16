@@ -663,14 +663,19 @@ function startGhostDrag(img, ev, opts = {}){
         try { ghost.remove(); } catch {}
 
         const idx = handCards.indexOf(img);
-        if (idx >= 0) handCards.splice(idx, 1);
-        try { img.remove(); } catch {}
-        if (handCards.length === 0) {
-          focus = -1;
-        } else if (idx <= focus) {
-          focus = clamp(focus - 1, 0, Math.max(0, handCards.length - 1));
-        }
-        renderHand();
+if (idx >= 0) handCards.splice(idx, 1);
+
+// 🔹 Count a DECREASE from hand when promoting to table
+try { window.TurnUpkeep?.noteHand?.(-1, { reason: 'leave-hand', via: 'promote' }); } catch {}
+
+try { img.remove(); } catch {}
+if (handCards.length === 0) {
+  focus = -1;
+} else if (idx <= focus) {
+  focus = clamp(focus - 1, 0, Math.max(0, handCards.length - 1));
+}
+renderHand();
+
 
         if (spawnedEl && opts.SHOW_TOOLTIP_EARLY){
           try {

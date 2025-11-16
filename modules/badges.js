@@ -276,6 +276,90 @@ function _followBuffWrapViewport(info){
 }
 
 
+// Token-aware meta fetcher: prefer prints that match our typeLine hint,
+// and among those prefer ones with an empty oracle (no built-in abilities).
+async function _fetchBestTokenMeta(name, typeLineHint=''){
+  const key = `tok:${(name||'').toLowerCase()}|${(typeLineHint||'').toLowerCase()}`;
+  if (_MetaCache.has(key)) return _MetaCache.get(key);
+
+  const enc = encodeURIComponent;
+  const url =
+    `https://api.scryfall.com/cards/search?` +
+    `q=!"${enc(name)}"+is:token&unique=prints&include_extras=true&order=released`;
+
+  try{
+    const r = await fetch(url, { cache:'no-store' });
+    if (!r.ok) throw new Error('scryfall');
+    const j = await r.json();
+    const data = Array.isArray(j.data) ? j.data : [];
+
+    const norm = s => String(s||'').trim().toLowerCase();
+    const tHint = norm(typeLineHint);
+
+    // score candidates: match typeline → prefer empty oracle → newest first
+    let best = null, bestScore = -1;
+    for (const card of data){
+      const face0 = (Array.isArray(card.card_faces) && card.card_faces[0]) ? card.card_faces[0] : null;
+      const typeLine  = norm(face0?.type_line ?? card.type_line ?? '');
+      const oracleTxt = String(face0?.oracle_text ?? card.oracle_text ?? '');
+      const power     = face0?.power ?? card.power ?? '';
+      const tough     = face0?.toughness ?? card.toughness ?? '';
+      const loyalty   = face0?.loyalty ?? card.loyalty ?? '';
+
+      let score = 0;
+      if (tHint && typeLine === tHint) score += 10;
+      if (!oracleTxt.trim())           score += 2;   // no abilities → plainest token
+      // newer prints will naturally appear later; tiny bias to later items
+      score += 0.001;
+
+      if (score > bestScore){
+        bestScore = score;
+        best = { typeLine: face0?.type_line ?? card.type_line ?? '',
+                 oracle:   oracleTxt,
+                 power, toughness, loyalty };
+      }
+    }
+
+    if (best){
+      _MetaCache.set(key, best);
+      return best;
+    }
+  }catch(e){ /* fall through to name-only */ }
+
+  // fallback to the name-only fetch you already had
+  return _fetchMetaByName(name);
+}
+
+async function _fetchMetaById(id){
+  if (!id) return null;
+  const key = `id:${id}`;
+  if (_MetaCache.has(key)) return _MetaCache.get(key);
+  try{
+    const r = await fetch(`https://api.scryfall.com/cards/${id}`, { cache:'no-store' });
+    if (!r.ok) throw new Error('scryfall');
+    const j = await r.json();
+    const face0 = (Array.isArray(j.card_faces) && j.card_faces[0]) ? j.card_faces[0] : null;
+    const meta = {
+      typeLine:  face0?.type_line   ?? j.type_line   ?? '',
+      oracle:    face0?.oracle_text ?? j.oracle_text ?? '',
+      power:     (face0?.power     ?? j.power     ?? ''),
+      toughness: (face0?.toughness ?? j.toughness ?? ''),
+      loyalty:   (face0?.loyalty   ?? j.loyalty   ?? '')
+    };
+    _MetaCache.set(key, meta);
+    return meta;
+  } catch { return null; }
+}
+
+function _scryIdFromImg(el){
+  const src = el?.currentSrc || el?.src || '';
+  // Art urls, png/jpg: they often contain a UUID segment.
+  const m = src.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  return m ? m[0] : null;
+}
+
+
+
 // ---------- Meta hydration ------------
 const _MetaCache = new Map();
 async function _fetchMetaByName(name){
@@ -303,34 +387,160 @@ async function _fetchMetaByName(name){
   }
 }
 
+// --- match tooltip's numeric safety ---
+function _safePTNumber(str){
+  const raw = String(str ?? '').trim();
+  if (raw === '') return null;        // "no P/T on this face"
+  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
+  return 1;                           // "*", "X", "1+*", etc. -> default 1
+}
+function _safeLoyaltyNumber(str){
+  const raw = String(str ?? '').trim();
+  if (raw === '') return null;
+  if (/^-?\d+$/.test(raw)) return parseInt(raw, 10);
+  return null;
+}
+
+// Optional: fill base types/abilities if deck spawn didn't set them
+function _deriveBaseTypes(typeLine){
+  if (!typeLine) return [];
+  return typeLine.replace(/—/g,' ').split(/\s+/).map(s=>s.trim()).filter(Boolean);
+}
+function _deriveBaseAbilities(oracleText){
+  if (!oracleText) return [];
+  const ABILITIES = ['flying','first strike','double strike','vigilance','lifelink','deathtouch','trample','haste','reach','defender','hexproof','indestructible','menace','ward','battle cry','exalted'];
+  const VERB_GUARD = /\b(gets?|gains?|has|have|loses?|becomes?|gain|give|grants?)\b/i;
+  const out = new Set();
+  const lines = String(oracleText).split(/\r?\n+/).map(l=>l.trim()).filter(Boolean);
+  for (const line of lines){
+    const low = line.toLowerCase();
+    if (/^(as long as|whenever|when |at the beginning|if |while |other |each other |creatures? you control |your creatures |tokens you control |all creatures you control )/i.test(line)) continue;
+    if (!ABILITIES.some(kw=>low.startsWith(kw))) continue;
+    let head = line.split('(')[0].split('.')[0].trim();
+    if (!head || VERB_GUARD.test(head)) continue;
+    for (const part of head.split(/[;,]/).map(s=>s.trim()).filter(Boolean)){
+      const p = part.toLowerCase();
+      if (p.startsWith('hexproof ') || /^protection\s+from\b/i.test(part) || /\bas long as\b|\bif\b|\bwhile\b/i.test(part)) continue;
+      const match = ABILITIES.find(kw=>p.startsWith(kw));
+      if (match) out.add(match.replace(/\b\w/g,m=>m.toUpperCase()));
+    }
+  }
+  return [...out];
+}
+
+
 async function ensureHydratedDatasets(el){
   const hasType    = !!(el.dataset.typeLine && el.dataset.typeLine.trim());
   const hasOracle  = !!(el.dataset.oracle && el.dataset.oracle.trim());
   const hasPower   = el.dataset.power != null && el.dataset.power !== '';
   const hasTough   = el.dataset.toughness != null && el.dataset.toughness !== '';
   const hasPTcur   = el.dataset.ptCurrent != null && el.dataset.ptCurrent !== '';
+  const hasLoy     = el.dataset.loyalty != null && el.dataset.loyalty !== '';
+  const hasLoyCur  = el.dataset.loyaltyCurrent != null && el.dataset.loyaltyCurrent !== '';
 
+  // If we already have everything a sticker needs, bail early.
   if (hasType && hasOracle && hasPower && hasTough && hasPTcur) return;
 
   const name = el.dataset.name || el.title || el.alt || '';
   if (!name) return;
 
-  const meta = await _fetchMetaByName(name);
-  if (!meta) return;
+  // -----------------------------------------------
+  // 0) Guard: if this card is a "Copy", never stamp PT from Scryfall.
+  //    We'll let RulesStore / CardAttributes drive PT (or hide sticker).
+  // -----------------------------------------------
+  let isCopyGrant = false;
+  try {
+    // local CardAttributes.grants
+    const row = window.CardAttributes?.get?.(el.dataset.cid);
+    const grantsLocal = Array.isArray(row?.grants) ? row.grants : [];
+    // remoteAttrs.grants
+    const remote = el.dataset.remoteAttrs ? JSON.parse(el.dataset.remoteAttrs) : null;
+    const grantsRemote = Array.isArray(remote?.grants) ? remote.grants : [];
 
+    const anyGrants = [...grantsLocal, ...grantsRemote];
+    isCopyGrant = anyGrants.some(g => String(g?.kind || 'type').toLowerCase() === 'type'
+                                   && String(g?.name || '').trim().toLowerCase() === 'copy');
+  } catch {}
+
+  // If it's a Copy, strip any stale PT so the sticker doesn't default to random token prints.
+  if (isCopyGrant) {
+    delete el.dataset.ptCurrent;
+    delete el.dataset.power;
+    delete el.dataset.toughness;
+    // Still allow typeline/oracle hydration below, but skip PT entirely.
+  }
+  
+  
+
+const sfId = _scryIdFromImg(el);
+let meta = null;
+if (sfId) {
+  meta = await _fetchMetaById(sfId);
+}
+if (!meta) {
+  meta = await _fetchBestTokenMeta(name, el.dataset.typeLine || '');
+}
+if (!meta) return;
+
+
+  // Do not overwrite fields that are already present
   if (!hasType)   el.dataset.typeLine  = meta.typeLine || '';
   if (!hasOracle) el.dataset.oracle    = meta.oracle   || '';
-  if (!hasPower)  el.dataset.power     = (meta.power ?? '');
-  if (!hasTough)  el.dataset.toughness = (meta.toughness ?? '');
 
-  const p = el.dataset.power, t = el.dataset.toughness;
-  const faceHasBasePT = (p !== '' && t !== '');
-  if (!hasPTcur && faceHasBasePT) {
-    el.dataset.ptCurrent = `${p}/${t}`;
-  } else if (!faceHasBasePT) {
+  // -----------------------------------------------
+  // 1) Only hydrate PT if the meta face is actually creature-like.
+  //    This is the key to avoid the rogue "3/1" token print.
+  // -----------------------------------------------
+  const typeLineMeta = (meta.typeLine || '').toLowerCase();
+  const isCreatureishMeta = /\b(creature|vehicle)\b/.test(typeLineMeta);
+
+  // Compute safe printed P/T (numbers or null)
+  const pSafe = _safePTNumber(meta.power);
+  const tSafe = _safePTNumber(meta.toughness);
+
+  // If Copy, or non-creatureish, we do not stamp PT.
+  const allowStampPT = !isCopyGrant && isCreatureishMeta;
+
+  if (allowStampPT) {
+    if (!hasPower || !hasTough){
+      if (pSafe === null && tSafe === null) {
+        delete el.dataset.power;
+        delete el.dataset.toughness;
+        delete el.dataset.ptCurrent;
+      } else {
+        const p = (pSafe === null ? 1 : pSafe);
+        const t = (tSafe === null ? 1 : tSafe);
+        if (!hasPower) el.dataset.power     = String(p);
+        if (!hasTough) el.dataset.toughness = String(t);
+        if (!hasPTcur) el.dataset.ptCurrent = `${p}/${t}`;
+      }
+    } else if (!hasPTcur) {
+      el.dataset.ptCurrent = `${el.dataset.power}/${el.dataset.toughness}`;
+    }
+  } else {
+    // Explicitly clear stale PT if meta says it's not creatureish or this is a Copy.
     delete el.dataset.ptCurrent;
+    delete el.dataset.power;
+    delete el.dataset.toughness;
   }
+
+  // Loyalty (for walkers)
+  if (!hasLoy || !hasLoyCur){
+    const L = _safeLoyaltyNumber(meta.loyalty);
+    if (L == null){
+      delete el.dataset.loyalty;
+      delete el.dataset.loyaltyCurrent;
+    } else {
+      if (!hasLoy)    el.dataset.loyalty        = String(L);
+      if (!hasLoyCur) el.dataset.loyaltyCurrent = String(L);
+    }
+  }
+
+  // Seed base types/abilities if deck loader didn’t
+  if (!el.dataset.baseTypes)     el.dataset.baseTypes     = JSON.stringify(_deriveBaseTypes(el.dataset.typeLine || ''));
+  if (!el.dataset.baseAbilities) el.dataset.baseAbilities = JSON.stringify(_deriveBaseAbilities(el.dataset.oracle || ''));
 }
+
 
 
 // ---------- misc helpers ----------
@@ -865,9 +1075,13 @@ async function hydrateFromRulesStore(info, el){
 
   const snap = Rules.resolveForCard(cid);
   if (!snap) {
+    // ensure we don't keep an old PT from a prior render
+    info.__rulesPT   = null;
+    info.__rulesBuffs = [];
     try { _rebuildBuffRows(el, null); } catch {}
     return;
   }
+
 
   info.__rulesPT = {
     powFinal: snap.powFinal,
@@ -1419,15 +1633,22 @@ info.panel.style.transform = `scale(${sPanel})`;
 
         const pf = info.__rulesPT.powFinal | 0;
         const tf = info.__rulesPT.touFinal | 0;
-        text = `${pf}/${tf}`;
 
         const pb = Number.isFinite(info.__rulesPT.powBase) ? (info.__rulesPT.powBase|0) : pf;
         const tb = Number.isFinite(info.__rulesPT.touBase) ? (info.__rulesPT.touBase|0) : tf;
-        const boosted = (pf > pb) || (tf > tb);
-        const nerfed  = (pf < pb) || (tf < tb);
-        if (boosted) colorOverride = '#4ade80';
-        if (nerfed)  colorOverride = '#f87171';
+
+        const hasDelta = (pf !== pb) || (tf !== tb);
+
+        // ✅ Only use RulesStore PT if it actually differs from base PT.
+        if (hasDelta) {
+          text = `${pf}/${tf}`;
+          const boosted = (pf > pb) || (tf > tb);
+          const nerfed  = (pf < pb) || (tf < tb);
+          if (boosted) colorOverride = '#4ade80';
+          if (nerfed)  colorOverride = '#f87171';
+        }
       }
+
 
       if (!text && Number.isFinite(info?.__grant?._pow) && Number.isFinite(info?.__grant?._tou)) {
         const gp = info.__grant._pow|0;

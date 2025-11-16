@@ -270,6 +270,45 @@ function mirrorTopY(yTop, cardH) {
 
 
 
+  // Small helper: compute a basic converted mana value from a cost string like "{2}{B}{B}" → 4.
+  // - Pure numbers add their value: "{3}" -> +3
+  // - Symbols with a leading number like "{2/W}" use the leading number: +2
+  // - Other symbols (W,U,B,R,G,C,S, hybrid, phyrexian, etc) count as 1
+  // - X/Y/Z are treated as 0 here (we don't know the chosen value at cast time)
+  function _computeManaValue(rawCost){
+    if (!rawCost) return 0;
+    const matches = String(rawCost).match(/\{([^}]+)\}/g) || [];
+    let total = 0;
+
+    for (const token of matches){
+      const inner = token.slice(1, -1).toUpperCase().trim();
+      if (!inner) continue;
+
+      // pure numeric symbol, e.g. "2", "10"
+      if (/^\d+$/.test(inner)){
+        total += Number(inner);
+        continue;
+      }
+
+      // starts with a number then more stuff, e.g. "2/W"
+      const leadingNum = inner.match(/^(\d+)/);
+      if (leadingNum){
+        total += Number(leadingNum[1]);
+        continue;
+      }
+
+      // X/Y/Z: we treat as 0 here
+      if (/^[XYZ]$/.test(inner)){
+        continue;
+      }
+
+      // everything else (W,U,B,R,G,C,S, hybrids, phyrexian, etc.) counts as 1
+      total += 1;
+    }
+
+    return total;
+  }
+
   // Build the mana/color payload we want to RTC out with every packet.
   // - manaCostRaw: first try dataset.manaCostRaw, fall back to dataset.manaCost, else "".
   // - colors: if dataset.colors exists and is JSON, use it. Otherwise derive from manaCostRaw.
@@ -297,11 +336,15 @@ function mirrorTopY(yTop, cardH) {
       colsArr = Array.from(uniq);
     }
 
+    const manaValue = _computeManaValue(rawCost);
+
     return {
-      manaCostRaw: String(rawCost || ''),
-      colors: colsArr
+      manaCostRaw: String(rawCost || ''), // "true" printed cost string
+      colors: colsArr,                    // ['B'], ['U','R'], etc.
+      manaValue                           // numeric converted mana cost
     };
   }
+
   
   // Land detector: catches "Land" in type line or baseTypes list
 function _looksLikeLand(el){
@@ -494,11 +537,16 @@ function _emitCastFor(el, fromSeat){
     typeLine: el.dataset.typeLine || '',
     primaryType: _primaryCardType(el),
     types: _collectAllTypes(el),
+
+    // color + cost info
     colors: mc.colors || [],
-    manaCostRaw: mc.manaCostRaw || ''
+    manaCost: mc.manaCostRaw || '',                      // "true" printed cost, e.g. "{2}{B}"
+    manaCostRaw: mc.manaCostRaw || '',                   // keep for backwards compatibility
+    manaValue: typeof mc.manaValue === 'number' ? mc.manaValue : 0 // e.g. 3
   };
   try { window.TurnUpkeep?.noteCast?.(payload); } catch {}
 }
+
 
   
   // Spawn at pointer (screen coords) with center alignment, broadcast spawn.
@@ -821,16 +869,18 @@ function __overZoneByIntersect(el, zoneId, tol = 0) {
   return horiz && vert;
 }
 
-// Public-ish helper that evaluates drop routing *as if* finalizeDrop() ran.
-// It finalizes pending spawn, handles "back to hand", pl/op grave/exile, and pl-deck popup.
 function evaluateDropZones(el) {
   if (!el || !el.classList.contains('table-card')) return;
+
+  // Was this the first drop after being pulled from hand?
+  const wasFreshFromHand = (el.dataset.pendingSpawn === 'true');
 
   // If spawn was deferred while dragging from hand, finalize it now
   const inHandNow = __overZoneByIntersect(el, 'handZone', /*tol*/12);
   if (el.dataset.pendingSpawn === 'true' && !inHandNow) {
     try { el._finalizeSpawn?.(); } catch {}
   }
+
 
   // 1) Back to MY hand (intersection + tolerance)
   if (inHandNow) {
@@ -884,13 +934,55 @@ function evaluateDropZones(el) {
 
   // 2) MY graveyard / exile
   if (__overZoneCenter(el, 'pl-graveyard')) {
-    try { window.TurnUpkeep?.noteGrave?.(); } catch {}
+    try {
+      const seatNum = Number(window.mySeat?.() ?? 1);
+
+      // Existing "total to graveyard" stat
+      window.TurnUpkeep?.noteGrave?.({
+        seat: seatNum,
+        ownerSide: 'player',
+        fromHand: wasFreshFromHand,
+        via: wasFreshFromHand ? 'discard' : 'send'
+      });
+
+      // Optional: dedicated discard counter, only when from hand
+      if (wasFreshFromHand) {
+        window.TurnUpkeep?.noteDiscard?.({
+          seat: seatNum,
+          ownerSide: 'player',
+          zone: 'graveyard',
+          via: 'hand-drop'
+        });
+      }
+    } catch {}
+
     return sendRemove('graveyard','player');
   }
+
   if (__overZoneCenter(el, 'pl-exile')) {
-    try { window.TurnUpkeep?.noteExile?.(); } catch {}
+    try {
+      const seatNum = Number(window.mySeat?.() ?? 1);
+
+      window.TurnUpkeep?.noteExile?.({
+        seat: seatNum,
+        ownerSide: 'player',
+        fromHand: wasFreshFromHand,
+        via: wasFreshFromHand ? 'discard' : 'send'
+      });
+
+      if (wasFreshFromHand) {
+        window.TurnUpkeep?.noteDiscard?.({
+          seat: seatNum,
+          ownerSide: 'player',
+          zone: 'exile',
+          via: 'hand-drop'
+        });
+      }
+    } catch {}
+
     return sendRemove('exile','player');
   }
+
 
   // 3) OPPONENT graveyard / exile
   if (__overZoneCenter(el, 'op-graveyard')) {
@@ -914,11 +1006,28 @@ function evaluateDropZones(el) {
         ok = !!window.DeckLoading.insertFromTable(el, pos);
       }
       if (!ok) console.warn('[DropZones] insertFromTable failed; still removing');
+
+      // 🔹 NEW: tell TurnUpkeep a card just went back into the library
+      try {
+        const seatNum = Number(window.mySeat?.() ?? 1);
+        window.TurnUpkeep?.noteLibrary?.(
+          +1,
+          {
+            seat: seatNum,
+            reason: 'return',
+            via: 'drop',
+            pos    : pos
+          }
+        );
+      } catch (err) {
+        console.warn('[DropZones] noteLibrary failed', err);
+      }
     } catch(e) {
       console.warn('[DropZones] deck insert failed', e);
     }
     return sendRemove('deck','player');
   }
+
 }
 
 
@@ -1614,18 +1723,43 @@ function openReturnMultipleOverlay(){
       return { ok:false, entry:null, deckSize:0 };
     }
     const ok = window.DeckLoading.insertFromTable(el, where);
-    let entryRef = null, deckSize = 0;
-    try {
-      const lib = window.DeckLoading.state?.library || [];
-      deckSize = lib.length;
-      entryRef = (where === 'bottom') ? lib[lib.length - 1] : lib[0];
-      if (entryRef && typeof entryRef === 'object') {
-        entryRef.__cid          = el?.dataset?.cid || '';
-        entryRef.__datasetRaw   = { ...(preSnap?.dsRaw || {}) };
-        entryRef.__attributesRaw= { ...(preSnap?.attrs || {}) };
-      }
-    } catch {}
-    return { ok, entry: entryRef, deckSize };
+let entryRef = null, deckSize = 0;
+try {
+  const lib = window.DeckLoading.state?.library || [];
+  deckSize = lib.length;
+  entryRef = (where === 'bottom') ? lib[lib.length - 1] : lib[0];
+  if (entryRef && typeof entryRef === 'object') {
+    entryRef.__cid          = el?.dataset?.cid || '';
+    entryRef.__datasetRaw   = { ...(preSnap?.dsRaw || {}) };
+    entryRef.__attributesRaw= { ...(preSnap?.attrs || {}) };
+  }
+} catch {}
+
+// ✅ note a single card returned to library (works for Top, Bottom, and Return Multiple)
+try {
+  const seatNum = Number(
+    el?.dataset?.ownerCurrent ||
+    el?.dataset?.ownerOriginal ||
+    window.mySeat?.() ||
+    1
+  );
+
+  window.TurnUpkeep?.noteLibrary?.(
+    +1,
+    {
+      seat: seatNum,             // 🔹 correct field for TurnUpkeep
+      reason: 'return',
+      pos: where,                // 'top' | 'bottom'
+      via: 'insertExact',        // from table / hand / zone -> library
+      cid: el?.dataset?.cid || null,
+      deckSizeAfter: deckSize
+    }
+  );
+} catch {}
+
+
+return { ok, entry: entryRef, deckSize };
+
   }
 
   function richestNodeForCid(cid){
@@ -1960,8 +2094,6 @@ if (el.dataset.pendingSpawn === 'true' && !overZoneByIntersect('handZone', 12)) 
 // Use rectangle intersection for Hand so drops near the top edge still count.
 if (overZoneByIntersect('handZone', /*tol=*/12)) {
   if (el.dataset.pendingSpawn === 'true') {
-    // CANCEL the spawn entirely: do NOT broadcast spawn or send a remove.
-    // Just clean up the temp table element and animate back to hand.
     try { window.Tooltip?.hide?.(); } catch {}
     try {
       window.flyDrawToHand?.(
@@ -1969,21 +2101,27 @@ if (overZoneByIntersect('handZone', /*tol=*/12)) {
         null
       );
     } catch {}
+    // 🔹 Count as a RETURN to hand (not a draw)
+    try { window.TurnUpkeep?.noteHand?.(+1, { reason: 'return', via: 'drop' }); } catch {}
+
     try { el.remove(); } catch {}
     try { state.byCid.delete(el.dataset.cid); } catch {}
-    el.dataset.pendingSpawn = 'false'; // consumed
-    return; // short-circuit: nothing else to do
+    el.dataset.pendingSpawn = 'false';
+    return;
   } else {
-    // Normal path (card had already been spawned): send a remove packet like before.
     try {
       window.flyDrawToHand?.(
         { name: el.title || '', imageUrl: el.currentSrc || el.src },
         null
       );
     } catch {}
-    removeCard(null, 'player'); // no zone tag but conceptually "back to me"
+    // 🔹 Count as a RETURN to hand (not a draw)
+    try { window.TurnUpkeep?.noteHand?.(+1, { reason: 'return', via: 'drop' }); } catch {}
+
+    removeCard(null, 'player');
   }
 }
+
 
 
 
@@ -2024,14 +2162,14 @@ else if (overZoneCenter('pl-deck')) {
     let ok = false;
     try {
       if (typeof DeckLoading?.insertFromTable === 'function') {
-  ok = !!DeckLoading.insertFromTable(el, pos);
-} else {
-  console.warn('[Deck] DeckLoading.insertFromTable not found (module import missing?)');
-}
+        ok = !!DeckLoading.insertFromTable(el, pos);
+      } else {
+        console.warn('[Deck] DeckLoading.insertFromTable not found (module import missing?)');
+      }
 
-if (pos === 'random' && typeof DeckLoading?.shuffleLibrary === 'function') {
+      if (pos === 'random' && typeof DeckLoading?.shuffleLibrary === 'function') {
         // only shuffle if user confirmed in the popup; log already printed there
-        // window.DeckLoading.shuffleLibrary();
+        // DeckLoading.shuffleLibrary();
       }
     } catch (e) {
       console.warn('[Deck] insertFromTable threw:', e);
@@ -2039,10 +2177,44 @@ if (pos === 'random' && typeof DeckLoading?.shuffleLibrary === 'function') {
 
     if (!ok) {
       console.warn('[Deck] insertFromTable failed — removing from table anyway');
+    } else {
+      // 🔹 Tell TurnUpkeep a card went back into our library (Top/Bottom/Random)
+      try {
+        const seatNum = Number(
+          el?.dataset?.ownerCurrent ||
+          el?.dataset?.ownerOriginal ||
+          (typeof window.mySeat === 'function' ? window.mySeat() : 1)
+        );
+
+        let deckSizeAfter = 0;
+        try {
+          const lib =
+            (DeckLoading?.state?.library) ||
+            (window.DeckLoading?.state?.library) ||
+            [];
+          deckSizeAfter = lib.length;
+        } catch {}
+
+        window.TurnUpkeep?.noteLibrary?.(
+          +1,
+          {
+            seat: seatNum,
+            reason: 'return',
+            pos,                          // 'top' | 'bottom' | 'random'
+            via: 'deckInsertSingle',      // single-card popup path
+            cid: el?.dataset?.cid || null,
+            deckSizeAfter
+          }
+        );
+      } catch (err) {
+        console.warn('[Deck] noteLibrary failed', err);
+      }
     }
+
     removeCard('deck', 'player'); // keep visual state in sync
   });
 }
+
 
         // (future: if you want to let me tuck into opponent's deck, mirror this with 'op-deck')
 

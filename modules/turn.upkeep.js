@@ -34,12 +34,19 @@ const _Tallies = {
   countersPlaced: {},
   tokensCreated: {},
   exiles: 0,
-  graves: 0,     // ← NEW
-  returns: 0,
+  graves: 0,
+  returns: 0,           // legacy: increments on hand increases (compat with your UI)
+  handReturns: 0,       // 🔹 explicit global “to hand”
+  handLeaves: 0,        // 🔹 explicit global “from hand”
+  handTotal: 0,
+  // 🔹 global discard splits (for stats overlay)
+  discardToGraveyard: 0,
+  discardToExile: 0,
 
   tutors: 0,
   shuffles: 0
 };
+
 
 function freshSeatTallies(){
   return {
@@ -49,13 +56,32 @@ function freshSeatTallies(){
     castsByColor: {},
     castsByMVBucket: {},
     namesPlayed: [],
-        taps: 0,
+    taps: 0,
     untaps: 0,
-    landsPlayed: 0,   // ← NEW
-    lifegain: 0,
+    landsPlayed: 0,
 
+    lifegain: 0,
     lifeloss: 0,
     netLife: 0,
+    startLife: null,     // 🔹 new
+
+    // Library
+    startLibrary: null,   // snapshot at start of turn
+    libraryIn: 0,         // 🔹 cards returned to library this turn
+    libraryOut: 0,        // 🔹 cards that left library this turn
+    netLibrary: 0, 
+
+    // 🔹 hand movement
+    returnsToHand: 0,
+    leavesHand: 0,
+    netHand: 0,
+
+    // 🔹 per-seat GY / Exile splits
+    toGraveyardFromHand: 0,
+    toGraveyardTotal: 0,
+    toExileFromHand: 0,
+    toExileTotal: 0,
+
     scries: 0,
     surveils: 0,
     investigates: 0,
@@ -63,6 +89,8 @@ function freshSeatTallies(){
     blockersDeclared: 0
   };
 }
+
+
 
 // -----------------------------
 // Snapshot shape (DOM scan)
@@ -117,6 +145,58 @@ function _broadcastPhase(){
 function normKey(s){
   return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
 }
+
+// Small MV helper from a mana cost string like "{1}{B}{B}"
+function computeManaValueFromCost(costStr) {
+  const s = String(costStr || '');
+  if (!s) return null;
+
+  const re = /\{([^}]+)\}/g;
+  let m;
+  let total = 0;
+
+  while ((m = re.exec(s)) !== null) {
+    const tokRaw = m[1];
+    if (!tokRaw) continue;
+    const tok = String(tokRaw).toUpperCase();
+
+    // Pure generic number, e.g. "{3}"
+    if (/^\d+$/.test(tok)) {
+      total += Number(tok);
+      continue;
+    }
+
+    // X / Y / Z – treat as 0 here
+    if (tok === 'X' || tok === 'Y' || tok === 'Z') {
+      continue;
+    }
+
+    // Single-symbol colored / colorless / snow
+    if (/^(W|U|B|R|G|C|S)$/.test(tok)) {
+      total += 1;
+      continue;
+    }
+
+    // Hybrid / phyrexian / 2-color etc, e.g. "W/U", "2/U", "G/P"
+    if (tok.includes('/')) {
+      const parts = tok.split('/');
+      const numPart = parts.find(p => /^\d+$/.test(p));
+      if (numPart) {
+        // things like {2/U} -> 2
+        total += Number(numPart);
+      } else {
+        // normal hybrid / phyrexian -> 1
+        total += 1;
+      }
+      continue;
+    }
+
+    // Anything unknown counts as 0
+  }
+
+  return total;
+}
+
 
 // Color extraction with multiple fallbacks
 function extractColorsFromEl(el){
@@ -246,24 +326,29 @@ function endTurnFrom(seatWhoEnded){
   _runCleanup();
 
   _S.turn = (Number(_S.turn)||1) + 1;
-_S.activeSeat = nextSeat;
+  _S.activeSeat = nextSeat;
 
-if (stateUI){
-  stateUI.turn = _S.turn;
-  stateUI.activeSeat = _S.activeSeat;
-  stateUI.playerLabel = (nextSeat===1)?'Player 1':'Player 2';
-  UI.setTurn(stateUI.turn, stateUI.playerLabel);
-  if (stateUI.activeSeat===stateUI.seat) UI._markAttackerUI(); else UI._markDefenderUI();
-  UI.setPhase?.(Phase.UNTAP, _S.activeSeat); // pill bumps immediately; _enterPhase will follow
-}
+  // 🔹 NEW: snapshot life + library for the new active seat
+  try {
+    _resetTalliesForNewTurn();
+  } catch (e) {
+    console.warn('[TurnUpkeep] _resetTalliesForNewTurn failed on local endTurn', e);
+  }
 
-if (_S.activeSeat === mySeatNum()) {
-  _enterPhase(Phase.UNTAP, { reason: 'local-ended-turn' });
-} else {
-  _enterPhase(Phase.MAIN2_ENDING, { reason: 'waiting-for-opponent' });
-}
+  if (stateUI){
+    stateUI.turn = _S.turn;
+    stateUI.activeSeat = _S.activeSeat;
+    stateUI.playerLabel = (nextSeat===1)?'Player 1':'Player 2';
+    UI.setTurn(stateUI.turn, stateUI.playerLabel);
+    if (stateUI.activeSeat===stateUI.seat) UI._markAttackerUI(); else UI._markDefenderUI();
+    UI.setPhase?.(Phase.UNTAP, _S.activeSeat); // pill bumps immediately; _enterPhase will follow
+  }
 
-
+  if (_S.activeSeat === mySeatNum()) {
+    _enterPhase(Phase.UNTAP, { reason: 'local-ended-turn' });
+  } else {
+    _enterPhase(Phase.MAIN2_ENDING, { reason: 'waiting-for-opponent' });
+  }
 
   if (stateUI){
     stateUI.turn = _S.turn;
@@ -282,6 +367,7 @@ if (_S.activeSeat === mySeatNum()) {
     });
   }catch(err){ console.warn('[TurnUpkeep] rtcSend turn_pass failed', err); }
 }
+
 
 // Call this after a successful local draw (e.g., DeckLoading.drawOneToHand returns true)
 function noteLocalDraw(){
@@ -304,9 +390,18 @@ function applyTurnPassFromRTC(msg){
   const seatFromMsg = Number(msg?.activeSeat)||1;
   _S.activeSeat = seatFromMsg;
   _S.turn = Number(msg?.turn)||_S.turn;
+
+  // 🔹 NEW: refresh tallies snapshot when the turn changes via RTC
+  try {
+    _resetTalliesForNewTurn();
+  } catch (e) {
+    console.warn('[TurnUpkeep] _resetTalliesForNewTurn failed on RTC turn_pass', e);
+  }
+
   if (seatFromMsg===mySeatNum()) _enterPhase(Phase.UNTAP,{reason:'turn_pass'});
   else _enterPhase(Phase.MAIN2_ENDING,{reason:'their-turn-idle'});
 }
+
 function applyPhaseSetFromRTC(msg){
   try{
     const seat = Number(msg?.seat);
@@ -422,8 +517,208 @@ function _resetTalliesForNewTurn(){
   _Tallies.bySeat[2] = freshSeatTallies();
   _Tallies.countersPlaced = {};
   _Tallies.tokensCreated  = {};
-  _Tallies.exiles=0; _Tallies.returns=0; _Tallies.tutors=0; _Tallies.shuffles=0;
+
+  // 🔹 per-turn zone sends
+  _Tallies.exiles = 0;
+  _Tallies.graves = 0;
+  _Tallies.returns = 0;
+  _Tallies.handReturns = 0;   // 🔹
+  _Tallies.handLeaves  = 0;   // 🔹
+  _Tallies.discardToGraveyard = 0;
+  _Tallies.discardToExile     = 0;
+
+  _Tallies.tutors = 0;
+  _Tallies.shuffles = 0;
+
+  // 🔹 capture start-of-turn life (per seat)
+  try {
+    const L = window.UserInterface?.getLifeSnapshot?.();
+
+    if (L) {
+      _Tallies.bySeat[1].startLife = Number(L.p1?.total ?? 0);
+      _Tallies.bySeat[2].startLife = Number(L.p2?.total ?? 0);
+    }
+  } catch {}
+
+  // 🔹 capture start-of-turn library sizes (best-effort)
+  try {
+    // local seat library size (we only know our own for sure)
+    const mySeat = Number(window.mySeat?.() ?? 1);
+    const libLen = (window.DeckLoading?.state?.library?.length) | 0;
+    _Tallies.bySeat[mySeat].startLibrary = libLen;
+    // leave opponent as null unless you mirror counts
+  } catch {}
 }
+
+// -----------------------------
+// Stats RTC helpers
+// -----------------------------
+function _emitStatsEvent(metric, { seat, delta, source = 'local', raw = {} } = {}) {
+  try {
+    window.dispatchEvent(new CustomEvent('stats:update', {
+      detail: { metric, seat, delta, source, raw }
+    }));
+  } catch {}
+}
+
+function _sendStatsUpdate(metric, payload = {}) {
+  try {
+    const packet = {
+      type: 'stats:update',
+      metric,
+      fromSeat: mySeatNum(),
+      ts: Date.now(),
+      ...payload
+    };
+    (window.rtcSend || window.peer?.send)?.(packet);
+  } catch (e) {
+    console.warn('[TurnUpkeep] stats:update send failed', e, { metric, payload });
+  }
+}
+
+// Apply a stats delta that came in over RTC (no re-broadcast).
+function applyRemoteStatsUpdate(msg = {}) {
+  try {
+    const metricRaw = msg.metric || msg.stat || '';
+    const metric = String(metricRaw).toLowerCase();
+    if (!metric) return;
+
+    const delta = Number(msg.delta) || 0;
+    if (!delta) return;
+
+    const seat = seatKey(msg.seat ?? msg.forSeat ?? msg.fromSeat ?? _S.activeSeat);
+    const seatTallies = _Tallies.bySeat[seat];
+    if (!seatTallies) return;
+
+    switch (metric) {
+      case 'draws': {
+        const d = Math.abs(delta);
+        seatTallies.draws = (seatTallies.draws || 0) + d;
+        break;
+      }
+	  
+	  case 'scry': {
+        const d = Math.abs(delta);
+        seatTallies.scries = (seatTallies.scries || 0) + d;
+        break;
+      }
+
+      case 'surveil': {
+        const d = Math.abs(delta);
+        seatTallies.surveils = (seatTallies.surveils || 0) + d;
+        break;
+      }
+
+      case 'investigate': {
+        const d = Math.abs(delta);
+        seatTallies.investigates = (seatTallies.investigates || 0) + d;
+        break;
+      }
+	  
+      case 'grave': {
+        const d = Math.abs(delta);
+
+        const fromZone = (msg.fromZone || msg.from || msg.origin || '').toLowerCase();
+        const reason   = (msg.reason || '').toLowerCase();
+        const via      = (msg.via || '').toLowerCase();
+
+        const fromHand =
+          msg.fromHand === true ||
+          fromZone === 'hand' ||
+          reason === 'discard' ||
+          via === 'discard';
+
+        _Tallies.graves = (_Tallies.graves || 0) + d;
+
+        seatTallies.toGraveyardTotal     = (seatTallies.toGraveyardTotal     || 0) + d;
+        if (fromHand) {
+          seatTallies.toGraveyardFromHand = (seatTallies.toGraveyardFromHand || 0) + d;
+          _Tallies.discardToGraveyard = (_Tallies.discardToGraveyard || 0) + d;
+        }
+        break;
+      }
+
+      case 'exile': {
+        const d = Math.abs(delta);
+
+        const fromZone = (msg.fromZone || msg.from || msg.origin || '').toLowerCase();
+        const reason   = (msg.reason || '').toLowerCase();
+        const via      = (msg.via || '').toLowerCase();
+
+        const fromHand =
+          msg.fromHand === true ||
+          fromZone === 'hand' ||
+          reason === 'discard' ||
+          via === 'discard';
+
+        _Tallies.exiles = (_Tallies.exiles || 0) + d;
+
+        seatTallies.toExileTotal     = (seatTallies.toExileTotal     || 0) + d;
+        if (fromHand) {
+          seatTallies.toExileFromHand = (seatTallies.toExileFromHand || 0) + d;
+          _Tallies.discardToExile = (_Tallies.discardToExile || 0) + d;
+        }
+        break;
+      }
+
+      case 'hand': {
+        const d = delta;
+        if (d === 0) break;
+
+        if (d > 0) {
+          // cards returned to / gained in hand
+          _Tallies.returns      = (_Tallies.returns      || 0) + d;
+          _Tallies.handReturns  = (_Tallies.handReturns  || 0) + d;
+          seatTallies.returnsToHand = (seatTallies.returnsToHand || 0) + d;
+        } else {
+          const dec = -d;
+          _Tallies.handLeaves   = (_Tallies.handLeaves   || 0) + dec;
+          seatTallies.leavesHand = (seatTallies.leavesHand || 0) + dec;
+        }
+
+        seatTallies.netHand =
+          (seatTallies.returnsToHand || 0) -
+          (seatTallies.leavesHand    || 0);
+        break;
+      }
+
+      case 'library': {
+        const d = delta;
+        if (!d) break;
+
+        if (d > 0) {
+          seatTallies.libraryIn  = (seatTallies.libraryIn  || 0) + d;
+        } else {
+          const dec = -d;
+          seatTallies.libraryOut = (seatTallies.libraryOut || 0) + dec;
+        }
+
+        seatTallies.netLibrary =
+          (seatTallies.libraryIn  || 0) -
+          (seatTallies.libraryOut || 0);
+        break;
+      }
+
+      // 🔧 other metrics can be wired here later
+      default:
+        console.warn('[TurnUpkeep] applyRemoteStatsUpdate: unknown metric', msg);
+        break;
+    }
+
+    // Let watchers know this was applied from RTC.
+    _emitStatsEvent(metric, {
+      seat,
+      delta,
+      source: 'rtc',
+      raw: msg
+    });
+  } catch (e) {
+    console.warn('[TurnUpkeep] applyRemoteStatsUpdate failed', e, msg);
+  }
+}
+
+
+
 function bump(path, by=1){
   try{
     const parts = String(path).split('.');
@@ -433,24 +728,74 @@ function bump(path, by=1){
     cur[leaf] = (cur[leaf]||0) + by;
   }catch(e){ console.warn('[TurnUpkeep.bump] failed', path, e); }
 }
-function recordDraw(seat, n=1){ _Tallies.bySeat[seatKey(seat)].draws += Math.max(1,n|0); }
-function recordCast({ seat, cid, name, typeLine='', colorsJson='[]', mv=null }={}){
+function recordDraw(seat, n = 1) {
+  const s     = seatKey(seat);
+  const delta = Math.max(1, n | 0);
+
+  _Tallies.bySeat[s].draws = (_Tallies.bySeat[s].draws || 0) + delta;
+
+  // Fire a local stats event so watchers see it.
+  _emitStatsEvent('draws', {
+    seat: s,
+    delta,
+    source: 'local',
+    raw: { seat, n }
+  });
+
+  // Broadcast to opponent so their tallies keep up.
+  try {
+    _sendStatsUpdate('draws', { seat: s, delta });
+  } catch {}
+}
+
+function recordCast({ seat, cid, name, typeLine = '', colorsJson = '[]', mv = null, manaCost = null } = {}){
   const s = seatKey(seat);
   _Tallies.bySeat[s].casts++;
 
-  const majorType = (String(typeLine).split('—')[0]||'').split(/\s+/).find(t=>/^(Creature|Instant|Sorcery|Artifact|Enchantment|Planeswalker|Battle|Land)$/i.test(t)) || 'Unknown';
+  const majorType =
+    (String(typeLine).split('—')[0] || '')
+      .split(/\s+/)
+      .find(t => /^(Creature|Instant|Sorcery|Artifact|Enchantment|Planeswalker|Battle|Land)$/i.test(t)) ||
+    'Unknown';
   inc(_Tallies.bySeat[s].castsByType, majorType, 1);
 
-  let cols=[]; try{ cols = JSON.parse(colorsJson||'[]'); }catch{} if (!Array.isArray(cols)) cols=[];
-  if (cols.length===0) inc(_Tallies.bySeat[s].castsByColor,'C',1);
-  else cols.forEach(c=>inc(_Tallies.bySeat[s].castsByColor,String(c),1));
+  let cols = [];
+  try { cols = JSON.parse(colorsJson || '[]'); } catch {}
+  if (!Array.isArray(cols)) cols = [];
+  if (cols.length === 0) inc(_Tallies.bySeat[s].castsByColor, 'C', 1);
+  else cols.forEach(c => inc(_Tallies.bySeat[s].castsByColor, String(c), 1));
 
-  const mvn = Number(mv);
-  const bucket = Number.isFinite(mvn) ? (mvn<=1?'0-1':mvn<=3?'2-3':mvn<=5?'4-5':'6+') : 'unknown';
+  // 🔹 prefer payload.mv, fall back to manaCost string if needed
+  const mvFromPayload = (mv != null ? Number(mv) : NaN);
+  let finalMv = Number.isFinite(mvFromPayload) ? mvFromPayload : null;
+
+  if (finalMv == null && manaCost) {
+    const computed = computeManaValueFromCost(manaCost);
+    if (computed != null && !Number.isNaN(computed)) {
+      finalMv = computed;
+    }
+  }
+
+  const mvForBucket = Number.isFinite(finalMv) ? finalMv : null;
+  const bucket =
+    mvForBucket == null ? 'unknown' :
+    mvForBucket <= 1 ? '0-1' :
+    mvForBucket <= 3 ? '2-3' :
+    mvForBucket <= 5 ? '4-5' :
+    '6+';
   inc(_Tallies.bySeat[s].castsByMVBucket, bucket, 1);
 
-  _Tallies.bySeat[s].namesPlayed.push({ cid:cid||'', name:name||'(unknown)', typeLine, colors:cols, mv:Number.isFinite(mvn)?mvn:null, time:Date.now() });
+  _Tallies.bySeat[s].namesPlayed.push({
+    cid: cid || '',
+    name: name || '(unknown)',
+    typeLine,
+    colors: cols,
+    mv: finalMv,
+    manaCost: manaCost || null,
+    time: Date.now()
+  });
 }
+
 function recordTap(seat, cid){ recordTapInternal(seatKey(seat), cid); }
 function recordTapInternal(s, cid){ _Tallies.bySeat[s].taps++; }
 function recordUntap(seat, cid){ recordUntapInternal(seatKey(seat), cid); }
@@ -463,9 +808,69 @@ function recordLife(seat, {gain=0,loss=0}={}){
 }
 function recordCounter(kind, delta=1){ inc(_Tallies.countersPlaced, String(kind), delta); }
 function recordToken(kind, delta=1){ inc(_Tallies.tokensCreated , String(kind), delta); }
-function recordScry(seat, n){ _Tallies.bySeat[seatKey(seat)].scries += Math.max(1,n|0); }
-function recordSurveil(seat, n){ _Tallies.bySeat[seatKey(seat)].surveils += Math.max(1,n|0); }
-function recordInvestigate(seat, n){ _Tallies.bySeat[seatKey(seat)].investigates += Math.max(1,n|0); }
+
+function recordScry(seat, n){
+  const s     = seatKey(seat);
+  const delta = Math.max(1, n | 0);
+
+  _Tallies.bySeat[s].scries = (_Tallies.bySeat[s].scries || 0) + delta;
+
+  // Local stats event
+  _emitStatsEvent('scry', {
+    seat: s,
+    delta,
+    source: 'local',
+    raw: { seat, n }
+  });
+
+  // RTC broadcast so opponent sees your scries
+  _sendStatsUpdate('scry', {
+    seat: s,
+    delta
+  });
+}
+
+function recordSurveil(seat, n){
+  const s     = seatKey(seat);
+  const delta = Math.max(1, n | 0);
+
+  _Tallies.bySeat[s].surveils = (_Tallies.bySeat[s].surveils || 0) + delta;
+
+  // Local stats event
+  _emitStatsEvent('surveil', {
+    seat: s,
+    delta,
+    source: 'local',
+    raw: { seat, n }
+  });
+
+  // RTC broadcast so opponent sees your surveils
+  _sendStatsUpdate('surveil', {
+    seat: s,
+    delta
+  });
+}
+
+function recordInvestigate(seat, n){
+  const s     = seatKey(seat);
+  const delta = Math.max(1, n | 0);
+
+  _Tallies.bySeat[s].investigates = (_Tallies.bySeat[s].investigates || 0) + delta;
+
+  // Optional: mirror investigate as well
+  _emitStatsEvent('investigate', {
+    seat: s,
+    delta,
+    source: 'local',
+    raw: { seat, n }
+  });
+
+  _sendStatsUpdate('investigate', {
+    seat: s,
+    delta
+  });
+}
+
 // --- NEW: land plays (not counted as casts) ---
 function noteLandPlay({ seat } = {}){
   const s = seatKey(seat);
@@ -473,15 +878,243 @@ function noteLandPlay({ seat } = {}){
 }
 
 // --- NEW: zone sends (dragged to grave/exile) ---
-function noteExile(){ _Tallies.exiles += 1; }
-function noteGrave(){ _Tallies.graves += 1; }
+// Accepts either:
+//   noteGrave()                    // simple increment
+//   noteGrave(3)                   // +3
+//   noteGrave({ delta, seat, fromZone:'hand', reason:'discard', via:'discard' })
+function noteGrave(arg){
+  let delta = 1;
+  let opts  = {};
+
+  if (typeof arg === 'number') {
+    delta = arg || 0;
+  } else if (arg && typeof arg === 'object') {
+    opts  = arg;
+    delta = Number(opts.delta) || 1;
+  }
+
+  if (!delta) return;
+
+  const s = seatKey(opts.seat ?? _S.activeSeat);
+
+  const fromZone = (opts.fromZone || opts.from || opts.origin || '').toLowerCase();
+  const reason   = (opts.reason || '').toLowerCase();
+  const via      = (opts.via || '').toLowerCase();
+
+  const fromHand =
+    fromZone === 'hand' ||
+    reason === 'discard' ||
+    via === 'discard';
+
+  _Tallies.graves = (_Tallies.graves || 0) + delta;
+
+  const seatT = _Tallies.bySeat[s];
+  seatT.toGraveyardTotal     = (seatT.toGraveyardTotal     || 0) + delta;
+  if (fromHand) {
+    seatT.toGraveyardFromHand = (seatT.toGraveyardFromHand || 0) + delta;
+    _Tallies.discardToGraveyard = (_Tallies.discardToGraveyard || 0) + delta;
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent('grave:delta', {
+      detail: { seat: s, delta, fromHand, fromZone, reason, via }
+    }));
+  } catch {}
+
+  // 🔹 stats event (local)
+  _emitStatsEvent('grave', {
+    seat: s,
+    delta,
+    source: 'local',
+    raw: { fromZone, reason, via, fromHand }
+  });
+
+  // 🔹 RTC broadcast so opponent sees your grave stats
+  _sendStatsUpdate('grave', {
+    seat: s,
+    delta,
+    fromZone,
+    reason,
+    via,
+    fromHand
+  });
+}
+
+
+function noteExile(arg){
+  let delta = 1;
+  let opts  = {};
+
+  if (typeof arg === 'number') {
+    delta = arg || 0;
+  } else if (arg && typeof arg === 'object') {
+    opts  = arg;
+    delta = Number(opts.delta) || 1;
+  }
+
+  if (!delta) return;
+
+  const s = seatKey(opts.seat ?? _S.activeSeat);
+
+  const fromZone = (opts.fromZone || opts.from || opts.origin || '').toLowerCase();
+  const reason   = (opts.reason || '').toLowerCase();
+  const via      = (opts.via || '').toLowerCase();
+
+  const fromHand =
+    fromZone === 'hand' ||
+    reason === 'discard' ||
+    via === 'discard';
+
+  _Tallies.exiles = (_Tallies.exiles || 0) + delta;
+
+  const seatT = _Tallies.bySeat[s];
+  seatT.toExileTotal     = (seatT.toExileTotal     || 0) + delta;
+  if (fromHand) {
+    seatT.toExileFromHand = (seatT.toExileFromHand || 0) + delta;
+    _Tallies.discardToExile = (_Tallies.discardToExile || 0) + delta;
+  }
+
+  try {
+    window.dispatchEvent(new CustomEvent('exile:delta', {
+      detail: { seat: s, delta, fromHand, fromZone, reason, via }
+    }));
+  } catch {}
+
+  // 🔹 stats event (local)
+  _emitStatsEvent('exile', {
+    seat: s,
+    delta,
+    source: 'local',
+    raw: { fromZone, reason, via, fromHand }
+  });
+
+  // 🔹 RTC broadcast
+  _sendStatsUpdate('exile', {
+    seat: s,
+    delta,
+    fromZone,
+    reason,
+    via,
+    fromHand
+  });
+}
+
+
+
+// --- NEW: library movement (return vs leave) ---
+function noteLibrary(delta = 1, { seat, reason = '', via = '', pos = '' } = {}){
+  const s = seatKey(seat ?? _S.activeSeat);
+  const d = (Number(delta) || 0);
+  if (!d) return;
+
+  const seatT = _Tallies.bySeat[s];
+
+  if (d > 0) {
+    seatT.libraryIn  = (seatT.libraryIn  || 0) + d;
+  } else {
+    const dec = -d;
+    seatT.libraryOut = (seatT.libraryOut || 0) + dec;
+  }
+  seatT.netLibrary = (seatT.libraryIn || 0) - (seatT.libraryOut || 0);
+
+  // Optional: event for overlays / notifications
+  try {
+    window.dispatchEvent(new CustomEvent('library:delta', {
+      detail: {
+        seat: s, delta: d, reason, via, pos,
+        totals: {
+          in:  seatT.libraryIn,
+          out: seatT.libraryOut,
+          net: seatT.netLibrary
+        }
+      }
+    }));
+  } catch {}
+
+  // 🔹 stats event (local)
+  _emitStatsEvent('library', {
+    seat: s,
+    delta: d,
+    source: 'local',
+    raw: { reason, via, pos }
+  });
+
+  // 🔹 RTC broadcast
+  _sendStatsUpdate('library', {
+    seat: s,
+    delta: d,
+    reason,
+    via,
+    pos
+  });
+}
+	
+
+
+// --- NEW: hand movement (drop-to-hand vs leaving hand) ---
+function noteHand(delta = 1, { seat, reason = '', via = '' } = {}){
+  const s = seatKey(seat ?? _S.activeSeat);
+  const d = (Number(delta) || 0);
+
+  if (d === 0) return;
+
+  const seatT = _Tallies.bySeat[s];
+
+  if (d > 0) {
+    // Increase in hand: count as a return (not a draw)
+    _Tallies.returns      = (_Tallies.returns      || 0) + d; // legacy “Returns tracked”
+    _Tallies.handReturns  = (_Tallies.handReturns  || 0) + d;
+    seatT.returnsToHand   = (seatT.returnsToHand   || 0) + d;
+  } else {
+    // Decrease in hand (promote/play/etc.)
+    const dec = -d;
+    _Tallies.handLeaves   = (_Tallies.handLeaves   || 0) + dec;
+    seatT.leavesHand      = (seatT.leavesHand      || 0) + dec;
+  }
+
+  // keep a net
+  seatT.netHand = (seatT.returnsToHand || 0) - (seatT.leavesHand || 0);
+
+  // optional event for watchers/notifications
+  try {
+    window.dispatchEvent(new CustomEvent('hand:delta', {
+      detail: { seat: s, delta: d, reason, via,
+        totals: {
+          seatReturns: seatT.returnsToHand,
+          seatLeaves:  seatT.leavesHand,
+          seatNet:     seatT.netHand,
+          globalReturns: _Tallies.handReturns,
+          globalLeaves:  _Tallies.handLeaves
+        }
+      }
+    }));
+  } catch {}
+
+  // 🔹 stats event (local)
+  _emitStatsEvent('hand', {
+    seat: s,
+    delta: d,
+    source: 'local',
+    raw: { reason, via }
+  });
+
+  // 🔹 RTC broadcast
+  _sendStatsUpdate('hand', {
+    seat: s,
+    delta: d,
+    reason,
+    via
+  });
+}
+
+
 
 function tallyAttackers(n){ _Tallies.bySeat[seatKey(_S.activeSeat)].attackersDeclared += (n|0); }
 function tallyBlockers(n){  _Tallies.bySeat[seatKey(_S.activeSeat)].blockersDeclared  += (n|0); }
 function getTallies(){ return JSON.parse(JSON.stringify(_Tallies)); }
 
 // Bridge called from CardPlacement when a card is spawned from HAND (origin:'hand').
-// payload: { seat, cid, name, typeLine, colors:[], manaCostRaw?, mv? }
+// payload: { seat, cid, name, typeLine, colors:[], manaCostRaw?, manaCost?, mv? }
 function noteCast(payload = {}) {
   const s   = seatKey(payload.seat ?? mySeatNum());
   const cid = String(payload.cid || '');
@@ -495,8 +1128,11 @@ function noteCast(payload = {}) {
   } catch {}
 
   // Normalize colors to the JSON string recordCast expects.
-  const colorsArr = Array.isArray(payload.colors) ? payload.colors : [];
+  const colorsArr  = Array.isArray(payload.colors) ? payload.colors : [];
   const colorsJson = JSON.stringify(colorsArr);
+
+  // Prefer manaCostRaw, fall back to manaCost
+  const manaCost = (payload.manaCostRaw || payload.manaCost || '').toString() || null;
 
   // Pass through to the canonical recorder.
   recordCast({
@@ -505,9 +1141,11 @@ function noteCast(payload = {}) {
     name: String(payload.name || ''),
     typeLine: String(payload.typeLine || ''),
     colorsJson,
-    mv: (payload.mv != null ? Number(payload.mv) : null)
+    mv: payload.mv,       // let recordCast normalize & fallback
+    manaCost
   });
 }
+
 
 
 // -----------------------------
@@ -710,9 +1348,36 @@ function debug(){
         taps:s.taps, untaps:s.untaps,
         landsPlayed:s.landsPlayed,
 
-        lifegain:s.lifegain, lifeloss:s.lifeloss, netLife:s.netLife,
-        scries:s.scries, surveils:s.surveils, investigates:s.investigates,
-        attackersDeclared:s.attackersDeclared, blockersDeclared:s.blockersDeclared
+        // life
+        startLife:s.startLife,
+        lifegain:s.lifegain,
+        lifeloss:s.lifeloss,
+        netLife:s.netLife,
+
+        // library
+        startLibrary:s.startLibrary,
+        libraryIn:s.libraryIn,
+        libraryOut:s.libraryOut,
+        netLibrary:s.netLibrary,
+
+        // hand
+        returnsToHand:s.returnsToHand,
+        leavesHand:s.leavesHand,
+        netHand:s.netHand,
+
+        // grave / exile splits
+        toGraveyardFromHand:s.toGraveyardFromHand,
+        toGraveyardTotal:s.toGraveyardTotal,
+        toExileFromHand:s.toExileFromHand,
+        toExileTotal:s.toExileTotal,
+
+        // misc
+        scries:s.scries,
+        surveils:s.surveils,
+        investigates:s.investigates,
+
+        attackersDeclared:s.attackersDeclared,
+        blockersDeclared:s.blockersDeclared
       });
       console.log('  castsByType:', s.castsByType);
       console.log('  castsByColor:', s.castsByColor);
@@ -721,8 +1386,16 @@ function debug(){
     });
     console.log('Global countersPlaced:', tall.countersPlaced);
     console.log('Global tokensCreated:',  tall.tokensCreated);
-    console.log('Global graves/exiles/returns/tutors/shuffles:', {
-      graves:tall.graves, exiles:tall.exiles, returns:tall.returns, tutors:tall.tutors, shuffles:tall.shuffles
+    console.log('Global graves/exiles/returns/tutors/shuffles/discards/hand:', {
+      graves: tall.graves,
+      exiles: tall.exiles,
+      returns: tall.returns,
+      handReturns: tall.handReturns,
+      handLeaves: tall.handLeaves,
+      discardToGraveyard: tall.discardToGraveyard,
+      discardToExile: tall.discardToExile,
+      tutors: tall.tutors,
+      shuffles: tall.shuffles
     });
 
     console.log('Estimated casts this turn (optional):', snap.estimatedCastsThisTurn);
@@ -747,6 +1420,7 @@ export const TurnUpkeep = {
   onCombatFinishedFromRTC,
   applyTurnPassFromRTC,
   applyPhaseSetFromRTC,
+  applyRemoteStatsUpdate,
 
   // tallies recorders
   recordDraw,
@@ -764,8 +1438,11 @@ export const TurnUpkeep = {
   bump,
   noteCast,           // (from previous step you added)
   noteLandPlay,    // ← NEW
-  noteExile,       // ← NEW
-  noteGrave,       // ← NEW
+  noteExile,
+  noteGrave,
+  noteHand,
+  noteLibrary,    // 🔹 NEW
+
 
   // snapshot
   recomputeSnapshot,
@@ -788,6 +1465,38 @@ window.addEventListener('phase:beginningOfEndStep', (ev) => {
     console.warn('[TurnUpkeep] EOT listener failed', e);
   }
 });
+
+// near the bottom of the file, once:
+window.addEventListener('turn:localDraw', () => { try{ noteLocalDraw(); }catch{} });
+
+// NEW: bridge ScryOverlay → TurnUpkeep tallies (Scry vs Surveil)
+window.addEventListener('scry:resolved', (ev) => {
+  try {
+    const detail = ev?.detail || {};
+    const mode   = detail.mode === 'surveil' ? 'surveil' : 'scry';
+    const c      = detail.counts || {};
+
+    // how many cards were actually looked at (any lane)
+    const total =
+      (c.top       | 0) +
+      (c.bottom    | 0) +
+      (c.hand      | 0) +
+      (c.graveyard | 0) +
+      (c.exile     | 0);
+
+    const n    = Math.max(1, total || 0);
+    const seat = mySeatNum();
+
+    if (mode === 'surveil') {
+      recordSurveil(seat, n);
+    } else {
+      recordScry(seat, n);
+    }
+  } catch (e) {
+    console.warn('[TurnUpkeep] scry:resolved listener failed', e);
+  }
+});
+
 
 
 // near the bottom of the file, once:

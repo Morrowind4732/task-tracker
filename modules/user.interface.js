@@ -729,7 +729,7 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
   background: radial-gradient(ellipse at 50% 40%, rgba(0,0,0,.65), rgba(0,0,0,.85));
 }
 #lifeOverlay[data-open="true"] { display: flex; }
-#lifeOverlay .panel{
+#lifeOverlay .life-panel{
   width: 360px; max-width: calc(100% - 32px);
   background: linear-gradient(180deg, var(--ui-deep-2), var(--ui-deep-1) 60%, var(--ui-deep-2));
   border: 1px solid rgba(255,255,255,.12);
@@ -737,6 +737,7 @@ body.ui-drawer-open .ui-drawer { transform: translateX(0); }
   border-radius: 12px; padding: 14px; color: var(--ui-text);
   font: 600 13px/1.25 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
 }
+
 #lifeOverlay .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
 #lifeOverlay h4{margin:0;font-size:14px;letter-spacing:.25px;}
 #lifeOverlay .grid{
@@ -833,12 +834,12 @@ document.body.appendChild(life);
 if (!document.getElementById('lifeOverlay')) {
   const ov = document.createElement('div');
   ov.id = 'lifeOverlay';
-  ov.innerHTML = `
-    <div class="panel" role="dialog" aria-modal="true" aria-label="Edit Life">
-      <div class="hdr">
-        <h4 id="lifeOverlayTitle">Edit Life – P1</h4>
-        <button class="btn" id="lifeCloseBtn" aria-label="Close">✕</button>
-      </div>
+ov.innerHTML = `
+  <div class="life-panel" role="dialog" aria-modal="true" aria-label="Edit Life">
+    <div class="hdr">
+      <h4 id="lifeOverlayTitle">Edit Life – P1</h4>
+      <button class="btn" id="lifeCloseBtn" aria-label="Close">✕</button>
+    </div>
 
       <div class="grid">
         <div class="label">Life</div>
@@ -2345,15 +2346,26 @@ function _clampLife(v){
 function setLife(seat, total, mid, poison, reason = 'sync'){
   const key = (Number(seat) === 2 ? 'p2' : 'p1');
   const cur = STATE[key];
-  STATE[key] = {
+  const next = {
     total : toInt(total , cur.total),
     mid   : toInt(mid   , cur.mid),
     poison: toInt(poison, cur.poison)
   };
+  const dTotal = (Number(next.total) - Number(cur.total)) | 0;
+
+  STATE[key] = next;
   render();
+
+  // NEW: tell TurnUpkeep + notify watchers
+  if (dTotal !== 0) {
+    try { window.TurnUpkeep?.recordLife?.(seat, { gain: dTotal>0 ? dTotal : 0, loss: dTotal<0 ? -dTotal : 0 }); } catch {}
+    try { window.dispatchEvent?.(new CustomEvent('life:delta', { detail: { seat, delta:dTotal, reason, totals:{...next} } })); } catch {}
+  }
+
   if (reason !== 'sync') _broadcastLife(reason);
   return { ...STATE[key] };
 }
+
 
 // Adjust by deltas (use for damage/lifelink/etc.); WILL broadcast
 function adjustLife(seat, dTotal = 0, dMid = 0, dPoison = 0, reason = 'manual'){
@@ -2364,8 +2376,17 @@ function adjustLife(seat, dTotal = 0, dMid = 0, dPoison = 0, reason = 'manual'){
     mid   : _clampLife(cur.mid    + (dMid    | 0)),
     poison: _clampLife(cur.poison + (dPoison | 0))
   };
+  const appliedDelta = (next.total - cur.total) | 0;
+
   STATE[key] = next;
   render();
+
+  // NEW: tally + event (ignore mid/poison for life tallies)
+  if (appliedDelta !== 0) {
+    try { window.TurnUpkeep?.recordLife?.(seat, { gain: appliedDelta>0 ? appliedDelta : 0, loss: appliedDelta<0 ? -appliedDelta : 0 }); } catch {}
+    try { window.dispatchEvent?.(new CustomEvent('life:delta', { detail: { seat, delta: appliedDelta, reason, totals:{...next} } })); } catch {}
+  }
+
   _broadcastLife(reason);
   return next;
 }
@@ -2416,24 +2437,41 @@ function setupLifeRtc(){
   setupLifeRtc._done = true;
 
   const handler = (msg) => {
-    if (!msg || msg.type !== 'life:update' || !msg.p1 || !msg.p2) return;
-    // Ignore if it's our own echo (optional). Safe to apply anyway.
-    try {
-      STATE.p1 = {
-        total : toInt(msg.p1.total , STATE.p1.total),
-        mid   : toInt(msg.p1.mid   , STATE.p1.mid),
-        poison: toInt(msg.p1.poison, STATE.p1.poison)
-      };
-      STATE.p2 = {
-        total : toInt(msg.p2.total , STATE.p2.total),
-        mid   : toInt(msg.p2.mid   , STATE.p2.mid),
-        poison: toInt(msg.p2.poison, STATE.p2.poison)
-      };
-      render();
-    } catch(e){
-      console.warn('[UI] life:update apply failed', e, msg);
+  if (!msg || msg.type !== 'life:update' || !msg.p1 || !msg.p2) return;
+  try {
+    const prev1 = { ...STATE.p1 };
+    const prev2 = { ...STATE.p2 };
+
+    const next1 = {
+      total : toInt(msg.p1.total , prev1.total),
+      mid   : toInt(msg.p1.mid   , prev1.mid),
+      poison: toInt(msg.p1.poison, prev1.poison)
+    };
+    const next2 = {
+      total : toInt(msg.p2.total , prev2.total),
+      mid   : toInt(msg.p2.mid   , prev2.mid),
+      poison: toInt(msg.p2.poison, prev2.poison)
+    };
+
+    STATE.p1 = next1;
+    STATE.p2 = next2;
+    render();
+
+    const d1 = (next1.total - prev1.total) | 0;
+    const d2 = (next2.total - prev2.total) | 0;
+    if (d1) {
+      try { window.TurnUpkeep?.recordLife?.(1, { gain: d1>0?d1:0, loss: d1<0?-d1:0 }); } catch {}
+      try { window.dispatchEvent?.(new CustomEvent('life:delta', { detail: { seat:1, delta:d1, reason:msg.reason||'sync', totals:{...next1} } })); } catch {}
     }
-  };
+    if (d2) {
+      try { window.TurnUpkeep?.recordLife?.(2, { gain: d2>0?d2:0, loss: d2<0?-d2:0 }); } catch {}
+      try { window.dispatchEvent?.(new CustomEvent('life:delta', { detail: { seat:2, delta:d2, reason:msg.reason||'sync', totals:{...next2} } })); } catch {}
+    }
+  } catch(e){
+    console.warn('[UI] life:update apply failed', e, msg);
+  }
+};
+
 
   // Preferred: event-style RTC
   try { window.RTC?.on?.('life:update', handler); } catch {}

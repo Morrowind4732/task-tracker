@@ -277,6 +277,11 @@ SIDEBOARD
     const loyaltyFront   = f0?.loyalty ?? j.loyalty ?? '';
     const loyaltyBack    = f1?.loyalty ?? '';
 
+    // mana cost (front/back)
+    const frontManaCost = f0?.mana_cost || j.mana_cost || '';
+    const backManaCost  = f1?.mana_cost || '';
+
+
 
     // untap rule based on the FRONT oracle
     const oLow = ` ${String(frontOracle||'').toLowerCase()} `;
@@ -300,13 +305,17 @@ SIDEBOARD
 
     // commanderMeta with the SAME fields we give normal cards,
     // plus power/toughness for convenience.
-    return {
+        return {
        img: imgFront || '',
       typeLine: frontTypeLine || '',
       oracle: frontOracle || '',
       power: powerFront || '',
       toughness: toughnessFront || '',
       loyalty: loyaltyFront || '',
+
+      // mana
+      manaCost:     frontManaCost || '',
+      backManaCost: backManaCost  || '',
 
       imgBack: imgBack || '',
       backTypeLine: backTypeLine || '',
@@ -320,15 +329,19 @@ SIDEBOARD
       backBaseTypes:       parsedBack.baseTypes      || [],
       backBaseAbilities:   parsedBack.baseAbilities  || []
     };
+
   } catch (e) {
     console.warn('[DeckLoading] commander fetch failed', e);
     return {
       img:'', typeLine:'', oracle:'', power:'', toughness:'',
+      manaCost:'', backManaCost:'',
       imgBack:'', backTypeLine:'', backOracle:'',
+      backLoyalty:'',
       untapsDuringUntapStep:true,
       frontBaseTypes:[], frontBaseAbilities:[],
       backBaseTypes:[],  backBaseAbilities:[]
     };
+
   }
 }
 
@@ -379,6 +392,10 @@ SIDEBOARD
     const loyaltyFront   = f0?.loyalty ?? card.loyalty ?? '';
     const loyaltyBack    = f1?.loyalty ?? '';
 
+    // mana
+    const frontManaCost = f0?.mana_cost || card.mana_cost || '';
+    const backManaCost  = f1?.mana_cost || '';
+
     // untap rule is front-face oracle based (that’s what we’d show on table first)
     const oLow = ` ${String(frontOracle||'').toLowerCase()} `;
     const untapsDuringUntapStep =
@@ -409,6 +426,10 @@ SIDEBOARD
       toughness: toughnessFront || '',
       loyalty: loyaltyFront || '',
 
+      // mana (front/back)
+      manaCost:     frontManaCost || '',
+      backManaCost: backManaCost  || '',
+
       // Back info kept separately
       imgBack: imgBack || '',
       backTypeLine: backTypeLine || '',
@@ -417,6 +438,7 @@ SIDEBOARD
 
       // "does it untap normally?" derived from front rules box
       untapsDuringUntapStep: !!untapsDuringUntapStep,
+
 
       // Parsed ability/type pills per face
       frontBaseTypes:      parsedFront.baseTypes     || [],
@@ -475,6 +497,11 @@ for (const name of missing){
     const loyaltyFront   = f0?.loyalty ?? j.loyalty ?? '';
     const loyaltyBack    = f1?.loyalty ?? '';
 
+    // mana
+    const frontManaCost = f0?.mana_cost || j.mana_cost || '';
+    const backManaCost  = f1?.mana_cost || '';
+
+
     // untap rule based on frontOracle
     const oLow = ` ${String(frontOracle||'').toLowerCase()} `;
 
@@ -505,12 +532,18 @@ for (const name of missing){
       toughness: toughnessFront || '',
       loyalty: loyaltyFront || '',
 
+      // mana
+      manaCost:     frontManaCost || '',
+      backManaCost: backManaCost  || '',
+
       imgBack: imgBack || '',
       backTypeLine: backTypeLine || '',
       backOracle: backOracle || '',
       backLoyalty: loyaltyBack || '',
 
       untapsDuringUntapStep: !!untapsDuringUntapStep,
+
+
 
       frontBaseTypes:      parsedFront.baseTypes     || [],
       frontBaseAbilities:  parsedFront.baseAbilities || [],
@@ -825,6 +858,11 @@ try {
     oracle: cmdMeta.oracle || '',
     frontOracle: cmdMeta.oracle || '',
     backOracle:  cmdMeta.backOracle || '',
+
+    // mana
+    manaCost:     cmdMeta.manaCost     || cmdMeta.frontManaCost || '',
+    backManaCost: cmdMeta.backManaCost || '',
+
     untapsDuringUntapStep: !!cmdMeta.untapsDuringUntapStep,
     baseTypes:     cmdMeta.frontBaseTypes     || [],
     baseAbilities: cmdMeta.frontBaseAbilities || [],
@@ -838,6 +876,7 @@ try {
     backLoyalty: cmdMeta.backLoyalty || '',
     currentSide: 'front'
   };
+
 
   // 5) Install minimal state (empty library for now)
   Object.assign(state, {
@@ -905,6 +944,11 @@ try {
             toughness: meta.toughness || '',
             loyalty:   meta.loyalty || '',
             backLoyalty: meta.backLoyalty || '',
+
+            // mana
+            manaCost:     meta.manaCost     || '',
+            backManaCost: meta.backManaCost || '',
+
             untapsDuringUntapStep: !!meta.untapsDuringUntapStep,
             baseTypes:     meta.frontBaseTypes     || [],
             baseAbilities: meta.frontBaseAbilities || [],
@@ -920,12 +964,21 @@ try {
             imgBack:       meta.imgBack || '',
             currentSide:   'front'
           };
+
           console.log('%c[DeckLoad:card built ✅]', 'color:#6cf', {
-            name: cardEntry.name, imageUrl: cardEntry.imageUrl,
-            typeLine: cardEntry.typeLine, oracle: cardEntry.oracle,
-            baseTypes: cardEntry.baseTypes, baseAbilities: cardEntry.baseAbilities,
-            untapsDuringUntapStep: cardEntry.untapsDuringUntapStep
-          });
+  name:          cardEntry.name,
+  imageUrl:      cardEntry.imageUrl,
+  typeLine:      cardEntry.typeLine,
+  oracle:        cardEntry.oracle,
+  baseTypes:     cardEntry.baseTypes,
+  baseAbilities: cardEntry.baseAbilities,
+  untapsDuringUntapStep: cardEntry.untapsDuringUntapStep,
+
+  // 👇 new: show mana in the console
+  manaCost:      cardEntry.manaCost,
+  backManaCost:  cardEntry.backManaCost
+});
+
           return cardEntry;
         }
 
@@ -985,8 +1038,20 @@ try {
   function drawOne(){
   const c = state.library.shift() || null;
   try { _syncLibGlobals(); } catch {}
+
+  // 🔵 Tell TurnUpkeep the library changed (draw = -1)
+  try {
+    const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
+    // initializes startLibrary on first call, then tracks in/out/net
+    window.TurnUpkeep?.noteLibrary?.(-1, { seat: seatNow, reason: 'draw' });
+  } catch {}
+
+  // keep any listeners (overlays) in sync
+  try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
+
   return c || null;
 }
+
 
 
   function drawOneToHand(deckEl){
@@ -1047,11 +1112,14 @@ try {
           oracle:     c?.oracle || '',
           untapsDuringUntapStep: !!c?.untapsDuringUntapStep,
 
-          // stats / loyalty
+          // stats / loyalty / cost
           power:       c?.power ?? '',
           toughness:   c?.toughness ?? '',
           loyalty:     c?.loyalty ?? '',
           backLoyalty: c?.backLoyalty ?? '',
+          manaCost:    c?.manaCost ?? '',
+          backManaCost:c?.backManaCost ?? '',
+
 
           // base pills (front/back kept for parity with flip logic)
           baseTypes:        Array.isArray(c?.baseTypes) ? [...c.baseTypes] : [],
@@ -1109,7 +1177,13 @@ try {
       toughness: d.toughness || '',
       loyalty:   d.loyalty   || '',
       backLoyalty: d.backLoyalty || '',
+
+      // mana (if dataset has it from spawn)
+      manaCost:     d.manaCost     || '',
+      backManaCost: d.backManaCost || '',
+
       untapsDuringUntapStep: (d.untapsDuringUntapStep !== 'false'),
+
 
       baseTypes:     parseJSON(d.baseTypes),
       baseAbilities: parseJSON(d.baseAbilities),

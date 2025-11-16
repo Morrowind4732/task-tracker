@@ -23,6 +23,17 @@ export const CardOverlayUI = (() => {
   tmp: { typeInput:'', abilityInput:'', counterInput:'', pow:'0', tou:'0' }
 };
 
+  // Radial picker runtime state
+  const RADIAL_STATE = {
+    key: null,          // e.g. "+ability", "+manAbility"
+    sourceBtn: null,    // the button that opened the radial
+    targetInput: null,  // the input we’ll write into
+    mode: 'root',       // 'root' | 'normal' | 'special'
+    letter: null,       // current ability letter (A–Z) for "Normal Ability"
+    specialGroup: null  // 'attack' | 'block' | 'protect' | 'weak'
+  };
+
+
 
   // ------- Mock catalogs (trimmed; extend later or fetch real data) -------
   const TYPES = {
@@ -69,6 +80,147 @@ export const CardOverlayUI = (() => {
     P: ['Poison'],
     S: ['Stun','Spore']
   };
+  
+    // Special Instruction helpers (emoji flags) for the radial picker.
+  // These mirror the battle.system.rules "restriction flags" plus the new 🚩 weakness flag.
+  const SPECIAL_INSTRUCTION_GROUPS = [
+    {
+      key: 'attack',
+      label: 'Attacker rules',
+      entries: [
+        {
+          code: '⚠️⚔️🚫Alone',
+          title: "Can't attack alone",
+          detail: 'This creature cannot be your only attacker.'
+        },
+        {
+          code: '⚠️⚔️⚔️',
+          title: 'Must attack each combat if able',
+          detail: 'If able, this creature must be declared as an attacker each combat.'
+        },
+        {
+          code: '⚠️⚔️⚔️',
+          title: 'Must attack each combat while a tag is present',
+          detail: 'After inserting, append a type or tag, e.g. "⚠️⚔️⚔️ Elf".'
+        },
+        {
+          code: '⚠️⚔️✅',
+          title: 'Can only attack if you control something',
+          detail: 'After inserting, append what you must control, e.g. "⚠️⚔️✅ Wizard".'
+        },
+        {
+          code: '⚠️⚔️',
+          title: 'Can only attack specific things',
+          detail: 'After inserting, append the target restriction, e.g. "⚠️⚔️ Planeswalkers".'
+        }
+      ]
+    },
+    {
+      key: 'block',
+      label: 'Blocker rules',
+      entries: [
+        {
+          code: '🚫Block',
+          title: "Can't block",
+          detail: 'This creature cannot be declared as a blocker at all.'
+        },
+        {
+          code: '⚠️🛡️🚫Alone',
+          title: "Can't block alone",
+          detail: 'This creature must block together with at least one other blocker.'
+        },
+        {
+          code: '⚠️🛡️',
+          title: 'Can only block a specific type',
+          detail: 'After inserting, append a type, e.g. "⚠️🛡️ Flying".'
+        }
+      ]
+    },
+    {
+      key: 'protect',
+      label: 'Protection',
+      entries: [
+        {
+          code: '🛡️White',
+          title: 'Protection from White',
+          detail: 'Damage and effects from white sources are prevented.'
+        },
+        {
+          code: '🛡️Blue',
+          title: 'Protection from Blue',
+          detail: 'Damage and effects from blue sources are prevented.'
+        },
+        {
+          code: '🛡️Black',
+          title: 'Protection from Black',
+          detail: 'Damage and effects from black sources are prevented.'
+        },
+        {
+          code: '🛡️Red',
+          title: 'Protection from Red',
+          detail: 'Damage and effects from red sources are prevented.'
+        },
+        {
+          code: '🛡️Green',
+          title: 'Protection from Green',
+          detail: 'Damage and effects from green sources are prevented.'
+        },
+        {
+          code: '🛡️Artifact',
+          title: 'Protection from Artifacts',
+          detail: 'Damage and effects from artifact sources are prevented.'
+        },
+        {
+          code: '🛡️',
+          title: 'Protection from a custom thing',
+          detail: 'After inserting, append whatever you want, e.g. "🛡️ Demons".'
+        }
+      ]
+    },
+    {
+      // 🚩 = "only weak to this" → protection from everything else.
+      key: 'weak',
+      label: 'Weakness (🚩 flags)',
+      entries: [
+        {
+          code: '🚩White',
+          title: 'Only weak to White',
+          detail: 'Effectively protection from all non-white sources; White is the one weakness.'
+        },
+        {
+          code: '🚩Blue',
+          title: 'Only weak to Blue',
+          detail: 'Effectively protection from all non-blue sources; Blue is the one weakness.'
+        },
+        {
+          code: '🚩Black',
+          title: 'Only weak to Black',
+          detail: 'Effectively protection from all non-black sources; Black is the one weakness.'
+        },
+        {
+          code: '🚩Red',
+          title: 'Only weak to Red',
+          detail: 'Effectively protection from all non-red sources; Red is the one weakness.'
+        },
+        {
+          code: '🚩Green',
+          title: 'Only weak to Green',
+          detail: 'Effectively protection from all non-green sources; Green is the one weakness.'
+        },
+        {
+          code: '🚩Artifact',
+          title: 'Only weak to Artifacts',
+          detail: 'Effectively protection from all non-artifact sources; Artifacts are the one weakness.'
+        },
+        {
+          code: '🚩',
+          title: 'Only weak to a custom thing',
+          detail: 'After inserting, append what it is weak to, e.g. "🚩 Angels".'
+        }
+      ]
+    }
+  ];
+
 
   const CSS = `
   :root{
@@ -1973,13 +2125,18 @@ if (Array.isArray(remote.grants)){
     });
 
     // ---------------- RADIAL PICKER HOOKS ----------------
-    // Radial open triggers (+/- on apply/manage/type/ability/counter)
-    back.querySelectorAll('[data-radial]').forEach(b=>{
-      b.addEventListener('click', ()=>{
-        const key = b.getAttribute('data-radial');
-        openRadial(key);
+    back.querySelectorAll('[data-radial]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-radial');
+        if (key === 'close') {
+          setRadialVisible(false);
+        } else {
+          // pass the button so we can find the right input to fill
+          openRadial(key, btn);
+        }
       });
     });
+
 
     // Radial close
     back.querySelector('[data-radial="close"]').addEventListener('click', ()=> setRadialVisible(false));
@@ -2735,14 +2892,349 @@ if (!act._delegated) {
   function mount(){ ensure(); }
 
   // ---------------- Radial picker ----------------
-  function setRadialVisible(v){ STATE.root.querySelector('.radialBack')?.setAttribute('aria-hidden', v ? 'false':'true'); }
+    function setRadialVisible(v){
+    const back = STATE.root?.querySelector('.radialBack');
+    if (!back) return;
+    back.setAttribute('aria-hidden', v ? 'false' : 'true');
 
-  function openRadial(key){
-    const rBack = STATE.root.querySelector('.radialBack');
-    const rad = rBack.querySelector('.radial');
-    // ... (radial code)
+    if (!v) {
+      // reset radial state when closing
+      RADIAL_STATE.key = null;
+      RADIAL_STATE.sourceBtn = null;
+      RADIAL_STATE.targetInput = null;
+      RADIAL_STATE.mode = 'root';
+      RADIAL_STATE.letter = null;
+      RADIAL_STATE.specialGroup = null;
+    }
+  }
+
+  // Figure out which input the radial should write into, based on which "+" was clicked
+  function _getRadialTargetInput(key, sourceBtn){
+    if (!sourceBtn) return null;
+    const root = STATE.root;
+    if (!root) return null;
+
+    const container =
+      sourceBtn.closest('.group') ||
+      sourceBtn.closest('.fieldRow') ||
+      sourceBtn.parentElement;
+
+    // Apply tab – grant ability (the + next to the abilities textbox)
+    if (key === '+ability' || key === '-ability') {
+      return container?.querySelector('input[data-apply="ability"]')
+        || root.querySelector('input[data-apply="ability"]');
+    }
+
+    // Manage tab – Force Effects / Abilities
+    if (key === '+manAbility' || key === '-manAbility') {
+      return container?.querySelector('input[data-man="ability"]')
+        || root.querySelector('input[data-man="ability"]');
+    }
+
+    // Types / Counters (if you ever use radial here, we still try to be helpful)
+    if (key === '+grantType' || key === '-grantType') {
+      return container?.querySelector('input[data-apply="grantType"]')
+        || root.querySelector('input[data-apply="grantType"]');
+    }
+    if (key === '+manType' || key === '-manType') {
+      return container?.querySelector('input[data-man="type"]')
+        || root.querySelector('input[data-man="type"]');
+    }
+    if (key === '+manCounter' || key === '-manCounter') {
+      return container?.querySelector('input[data-man="counter"]')
+        || root.querySelector('input[data-man="counter"]');
+    }
+
+    // Fallback
+    return container?.querySelector('input.ipt') || null;
+  }
+
+  function openRadial(key, sourceBtn){
+    if (!STATE.root) return;
+    const back = STATE.root.querySelector('.radialBack');
+    const rad  = back?.querySelector('.radial');
+    if (!back || !rad) return;
+
+    RADIAL_STATE.key         = key;
+    RADIAL_STATE.sourceBtn   = sourceBtn || null;
+    RADIAL_STATE.targetInput = _getRadialTargetInput(key, sourceBtn);
+    RADIAL_STATE.mode        = 'root';   // first screen: Normal vs Special
+    RADIAL_STATE.letter      = null;
+    RADIAL_STATE.specialGroup = null;
+
+    _renderRadial(rad);
     setRadialVisible(true);
   }
+
+  // Centered list helper
+  function _makeCenteredList(rad){
+    const list = document.createElement('div');
+    list.className = 'rList';
+    Object.assign(list.style, {
+      left: '50%',
+      top: '50%',
+      transform: 'translate(-50%, -50%)'
+    });
+    // remove any existing list first
+    rad.querySelectorAll('.rList').forEach(n => n.remove());
+    rad.appendChild(list);
+    return list;
+  }
+
+  function _clearRing(rad){
+    rad.querySelectorAll('.rBtn').forEach(n => n.remove());
+  }
+
+  function _renderRadial(rad){
+    if (!rad) return;
+
+    // Clear previous dynamic content
+    _clearRing(rad);
+    rad.querySelectorAll('.rList').forEach(n => n.remove());
+
+    const mode = RADIAL_STATE.mode || 'root';
+
+    if (mode === 'root') {
+      _renderRadialRoot(rad);
+    } else if (mode === 'normal') {
+      _renderRadialNormal(rad);
+    } else if (mode === 'special') {
+      if (!RADIAL_STATE.specialGroup) {
+        _renderRadialSpecialGroups(rad);
+      } else {
+        _renderRadialSpecialGroup(rad);
+      }
+    } else {
+      // safety fallback
+      RADIAL_STATE.mode = 'root';
+      _renderRadialRoot(rad);
+    }
+  }
+
+  // ---------- STEP 1: Root menu (Normal Ability vs Special Instructions) ----------
+
+  function _renderRadialRoot(rad){
+    const list = _makeCenteredList(rad);
+
+    const intro = document.createElement('div');
+    intro.style.fontWeight = '600';
+    intro.style.marginBottom = '8px';
+    intro.style.fontSize = '13px';
+    intro.textContent = 'What are you adding to this card?';
+    list.appendChild(intro);
+
+    const makeItem = (label, sub, mode) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rItem';
+      btn.innerHTML = `
+        <div style="font-weight:600; margin-bottom:2px;">${label}</div>
+        <div style="font-size:11px; opacity:.8;">${sub}</div>
+      `;
+      btn.addEventListener('click', () => {
+        RADIAL_STATE.mode = mode;
+        RADIAL_STATE.letter = null;
+        RADIAL_STATE.specialGroup = null;
+        _renderRadial(rad);
+      });
+      list.appendChild(btn);
+    };
+
+    makeItem(
+      'Normal ability keyword',
+      'Flying, First strike, Menace, etc. (A–Z wheel)',
+      'normal'
+    );
+    makeItem(
+      'Special instructions / flags',
+      'Attacker / blocker / protection / weakness emojis',
+      'special'
+    );
+  }
+
+  // ---------- STEP 2A: Normal Ability → A–Z ring + abilities list ----------
+
+  function _renderRadialNormal(rad){
+    const letters = Object.keys(ABILITIES || {}).sort();
+    if (!letters.length) {
+      const list = _makeCenteredList(rad);
+      const msg = document.createElement('div');
+      msg.style.fontSize = '12px';
+      msg.style.opacity = '.8';
+      msg.textContent = 'No ability catalog configured yet.';
+      list.appendChild(msg);
+      return;
+    }
+
+    if (!RADIAL_STATE.letter) {
+      RADIAL_STATE.letter = letters[0];
+    }
+
+    const cx = 260;
+    const cy = 260;
+    const R  = 190;
+
+    letters.forEach((ch, idx) => {
+      const angle = (Math.PI * 2 * idx) / letters.length - Math.PI / 2;
+      const x = cx + R * Math.cos(angle);
+      const y = cy + R * Math.sin(angle);
+
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rBtn';
+      b.textContent = ch;
+      b.style.left = `${x - 22}px`;
+      b.style.top  = `${y - 22}px`;
+
+      if (RADIAL_STATE.letter === ch) {
+        b.style.boxShadow = '0 0 8px 2px rgba(96,165,250,.9)';
+      }
+
+      b.addEventListener('click', () => {
+        RADIAL_STATE.letter = ch;
+        _renderRadial(rad);
+      });
+
+      rad.appendChild(b);
+    });
+
+    const list = _makeCenteredList(rad);
+    const letter = RADIAL_STATE.letter;
+    const abilList = ABILITIES[letter] || [];
+
+    const title = document.createElement('div');
+    title.style.fontWeight = '600';
+    title.style.marginBottom = '4px';
+    title.textContent = `${letter} — abilities`;
+    list.appendChild(title);
+
+    abilList.forEach(name => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rItem';
+      btn.textContent = name;
+      btn.addEventListener('click', () => {
+        _insertRadialText(name);
+      });
+      list.appendChild(btn);
+    });
+
+    if (!abilList.length) {
+      const empty = document.createElement('div');
+      empty.style.fontSize = '12px';
+      empty.style.opacity = '.75';
+      empty.textContent = 'No abilities in this letter bucket yet.';
+      list.appendChild(empty);
+    }
+  }
+
+  // ---------- STEP 2B: Special Instructions → group list ----------
+
+  function _renderRadialSpecialGroups(rad){
+    const list = _makeCenteredList(rad);
+
+    const title = document.createElement('div');
+    title.style.fontWeight = '600';
+    title.style.marginBottom = '6px';
+    title.textContent = 'Special instructions / emoji helpers';
+    list.appendChild(title);
+
+    SPECIAL_INSTRUCTION_GROUPS.forEach(group => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rItem';
+      btn.innerHTML = `
+        <div style="font-weight:600; margin-bottom:2px;">${group.label}</div>
+        <div style="font-size:11px; opacity:.8;">
+          ${group.key === 'attack' ? 'Attacker-only restrictions'
+            : group.key === 'block' ? 'Blocking restrictions'
+            : group.key === 'protect' ? 'Protection shorthand'
+            : '🚩 weakness flags (only weak to X)'}
+        </div>
+      `;
+      btn.addEventListener('click', () => {
+        RADIAL_STATE.specialGroup = group.key;
+        _renderRadial(rad);
+      });
+      list.appendChild(btn);
+    });
+  }
+
+  // ---------- STEP 2B-Detail: Entries inside a Special group ----------
+
+  function _renderRadialSpecialGroup(rad){
+    const group = SPECIAL_INSTRUCTION_GROUPS.find(g => g.key === RADIAL_STATE.specialGroup);
+    if (!group) {
+      RADIAL_STATE.specialGroup = null;
+      _renderRadial(rad);
+      return;
+    }
+
+    const list = _makeCenteredList(rad);
+
+    const title = document.createElement('div');
+    title.style.fontWeight = '600';
+    title.style.marginBottom = '6px';
+    title.textContent = group.label;
+    list.appendChild(title);
+
+    group.entries.forEach(entry => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rItem';
+      btn.innerHTML = `
+        <div style="font-weight:600; margin-bottom:2px;">${entry.title}</div>
+        <div style="font-size:11px; opacity:.8;">
+          ${entry.code ? `${entry.code} — ` : ''}${entry.detail || ''}
+        </div>
+      `;
+      btn.addEventListener('click', () => {
+        if (entry.code) {
+          _insertRadialText(entry.code);
+        }
+      });
+      list.appendChild(btn);
+    });
+
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'rItem';
+    backBtn.style.marginTop = '4px';
+    backBtn.innerHTML = `<div style="font-weight:500;">⟵ Back to categories</div>`;
+    backBtn.addEventListener('click', () => {
+      RADIAL_STATE.specialGroup = null;
+      _renderRadial(rad);
+    });
+    list.appendChild(backBtn);
+  }
+
+  // ---------- Apply the selected snippet into the target input ----------
+
+  function _insertRadialText(snippet){
+    const input = RADIAL_STATE.targetInput;
+    if (!input || !snippet) {
+      setRadialVisible(false);
+      return;
+    }
+
+    const cur = input.value || '';
+    const trimmed = cur.trim();
+
+    // If there is existing text, we append with ", " by default
+    const joiner = trimmed ? ', ' : '';
+    input.value = trimmed ? (cur + joiner + snippet) : snippet;
+
+    try {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    } catch {}
+
+    // Let any listeners know it changed
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    setRadialVisible(false);
+  }
+
 
   // --------- Effect sections (render on toggle) ---------
   function buildPTSection(){

@@ -411,19 +411,35 @@ if (decision === true){
       borderRadius:'12px', padding:'16px', color:'#eaf2ff'
     });
 
-    const grid = el('div');
-    Object.assign(grid.style, { display:'grid',
-      gridTemplateColumns:'repeat(5,60px)', gap:'8px' });
+    // inside quickPick()
+const grid = el('div');
+Object.assign(grid.style, {
+  display:'grid',
+  gridTemplateColumns:'repeat(5,60px)',
+  gap:'8px',
+  justifyItems:'stretch' // allow children to expand
+});
 
-    const mk = (t)=>{
-      const b=el('button');
-      b.textContent=t;
-      Object.assign(b.style, btnS());
-      b.onclick=()=>{ try{dim.remove();}catch{} resolve(t); };
-      return b;
-    };
-    ['1','2','3','4','5','6','7','8','9','X','Special']
-      .forEach(v => grid.append(mk(v)));
+const mk = (t)=>{
+  const b = el('button');
+  b.textContent = t;
+  Object.assign(b.style, btnS());
+
+  // ⬇️ Full-width “Special” across the grid
+  if (t === 'Special') {
+    b.style.gridColumn = '1 / -1'; // span all 5 columns
+    b.style.width = '100%';
+    b.style.height = '44px';
+    b.style.fontWeight = '800';
+  }
+
+  b.onclick = ()=>{ try{ dim.remove(); }catch{} resolve(t); };
+  return b;
+};
+
+['1','2','3','4','5','6','7','8','9','X','Special']
+  .forEach(v => grid.append(mk(v)));
+
 
     panel.append(el('div',{},'<strong>Cascade: choose value</strong>'), grid);
     dim.append(panel);

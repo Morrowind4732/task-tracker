@@ -39,8 +39,12 @@ const S = {
 
   // NEW: fan state for initial landing in the preview area
   previewBaseX: null,   // first-card X in preview
-  previewIdx: 0         // how many revealed (for fan offset)
+  previewIdx: 0,        // how many revealed (for fan offset)
+
+  // NEW: Scry vs Surveil mode
+  isSurveil: false
 };
+
 
 
 // ----- helpers -----
@@ -69,8 +73,12 @@ function ensureCSS(){
   .scry-num{flex:1;min-width:24px;text-align:center;font-weight:800;color:#cfe1ff;
     padding:4px 0;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
     border-radius:8px}
+  .scry-mode{display:flex;align-items:center;gap:6px;font-size:12px;color:#cfe1ff;
+    padding:3px 4px;border-radius:6px;background:rgba(15,23,42,.6);
+    border:1px solid rgba(148,163,184,.25)}
   /* -------- right pane -------- */
   .scry-main{position:relative;flex:1;border:1px solid rgba(255,255,255,.15);
+
     border-radius:12px;overflow:hidden;background:
       linear-gradient(180deg,#0d141f 0%, #0b1626 45%, #0a1422 45%, #0a1422 100%);}
   .scry-preview{position:absolute;left:0;top:0;right:0;height:55%;
@@ -128,9 +136,22 @@ function buildUI(){
   row.append(minus, num, plus);
   function setCount(n){ S.count = Math.max(1, Math.floor(n||1)); num.textContent = S.count; }
 
+  // Surveil toggle (uses same overlay, just changes mode flag)
+  const modeRow = document.createElement('label');
+  modeRow.className = 'scry-mode';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.addEventListener('change', () => {
+    S.isSurveil = cb.checked;
+  });
+  const span = document.createElement('span');
+  span.textContent = 'Surveil';
+  modeRow.append(cb, span);
+
   const btnGo = btn('Scry Cards', revealN);
 
-  rail.append(deckWrap, btnApply, btnCancel, row, btnGo);
+  rail.append(deckWrap, btnApply, btnCancel, row, modeRow, btnGo);
+
 
   // Right MAIN (stage)
   const main = document.createElement('div'); main.className = 'scry-main';
@@ -502,6 +523,22 @@ function resolveAndClose(){
   if (exileList.length)  sendToZone(exileList, 'exile');
   if (handList.length)   sendToHand(handList); // safe optional
 
+  // Let the rest of the app know what happened and whether this was Surveil
+  try {
+    window.dispatchEvent(new CustomEvent('scry:resolved', {
+      detail: {
+        mode: S.isSurveil ? 'surveil' : 'scry',
+        counts: {
+          top:       topList.length,
+          bottom:    bottomList.length,
+          hand:      handList.length,
+          graveyard: gyList.length,
+          exile:     exileList.length
+        }
+      }
+    }));
+  } catch {}
+
   close();
 }
 
@@ -511,10 +548,12 @@ export const ScryOverlay = {
     if (S.open) return;
     S.open = true;
     S.count = 1;
+    S.isSurveil = false; // default to normal Scry each time
     buildUI();
   },
   close
 };
+
 
 function btn(label, fn){
   const b = document.createElement('button');
@@ -530,7 +569,10 @@ function close(){
     lanes:{}, cards:new Map(), deckMock:null,
     // NEW: reset preview fan state
     previewBaseX: null,
-    previewIdx: 0
+    previewIdx: 0,
+    // reset mode
+    isSurveil: false
   });
 }
+
 

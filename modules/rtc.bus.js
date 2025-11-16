@@ -1602,16 +1602,16 @@ export function initRTCConnectionUI() {
             console.warn('[RTC:zones:sync] apply failed', e, msg);
           }
 
-        } else if (msg?.type === 'life:update') {
+        } else if (msg?.type === 'stats:update') {
           try {
-            // Forward to UI’s receiver (idempotent & safe)
-            window.__applyRemoteLifeUpdate?.(msg);
-            console.log('%c[RTC:recv life:update→applied]', 'color:#6cf', { from: msg.from, p1: msg.p1, p2: msg.p2 });
+            const { TurnUpkeep } = await import('./turn.upkeep.js');
+            TurnUpkeep?.applyRemoteStatsUpdate?.(msg);
+            console.log('%c[RTC:stats:update→TurnUpkeep]', 'color:#6cf', msg);
           } catch (e) {
-            console.warn('[RTC:life:update] apply failed', e, msg);
+            console.warn('[RTC:stats:update] handler failed', e, msg);
           }
           return;
-        } else {
+		} else {
 
 
           console.log('[RTC:recv] unhandled message', msg);
