@@ -49,28 +49,32 @@ async function _fetchMetaById(id, imgHint){
 
     let faces = [];
     if (Array.isArray(j.card_faces) && j.card_faces.length){
-      faces = j.card_faces.map(f => ({
-        title: f.name || j.name || '',
-        cost:  f.mana_cost || '',
-        type:  f.type_line || j.type_line || '',
-        oracle:f.oracle_text || '',
-        power: f.power ?? '',
-        toughness: f.toughness ?? '',
-        loyalty: f.loyalty ?? '',
-        img:   imgHint || f.image_uris?.normal || ''
+      faces = j.card_faces.map((f, idx) => ({
+        title:    f.name || j.name || '',
+        cost:     f.mana_cost || '',
+        type:     f.type_line || j.type_line || '',
+        oracle:   f.oracle_text || '',
+        power:    f.power ?? '',
+        toughness:f.toughness ?? '',
+        loyalty:  f.loyalty ?? '',
+        // Only the *front* face preserves the spawned art; back faces use Scryfall art.
+        img: idx === 0
+          ? (imgHint || f.image_uris?.normal || '')
+          : (f.image_uris?.normal || imgHint || '')
       }));
     } else {
       faces = [{
-        title: j.name || '',
-        cost:  j.mana_cost || '',
-        type:  j.type_line || '',
-        oracle:j.oracle_text || '',
-        power: j.power ?? '',
-        toughness: j.toughness ?? '',
-        loyalty: j.loyalty ?? '',
-        img:   imgHint || j.image_uris?.normal || ''
+        title:    j.name || '',
+        cost:     j.mana_cost || '',
+        type:     j.type_line || '',
+        oracle:   j.oracle_text || '',
+        power:    j.power ?? '',
+        toughness:j.toughness ?? '',
+        loyalty:  j.loyalty ?? '',
+        img:      imgHint || j.image_uris?.normal || ''
       }];
     }
+
     const meta = { faces, hasBack: faces.length > 1 };
     Cache.set(key, meta);
     return meta;
@@ -96,29 +100,32 @@ async function _fetchMetaByName(name, imgHint){
 
     let faces = [];
     if (Array.isArray(j.card_faces) && j.card_faces.length){
-      faces = j.card_faces.map(f => ({
-        title: f.name || j.name || name,
-        cost:  f.mana_cost || '',
-        type:  f.type_line || j.type_line || '',
-        oracle:f.oracle_text || '',
-        power: f.power ?? '',
-        toughness: f.toughness ?? '',
-        loyalty: f.loyalty ?? '',
-        // IMPORTANT: keep the art the user actually spawned (imgHint) if we have it
-        img:   imgHint || f.image_uris?.normal || ''
+      faces = j.card_faces.map((f, idx) => ({
+        title:    f.name || j.name || name,
+        cost:     f.mana_cost || '',
+        type:     f.type_line || j.type_line || '',
+        oracle:   f.oracle_text || '',
+        power:    f.power ?? '',
+        toughness:f.toughness ?? '',
+        loyalty:  f.loyalty ?? '',
+        // Preserve spawned art only for the primary/front face.
+        img: idx === 0
+          ? (imgHint || f.image_uris?.normal || '')
+          : (f.image_uris?.normal || imgHint || '')
       }));
     } else {
       faces = [{
-        title: j.name || name,
-        cost:  j.mana_cost || '',
-        type:  j.type_line || '',
-        oracle:j.oracle_text || '',
-        power: j.power ?? '',
-        toughness: j.toughness ?? '',
-        loyalty: j.loyalty ?? '',
-        img:   imgHint || j.image_uris?.normal || ''
+        title:    j.name || name,
+        cost:     j.mana_cost || '',
+        type:     j.type_line || '',
+        oracle:   j.oracle_text || '',
+        power:    j.power ?? '',
+        toughness:j.toughness ?? '',
+        loyalty:  j.loyalty ?? '',
+        img:      imgHint || j.image_uris?.normal || ''
       }];
     }
+
 
     const meta = { faces, hasBack: faces.length > 1 };
     Cache.set(key, meta);

@@ -538,7 +538,26 @@ export function initRTCConnectionUI() {
   } catch (e) {
     console.warn('[RTC:overlay:d20] handler failed', e, msg);
   }
+  return;        } else if (msg?.type === 'dice:roll') {
+  // Generic dice-bag roll: both clients should open the dice module
+  // and roll the requested die type.
+  try {
+    // If your dice UI lives in the portrait overlay world and needs it,
+    // this will make sure it’s initialized, but NOT force-open it.
+    await __ensureOverlayReadyNoOpen();
+
+    // Delegate to a global hook so the actual dice module can be swapped
+    // without touching rtc.bus.js again.
+    if (typeof window.__handleDiceRollFromRTC === 'function') {
+      await window.__handleDiceRollFromRTC(msg);
+    } else {
+      console.warn('[RTC:dice:roll] no handler installed on window.__handleDiceRollFromRTC', msg);
+    }
+  } catch (e) {
+    console.warn('[RTC:dice:roll] handler failed', e, msg);
+  }
   return;
+
 
 
         } else if (msg?.type === 'overlay:ready') {
@@ -1369,6 +1388,59 @@ export function initRTCConnectionUI() {
           }
 
 
+// ---- CARD FLIP (tooltip-triggered) -------------------------------
+        } else if (msg?.type === 'flip') {
+          try {
+            const sel = `img.table-card[data-cid="${msg.cid}"]`;
+            const el  = document.querySelector(sel);
+            if (!el) {
+              console.warn('[RTC:flip] no element for', msg.cid);
+              return;
+            }
+
+            // swap art
+            if (msg.img) {
+              el.src = msg.img;
+            }
+
+            // keep name/title in sync
+            if (msg.name) {
+              el.dataset.name = String(msg.name);
+              el.title        = String(msg.name);
+            }
+
+            // sync basic printed stats, so overlays/tooltips read correctly
+            if (msg.typeLine != null)  el.dataset.typeLine  = String(msg.typeLine);
+            if (msg.oracle   != null)  el.dataset.oracle    = String(msg.oracle);
+            if (msg.power    != null)  el.dataset.power     = String(msg.power);
+            if (msg.toughness!= null)  el.dataset.toughness = String(msg.toughness);
+            if (msg.loyalty  != null)  el.dataset.loyalty   = String(msg.loyalty);
+
+            // face index + hasFlip flag are used by tooltip / future logic
+            if (msg.faceIndex != null) el.dataset.faceIndex = String(msg.faceIndex);
+            if (msg.hasFlip   != null) el.dataset.hasFlip   = msg.hasFlip ? '1' : '';
+
+            // refresh badges + tooltip if present
+            try {
+              (async () => {
+                const { Badges } = await import('./badges.js');
+                Badges.render?.(el);
+              })();
+            } catch {}
+
+            try {
+              window.Tooltip?.showForCard?.(el, el, { mode: 'right' });
+            } catch {}
+
+            console.log('%c[RTC:flip→applied]', 'color:#6f6', {
+              cid      : msg.cid,
+              faceIndex: msg.faceIndex,
+              hasFlip  : msg.hasFlip
+            });
+          } catch (e) {
+            console.warn('[RTC:flip] apply failed', e, msg);
+          }
+
         // ---- TAP / UNTAP -------------------------------------------------
         } else if (msg?.type === 'tap') {
           try {
@@ -1412,6 +1484,7 @@ export function initRTCConnectionUI() {
           } catch (e) {
             console.warn('[RTC:tap] apply failed', e, msg);
           }
+		  
         } else if (msg?.type === 'combat_charge') {
           const list = Array.isArray(msg.cids) ? msg.cids
                    : Array.isArray(msg.attackers) ? msg.attackers : [];

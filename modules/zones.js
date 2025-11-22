@@ -2343,22 +2343,34 @@ window.addEventListener('keydown', onKey, { passive: true });
       // each action also decrements ONE copy from the live library and re-renders
       addBtn('Table', ()=>{
         try{ CardPlacement.spawnCardLocal({ name: payload.name, img: payload.img }); }catch{}
-        _decrementFromLibraryByName(payload.name);
+			_decrementFromLibraryByName(payload.name);
+			  try {
+				window.TurnUpkeep?.recordTutor?.((window.mySeat?.() || 1), 1);
+			  } catch {}
         render();
       });
       addBtn('Hand',  ()=>{
         try{ window.flyDrawToHand?.({ name: payload.name, imageUrl: payload.img }, null); }catch{}
         _decrementFromLibraryByName(payload.name);
+		  try {
+			window.TurnUpkeep?.recordTutor?.((window.mySeat?.() || 1), 1);
+		  } catch {}
         render();
       });
       addBtn('Graveyard', ()=>{
         try{ window.moveCardToZone?.(payload,'graveyard',(window.mySeat?.()||1)); }catch{}
         _decrementFromLibraryByName(payload.name);
+		  try {
+			window.TurnUpkeep?.recordTutor?.((window.mySeat?.() || 1), 1);
+		  } catch {}
         render();
       });
       addBtn('Exile', ()=>{
         try{ window.moveCardToZone?.(payload,'exile',(window.mySeat?.()||1)); }catch{}
         _decrementFromLibraryByName(payload.name);
+		  try {
+			window.TurnUpkeep?.recordTutor?.((window.mySeat?.() || 1), 1);
+		  } catch {}
         render();
       });
 

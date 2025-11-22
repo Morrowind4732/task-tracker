@@ -260,8 +260,18 @@ body { color: var(--ui-text); }
   letter-spacing: .2px;
 }
 .ui-life .left { justify-self: start; opacity: .95; }
-.ui-life .center { justify-self: center; opacity: .95; }
+
+/* center now flex so pills can sit left / center / right neatly */
+.ui-life .center {
+  justify-self: center;
+  opacity: .95;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .ui-life .right { justify-self: end; opacity: .95; }
+
 .ui-life .pill {
   background: linear-gradient(180deg, var(--ui-deep-3), var(--ui-deep-2));
   border: 1px solid rgba(255,255,255,.10);
@@ -269,6 +279,57 @@ body { color: var(--ui-text); }
   padding: 6px 10px;
   box-shadow: inset 0 0 0 1px rgba(255,255,255,.03);
 }
+
+/* inactive / disabled dice pill state */
+.ui-life .pill.is-inactive,
+.ui-life .pill[data-disabled="true"] {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+
+
+
+  /* Tiny opponent hand strip just under the life bar */
+  .ui-opponent-hand-strip{
+    position:fixed;
+    left:0;
+    right:0;
+    top:var(--ui-life-h);
+    height:18px;
+    display:flex;
+    justify-content:center;
+    align-items:flex-start;
+    pointer-events:none;
+    z-index:9900;
+  height: 18px;          /* or 20px if you want a fatter peek */
+  overflow: visible;     /* let the strip hang into the battlefield */
+}
+  .ui-opponent-hand-card {
+  flex: 0 0 auto;
+  width: 80px;               /* same width as table cards */
+  height: 22px;              /* how much of the card you want visible */
+  border-radius: 6px;
+  overflow: hidden;
+
+  background-image: url('https://i.imgur.com/LdOBU1I.jpeg');
+  background-repeat: no-repeat;
+
+  /* 👇 Full-width card at normal aspect, only bottom slice visible */
+  background-size: 100% auto;          /* full card width, auto height */
+  background-position: center bottom;  /* show the bottom edge */
+
+  box-shadow: 0 0 4px rgba(0,0,0,0.6);
+  opacity: 1;
+}
+
+.ui-opponent-hand-card + .ui-opponent-hand-card {
+  margin-left: -6px;          /* slight overlap */
+}
+
+
+
 
 /* 🔵 NEW: green ring for the active seat */
 .ui-life .pill.is-active {
@@ -802,6 +863,74 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
     style.textContent = css;
     document.head.appendChild(style);
   }
+  
+    // Tiny HUD: show a stub “card back” for each card in the opponent's hand.
+  function updateOpponentHandStrip() {
+    const strip = document.getElementById('ui-opponent-hand-strip');
+    if (!strip) return;
+
+    // Figure out which seat is “me”
+    let mySeat = 1;
+    try {
+      if (typeof window.mySeat === 'function') {
+        mySeat = Number(window.mySeat()) || 1;
+      } else if (STATE.seat) {
+        mySeat = Number(STATE.seat) || 1;
+      }
+    } catch {}
+    const oppSeatKey = (mySeat === 2 ? '1' : '2');
+
+    // Read tallies as a backup (they can lag one step behind DOM)
+    let oppHandCountTallies = 0;
+    try {
+      const TU = window.TurnUpkeep;
+      const tallies = TU?.getTallies?.();
+      const seatData = tallies?.bySeat?.[oppSeatKey];
+      if (seatData && typeof seatData.handCount === 'number') {
+        oppHandCountTallies = seatData.handCount;
+      }
+    } catch {
+      // ignore, DOM will be the primary truth
+    }
+
+    // Primary: count live DOM hand cards. This is the real, current truth.
+    let oppHandCount = 0;
+    try {
+      const handEls = document.querySelectorAll(
+        'img.hand-card[data-cid], img[data-zone="hand"][data-cid]'
+      );
+      handEls.forEach(el => {
+        const owner = (el.dataset.ownerCurrent ?? el.dataset.owner ?? '')
+          .toString()
+          .match(/\d+/)?.[0] || '1';
+        if (owner === oppSeatKey) oppHandCount++;
+      });
+    } catch {
+      // ignore, we'll fall back to tallies if needed
+    }
+
+    // If DOM shows nothing (e.g. right after a reconnect) but tallies know something,
+    // fall back to the tallies.
+    if (!oppHandCount && oppHandCountTallies) {
+      oppHandCount = oppHandCountTallies;
+    }
+
+
+    // Render the little card backs
+    strip.innerHTML = '';
+    if (!oppHandCount) {
+      strip.style.display = 'none';
+      return;
+    }
+    strip.style.display = 'flex';
+
+    for (let i = 0; i < oppHandCount; i++) {
+      const stub = document.createElement('div');
+      stub.className = 'ui-opponent-hand-card';
+      strip.appendChild(stub);
+    }
+  }
+
 
   // ------------------------------------------------------------------
   // MARKUP (life bar, drawer shell, rails)
@@ -818,8 +947,33 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
       P1&nbsp;<span class="life-red">40</span>&nbsp;<span class="life-white">21</span>&nbsp;<span class="life-green">0</span>
     </span>
   </div>
+
   <div class="center">
-    <span class="pill" id="ui-turn-pill">Turn: 1 – Player 1 – Phase: Main 1</span>
+    <!-- LEFT DICE PILL: active -->
+    <button
+      type="button"
+      class="pill"
+      id="diceBagBtn"
+      title="Dice Bag"
+    >
+      🎲
+    </button>
+
+    <!-- TURN / PHASE PILL (unchanged text) -->
+    <span class="pill" id="ui-turn-pill">
+      Turn: 1 – Player 1 – Phase: Main 1
+    </span>
+
+    <!-- RIGHT DICE PILL: starts inactive -->
+    <button
+      type="button"
+      class="pill is-inactive"
+      id="quickDiceBtn"
+      title="Quick Dice"
+      data-disabled="true"
+    >
+      🎲
+    </button>
   </div>
 
   <div class="right">
@@ -828,10 +982,19 @@ body.ui-drawer-open .ui-rail[data-side="right"] .ui-tab .chev {
     </span>
   </div>
 `;
+
 document.body.appendChild(life);
 
-// Life editor overlay (compact 3-column)
-if (!document.getElementById('lifeOverlay')) {
+    // NEW: tiny opponent hand strip container just under the life bar
+    if (!document.getElementById('ui-opponent-hand-strip')) {
+      const strip = document.createElement('div');
+      strip.id = 'ui-opponent-hand-strip';
+      strip.className = 'ui-opponent-hand-strip';
+      document.body.appendChild(strip);
+    }
+
+    // Life editor overlay lives here…
+    if (!document.getElementById('lifeOverlay')) {
   const ov = document.createElement('div');
   ov.id = 'lifeOverlay';
 ov.innerHTML = `
@@ -871,6 +1034,8 @@ ov.innerHTML = `
 }
 
     }
+	
+	
 
     // Drawer shell
     if (!document.querySelector('.ui-drawer')) {
@@ -1399,7 +1564,7 @@ ov.innerHTML = `
     }
   
 
-  // ------------------------------------------------------------------
+   // ------------------------------------------------------------------
   // TAB SWITCHER (settings tabs swap visible panel)
   // ------------------------------------------------------------------
   function activateSettingsTab(tabName){
@@ -1419,10 +1584,40 @@ ov.innerHTML = `
   // ------------------------------------------------------------------
   // EVENT WIRING (TOUCH-FIRST / POINTERDOWN-FIRST)
   // ------------------------------------------------------------------
+
+  // Lazy-load 3D dice module on first use (dice bag / quick dice buttons)
+  let Dice3DModule = null;
+  async function ensureDice3D() {
+    if (Dice3DModule) return Dice3DModule;
+    try {
+      const mod = await import('./dice.roller.3d.js');
+      const Dice3D = mod?.Dice3D || mod?.default || mod;
+      if (!Dice3D) throw new Error('Dice3D export missing from dice.roller.3d.js');
+
+      // One-time init hook; later we can bridge results into stats / RTC.
+      Dice3D.init({
+        onResult: ({ kind, value }) => {
+          try {
+            console.log('[Dice3D]', kind, '→', value);
+          } catch (e) {
+            console.warn('[UI] Dice3D onResult handler failed', e);
+          }
+        }
+      });
+
+      Dice3DModule = Dice3D;
+      return Dice3DModule;
+    } catch (err) {
+      console.warn('[UI] Failed to load 3D dice module', err);
+      return null;
+    }
+  }
+
   function wireEvents() {
-  // 🔵 Life pills → open editor overlay
-  const pillP1 = document.getElementById('ui-p1-pill');
-const pillP2 = document.getElementById('ui-p2-pill');
+    // 🔵 Life pills → open editor overlay
+    const pillP1 = document.getElementById('ui-p1-pill');
+    const pillP2 = document.getElementById('ui-p2-pill');
+
 
 // open the editor for whichever seat the pill CURRENTLY represents
 pillP1?.addEventListener('pointerdown', (e) => {
@@ -1729,11 +1924,45 @@ document.getElementById('ui-btn-load')?.addEventListener('pointerdown', async (e
       });
     }
 
+    // Dice bag + quick dice buttons in the top HUD
+    const diceBagBtn   = document.getElementById('diceBagBtn');
+    const quickDiceBtn = document.getElementById('quickDiceBtn');
+
+    diceBagBtn?.addEventListener('pointerdown', async (e) => {
+      if (e.button && e.button !== 0) return;
+      e.preventDefault();
+      const Dice3D = await ensureDice3D();
+      if (!Dice3D) return;
+      try {
+        Dice3D.openBag();
+      } catch (err) {
+        console.warn('[UI] Dice bag open failed', err);
+      }
+    });
+
+    quickDiceBtn?.addEventListener('pointerdown', async (e) => {
+      if (e.button && e.button !== 0) return;
+      e.preventDefault();
+      const Dice3D = await ensureDice3D();
+      if (!Dice3D) return;
+      try {
+        // Default quick die: D20 cinematic.
+        if (typeof Dice3D.rollQuick === 'function') {
+          Dice3D.rollQuick();
+        } else {
+          Dice3D.roll('d20', true);
+        }
+      } catch (err) {
+        console.warn('[UI] Quick dice roll failed', err);
+      }
+    });
+
     // ESC closes drawer (desktop convenience)
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && STATE.open) setOpen(false);
     });
   }
+
 
   // ------------------------------------------------------------------
   // TOGGLE HELPER
@@ -2237,9 +2466,11 @@ const rightIsSeat = STATE.flipSides ? 1 : 2;
 if (left)  left.setAttribute('data-seat', String(leftIsSeat));
 if (right) right.setAttribute('data-seat', String(rightIsSeat));
 
-left?.classList.toggle('is-active',  STATE.activeSeat === leftIsSeat);
-right?.classList.toggle('is-active', STATE.activeSeat === rightIsSeat);
+    left?.classList.toggle('is-active', STATE.activeSeat === leftIsSeat);
+    right?.classList.toggle('is-active', STATE.activeSeat === rightIsSeat);
 
+    // Keep opponent hand HUD in sync
+    updateOpponentHandStrip();
   }
 
 
@@ -2407,6 +2638,53 @@ function addPoison(targetSeat, counters){
 function addMid(targetSeat, delta){
   return adjustLife(targetSeat, 0, (delta|0), 0, 'mid');
 }
+
+// Stats Rules → Life Gain bridge
+// When a rule popup's "Gain X life" button is pressed, it dispatches
+//   statsRule:gainLife  { seat, amount, via, ... }
+// We just pipe that into adjustLife so it uses the same logic/RTC as normal.
+window.addEventListener?.('statsRule:gainLife', (ev) => {
+  try {
+    const detail = ev?.detail || {};
+    const amount = Number(detail.amount) || 0;
+    if (!amount) return;
+
+    const seat =
+      Number(detail.seat) ||
+      (typeof window.mySeat === 'function'
+        ? Number(window.mySeat())
+        : STATE.seat || 1);
+
+    adjustLife(seat, amount, 0, 0, detail.via || 'statsRule');
+  } catch (e) {
+    console.warn('[UI] statsRule:gainLife handler failed', e, ev);
+  }
+});
+
+// Stats Rules → Life Damage bridge
+// When a rule popup's "Deal X damage" button is pressed, it should dispatch
+//   statsRule:damageLife  { seat, amount, via, ... }
+// We just pipe that into adjustLife as loss so it uses the same logic/RTC.
+window.addEventListener?.('statsRule:damageLife', (ev) => {
+  try {
+    const detail = ev?.detail || {};
+    const amount = Number(detail.amount) || 0;
+    if (!amount) return;
+
+    const seat =
+      Number(detail.seat) ||
+      (typeof window.mySeat === 'function'
+        ? Number(window.mySeat())
+        : STATE.seat || 1);
+
+    // damage = negative life delta
+    adjustLife(seat, -amount, 0, 0, detail.via || 'statsRule');
+  } catch (e) {
+    console.warn('[UI] statsRule:damageLife handler failed', e, ev);
+  }
+});
+
+
 
 // Send a single compact packet with BOTH players' three life numbers.
 // shape: {type:'life:update', from, reason, p1:{total,mid,poison}, p2:{...}}
@@ -2589,11 +2867,16 @@ function _updatePhase(label){
     applyDamage,       // wrapper: -N to total (broadcasts)
     applyLifelink,     // wrapper: +N to total (broadcasts)
     addPoison,         // wrapper: +N to poison (broadcasts)
-    addMid,             // wrapper: +/- to mid (broadcasts)
-	getP1, getP2, getTurn, getPlayerLabel
+    addMid,            // wrapper: +/- to mid (broadcasts)
+    getP1, getP2, getTurn, getPlayerLabel,
+    updateOpponentHandStrip   // NEW: tiny opponent-hand HUD
   };
 
+
 })();
+
+
+
 
 
 

@@ -243,7 +243,7 @@ function ensureStyles() {
 
  
 // 🔵 CURRENT STATE HELPERS
-function getCurrentZonesSnapshot() {
+function getCurrentZonesSnapshot(tallies) {
   // Hand counts (P1 / P2) from DOM
   let handP1 = 0, handP2 = 0;
   try {
@@ -259,8 +259,12 @@ function getCurrentZonesSnapshot() {
     });
   } catch {}
 
-  // Library counts (we only *know* our own library size for sure)
+  // Library counts:
+  //  - Prefer direct DeckLoading for *our* seat.
+  //  - Fill missing values from TurnUpkeep tallies (startLibrary + netLibrary).
   let libP1 = null, libP2 = null;
+
+  // Direct local library size for our own seat
   try {
     const DL = window.DeckLoading;
     const lib = DL?.state?.library;
@@ -274,16 +278,66 @@ function getCurrentZonesSnapshot() {
     }
   } catch {}
 
+  // Fill library + hand from per-seat tallies (mirrored via stats:update)
+  try {
+    if (tallies && tallies.bySeat) {
+      const s1 = tallies.bySeat['1'];
+      const s2 = tallies.bySeat['2'];
+
+      // library
+      const applyLib = (seatData, which) => {
+        if (!seatData) return;
+
+        // Prefer absolute mirrored count from TurnUpkeep (library_abs)
+        const currentAbs = Number(seatData.libraryCurrent);
+        if (Number.isFinite(currentAbs)) {
+          if (which === '1') libP1 = currentAbs;
+          if (which === '2') libP2 = currentAbs;
+          return;
+        }
+
+        // Fallback: derive from start + net
+        const start = Number(seatData.startLibrary);
+        const inN   = Number(seatData.libraryIn)  || 0;
+        const outN  = Number(seatData.libraryOut) || 0;
+        const net =
+          (typeof seatData.netLibrary === 'number' && !Number.isNaN(seatData.netLibrary))
+            ? Number(seatData.netLibrary)
+            : (inN - outN);
+
+        if (Number.isFinite(start)) {
+          const current = start + net;
+          if (which === '1') libP1 = current;
+          if (which === '2') libP2 = current;
+        }
+      };
+
+
+      applyLib(s1, '1');
+      applyLib(s2, '2');
+
+      // absolute hand counts (real-time mirrored)
+      if (s1 && typeof s1.handCount === 'number') {
+        handP1 = s1.handCount;
+      }
+      if (s2 && typeof s2.handCount === 'number') {
+        handP2 = s2.handCount;
+      }
+    }
+  } catch {}
+
   return {
     hand:    { p1: handP1, p2: handP2 },
     library: { p1: libP1,  p2: libP2  }
   };
 }
 
+
+
 function refreshData() {
   const TU = window.TurnUpkeep || {};
   try { TU.recomputeSnapshot?.(); } catch {}
-  const tallies  = TU.getTallies?.()   || null;
+	const tallies  = TU.getTallies?.()   || null;
   const snapshot = TU.getSnapshot?.()  || null;
   const state    = typeof TU.state === 'function' ? TU.state() : null;
 
@@ -301,7 +355,7 @@ function refreshData() {
     console.warn('[TurnStatsOverlay] getLifeSnapshot failed', e);
   }
 
-  const zonesCurrent = getCurrentZonesSnapshot();
+const zonesCurrent = getCurrentZonesSnapshot(tallies);
 
   return { tallies, snapshot, state, life, zonesCurrent };
 }
@@ -544,6 +598,7 @@ function renderTallies(container, tallies, snapshot) {
       ['Left library', libraryOut],
       ['Net library change', netLibrary],
       ['Scries', seatData.scries],
+	  ['Tutors', seatData.tutors],
       ['Surveils', seatData.surveils],
       ['Investigates', seatData.investigates]
     ]);

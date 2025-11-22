@@ -2721,50 +2721,10 @@ function parseCounterAction(a){
   return { kind, qty: Math.max(1, qty) };
 }
 
-/** Prefill Apply tab for a counter action (+1/+1 also sets PT +1/+1). */
-function prefillApplyForCounter(kind, qty){
-  setTab('apply');
-  const togglesHost = STATE.root.querySelector('[data-effect="toggles"]');
-  if (!togglesHost) return;
 
-  const countersChk = togglesHost.querySelector('input[type="checkbox"][data-eff="counters"]');
-  if (countersChk && !countersChk.checked) countersChk.checked = true;
 
-  const isPlusOne = /^\s*\+1\s*\/\s*\+1\s*$/i.test(kind);
-  if (isPlusOne) {
-    const ptChk = togglesHost.querySelector('input[type="checkbox"][data-eff="pt"]');
-    if (ptChk && !ptChk.checked) ptChk.checked = true;
-  }
-  rebuildEffectSections();
 
-  const kindI = STATE.root.querySelector('input[data-apply="counterKind"]');
-  const qtyI  = STATE.root.querySelector('input[data-apply="counterQty"]');
-  if (kindI) kindI.value = kind;
-  if (qtyI)  qtyI.value  = String(qty);
-  if (isPlusOne) {
-    const powI = STATE.root.querySelector('input[data-pt="pow"]');
-    const touI = STATE.root.querySelector('input[data-pt="tou"]');
-    if (powI) powI.value = '1';
-    if (touI) touI.value = '1';
-  }
-  try { kindI?.focus(); } catch{}
-}
 
-/** NEW: Prefill Apply tab for a "Grant XYZ" action. */
-function prefillApplyForGrantAbility(ability){
-  const nice = titleCaseWords(ability);
-  setTab('apply');
-  // ensure ability toggle on & section rendered
-  const abilityChk = STATE.root.querySelector('input[type="checkbox"][data-eff="ability"]');
-  if (abilityChk && !abilityChk.checked) abilityChk.checked = true;
-  rebuildEffectSections();
-  // write the ability text
-  const input = STATE.root.querySelector('input[data-apply="ability"]');
-  if (input) {
-    input.value = nice;
-    try { input.focus(); } catch{}
-  }
-}
 
 // Render buttons (with cleaned labels)
 STATE.lastQuickActions.forEach((a, i) => {
@@ -2791,9 +2751,25 @@ if (!act._delegated) {
     const parsed = parseCounterAction(a);
     if (parsed) {
       console.log('[QuickAction] Counter detected:', parsed);
-      prefillApplyForCounter(parsed.kind, parsed.qty);
+
+      // Prefer the local helper, then the CardOverlayUI export, then the global.
+      const fn =
+        (typeof prefillApplyForCounter === 'function' && prefillApplyForCounter) ||
+        (window.CardOverlayUI &&
+         typeof window.CardOverlayUI.prefillApplyForCounter === 'function' &&
+         window.CardOverlayUI.prefillApplyForCounter) ||
+        (typeof window.prefillApplyForCounter === 'function' && window.prefillApplyForCounter) ||
+        null;
+
+      if (typeof fn === 'function') {
+        fn(parsed.kind, parsed.qty);
+      } else {
+        console.warn('[QuickAction] prefillApplyForCounter missing', parsed);
+        setTab('apply'); // at least land on Apply tab
+      }
       return;
     }
+
 
     // 2) TOKENS
     const looksLikeToken =
@@ -2858,29 +2834,107 @@ if (!act._delegated) {
   }
 
 
-  function openForCard(elOrCid){
-    ensure();
-    const el = typeof elOrCid === 'string' ? document.querySelector(`.table-card[data-cid="${elOrCid}"]`) : elOrCid;
-    const cid = el?.dataset?.cid || String(elOrCid || '');
-    STATE.activeCid = cid || null;
+  function openForCard(elOrCid, opts){
+  ensure();
+  const el =
+    typeof elOrCid === 'string'
+      ? document.querySelector(`.table-card[data-cid="${elOrCid}"]`)
+      : elOrCid;
 
-    const img = STATE.root.querySelector('.preview img');
-    img.src = el?.src || '';
-    img.alt = el?.title || 'Card';
-    STATE.root.querySelector('.preview .cap').textContent = el?.title || '';
-    STATE.root.querySelector('.cid').textContent = cid ? `cid: ${cid}` : '';
+  const cid = el?.dataset?.cid || String(elOrCid || '');
+  STATE.activeCid = cid || null;
 
-        setTab('scan');
-    rebuildTargets('mine'); // default to showing "My cards" in Apply tab
-    setVisible(true);
+  const img = STATE.root.querySelector('.preview img');
+  img.src = el?.src || '';
+  img.alt = el?.title || 'Card';
+  STATE.root.querySelector('.preview .cap').textContent = el?.title || '';
+  STATE.root.querySelector('.cid').textContent = cid ? `cid: ${cid}` : '';
 
-    // auto-run initial scan so the user doesn't have to press Rescan
-    // (this will also hydrate oracle text internally)
-    runScanForActiveCard();
+  // If we were invoked from a Stats Rule snapshot, try to land directly
+  // on Apply → Effects with counters prefilled.
+  let usedRulePrefill = false;
+  const snap = opts && opts.fromRuleSnapshot;
 
+  if (snap && typeof snap === 'object') {
+    const action = String(snap.effectAction || '').toLowerCase();
+    if (action === 'generate') {
+      const kindTree = String(snap.genKindTree || '').toLowerCase();
 
+      // For now we only prefill generated counters.
+      if (kindTree === 'counter' || kindTree === 'counters') {
+        const counter = snap.genCounter || {};
+        let kind = String(counter.kind || '').trim();
 
+        // Fallback: some rules may stash it on genToken instead.
+        if (!kind && snap.genToken && snap.genToken.kind) {
+          kind = String(snap.genToken.kind).trim();
+        }
+        if (!kind) {
+          // Last-resort default so the box isn’t blank.
+          kind = '+1/+1';
+        }
+
+        let qty =
+          counter.qty ??
+          counter.count ??
+          counter.quantity ??
+          (snap.genToken ? snap.genToken.qty : undefined) ??
+          1;
+        qty = Number(qty) || 1;
+
+        // --- Inline version of prefillApplyForCounter (so we don't rely on its scope) ---
+        setTab('apply');
+
+        const root = STATE.root;
+        const togglesHost = root?.querySelector('[data-effect="toggles"]');
+        if (togglesHost) {
+          const countersChk = togglesHost.querySelector('input[type="checkbox"][data-eff="counters"]');
+          if (countersChk && !countersChk.checked) countersChk.checked = true;
+
+          const isPlusOne = /^\s*\+1\s*\/\s*\+1\s*$/i.test(kind);
+          if (isPlusOne) {
+            const ptChk = togglesHost.querySelector('input[type="checkbox"][data-eff="pt"]');
+            if (ptChk && !ptChk.checked) ptChk.checked = true;
+
+            const powI = root.querySelector('input[data-pt="pow"]');
+            const touI = root.querySelector('input[data-pt="tou"]');
+            if (powI) powI.value = '1';
+            if (touI) touI.value = '1';
+          }
+        }
+
+        rebuildEffectSections();
+
+        const kindI = root?.querySelector('input[data-apply="counterKind"]');
+        const qtyI  = root?.querySelector('input[data-apply="counterQty"]');
+        if (kindI) kindI.value = kind;
+        if (qtyI)  qtyI.value  = String(qty);
+
+        // Force the mini-tab to Effects instead of Targets.
+        if (typeof setApplyStep === 'function') {
+          setApplyStep('effects');
+        }
+
+        usedRulePrefill = true;
+      }
+    }
   }
+
+
+  // Normal path: open on Scan if we didn’t come from a rule.
+  if (!usedRulePrefill) {
+    setTab('scan');
+  }
+
+  rebuildTargets('mine'); // default to showing "My cards"
+  setVisible(true);
+
+  // auto-run initial scan so the user doesn't have to press Rescan
+  // (this will also hydrate oracle text internally)
+  runScanForActiveCard();
+}
+
+
 
   function close(){
     setVisible(false);
@@ -3694,10 +3748,63 @@ function rebuildTargets(scope){
   console.log('[Overlay] targets rebuilt:', scope, rows.length, { filterAll: allKinds, kinds });
 }
 
+/** Prefill Apply tab for a counter action (+1/+1 also sets PT +1/+1). */
+function prefillApplyForCounter(kind, qty){
+  setTab('apply');
+  const togglesHost = STATE.root.querySelector('[data-effect="toggles"]');
+  if (!togglesHost) return;
 
+  const countersChk = togglesHost.querySelector('input[type="checkbox"][data-eff="counters"]');
+  if (countersChk && !countersChk.checked) countersChk.checked = true;
 
-  // expose for badges
-  window.CardOverlayUI = window.CardOverlayUI || { mount, openForCard, close };
+  const isPlusOne = /^\s*\+1\s*\/\s*\+1\s*$/i.test(kind);
+  if (isPlusOne) {
+    const ptChk = togglesHost.querySelector('input[type="checkbox"][data-eff="pt"]');
+    if (ptChk && !ptChk.checked) ptChk.checked = true;
+  }
+  rebuildEffectSections();
 
-  return { mount, openForCard, close };
+  const kindI = STATE.root.querySelector('input[data-apply="counterKind"]');
+  const qtyI  = STATE.root.querySelector('input[data-apply="counterQty"]');
+  if (kindI) kindI.value = kind;
+  if (qtyI)  qtyI.value  = String(qty);
+  if (isPlusOne) {
+    const powI = STATE.root.querySelector('input[data-pt="pow"]');
+    const touI = STATE.root.querySelector('input[data-pt="tou"]');
+    if (powI) powI.value = '1';
+    if (touI) touI.value = '1';
+  }
+  try { kindI?.focus(); } catch{}
+}
+
+// Make sure other modules / handlers can see it as a global.
+try {
+  window.prefillApplyForCounter = prefillApplyForCounter;
+} catch {}
+
+/** NEW: Prefill Apply tab for a "Grant XYZ" action. */
+function prefillApplyForGrantAbility(ability){
+  const nice = titleCaseWords(ability);
+  setTab('apply');
+  // ensure ability toggle on & section rendered
+  const abilityChk = STATE.root.querySelector('input[type="checkbox"][data-eff="ability"]');
+  if (abilityChk && !abilityChk.checked) abilityChk.checked = true;
+  rebuildEffectSections();
+  // write the ability text
+  const input = STATE.root.querySelector('input[data-apply="ability"]');
+  if (input) {
+    input.value = nice;
+    try { input.focus(); } catch{}
+  }
+}
+
+    // expose for badges / rules – always use this implementation
+  window.CardOverlayUI = { mount, openForCard, close };
+
+  // optional: also expose the prefill helpers in case anything external
+  // ever wants to call them directly
+  window.CardOverlayUI.prefillApplyForCounter      = prefillApplyForCounter;
+  window.CardOverlayUI.prefillApplyForGrantAbility = prefillApplyForGrantAbility;
+
+  return window.CardOverlayUI;
 })();

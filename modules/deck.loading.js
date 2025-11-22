@@ -1004,33 +1004,57 @@ try {
       state.library = lib;
       _syncLibGlobals();
 
-      // optional: close deck overlay now that deck is parsed
-      hide();
-
-      // broadcast compact art snapshot (commander + entries)
-      try { _sendDeckArtSnapshot(); } catch {}
-
-      // notify Zones/UI consumer
+      // 🔔 NEW: let the Stats Rules overlay know which cards exist in this deck
       try {
-        onLoadedCb?.(state.deck, state.commander, state.commanderMeta.img, state.commanderMeta);
-      } catch {}
+        _notifyRulesOverlayDeckRoster();
+      } catch (e) {
+        console.warn('[DeckLoad] rules overlay deck roster failed', e);
+      }
 
-      console.log('%c[DeckLoad:FINAL LIB]', 'background:#222;color:#0f0;padding:4px 6px;border-radius:4px;', {
-        commander: state.commander,
-        commanderMeta: state.commanderMeta,
-        libraryCount: state.library.length,
-        libraryFirstFew: state.library.slice(0,10),
-        fullLibrary: state.library
-      });
-    } catch (e) {
-      console.warn('[DeckLoad] background deck fetch/build failed', e);
-      // Still close the text overlay to avoid trapping the user
-      try { hide(); } catch {}
-    } finally {
-      try { if (btn) { btn.disabled = false; btn.textContent = 'Load Deck'; } } catch {}
+
+  // 🔵 Library is fully built and mirrored into state; log + broadcast
+  try {
+    console.log(
+      '%c[DeckLoad:FINAL LIB]',
+      'background:#111827;color:#22c55e;padding:4px 6px;border-radius:4px;',
+      {
+        commander,
+        commanderMeta: enrichedCommanderMeta,
+        libraryCount: lib.length,
+        libraryFirstFew: lib.slice(0, 10).map(c => c.name)
+      }
+    );
+
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent('deckloading:final-lib', {
+          detail: {
+            commander,
+            libraryCount: lib.length
+          }
+        })
+      );
     }
+  } catch (eLog) {
+    console.warn('[DeckLoad] FINAL LIB log/event failed', eLog);
+  }
+
+  if (typeof onLoadedCb === 'function'){
+    try {
+      onLoadedCb([...lib], commander, cmdMeta.img || '');
+    } catch {}
+  }
+
+  } catch (e) {
+    console.warn('[DeckLoad] background deck fetch/build failed', e);
+    // Still close the text overlay to avoid trapping the user
+    try { hide(); } catch {}
+  } finally {
+    try { if (btn) { btn.disabled = false; btn.textContent = 'Load Deck'; } } catch {}
+  }
   })();
 };
+
 
 }
 
@@ -1260,6 +1284,106 @@ function _syncLibGlobals(){
     console.warn('[DeckLoading] _syncLibGlobals failed', e);
   }
 }
+
+/**
+ * Build a deduped roster of cards for the Stats Rules overlay:
+ * [{ name, imageUrl, typeLine }, …]
+ *
+ * Includes:
+ *   - All unique names from the drawable library (the 99)
+ *   - The commander as a synthetic entry (so commander-bound rules load too)
+ */
+function _buildRulesDeckRoster(){
+  try {
+    const byName = new Map();
+
+    // 1) Main deck library (the 99)
+    for (const c of state.library || []) {
+      const rawName = c?.name || '';
+      const name = String(rawName).trim();
+      if (!name || byName.has(name)) continue;
+
+      const imageUrl =
+        c?.imgFront ||
+        c?.imageUrl ||
+        c?.img ||
+        '';
+
+      const typeLine =
+        c?.typeLine ||
+        c?.frontTypeLine ||
+        '';
+
+      byName.set(name, { name, imageUrl, typeLine });
+    }
+
+    // 2) Commander (stored separately from library)
+    const commanderName = String(state.commander || '').trim();
+    if (commanderName && !byName.has(commanderName)) {
+      const cm = state.commanderMeta || {};
+      const imageUrl =
+        cm.imgFront ||
+        cm.imageUrl ||
+        cm.img ||
+        '';
+
+      const typeLine =
+        cm.typeLine ||
+        cm.frontTypeLine ||
+        '';
+
+      byName.set(commanderName, { name: commanderName, imageUrl, typeLine });
+    }
+
+    return Array.from(byName.values());
+  } catch (e) {
+    console.warn('[DeckLoading] _buildRulesDeckRoster failed', e);
+    return [];
+  }
+}
+
+
+/**
+ * Notify the Stats Rules system that a deck has been loaded.
+ * 1) Direct hook: StatsRulesOverlay.loadDeckCardRoster(roster)
+ * 2) DOM event:  'statsrules:deck-roster'
+ */
+function _notifyRulesOverlayDeckRoster(){
+  try {
+    if (typeof window === 'undefined') return;
+
+    const roster = _buildRulesDeckRoster();
+    if (!roster.length) return;
+
+    // Direct API hook (if overlay module is loaded)
+    try {
+      const mod = window.StatsRulesOverlay;
+      if (mod && typeof mod.loadDeckCardRoster === 'function') {
+        mod.loadDeckCardRoster(roster);
+      }
+    } catch (e) {
+      console.warn('[DeckLoading] StatsRulesOverlay.loadDeckCardRoster failed', e);
+    }
+
+    // Generic DOM event for other listeners
+    try {
+      window.dispatchEvent(
+        new CustomEvent('statsrules:deck-roster', {
+          detail: {
+            roster,
+            source: 'DeckLoading',
+            at: 'deckload-complete'
+          }
+        })
+      );
+    } catch (e) {
+      console.warn('[DeckLoading] statsrules:deck-roster event failed', e);
+    }
+  } catch (e) {
+    console.warn('[DeckLoading] _notifyRulesOverlayDeckRoster outer failed', e);
+  }
+}
+
 
 /* ────────────────────────────────────────────────────────────
    Manual draw suppression so first deck click doesn't add +1

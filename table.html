@@ -168,10 +168,18 @@
     transition: none; /* local drag must be immediate */
   }
 
+  /* Back-only ghost when opponent drags from hand */
+  img.table-card.remote-ghost-from-hand {
+    background-color: #000;      /* or your felt color */
+    background-size: cover;
+    background-position: center;
+  }
+
   /* ONLY remote-updated cards get smoothing */
   .table-card.remote-smooth {
     transition: left 0.08s linear, top 0.08s linear;
   }
+
 
   /* extra safety: while dragging, force no transition even if class leaks in */
   .table-card.is-dragging {
@@ -303,6 +311,7 @@
 <script type="module" src="./modules/notification.js"></script>
 <script type="module" src="./modules/stats.rules.overlay.js"></script>
 <script type="module" src="./modules/stats.watcher.actions.js"></script>
+<script type="module" src="./modules/dice.roller.3d.js"></script>
 <script>
   // Global timing + import wrapper
   window.__modTime = (label, when) => {

@@ -12,6 +12,7 @@
 // it only pops a Notification reminder when a rule "triggers".
 
 import { Notification } from './notification.js';
+import { CardOverlayUI } from './card.attributes.overlay.ui.js';
 
 // -------------------------------------------------------------
 // INTERNAL STYLE INJECTION
@@ -76,22 +77,75 @@ function ensureStyles() {
 
 /* footer below the tree */
 .stats-footer{
-  margin-top:10px;background:var(--stats-panel);border:1px solid var(--stats-line);
-  border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  gap:8px;
+  border-top:1px dashed var(--stats-line);
+  margin-top:10px;
+  padding-top:8px;
 }
-.stats-footer label{min-width:100px;font-size:.8rem;color:var(--stats-muted)}
+.stats-footer-row{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+}
+.stats-footer label{
+  font-size:.8rem;
+  color:var(--stats-muted);
+}
 .stats-footer input[type=text]{
-  flex:1;min-width:240px;background:#0b1224;color:var(--stats-fg);
-  border:1px solid #475569;border-radius:8px;padding:10px 12px;font-size:.95rem
+  flex:1 1 220px;
+  min-width:0;
+  background:#020617;
+  border-radius:6px;
+  border:1px solid rgba(148,163,184,.6);
+  padding:5px 8px;
+  color:#e5edff;
+  font-size:.85rem;
 }
-/* Prominent primary save button */
+.stats-footer select{
+  flex:1 1 220px;
+  min-width:0;
+  background:#020617;
+  border-radius:6px;
+  border:1px solid rgba(148,163,184,.6);
+  padding:5px 8px;
+  color:#e5edff;
+  font-size:.85rem;
+}
+.stats-source-inline{
+  display:flex;
+  flex:1 1 220px;
+  gap:6px;
+  align-items:center;
+}
+.stats-source-inline select{
+  flex:1 1 auto;
+}
+.stats-refresh-btn{
+  min-width:32px;
+  height:32px;
+  border-radius:999px;
+  border:1px solid rgba(148,163,184,.7);
+  background:rgba(15,23,42,0.9);
+  color:#e5edff;
+  font-size:.8rem;
+  cursor:pointer;
+}
 .stats-footer .save{
-  padding:12px 18px;border-radius:999px;border:1px solid #0ea5b7;
-  background:var(--stats-acc);color:#0b1224;cursor:pointer;
-  font-weight:800;letter-spacing:.02em;font-size:.95rem;
-  box-shadow:0 4px 14px rgba(56,189,248,.25);
-  transition:transform .06s ease, box-shadow .12s ease;
+  padding:6px 10px;
+  border-radius:6px;
+  border:none;
+  cursor:pointer;
+  background:linear-gradient(135deg,#38bdf8,#4f46e5);
+  color:white;
+  font-weight:600;
+  font-size:.8rem;
+  box-shadow:0 0 0 1px rgba(59,130,246,.5),0 8px 20px rgba(15,23,42,.9);
 }
+
 .stats-footer .save:hover{
   box-shadow:0 6px 18px rgba(56,189,248,.35);
 }
@@ -126,20 +180,252 @@ function ensureStyles() {
 .stats-preview{white-space:pre-wrap;background:#0b1224;border:1px dashed #475569;border-radius:10px;padding:10px;font-size:.85rem}
 .stats-tiny{font-size:.7rem;color:#cbd5e1}
 
-/* Active rules */
+/* Loaded rules UI */
 .stats-rules-list{ margin-top:6px; }
-.stats-rule-card{
-  background:#020617;border:1px solid var(--stats-line);border-radius:10px;padding:8px;margin-bottom:6px;font-size:.8rem;
+
+.stats-rules-empty{
+  font-size:.75rem;
+  color:var(--stats-muted);
+  padding:4px 0;
 }
-.stats-rule-card h4{margin:0 0 4px;font-size:.8rem;color:var(--stats-acc);}
-.stats-rule-meta{font-size:.75rem;color:var(--stats-muted);margin-bottom:3px}
+
+.stats-rules-filterRow{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  margin-bottom:6px;
+}
+.stats-rules-filterRow label{
+  font-size:.8rem;
+  color:var(--stats-muted);
+}
+.stats-rules-filterRow input{
+  flex:1 1 180px;
+  min-width:0;
+  background:#020617;
+  border-radius:6px;
+  border:1px solid rgba(148,163,184,.6);
+  padding:5px 8px;
+  color:#e5edff;
+  font-size:.8rem;
+}
+
+/* Grouped by card name */
+.stats-rule-group{
+  border-radius:10px;
+  border:1px solid var(--stats-line);
+  background:#020617;
+  margin-bottom:6px;
+  overflow:hidden;
+}
+.stats-rule-groupHeader{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:6px 8px;
+  cursor:pointer;
+}
+.stats-rule-groupTitle{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-size:.8rem;
+  font-weight:600;
+}
+.stats-rule-groupTog{
+  font-size:.8rem;
+}
+.stats-rule-countBadge{
+  font-size:.7rem;
+  padding:2px 6px;
+  border-radius:999px;
+  background:rgba(148,163,184,.2);
+  color:var(--stats-muted);
+}
+.stats-rule-groupRight{
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.stats-rule-infoBtn{
+  width:20px;
+  height:20px;
+  border-radius:999px;
+  border:1px solid rgba(148,163,184,.8);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  font-size:.7rem;
+  background:#020617;
+  color:var(--stats-muted);
+  cursor:pointer;
+}
+.stats-rule-infoBtn:hover{
+  border-color:var(--stats-acc);
+  color:var(--stats-acc);
+}
+.stats-rule-groupBody{
+  padding:6px 8px 8px;
+  border-top:1px dashed rgba(51,65,85,.9);
+}
+
+/* Individual rule cards inside a group */
+.stats-rule-card{
+  background:#020617;
+  border-radius:8px;
+  border:1px solid rgba(51,65,85,.8);
+  padding:6px 8px;
+  margin-bottom:4px;
+  font-size:.8rem;
+}
+.stats-rule-card:last-child{ margin-bottom:0; }
+.stats-rule-card h4{
+  margin:0 0 4px;
+  font-size:.8rem;
+  color:var(--stats-acc);
+}
+.stats-rule-meta{
+  font-size:.75rem;
+  color:var(--stats-muted);
+  margin-bottom:3px;
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  align-items:center;
+}
+.stats-rule-enabledBadge{
+  font-size:.65rem;
+  padding:2px 6px;
+  border-radius:999px;
+  background:rgba(34,197,94,.12);
+  color:#bbf7d0;
+}
+.stats-rule-enabledBadge.off{
+  background:rgba(148,163,184,.12);
+  color:#cbd5e1;
+}
 .stats-rule-cond{font-size:.8rem;margin-bottom:3px}
 .stats-rule-reward{font-size:.8rem;color:#e5e7eb}
-.stats-rule-actions{margin-top:4px;display:flex;gap:6px;flex-wrap:wrap}
+.stats-rule-actions{
+  margin-top:4px;
+  display:flex;
+  gap:6px;
+  flex-wrap:wrap;
+}
 .stats-rule-actions button{
-  font-size:.7rem;padding:6px 8px;border-radius:999px;border:1px solid #475569;background:#020617;color:var(--stats-fg);cursor:pointer;
+  font-size:.7rem;
+  padding:6px 8px;
+  border-radius:999px;
+  border:1px solid #475569;
+  background:#020617;
+  color:var(--stats-fg);
+  cursor:pointer;
 }
 .stats-rule-actions button:hover{border-color:var(--stats-acc);}
+
+/* Card art preview bubble */
+#stats-cardPreviewBubble{
+  position:fixed;
+  z-index:999999;
+  width:170px;
+  height:245px;
+  border-radius:12px;
+  background:#020617;
+  background-size:cover;
+  background-position:center;
+  border:1px solid rgba(148,163,184,.8);
+  box-shadow:0 18px 40px rgba(15,23,42,.9);
+  pointer-events:none;
+  display:none;
+}
+
+/* Rule outcome popups (bottom-right stack) */
+.stats-rule-popRoot{
+  position:fixed;
+  right:12px;
+  bottom:12px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  z-index:999999;
+  pointer-events:none;
+}
+
+.stats-rule-popCard{
+  min-width:260px;
+  max-width:320px;
+  background:#020617;
+  border-radius:12px;
+  border:1px solid #38bdf8;
+  box-shadow:0 18px 40px rgba(15,23,42,.9);
+  padding:10px 12px;
+  pointer-events:auto;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  font-size:.8rem;
+}
+
+.stats-rule-popTitle{
+  font-weight:600;
+  color:#e5e7eb;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:6px;
+}
+
+  .stats-rule-popCond{
+    font-size:11px;
+    color:#e5e7eb;  /* brighter so the WHEN line is readable */
+    margin:0 0 4px;
+  }
+  .stats-rule-popBody{
+    font-size:13px;
+    color:#f9fafb;  /* main rules text: near-white */
+    margin:0 0 8px;
+  }
+
+
+.stats-rule-popActions{
+  display:flex;
+  justify-content:flex-end;
+  gap:6px;
+  margin-top:4px;
+}
+
+.stats-rule-popBtn{
+  border-radius:999px;
+  border:1px solid #475569;
+  background:#020617;
+  color:#e5e7eb;
+  padding:4px 10px;
+  font-size:.75rem;
+  cursor:pointer;
+}
+
+.stats-rule-popBtn.primary{
+  background:#22c55e;
+  border-color:#22c55e;
+  color:#022c22;
+}
+
+.stats-rule-popBtn:hover{
+  border-color:#38bdf8;
+}
+
+.stats-rule-popClose{
+  border:none;
+  background:transparent;
+  color:#64748b;
+  font-size:.75rem;
+  cursor:pointer;
+  padding:0 4px;
+}
+
+
 `;
   const style = document.createElement('style');
   style.id = STYLE_ID;
@@ -180,6 +466,8 @@ const PLAYER_EVENTS = [
   { key: "discardto", label: "Discard to", branches: ["Exile", "Graveyard"] },
   { key: "sacrifice", label: "Sacrifice",  kinds: ["Creature", "Artifact", "Enchantment", "Planeswalker", "Land", "Permanent", "Type", "Token"] },
   { key: "draw",      label: "Draw" },
+  { key: "scry",      label: "Scry" },
+  { key: "tutor",      label: "Tutor" },
   { key: "cast",      label: "Cast",       kinds: ["Creature", "Artifact", "Instant", "Sorcery", "Type"] },
   { key: "creates",   label: "Creates",    kinds: ["Counters", "Tokens", "Copies"] },
   {
@@ -189,6 +477,7 @@ const PLAYER_EVENTS = [
   },
   { key: "has", label: "Has", cmp: ["More than", "Less Than", "Equal To"] }
 ];
+
 
 const ABILITIES = ["flying", "first strike", "double strike", "vigilance", "lifelink", "deathtouch", "trample", "haste", "reach", "hexproof", "indestructible", "defender", "menace"];
 
@@ -235,7 +524,9 @@ const S = {
   genKindTree: null,
   genToken: { kind: "Treasure", qty: 1 },
   genCounter: { kind: "+1/+1", qty: 1 },
-  genLife: { amt: 1 },
+  // Life generation: amount + who it applies to ("You" | "Opponent" | "Both")
+  genLife: { amt: 1, who: "You" },
+
 
   // Damage
   dmgKindTree: null,
@@ -243,6 +534,8 @@ const S = {
   dmgAmount: 1,
   dmgPT: { p: 1, t: 1 },
   dmgSendToTree: "",
+  dmgWho: null,            // "You" | "Opponent" for damage-to-player/hand
+
 
   // Search / Buff / Revive (stubs for now)
   searchKindTree: null,
@@ -257,7 +550,248 @@ const S = {
 // RULE STORAGE
 // -------------------------------------------------------------
 let RULE_ID_COUNTER = 1;
-const RULES = []; // { id, name, conditionText, effectText, snapshot }
+// Each rule may optionally be tied to a specific source card by name (and seat).
+// { id, name, conditionText, effectText, snapshot, sourceCardName?, sourceCardSeat?, dbId?, enabled? }
+const RULES = [];
+
+// Remember the last mounted root so we can re-render after async deck loads
+let LAST_ROOT = null;
+
+// Deck roster from DeckLoading: [{ name, imageUrl, typeLine }, ...]
+let CARD_ROSTER = [];
+let CARD_ART_INDEX = new Map();
+
+// Expand/collapse state per card-name group
+const GROUP_OPEN_STATE = Object.create(null);
+
+/**
+ * Accepts the deck roster from DeckLoading and indexes by card name (case-insensitive).
+ */
+function setDeckCardRoster(roster) {
+  CARD_ROSTER = Array.isArray(roster) ? roster : [];
+  CARD_ART_INDEX = new Map();
+
+  for (const entry of CARD_ROSTER) {
+    if (!entry || !entry.name) continue;
+    const key = String(entry.name).trim().toLowerCase();
+    if (!key || CARD_ART_INDEX.has(key)) continue;
+    CARD_ART_INDEX.set(key, entry);
+  }
+}
+
+/**
+ * Lookup art/type info by card name (case-insensitive).
+ */
+function getCardArtEntryByName(name) {
+  if (!name) return null;
+  const key = String(name).trim().toLowerCase();
+  return CARD_ART_INDEX.get(key) || null;
+}
+
+
+// -------------------------------------------------------------
+// Supabase helpers (best-effort; no hard dependency)
+// -------------------------------------------------------------
+function getSupabaseClient() {
+  try {
+    const sb =
+      (window && (window.supabase || window.supabaseClient || window.__supabase)) ||
+      null;
+    if (!sb) {
+      console.warn('[StatsRulesOverlay] Supabase client not found on window; rules will not be persisted to card_rules.');
+    }
+    return sb;
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] getSupabaseClient failed', e);
+    return null;
+  }
+}
+
+// Try to get the current Supabase auth user id (for card_rules.user_id FK).
+// Returns a string id or null if no logged-in user is available.
+async function getSupabaseUserId() {
+  const supabase = getSupabaseClient();
+  const auth = supabase?.auth;
+  if (!auth) return null;
+
+  try {
+    // Newer clients: auth.getUser()
+    if (typeof auth.getUser === 'function') {
+      const { data, error } = await auth.getUser();
+      if (error || !data?.user) return null;
+      return data.user.id || null;
+    }
+
+    // Older clients: auth.user()
+    if (typeof auth.user === 'function') {
+      const user = auth.user();
+      return user?.id || null;
+    }
+
+    return null;
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] getSupabaseUserId failed', e);
+    return null;
+  }
+}
+
+
+
+async function saveRuleToSupabase(rule) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return null;
+
+  if (!rule.sourceCardName) {
+    // Should already be prevented in UI, but guard anyway.
+    console.warn('[StatsRulesOverlay] Refusing to save rule without sourceCardName.');
+    return null;
+  }
+
+  try {
+    const payload = {
+      // 🧾 No user_id here – table must allow anonymous / null user_id.
+      card_name:      rule.sourceCardName,
+      rule_name:      rule.name,
+      condition_text: rule.conditionText,
+      effect_text:    rule.effectText,
+      snapshot_json:  rule.snapshot || null,
+      is_enabled:     true
+    };
+
+    const { data, error } = await supabase
+      .from('card_rules')
+      .insert([payload])
+      .select();
+
+    if (error) {
+      console.warn('[StatsRulesOverlay] Supabase insert failed', error);
+      try {
+        Notification.show({
+          top: 'Cloud save failed',
+          bottom: error.message || 'Rule saved locally, but not in card_rules.',
+          accent: '#f97316'
+        });
+      } catch {}
+      return null;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+    if (row && row.id) {
+      rule.dbId = row.id;
+    }
+    return row || null;
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] saveRuleToSupabase threw', e);
+    return null;
+  }
+}
+
+
+async function deleteRuleFromSupabase(rule) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  try {
+    let query = supabase.from('card_rules').delete();
+
+    if (rule.dbId) {
+      query = query.eq('id', rule.dbId);
+    } else if (rule.sourceCardName) {
+      // Fallback: match on card_name + rule_name
+      query = query
+        .eq('card_name', rule.sourceCardName)
+        .eq('rule_name', rule.name);
+    } else {
+      // Nothing reliable to match on, bail quietly
+      console.warn('[StatsRulesOverlay] No dbId/sourceCardName on rule; skipping Supabase delete.');
+      return;
+    }
+
+    const { error } = await query;
+    if (error) {
+      console.warn('[StatsRulesOverlay] Supabase delete failed', error);
+      try {
+        Notification.show({
+          top: 'Cloud delete failed',
+          bottom: error.message || 'Rule removed locally, but still in card_rules.',
+          accent: '#f97316'
+        });
+      } catch {}
+    }
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] deleteRuleFromSupabase threw', e);
+  }
+}
+
+// -------------------------------------------------------------
+// AUTO-LOAD RULES FOR A DECK ROSTER (card_rules → local RULES)
+// -------------------------------------------------------------
+async function loadRulesForDeckRoster(roster) {
+  const supabase = getSupabaseClient();
+  if (!supabase) return;
+
+  try {
+    const names = Array.from(
+      new Set(
+        (roster || [])
+          .map(r => (r && r.name ? String(r.name).trim() : ''))
+          .filter(Boolean)
+      )
+    );
+    if (!names.length) return;
+
+    const { data, error } = await supabase
+      .from('card_rules')
+      .select('*')
+      .in('card_name', names);
+
+    if (error) {
+      console.warn('[StatsRulesOverlay] loadRulesForDeckRoster Supabase select failed', error);
+      return;
+    }
+    if (!Array.isArray(data) || !data.length) return;
+
+    const existingKey = new Set(
+      RULES.map(r => `${r.sourceCardName || ''}::${r.name || ''}`)
+    );
+
+    data.forEach(row => {
+      const cardName = (row.card_name || '').trim();
+      const ruleName = (row.rule_name || '').trim() || cardName || 'Rule';
+      const key = `${cardName}::${ruleName}`;
+      if (existingKey.has(key)) return;
+
+      const rule = {
+        id: RULE_ID_COUNTER++,
+        name: ruleName,
+        conditionText: row.condition_text || '(no condition text)',
+        effectText: row.effect_text || '',
+        snapshot: row.snapshot_json || null,
+        sourceCardName: cardName || null,
+        sourceCardSeat: getMySeatSafe(),
+        dbId: row.id,
+        // 🔕 Deck-loaded rules start disabled; user can enable per card.
+        enabled: false
+      };
+
+      RULES.push(rule);
+      existingKey.add(key);
+    });
+
+    if (LAST_ROOT) {
+      renderRulesList(LAST_ROOT);
+    }
+
+    // Let watcher rebuild with any newly available rules (still disabled)
+    try {
+      window.StatsWatcherActions?.init?.();
+    } catch {}
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] loadRulesForDeckRoster threw', e);
+  }
+}
+
+
 
 // -------------------------------------------------------------
 // DOM HELPERS (scoped to a given root container)
@@ -286,6 +820,243 @@ function makeCol(title) {
   wrap.append(h, grid);
   return { wrap, grid };
 }
+
+// -------------------------------------------------------------
+// CARD PREVIEW BUBBLE (for "i" info button)
+// -------------------------------------------------------------
+function ensureCardPreviewBubble() {
+  let el = document.getElementById('stats-cardPreviewBubble');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'stats-cardPreviewBubble';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showCardPreview(name, anchorEl) {
+  const entry = getCardArtEntryByName(name);
+  if (!entry || !entry.imageUrl || !anchorEl) return;
+
+  const bubble = ensureCardPreviewBubble();
+  bubble.style.backgroundImage = `url("${entry.imageUrl}")`;
+
+  const rect = anchorEl.getBoundingClientRect();
+  const w = bubble.offsetWidth || 170;
+  const h = bubble.offsetHeight || 245;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let left = rect.right + 8;
+  let top = rect.top - (h / 2 - rect.height / 2);
+
+  if (left + w > vw - 8) left = rect.left - w - 8;
+  if (left < 8) left = 8;
+  if (top + h > vh - 8) top = vh - h - 8;
+  if (top < 8) top = 8;
+
+  bubble.style.left = `${left}px`;
+  bubble.style.top = `${top}px`;
+  bubble.style.display = 'block';
+}
+
+function hideCardPreview() {
+  const bubble = document.getElementById('stats-cardPreviewBubble');
+  if (bubble) bubble.style.display = 'none';
+}
+
+
+// -------------------------------------------------------------
+// BATTLEFIELD CARD HELPERS (for rule "source card" binding)
+// -------------------------------------------------------------
+function getMySeatSafe() {
+  try {
+    if (typeof window.mySeat === 'function') {
+      const s = Number(window.mySeat()) || 1;
+      if (s === 1 || s === 2) return s;
+    }
+    if (window.__LOCAL_SEAT) {
+      const s = Number(window.__LOCAL_SEAT) || 1;
+      if (s === 1 || s === 2) return s;
+    }
+  } catch {}
+  return 1;
+}
+
+// Return a deduped list of cards on *your* battlefield: [{ name, count }, ...]
+function listMyBattlefieldCards() {
+  const out = [];
+  try {
+    const mySeat = String(getMySeatSafe());
+    const els = document.querySelectorAll(
+      'img.table-card[data-cid], img[data-zone="table"][data-cid]'
+    );
+    const byName = new Map();
+
+    els.forEach(el => {
+      const d = el.dataset || {};
+      const ownerRaw = d.ownerCurrent ?? d.owner ?? '';
+      const owner = ownerRaw.toString().match(/\d+/)?.[0] || '1';
+      if (owner !== mySeat) return;
+
+      const name =
+        (d.name ||
+          el.getAttribute('data-name') ||
+          el.getAttribute('alt') ||
+          '').trim();
+      if (!name) return;
+
+      const key = name;
+      let info = byName.get(key);
+      if (!info) {
+        info = { name: key, count: 0 };
+        byName.set(key, info);
+      }
+      info.count++;
+    });
+
+    return Array.from(byName.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] listMyBattlefieldCards failed', e);
+    return out;
+  }
+}
+
+// Fill the <select> in the footer with current battlefield cards
+function refreshSourceCardOptions(rootEl) {
+  const select = q(rootEl, '#stats-sourceCard');
+  if (!select) return;
+
+  const prev = select.value;
+  select.innerHTML = '';
+
+  const optNone = document.createElement('option');
+  optNone.value = '';
+  optNone.textContent = 'No specific source (global rule)';
+  select.appendChild(optNone);
+
+  const cards = listMyBattlefieldCards();
+  cards.forEach(({ name, count }) => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = count > 1 ? `${name} (×${count})` : name;
+    select.appendChild(opt);
+  });
+
+  if (prev) {
+    const match = Array.from(select.options).find(o => o.value === prev);
+    if (match) select.value = prev;
+  }
+}
+
+// Try to resolve a concrete cid on the battlefield for a rule's "source card"
+// so we can open the Card Attributes overlay for it.
+function resolveSourceCidForRule(rule) {
+  if (!rule || !rule.sourceCardName) return null;
+
+  try {
+    const wantName = String(rule.sourceCardName).trim().toLowerCase();
+    if (!wantName) return null;
+
+    // Prefer the stored sourceCardSeat if present
+    const wantSeat =
+      rule.sourceCardSeat === 1 || rule.sourceCardSeat === 2
+        ? String(rule.sourceCardSeat)
+        : null;
+
+    const els = document.querySelectorAll(
+      'img.table-card[data-cid], img[data-zone="table"][data-cid]'
+    );
+    const mySeat = String(getMySeatSafe());
+    let foundCid = null;
+
+    els.forEach(el => {
+      const d = el.dataset || {};
+
+      // Ignore commander-zone pseudo-table cards
+      if (d.inCommandZone === 'true') return;
+
+      const ownerRaw = d.ownerCurrent ?? d.owner ?? '';
+      const owner = ownerRaw.toString().match(/\d+/)?.[0] || mySeat;
+      if (wantSeat && owner !== wantSeat) return;
+
+      const liveName =
+        (d.name ||
+          el.getAttribute('data-name') ||
+          el.getAttribute('alt') ||
+          '').trim().toLowerCase();
+      if (!liveName || liveName !== wantName) return;
+
+      const cid = d.cid || el.getAttribute('data-cid');
+      if (!cid) return;
+
+      if (!foundCid) {
+        foundCid = cid;
+      }
+    });
+
+    if (foundCid) {
+      console.log('[StatsRulesOverlay] resolved source card for rule', {
+        ruleId: rule.id,
+        sourceCardName: rule.sourceCardName,
+        cid: foundCid
+      });
+    }
+
+    return foundCid || null;
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] resolveSourceCidForRule failed', e, rule);
+    return null;
+  }
+}
+
+// If this rule's effect is a "generate" that grants counters/types/abilities,
+// open the Card Attributes overlay for its source card and let it prefill.
+function maybeOpenSourceAttributesOverlay(rule) {
+  try {
+    if (!rule || !rule.snapshot) return;
+
+    const snap = rule.snapshot || {};
+    const action = String(snap.effectAction || '').toLowerCase();
+    if (action !== 'generate') return;
+
+    const kindTree = String(snap.genKindTree || '').toLowerCase();
+
+    // For now we care about generated counters (+1/+1 etc).
+    // (Types/abilities can be wired in here later.)
+    if (
+      kindTree !== 'counter' &&
+      kindTree !== 'counters' &&
+      kindTree !== 'types' &&
+      kindTree !== 'abilities'
+    ) {
+      return;
+    }
+
+    const cid = resolveSourceCidForRule(rule);
+    if (!cid) return;
+
+    const api = window.CardOverlayUI;
+    if (!api || typeof api.openForCard !== 'function') return;
+
+    // Pass just enough of the snapshot for CardOverlayUI to prefill.
+    const fromRuleSnapshot = {
+      effectAction: snap.effectAction,
+      genKindTree: snap.genKindTree,
+      genCounter: snap.genCounter ? { ...snap.genCounter } : undefined,
+      genToken:   snap.genToken   ? { ...snap.genToken }   : undefined
+    };
+
+    api.openForCard(cid, { fromRuleSnapshot });
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] maybeOpenSourceAttributesOverlay failed', e, rule);
+  }
+}
+
+
+
 
 // -------------------------------------------------------------
 // STATE RESET
@@ -318,8 +1089,10 @@ function resetForRoot(rootEl) {
   S.dmgKindTree = null;
   S.dmgCardModeTree = null;
   S.dmgSendToTree = "";
+  S.dmgWho = null;
 
   S.searchKindTree = null;
+
   S.buffKindTree = null;
   S.reviveFromTree = null;
 }
@@ -348,8 +1121,10 @@ function resetSubPaths() {
   S.dmgKindTree = null;
   S.dmgCardModeTree = null;
   S.dmgSendToTree = "";
+  S.dmgWho = null;
 
   S.searchKindTree = null;
+
   S.buffKindTree = null;
   S.reviveFromTree = null;
 }
@@ -859,15 +1634,28 @@ function appendThen(colsHost, rootEl) {
     colsHost.appendChild(cGen.wrap);
 
     if (S.genKindTree) {
-      const cDet = makeCol('Details');
+      // 👇 New branch: life gets its own "Who" + "Amount" columns
       if (S.genKindTree === 'life') {
-        cDet.wrap.insertAdjacentHTML(
+        const cWho = makeCol('Who');
+        ["You", "Opponent", "Both"].forEach(who =>
+          cWho.grid.appendChild(
+            makeBtn(who, S.genLife.who === who, () => {
+              S.genLife.who = who;
+              updatePreview(rootEl);
+              renderTree(rootEl);
+            })
+          )
+        );
+        colsHost.appendChild(cWho.wrap);
+
+        const cAmt = makeCol('Amount');
+        cAmt.wrap.insertAdjacentHTML(
           'beforeend',
           `<div class="stats-row" style="padding-right:12px">
              <input id="stats-genLifeAmtTree" type="text" placeholder="life amount" />
            </div>`
         );
-        colsHost.appendChild(cDet.wrap);
+        colsHost.appendChild(cAmt.wrap);
         setTimeout(() => {
           const i = q(rootEl, '#stats-genLifeAmtTree');
           if (i) {
@@ -878,107 +1666,131 @@ function appendThen(colsHost, rootEl) {
             };
           }
         }, 0);
-      }
-      if (S.genKindTree === 'token') {
-        cDet.wrap.insertAdjacentHTML(
-          'beforeend',
-          `
-          <div class="stats-row" style="padding-right:12px">
-            <input id="stats-genTokenKindTree" type="text" placeholder="token name (e.g. Treasure)" />
-          </div>
-          <div class="stats-row" style="padding-right:12px">
-            <input id="stats-genTokenQtyTree" type="text" placeholder="qty" />
-          </div>`
-        );
-        colsHost.appendChild(cDet.wrap);
-        setTimeout(() => {
-          const k = q(rootEl, '#stats-genTokenKindTree');
-          const qn = q(rootEl, '#stats-genTokenQtyTree');
-          if (k) {
-            k.value = S.genToken.kind;
-            k.oninput = e => {
-              S.genToken.kind = e.target.value;
-              updatePreview(rootEl);
-            };
-          }
-          if (qn) {
-            qn.value = String(S.genToken.qty || 1);
-            qn.oninput = e => {
-              S.genToken.qty = parseInt(e.target.value || '0', 10) || 0;
-              updatePreview(rootEl);
-            };
-          }
-        }, 0);
-      }
-      if (S.genKindTree === 'counter') {
-        cDet.wrap.insertAdjacentHTML(
-          'beforeend',
-          `
-          <div class="stats-row" style="padding-right:12px">
-            <input id="stats-genCounterKindTree" type="text" placeholder="counter kind (e.g. +1/+1)" />
-          </div>
-          <div class="stats-row" style="padding-right:12px">
-            <input id="stats-genCounterQtyTree" type="text" placeholder="qty" />
-          </div>`
-        );
-        colsHost.appendChild(cDet.wrap);
-        setTimeout(() => {
-          const k = q(rootEl, '#stats-genCounterKindTree');
-          const qn = q(rootEl, '#stats-genCounterQtyTree');
-          if (k) {
-            k.value = S.genCounter.kind;
-            k.oninput = e => {
-              S.genCounter.kind = e.target.value;
-              updatePreview(rootEl);
-            };
-          }
-          if (qn) {
-            qn.value = String(S.genCounter.qty || 1);
-            qn.oninput = e => {
-              S.genCounter.qty = parseInt(e.target.value || '0', 10) || 0;
-              updatePreview(rootEl);
-            };
-          }
-        }, 0);
+      } else {
+        const cDet = makeCol('Details');
+
+        if (S.genKindTree === 'token') {
+          cDet.wrap.insertAdjacentHTML(
+            'beforeend',
+            `
+            <div class="stats-row" style="padding-right:12px">
+              <input id="stats-genTokenKindTree" type="text" placeholder="token name (e.g. Treasure)" />
+            </div>
+            <div class="stats-row" style="padding-right:12px">
+              <input id="stats-genTokenQtyTree" type="text" placeholder="qty" />
+            </div>`
+          );
+          colsHost.appendChild(cDet.wrap);
+          setTimeout(() => {
+            const k = q(rootEl, '#stats-genTokenKindTree');
+            const qn = q(rootEl, '#stats-genTokenQtyTree');
+            if (k) {
+              k.value = S.genToken.kind;
+              k.oninput = e => {
+                S.genToken.kind = e.target.value;
+                updatePreview(rootEl);
+              };
+            }
+            if (qn) {
+              qn.value = String(S.genToken.qty || 1);
+              qn.oninput = e => {
+                S.genToken.qty = parseInt(e.target.value || '0', 10) || 0;
+                updatePreview(rootEl);
+              };
+            }
+          }, 0);
+        }
+
+        if (S.genKindTree === 'counter') {
+          cDet.wrap.insertAdjacentHTML(
+            'beforeend',
+            `
+            <div class="stats-row" style="padding-right:12px">
+              <input id="stats-genCounterKindTree" type="text" placeholder="counter kind (e.g. +1/+1)" />
+            </div>
+            <div class="stats-row" style="padding-right:12px">
+              <input id="stats-genCounterQtyTree" type="text" placeholder="qty" />
+            </div>`
+          );
+          colsHost.appendChild(cDet.wrap);
+          setTimeout(() => {
+            const k = q(rootEl, '#stats-genCounterKindTree');
+            const qn = q(rootEl, '#stats-genCounterQtyTree');
+            if (k) {
+              k.value = S.genCounter.kind;
+              k.oninput = e => {
+                S.genCounter.kind = e.target.value;
+                updatePreview(rootEl);
+              };
+            }
+            if (qn) {
+              qn.value = String(S.genCounter.qty || 1);
+              qn.oninput = e => {
+                S.genCounter.qty = parseInt(e.target.value || '0', 10) || 0;
+                updatePreview(rootEl);
+              };
+            }
+          }, 0);
+        }
       }
     }
   }
 
+
   if (S.effectAction === 'damage') {
     const cKind = makeCol('Damage → Target');
-    [["Target Player", "player"], ["Opponent’s Hand", "hand"], ["Target Card", "card"]].forEach(([label, key]) =>
+    [["Target Player", "player"], ["Target Hand", "hand"], ["Target Card", "card"]].forEach(([label, key]) =>
       cKind.grid.appendChild(
         makeBtn(label, S.dmgKindTree === key, () => {
           S.dmgKindTree = key;
           S.dmgCardModeTree = null;
+          S.dmgWho = null;          // reset who when switching target kind
           renderTree(rootEl);
         })
       )
     );
+
     colsHost.appendChild(cKind.wrap);
 
     if (S.dmgKindTree) {
       if (S.dmgKindTree === 'player' || S.dmgKindTree === 'hand') {
-        const cDet = makeCol('Amount');
-        cDet.wrap.insertAdjacentHTML(
-          'beforeend',
-          `<div class="stats-row" style="padding-right:12px">
-             <input id="stats-dmgAmtTree" type="text" placeholder="amount" />
-           </div>`
+        // Step 1: pick which side
+        const cWho = makeCol('Who');
+        ["You", "Opponent"].forEach(who =>
+          cWho.grid.appendChild(
+            makeBtn(who, S.dmgWho === who, () => {
+              S.dmgWho = who;
+              renderTree(rootEl);
+            })
+          )
         );
-        colsHost.appendChild(cDet.wrap);
-        setTimeout(() => {
-          const i = q(rootEl, '#stats-dmgAmtTree');
-          if (i) {
-            i.value = String(S.dmgAmount || 1);
-            i.oninput = e => {
-              S.dmgAmount = parseInt(e.target.value || '0', 10) || 0;
-              updatePreview(rootEl);
-            };
-          }
-        }, 0);
+        colsHost.appendChild(cWho.wrap);
+
+        // Step 2: once chosen, pick amount
+        if (S.dmgWho) {
+          const cDet = makeCol('Amount');
+          cDet.wrap.insertAdjacentHTML(
+            'beforeend',
+            `<div class="stats-row" style="padding-right:12px">
+               <input id="stats-dmgAmtTree" type="text" placeholder="amount" />
+             </div>`
+          );
+          colsHost.appendChild(cDet.wrap);
+          setTimeout(() => {
+            const i = q(rootEl, '#stats-dmgAmtTree');
+            if (i) {
+              i.value = String(S.dmgAmount || 1);
+              i.oninput = e => {
+                S.dmgAmount = parseInt(e.target.value || '0', 10) || 0;
+                updatePreview(rootEl);
+              };
+            }
+          }, 0);
+        }
       }
       if (S.dmgKindTree === 'card') {
+
+
         const cMode = makeCol('Card Effect');
         [["Debuff -P/-T", "debuff"], ["Use -X/-X counters", "counters"], ["Send to →", "send"]].forEach(
           ([label, key]) =>
@@ -1134,13 +1946,21 @@ function buildConditionText() {
 
 function buildEffectText() {
   switch (S.effectAction) {
-    case 'generate':
+        case 'generate': {
       if (S.genKindTree === 'life') {
-        return `You gain ${S.genLife.amt || 1} life.`;
+        const amt = S.genLife.amt || 1;
+        const who = S.genLife.who || 'You';
+        if (who === 'Opponent') {
+          return `Opponent gains ${amt} life.`;
+        }
+        if (who === 'Both') {
+          return `Each player gains ${amt} life.`;
+        }
+        return `You gain ${amt} life.`;
       }
       if (S.genKindTree === 'token') {
         const qty = S.genToken.qty || 1;
-        const kind = S.genToken.kind || 'token';
+        const kind = S.genToken.kind || 'Treasure';
         return `Create ${qty} ${kind} token${qty === 1 ? '' : 's'}.`;
       }
       if (S.genKindTree === 'counter') {
@@ -1149,12 +1969,17 @@ function buildEffectText() {
         return `Put ${qty} ${kind} counter${qty === 1 ? '' : 's'} on target.`;
       }
       return 'Generate some value.';
-    case 'damage':
+    }
+
+    case 'damage': {
+      const amt = S.dmgAmount || 1;
       if (S.dmgKindTree === 'player') {
-        return `Deal ${S.dmgAmount || 1} damage to target player.`;
+        const who = S.dmgWho === 'Opponent' ? 'opponent' : 'you';
+        return `Deal ${amt} damage to ${who}.`;
       }
       if (S.dmgKindTree === 'hand') {
-        return `Deal ${S.dmgAmount || 1} damage to cards in opponent’s hand.`;
+        const whoHand = S.dmgWho === 'Opponent' ? "opponent's hand" : 'your hand';
+        return `Deal ${amt} damage to ${whoHand}.`;
       }
       if (S.dmgKindTree === 'card') {
         if (S.dmgCardModeTree === 'debuff' || S.dmgCardModeTree === 'counters') {
@@ -1165,6 +1990,8 @@ function buildEffectText() {
         }
       }
       return 'Deal some kind of damage.';
+    }
+
     case 'search':
       return 'Search a zone (details later).';
     case 'buff':
@@ -1221,28 +2048,51 @@ function summarizeConditionForName() {
 
 function summarizeEffectForName() {
   switch (S.effectAction) {
-    case 'generate':
-      if (S.genKindTree === 'life') return `Gain ${S.genLife.amt || 1} Life`;
+    case 'generate': {
+      if (S.genKindTree === 'life') {
+        const amt = S.genLife.amt || 1;
+        const who = S.genLife.who || 'You';
+        if (who === 'Opponent') {
+          return `Opponent gains ${amt} Life`;
+        }
+        if (who === 'Both') {
+          return `Each player gains ${amt} Life`;
+        }
+        return `Gain ${amt} Life`;
+      }
       if (S.genKindTree === 'token') {
         const qty = S.genToken.qty || 1;
-        const kind = S.genToken.kind || 'Token';
-        return `Create ${qty} ${kind}${qty === 1 ? '' : 's'}`;
+        const kind = S.genToken.kind || 'Treasure';
+        return `Create ${qty} ${kind} token${qty === 1 ? '' : 's'}.`;
       }
       if (S.genKindTree === 'counter') {
         const qty = S.genCounter.qty || 1;
-        const kind = S.genCounter.kind || 'Counter';
-        return `Put ${qty} ${kind} ${qty === 1 ? 'Counter' : 'Counters'}`;
+        const kind = S.genCounter.kind || 'counter';
+        return `Put ${qty} ${kind} counter${qty === 1 ? '' : 's'}.`;
       }
-      return 'Generate';
-    case 'damage':
-      if (S.dmgKindTree === 'player') return `Deal ${S.dmgAmount || 1} to Player`;
-      if (S.dmgKindTree === 'hand') return `Deal ${S.dmgAmount || 1} to Opponent’s Hand`;
+      return 'Generate some value.';
+    }
+
+    case 'damage': {
+      const amt = S.dmgAmount || 1;
+      if (S.dmgKindTree === 'player') {
+        const who = S.dmgWho || 'Player';
+        return `Deal ${amt} to ${who}`;
+      }
+      if (S.dmgKindTree === 'hand') {
+        const whoHand = S.dmgWho === 'Opponent'
+          ? "Opponent's Hand"
+          : (S.dmgWho === 'You' ? 'Your Hand' : 'Hand');
+        return `Deal ${amt} to ${whoHand}`;
+      }
       if (S.dmgKindTree === 'card') {
         if (S.dmgCardModeTree === 'debuff' || S.dmgCardModeTree === 'counters')
           return `Give -${S.dmgPT.p || 1}/-${S.dmgPT.t || 1}`;
         if (S.dmgCardModeTree === 'send' && S.dmgSendToTree) return `Send to ${S.dmgSendToTree}`;
       }
       return 'Damage';
+    }
+
     case 'search': return 'Search';
     case 'buff':   return 'Buff';
     case 'revive': return 'Revive';
@@ -1284,76 +2134,669 @@ function captureCurrentRule(rootEl) {
   const typedName = (nameInput?.value || '').trim();
   const name = typedName || autoNameFromState();
 
+  // Optional: bind this rule to a specific source card name on your battlefield
+  const srcSelect = q(rootEl, '#stats-sourceCard');
+  const rawSource = (srcSelect?.value || '').trim();
+  const sourceCardName = rawSource || null;
+
+  let sourceCardSeat = null;
+  if (sourceCardName) {
+    try {
+      sourceCardSeat = getMySeatSafe();
+    } catch {
+      sourceCardSeat = 1;
+    }
+  }
+
   return {
     id: RULE_ID_COUNTER++,
     name,
     conditionText: cond || '(incomplete condition)',
     effectText: eff,
-    snapshot: JSON.parse(JSON.stringify(S))
+    snapshot: JSON.parse(JSON.stringify(S)),
+    sourceCardName,
+    sourceCardSeat,
+    enabled: true  // UI-created rules start enabled
   };
 }
+
+
+// -------------------------------------------------------------
+// PER-CARD RULE BINDINGS (cid ↔ rule.id)
+// -------------------------------------------------------------
+// rule.id -> Set<cid>
+const RULE_BINDINGS = new Map();
+// cid -> Set<rule.id>
+const CID_BINDINGS  = new Map();
+
+/**
+ * Bind a rule to a specific card instance (by cid).
+ * - Keeps both ruleId→cid and cid→ruleId maps in sync.
+ * - For card-linked rules (sourceCardName), we treat "has any bindings"
+ *   as "enabled = true" so the watcher starts listening.
+ */
+function bindRuleToCid(rule, cid) {
+  if (!rule || !rule.id || !cid) return;
+  const ruleId = rule.id;
+  const cidStr = String(cid);
+
+  let byRule = RULE_BINDINGS.get(ruleId);
+  if (!byRule) {
+    byRule = new Set();
+    RULE_BINDINGS.set(ruleId, byRule);
+  }
+  byRule.add(cidStr);
+
+  let byCid = CID_BINDINGS.get(cidStr);
+  if (!byCid) {
+    byCid = new Set();
+    CID_BINDINGS.set(cidStr, byCid);
+  }
+  byCid.add(ruleId);
+
+  // For card-linked rules, treat "any bound copies" as enabled.
+  if (rule.sourceCardName && rule.enabled === false) {
+    rule.enabled = true;
+  }
+}
+
+/**
+ * Remove all bindings for a given cid.
+ * Returns an array of ruleIds whose enabled state was auto-toggled off
+ * because there are no remaining bound copies.
+ */
+function unbindAllRulesForCid(cid) {
+  const cidStr = cid ? String(cid) : null;
+  if (!cidStr) return [];
+
+  const byCid = CID_BINDINGS.get(cidStr);
+  if (!byCid || !byCid.size) {
+    CID_BINDINGS.delete(cidStr);
+    return [];
+  }
+
+  CID_BINDINGS.delete(cidStr);
+  const changedRuleIds = [];
+
+  byCid.forEach(ruleId => {
+    const byRule = RULE_BINDINGS.get(ruleId);
+    if (!byRule) return;
+
+    byRule.delete(cidStr);
+    if (!byRule.size) {
+      RULE_BINDINGS.delete(ruleId);
+      const rule = RULES.find(r => r.id === ruleId);
+      if (rule && rule.sourceCardName) {
+        // Only auto-disable card-linked rules; global rules stay as-is.
+        rule.enabled = false;
+        changedRuleIds.push(ruleId);
+      }
+    }
+  });
+
+  return changedRuleIds;
+}
+
+/**
+ * Convenience: list all rule objects bound to a given cid.
+ */
+function getRuleBindingsForCid(cid) {
+  const cidStr = cid ? String(cid) : null;
+  if (!cidStr) return [];
+  const ids = CID_BINDINGS.get(cidStr);
+  if (!ids) return [];
+  return Array.from(ids)
+    .map(id => RULES.find(r => r.id === id))
+    .filter(Boolean);
+}
+
 
 function renderRulesList(rootEl) {
   const host = q(rootEl, '#stats-rulesList');
   if (!host) return;
   host.innerHTML = '';
 
-  if (!RULES.length) {
+  LAST_ROOT = rootEl;
+
+  // Current text filter by card name
+  const filterInput = q(rootEl, '#stats-rulesFilter');
+  const filter = (filterInput?.value || '').trim().toLowerCase();
+
+  // Group rules by sourceCardName (or "Global Rules")
+  const groups = new Map();
+  RULES.forEach(rule => {
+    const groupName = rule.sourceCardName || 'Global Rules';
+    if (filter && !groupName.toLowerCase().includes(filter)) return;
+    if (!groups.has(groupName)) groups.set(groupName, []);
+    groups.get(groupName).push(rule);
+  });
+
+  if (!groups.size) {
     const empty = document.createElement('div');
-    empty.className = 'stats-tiny';
-    empty.textContent = 'No active rules yet. Use Add Rule to create one.';
+    empty.className = 'stats-rules-empty';
+    empty.textContent = 'No loaded rules yet. Use Add Rule above or load a deck.';
     host.appendChild(empty);
     return;
   }
 
-  RULES.forEach(rule => {
-    const card = document.createElement('div');
-    card.className = 'stats-rule-card';
+  groups.forEach((rules, groupName) => {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'stats-rule-group';
 
-    const h = document.createElement('h4');
-    h.textContent = rule.name;
-    card.appendChild(h);
+    const header = document.createElement('div');
+    header.className = 'stats-rule-groupHeader';
 
-    const meta = document.createElement('div');
-    meta.className = 'stats-rule-meta';
-    meta.textContent = `Rule #${rule.id}`;
-    card.appendChild(meta);
+    const left = document.createElement('div');
+    left.className = 'stats-rule-groupTitle';
 
-    const cond = document.createElement('div');
-    cond.className = 'stats-rule-cond';
-    cond.textContent = rule.conditionText;
-    card.appendChild(cond);
+    const arrow = document.createElement('span');
+    arrow.className = 'stats-rule-groupTog';
 
-    const eff = document.createElement('div');
-    eff.className = 'stats-rule-reward';
-    eff.textContent = rule.effectText;
-    card.appendChild(eff);
+    const isOpen = GROUP_OPEN_STATE[groupName] !== false;
+    arrow.textContent = isOpen ? '▾' : '▸';
 
-    const actions = document.createElement('div');
-    actions.className = 'stats-rule-actions';
+    const title = document.createElement('span');
+    title.textContent = groupName;
 
-    const testBtn = document.createElement('button');
-    testBtn.textContent = 'Test Notify';
-    testBtn.onclick = () => notifyRule(rule);
-    actions.appendChild(testBtn);
+    const count = document.createElement('span');
+    count.className = 'stats-rule-countBadge';
+    count.textContent = `${rules.length} rule${rules.length === 1 ? '' : 's'}`;
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.textContent = 'Delete';
-    deleteBtn.onclick = () => {
-      const idx = RULES.findIndex(r => r.id === rule.id);
-      if (idx >= 0) RULES.splice(idx, 1);
+    left.appendChild(arrow);
+    left.appendChild(title);
+    left.appendChild(count);
+
+    const right = document.createElement('div');
+    right.className = 'stats-rule-groupRight';
+
+    // Info button only if we have art for this card name
+    const artEntry = getCardArtEntryByName(groupName);
+    if (artEntry && artEntry.imageUrl) {
+      const infoBtn = document.createElement('button');
+      infoBtn.type = 'button';
+      infoBtn.className = 'stats-rule-infoBtn';
+      infoBtn.textContent = 'i';
+      infoBtn.title = 'Hold to preview card art';
+
+      infoBtn.onmousedown = e => {
+        e.stopPropagation();
+        showCardPreview(groupName, infoBtn);
+      };
+      infoBtn.onmouseup = e => {
+        e.stopPropagation();
+        hideCardPreview();
+      };
+      infoBtn.onmouseleave = hideCardPreview;
+
+      right.appendChild(infoBtn);
+    }
+
+    header.appendChild(left);
+    header.appendChild(right);
+
+    header.onclick = () => {
+      GROUP_OPEN_STATE[groupName] = !(GROUP_OPEN_STATE[groupName] !== false);
       renderRulesList(rootEl);
     };
-    actions.appendChild(deleteBtn);
 
-    card.appendChild(actions);
-    host.appendChild(card);
+    const body = document.createElement('div');
+    body.className = 'stats-rule-groupBody';
+    body.style.display = isOpen ? 'block' : 'none';
+
+    rules.forEach(rule => {
+      const card = document.createElement('div');
+      card.className = 'stats-rule-card';
+
+      const h = document.createElement('h4');
+      h.textContent = rule.name;
+      card.appendChild(h);
+
+      const meta = document.createElement('div');
+      meta.className = 'stats-rule-meta';
+      const metaBits = [`Rule #${rule.id}`];
+      if (rule.sourceCardName) {
+        metaBits.push(`Source: ${rule.sourceCardName}`);
+      }
+      meta.textContent = metaBits.join(' • ');
+
+      const status = document.createElement('span');
+      status.className = 'stats-rule-enabledBadge' + (rule.enabled === false ? ' off' : '');
+      status.textContent = rule.enabled === false ? 'Disabled' : 'Enabled';
+      meta.appendChild(status);
+
+      card.appendChild(meta);
+
+      const cond = document.createElement('div');
+      cond.className = 'stats-rule-cond';
+      cond.textContent = rule.conditionText;
+      card.appendChild(cond);
+
+      const eff = document.createElement('div');
+      eff.className = 'stats-rule-reward';
+      eff.textContent = rule.effectText;
+      card.appendChild(eff);
+
+      const actions = document.createElement('div');
+      actions.className = 'stats-rule-actions';
+
+      // Enable / Disable toggle
+      const toggleBtn = document.createElement('button');
+      toggleBtn.textContent = rule.enabled === false ? 'Enable' : 'Disable';
+      toggleBtn.onclick = () => {
+        rule.enabled = rule.enabled === false ? true : false;
+        renderRulesList(rootEl);
+        try {
+          window.StatsWatcherActions?.init?.();
+        } catch {}
+      };
+      actions.appendChild(toggleBtn);
+
+      const testBtn = document.createElement('button');
+      testBtn.textContent = 'Test Notify';
+      testBtn.onclick = () => notifyRule(rule);
+      actions.appendChild(testBtn);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.onclick = async () => {
+        await deleteRuleFromSupabase(rule);
+        const idx = RULES.findIndex(r => r.id === rule.id);
+        if (idx >= 0) RULES.splice(idx, 1);
+        renderRulesList(rootEl);
+        try {
+          window.StatsWatcherActions?.init?.();
+        } catch {}
+      };
+      actions.appendChild(deleteBtn);
+
+      card.appendChild(actions);
+      body.appendChild(card);
+    });
+
+    groupEl.appendChild(header);
+    groupEl.appendChild(body);
+    host.appendChild(groupEl);
   });
 }
 
 // -------------------------------------------------------------
 // NOTIFICATION HOOKS
 // -------------------------------------------------------------
+let POP_ROOT = null;
+
+function ensureRulePopupRoot() {
+  if (POP_ROOT && document.body.contains(POP_ROOT)) return POP_ROOT;
+  const root = document.createElement('div');
+  root.className = 'stats-rule-popRoot';
+  document.body.appendChild(root);
+  POP_ROOT = root;
+  return root;
+}
+
+// Pull out "Deal N damage to X" from the rule snapshot / text
+function extractDamageSpec(rule) {
+  if (!rule) return null;
+
+  const snap = rule.snapshot || {};
+  let amt = 0;
+  let who = null;
+
+  // Prefer structured snapshot from the builder
+  if (snap.effectAction === 'damage' && snap.dmgKindTree === 'player') {
+    const rawAmt = snap.dmgAmount;
+    const n = parseInt(rawAmt, 10);
+    if (!Number.isNaN(n) && n !== 0) {
+      amt = n;
+      who = snap.dmgWho === 'Opponent' ? 'Opponent' : 'You';
+    }
+  }
+
+  // Fallback: parse effect text like "Deal 3 damage to opponent"
+  if (!amt) {
+    const eff = String(rule.effectText || '');
+    const m = eff.match(/deal\s+(\d+)\s+damage\s+to\s+(you|opponent)/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n !== 0) {
+        amt = n;
+        const w = m[2].toLowerCase();
+        who = w === 'opponent' ? 'Opponent' : 'You';
+      }
+    }
+  }
+
+  if (!amt) return null;
+
+  // Map "You/Opponent" into an actual seat id
+  const mySeat = getMySeatSafe();
+  const seat =
+    who === 'Opponent'
+      ? (mySeat === 1 ? 2 : 1)
+      : mySeat;
+
+  return { amount: amt, who, seat };
+}
+
+
+// Pull out "You gain N life" from the rule snapshot / text
+function extractLifeGainSpec(rule) {
+  if (!rule) return null;
+
+  let amt = 0;
+  let who = 'You';
+  const snap = rule.snapshot || {};
+
+  // Prefer the structured snapshot from the builder
+  if (snap.effectAction === 'generate' && snap.genKindTree === 'life') {
+    const rawAmt = snap.genLife?.amt;
+    const n = parseInt(rawAmt, 10);
+    if (!Number.isNaN(n) && n !== 0) {
+      amt = n;
+    }
+    const snapWho = snap.genLife?.who;
+    if (snapWho === 'You' || snapWho === 'Opponent' || snapWho === 'Both') {
+      who = snapWho;
+    }
+  }
+
+  // Fallback: parse effect text, e.g. "You gain 3 life."
+  if (!amt) {
+    const eff = String(rule.effectText || '');
+    const m = eff.match(/gain[s]?\s+(\d+)\s+life/i);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n !== 0) {
+        amt = n;
+      }
+    }
+
+    if (/each player/i.test(eff) || /both players/i.test(eff)) {
+      who = 'Both';
+    } else if (/opponent/i.test(eff)) {
+      who = 'Opponent';
+    } else if (/you gain/i.test(eff)) {
+      who = 'You';
+    }
+  }
+
+  if (!amt) return null;
+
+  const mySeat = getMySeatSafe();
+  let seat = mySeat;
+  if (who === 'Opponent') {
+    seat = mySeat === 1 ? 2 : 1;
+  } else if (who === 'Both') {
+    seat = null; // sentinel: apply to both seats in handler
+  }
+
+  return { amount: amt, who, seat };
+}
+
+
+// Called when the "Apply" button is clicked.
+// Now wires **life gain** OR **life damage** into clean event pipelines.
+function handleRuleEffectApply(rule, meta, lifeSpec, damageSpec) {
+  if (!lifeSpec && !damageSpec) {
+    console.warn('[StatsRulesOverlay] handleRuleEffectApply called without lifeSpec or damageSpec.');
+    return;
+  }
+
+  const baseDetail = {
+    ruleId: rule.id,
+    ruleName: rule.name,
+    sourceCardName: rule.sourceCardName || null,
+    sourceCardSeat: rule.sourceCardSeat || null,
+    meta: meta || null
+  };
+
+  // Life gain branch (You / Opponent / Both)
+  if (lifeSpec) {
+    const mySeat = getMySeatSafe();
+    const who = lifeSpec.who || 'You';
+    const amount = Number(lifeSpec.amount) || 0;
+    if (!amount) return;
+
+    const dispatchGain = (seat, whoLabel) => {
+      const detail = {
+        ...baseDetail,
+        seat,
+        amount,
+        who: whoLabel || who
+      };
+      try {
+        window.dispatchEvent(
+          new CustomEvent('statsRule:gainLife', { detail })
+        );
+      } catch (e) {
+        console.warn('[StatsRulesOverlay] statsRule:gainLife dispatch failed', e, detail);
+      }
+    };
+
+    if (who === 'Both') {
+      // Fire once for you and once for opponent.
+      dispatchGain(mySeat, 'You');
+      const oppSeat = mySeat === 1 ? 2 : 1;
+      dispatchGain(oppSeat, 'Opponent');
+    } else if (who === 'Opponent') {
+      const oppSeat = lifeSpec.seat ?? (mySeat === 1 ? 2 : 1);
+      dispatchGain(oppSeat, 'Opponent');
+    } else {
+      const seat = lifeSpec.seat ?? mySeat;
+      dispatchGain(seat, 'You');
+    }
+
+    return;
+  }
+
+    // Damage branch (You / Opponent – sends to UI life bridge)
+  if (damageSpec) {
+    const fallbackSeat = getMySeatSafe();
+    const amount = Number(damageSpec.amount) || 0;
+    if (!amount) return;
+
+    const detail = {
+      ...baseDetail,
+      seat: damageSpec.seat ?? fallbackSeat,
+      amount,
+      who: damageSpec.who || null
+    };
+    try {
+      window.dispatchEvent(
+        new CustomEvent('statsRule:damageLife', { detail })
+      );
+    } catch (e) {
+      console.warn('[StatsRulesOverlay] statsRule:damageLife dispatch failed', e, detail);
+    }
+  }
+
+}
+
+
+// Build and show the bottom-right popup card for this rule trigger
+function showRulePopup(rule, meta) {
+  const host = ensureRulePopupRoot();
+  const { color } = classifyOutcome(rule.effectText || '');
+  const lifeSpec = extractLifeGainSpec(rule);
+  const damageSpec = lifeSpec ? null : extractDamageSpec(rule); // prefer life if both somehow exist
+
+  // NOTE:
+  // We NO LONGER auto-open Card Attributes overlay here.
+  // The overlay will only open after the player presses the primary
+  // "Apply" button, not just when the popup appears.
+
+  const card = document.createElement('div');
+  card.className = 'stats-rule-popCard';
+  card.style.borderColor = color;
+  card.style.boxShadow = `0 18px 40px rgba(15,23,42,.9), 0 0 0 1px ${color}33`;
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'stats-rule-popTitle';
+
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = rule.name || 'Rule Triggered';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'stats-rule-popClose';
+  closeBtn.textContent = '✕';
+  closeBtn.onclick = () => {
+    if (card.parentNode === host) host.removeChild(card);
+  };
+
+  titleRow.appendChild(titleSpan);
+  titleRow.appendChild(closeBtn);
+
+  const cond = document.createElement('div');
+  cond.className = 'stats-rule-popCond';
+  cond.textContent = rule.conditionText || '';
+
+  const body = document.createElement('div');
+  body.className = 'stats-rule-popBody';
+  body.textContent = rule.effectText || 'Effect occurred.';
+
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'stats-rule-popActions';
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.type = 'button';
+  dismissBtn.className = 'stats-rule-popBtn';
+  dismissBtn.textContent = 'Dismiss';
+  dismissBtn.onclick = () => {
+    if (card.parentNode === host) host.removeChild(card);
+  };
+
+  const primaryBtn = document.createElement('button');
+  primaryBtn.type = 'button';
+  primaryBtn.className = 'stats-rule-popBtn primary';
+
+  if (lifeSpec) {
+    if (lifeSpec.who === 'Opponent') {
+      primaryBtn.textContent = `Opponent gains ${lifeSpec.amount} life`;
+    } else if (lifeSpec.who === 'Both') {
+      primaryBtn.textContent = `Each player gains ${lifeSpec.amount} life`;
+    } else {
+      primaryBtn.textContent = `Gain ${lifeSpec.amount} life`;
+    }
+  } else if (damageSpec) {
+    primaryBtn.textContent = `Deal ${damageSpec.amount} damage`;
+  } else {
+    primaryBtn.textContent = 'Apply effect';
+  }
+
+  primaryBtn.onclick = () => {
+    // 1) Actually apply the rule (life / damage, etc.)
+    handleRuleEffectApply(rule, meta, lifeSpec, damageSpec);
+
+    // 2) ONLY NOW auto-open Card Attributes overlay for
+    //    generate → counters/types/abilities rules.
+    maybeOpenSourceAttributesOverlay(rule);
+
+    // 3) Close the popup
+    if (card.parentNode === host) host.removeChild(card);
+  };
+
+  actionsRow.appendChild(dismissBtn);
+  actionsRow.appendChild(primaryBtn);
+
+  card.appendChild(titleRow);
+  if (cond.textContent) card.appendChild(cond);
+  card.appendChild(body);
+  card.appendChild(actionsRow);
+
+  // Newest popup on top of stack
+  if (host.firstChild) {
+    host.insertBefore(card, host.firstChild);
+  } else {
+    host.appendChild(card);
+  }
+}
+
+
+// Existing:
+// let POP_ROOT = null;
+// function ensureRulePopupRoot() { ... }
+// function classifyOutcome(...) { ... }
+// function showRulePopup(rule, meta) { ... }
+
+/**
+ * Popup used when a card with linked rules ENTERS the battlefield.
+ * Lets you opt in to enabling those rules for THIS card instance (cid).
+ */
+function showCardAttachPopup(cardName, cid, rulesForCard) {
+  try { ensureStyles(); } catch {}
+
+  const root = ensureRulePopupRoot();
+  if (!root) return;
+
+  const card = document.createElement('div');
+  card.className = 'stats-rule-popCard';
+
+  const titleRow = document.createElement('div');
+  titleRow.className = 'stats-rule-popTitle';
+
+  const titleSpan = document.createElement('span');
+  titleSpan.textContent = `Enable rules for ${cardName}?`;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'stats-rule-popClose';
+  closeBtn.textContent = '×';
+  closeBtn.onclick = () => {
+    try { root.removeChild(card); } catch {}
+  };
+
+  titleRow.append(titleSpan, closeBtn);
+
+  const body = document.createElement('div');
+  body.className = 'stats-rule-popBody';
+
+  if (rulesForCard.length === 1) {
+    body.textContent =
+      `You put ${cardName} onto the battlefield. Enable "${rulesForCard[0].name}" for this copy?`;
+  } else {
+    const names = rulesForCard.map(r => r.name || 'Rule').join(', ');
+    body.textContent =
+      `You put ${cardName} onto the battlefield. Enable ${rulesForCard.length} rules for this copy? (${names})`;
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'stats-rule-popActions';
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.className = 'stats-rule-popBtn';
+  dismissBtn.textContent = 'Not now';
+  dismissBtn.onclick = () => {
+    try { root.removeChild(card); } catch {}
+  };
+
+  const enableBtn = document.createElement('button');
+  enableBtn.className = 'stats-rule-popBtn primary';
+  enableBtn.textContent = 'Enable for this card';
+  enableBtn.onclick = () => {
+    try {
+      rulesForCard.forEach(rule => {
+        bindRuleToCid(rule, cid);
+      });
+
+      if (LAST_ROOT) {
+        renderRulesList(LAST_ROOT);
+      }
+
+      try {
+        window.StatsWatcherActions?.init?.();
+      } catch (e) {
+        console.warn('[StatsRulesOverlay] StatsWatcherActions.init failed after card-rule enable', e);
+      }
+    } finally {
+      try { root.removeChild(card); } catch {}
+    }
+  };
+
+  actions.append(dismissBtn, enableBtn);
+  card.append(titleRow, body, actions);
+  root.appendChild(card);
+}
+
+
 // Classify effect for coloring (pos/neg/neutral) and provide text/html
 function classifyOutcome(effectText) {
   const txt = (effectText || '').trim();
@@ -1395,24 +2838,32 @@ function escapeHtml(s){
     .replace(/'/g,'&#39;');
 }
 
-function notifyRule(rule) {
-  const top = rule.name || 'RULE TRIGGERED';
-  const effTxt = rule.effectText || 'Effect occurred';
+function notifyRule(rule, meta = {}) {
+  try {
+    // Primary: bottom-right popup with Apply + Dismiss
+    showRulePopup(rule, meta);
+  } catch (e) {
+    console.warn('[StatsRulesOverlay] showRulePopup failed, falling back to Notification', e);
 
-  const { tone, color, bottom, bottomHTML } = classifyOutcome(effTxt);
+    // Fallback: original Notification toast
+    const top = rule.name || 'RULE TRIGGERED';
+    const effTxt = rule.effectText || 'Effect occurred';
 
-  // Use accent to mirror sentiment (keeps your current glow/border theme)
-  const accent = tone === 'pos' ? '#22c55e' : tone === 'neg' ? '#ef4444' : '#38bdf8';
+    const { tone, color, bottom, bottomHTML } = classifyOutcome(effTxt);
+    const accent = tone === 'pos' ? '#22c55e' : tone === 'neg' ? '#ef4444' : '#38bdf8';
 
-  // Send plain bottom + optional hints (non-breaking if Notification ignores them)
-  Notification.show({
-    top,
-    bottom,               // always provide plain text
-    bottomHTML,           // if your Notification supports innerHTML, it can use this
-    bottomColor: color,   // hint for coloring the bottom line if supported
-    accent                // keep accent consistent with sentiment
-  });
+    try {
+      Notification.show({
+        top,
+        bottom,
+        bottomHTML,
+        bottomColor: color,
+        accent
+      });
+    } catch {}
+  }
 }
+
 
 
 // -------------------------------------------------------------
@@ -1429,9 +2880,10 @@ function mount(rootEl) {
           Rule Engine: <span id="stats-rootLabel">When</span>
         </div>
         <div class="stats-rules-tabs">
-          <button class="stats-rules-tab active" data-tab="add">Add Rule</button>
-          <button class="stats-rules-tab" data-tab="active">Active Rules</button>
-        </div>
+  <button class="stats-rules-tab active" data-tab="add">Add Rule</button>
+  <button class="stats-rules-tab" data-tab="active">Loaded Rules</button>
+</div>
+
       </div>
 
       <div class="stats-rules-body">
@@ -1442,25 +2894,60 @@ function mount(rootEl) {
               <div class="stats-cols" id="stats-cols"></div>
             </div>
 
-            <!-- Footer: Rule Name (optional) + **Primary** Save -->
-            <div class="stats-footer">
-              <label for="stats-ruleName">Rule Name</label>
-              <input id="stats-ruleName" type="text" placeholder="(optional) We'll name it for you if blank"/>
-              <button id="stats-addRuleBtn" class="save">Save Rule</button>
-            </div>
+            <!-- Footer: Source card (optional) + Rule Name + **Primary** Save -->
+<div class="stats-footer">
+  <div class="stats-footer-row">
+<label for="stats-sourceCard">Source card (required)</label>
+<div class="stats-source-inline">
+  <select id="stats-sourceCard">
+    <option value="">Select a card on your battlefield…</option>
+  </select>
+
+      <button
+        type="button"
+        id="stats-refreshSourceCards"
+        class="stats-refresh-btn"
+        title="Refresh from battlefield"
+      >⟳</button>
+    </div>
+  </div>
+
+  <div class="stats-footer-row">
+    <label for="stats-ruleName">Rule Name</label>
+    <input
+      id="stats-ruleName"
+      type="text"
+      placeholder="(optional) We'll name it for you if blank"
+    />
+    <button id="stats-addRuleBtn" class="save">Save Rule</button>
+  </div>
+</div>
+
           </div>
 
           <!-- Live preview of the constructed sentence -->
           <div class="stats-preview" id="stats-preview"></div>
         </div>
 
-        <!-- TAB: ACTIVE RULES -->
+        <!-- TAB: LOADED RULES -->
         <div id="stats-tabActive" class="stats-tab-panel">
+          <div class="stats-rules-filterRow">
+            <label for="stats-rulesFilter">Filter by card name</label>
+            <input
+              id="stats-rulesFilter"
+              type="text"
+              placeholder="Type to filter loaded rules…"
+            />
+          </div>
           <div class="stats-rules-list" id="stats-rulesList"></div>
         </div>
+
       </div>
     </div>
   `;
+  
+    LAST_ROOT = rootEl;
+
 
   // wire tabs
   const tabButtons = qAll(rootEl, '.stats-rules-tab');
@@ -1476,20 +2963,44 @@ function mount(rootEl) {
   // duration + base state
   resetForRoot(rootEl);
 
-  // save rule button (the ONLY one now)
+  // save rule button (the ONLY one now)  // save rule button (the ONLY one now)
   const addRuleBtn = q(rootEl, '#stats-addRuleBtn');
   if (addRuleBtn) {
-    addRuleBtn.onclick = () => {
+    addRuleBtn.onclick = async () => {
       const rule = captureCurrentRule(rootEl);
+
+      // We now REQUIRE a source card for every rule
+      if (!rule.sourceCardName) {
+        try {
+          Notification.show({
+            top: 'Source card required',
+            bottom: 'Pick the source card from the dropdown before saving this rule.',
+            accent: '#f97316'
+          });
+        } catch {}
+        return;
+      }
+
+      // Local in-memory rule list
       RULES.push(rule);
       renderRulesList(rootEl);
 
+      // 🔔 Re-bind watcher rules after save
+      try {
+        window.StatsWatcherActions?.init?.();
+      } catch {}
+
+      // Attempt to persist to Supabase (best-effort)
+      await saveRuleToSupabase(rule);
+
       // Feedback on create with smarter bottom line
-      Notification.show({
-        top: 'RULE SAVED',
-        bottom: rule.name,
-        accent: '#22c55e'
-      });
+      try {
+        Notification.show({
+          top: 'RULE SAVED',
+          bottom: rule.name,
+          accent: '#22c55e'
+        });
+      } catch {}
 
       // Switch to Active Rules tab
       const activeTabBtn = tabButtons.find(b => b.getAttribute('data-tab') === 'active');
@@ -1497,24 +3008,173 @@ function mount(rootEl) {
     };
   }
 
+
+  // Source card list refresh (now correctly scoped to this root)
+  const refreshBtn = q(rootEl, '#stats-refreshSourceCards');
+  if (refreshBtn) {
+    refreshBtn.onclick = () => refreshSourceCardOptions(rootEl);
+  }
+
+  // Loaded Rules filter
+  const filterInput = q(rootEl, '#stats-rulesFilter');
+  if (filterInput) {
+    filterInput.oninput = () => renderRulesList(rootEl);
+  }
+
   // initial renders
   renderTree(rootEl);
   renderActionDetails(rootEl);
   renderRulesList(rootEl);
+  refreshSourceCardOptions(rootEl);
+
+  // 🔔 Ensure watcher sees whatever rules already exist
+  try {
+    window.StatsWatcherActions?.init?.();
+  } catch {}
 }
+
+
+// Listen for deck roster events from DeckLoading (fallback channel)
+if (typeof window !== 'undefined') {
+  window.addEventListener('statsrules:deck-roster', e => {
+    try {
+      const roster = e?.detail?.roster;
+      if (!Array.isArray(roster) || !roster.length) return;
+      setDeckCardRoster(roster);
+      loadRulesForDeckRoster(roster);
+    } catch (err) {
+      console.warn('[StatsRulesOverlay] statsrules:deck-roster handler failed', err);
+    }
+  });
+}
+
+/**
+ * Card table presence hook.
+ * Called whenever CardPlacement dispatches `card:tablePresence`:
+ *   detail = { cid, name, onTable, inCommandZone, fieldSide, ownerCurrent, ... }
+ *
+ * - onTable:true  → card just ENTERED the battlefield
+ * - onTable:false → card just LEFT the battlefield (to hand / grave / exile / deck)
+ */
+function handleTablePresence(detail = {}) {
+  try { ensureStyles(); } catch {}
+
+  const cid   = detail.cid ? String(detail.cid) : null;
+  const nameRaw =
+    detail.name ||
+    detail.cardName ||
+    '';
+  const name  = String(nameRaw).trim();
+
+  if (!cid || !name) return;
+
+  // Only consider cards we control for now
+  const mySeat = String(getMySeatSafe());
+  let ownerSeat = null;
+
+  if (detail.ownerCurrent != null) {
+    ownerSeat = String(detail.ownerCurrent);
+  } else if (detail.owner != null) {
+    ownerSeat = String(detail.owner);
+  } else if (detail.ownerSeat != null) {
+    ownerSeat = String(detail.ownerSeat);
+  }
+
+  if (ownerSeat) {
+    const m = ownerSeat.match(/\d+/);
+    if (m) ownerSeat = m[0];
+  }
+
+  if (ownerSeat && ownerSeat !== mySeat) {
+    // Not our card; ignore for now
+    return;
+  }
+
+  const onTable = !!detail.onTable;
+
+  if (onTable) {
+    // Card has just ENTERED the battlefield.
+    const lowerName = name.toLowerCase();
+
+    // Find rules explicitly linked to this card name.
+    const candidateRules = RULES.filter(r =>
+      r.sourceCardName &&
+      r.sourceCardName.toLowerCase() === lowerName
+    );
+
+    if (!candidateRules.length) return;
+
+    // If this cid is already bound to all these rules, don't re-prompt.
+    let alreadyBound = true;
+    for (const rule of candidateRules) {
+      const set = RULE_BINDINGS.get(rule.id);
+      if (!set || !set.has(cid)) {
+        alreadyBound = false;
+        break;
+      }
+    }
+    if (alreadyBound) return;
+
+    showCardAttachPopup(name, cid, candidateRules);
+  } else {
+    // Card has LEFT the battlefield → drop bindings for this cid
+    const affectedRuleIds = unbindAllRulesForCid(cid);
+
+    if (affectedRuleIds && affectedRuleIds.length) {
+      if (LAST_ROOT) {
+        renderRulesList(LAST_ROOT);
+      }
+      try {
+        window.StatsWatcherActions?.init?.();
+      } catch (e) {
+        console.warn('[StatsRulesOverlay] StatsWatcherActions.init failed after card-rule unbind', e);
+      }
+    }
+  }
+}
+
+
 
 // -------------------------------------------------------------
 // PUBLIC API
 // -------------------------------------------------------------
 export const StatsRulesOverlay = {
   mount,
+
+  // Watchers should only see enabled rules
   getRules() {
+    return RULES.filter(r => r.enabled !== false);
+  },
+
+  // In case you ever need the raw list (incl. disabled)
+  getAllRules() {
     return RULES.slice();
   },
+
   triggerRuleById(id) {
     const rule = RULES.find(r => r.id === id);
     if (!rule) return;
     notifyRule(rule);
   },
-  notifyRule
+
+  notifyRule,
+
+  // Direct hook used by DeckLoading (in addition to the DOM event)
+  loadDeckCardRoster(roster) {
+    setDeckCardRoster(roster);
+    loadRulesForDeckRoster(roster);
+  },
+
+  // NEW: hook from CardPlacement → card:tablePresence
+  handleTablePresence,
+
+  // NEW: optional debugging / inspection helper
+  getRuleBindingsForCid(cid) {
+    return getRuleBindingsForCid(cid);
+  }
 };
+
+// Optional: make it accessible via window for non-module callers
+if (typeof window !== 'undefined') {
+  window.StatsRulesOverlay = StatsRulesOverlay;
+}

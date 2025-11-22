@@ -14,6 +14,23 @@ import { Zones } from './zones.js';   // ⬅️ NEW: so we can call Zones.record
 import { extractInnateAbilities } from './oracle.innate.js'; // ⬅️ innate ability parser for RTC spawn
 import { DeckLoading } from './deck.loading.js';            // ⬅️ use module, not window.*
 
+// ---------------------------------------------------------
+// PRELOAD: deck-back image so ghost cards don't flicker
+// ---------------------------------------------------------
+(function preloadDeckBack() {
+  try {
+    if (typeof window === 'undefined') return;
+    const url = window.DECK_BACK_URL;
+    if (!url) return;
+    const img = new Image();
+    img.src = url; // browser will cache & decode this once
+    window.__DECK_BACK_PRELOADED = img;
+  } catch (_) {
+    // ignore
+  }
+})();
+
+
 const localDragLock = new Set();
 
 
@@ -400,6 +417,29 @@ function _looksLikeLand(el){
       senderSeat  : String(mySeat()) || '1'       // who is SENDING this packet
     };
 
+    // 🔵 If this element is a "pending spawn" coming from hand, treat this
+    // MOVE as a ghost hand-drag so the opponent can see a back-only card
+    // moving around even before it's committed to the table.
+    if (el.dataset.pendingSpawn === 'true') {
+      pkt.ghost  = 'hand-drag';
+      pkt.origin = el.dataset.origin || 'hand';
+
+      // Try to send some image info along (front art, as a fallback)
+      const imgSrc =
+        el.dataset.img ||
+        el.getAttribute('data-img') ||
+        el.src ||
+        '';
+
+      if (imgSrc) {
+        pkt.img = imgSrc;
+      }
+
+      // And send the back image URL (global you set earlier)
+      if (typeof window.DECK_BACK_URL === 'string' && window.DECK_BACK_URL) {
+        pkt.backImg = window.DECK_BACK_URL;
+      }
+    }
 
     if (full) {
       // enrich with all the state-y stuff we actually care about AFTER drop
@@ -418,6 +458,7 @@ function _looksLikeLand(el){
 
     return pkt;
   }
+
 
 
   // Call this AFTER you receive the opponent's End Turn packet
@@ -521,31 +562,68 @@ function _deriveBaseTypesFromTypeLine(typeLine){
 
 
 // Build + emit the cast event (local call AND optional RTC mirror already handled via origin flag)
-function _emitCastFor(el, fromSeat){
+function _emitCastFor(el, fromSeat) {
   if (!el) return;
-  if (_isLandCard(el)) {
-    try { window.TurnUpkeep?.noteLandPlay?.({ seat: fromSeat }); } catch {}
-    return; // lands are NOT spells
+
+  const d = el.dataset || {};
+  const seat = Number(fromSeat || d.ownerCurrent || d.owner || 1) === 2 ? 2 : 1;
+
+  const name =
+    d.name ||
+    el.getAttribute('data-name') ||
+    el.getAttribute('alt') ||
+    el.getAttribute('title') ||
+    '';
+
+  const typeLine =
+    d.typeLine ||
+    d.frontTypeLine ||
+    d.backTypeLine ||
+    '';
+
+  const mv = Number(d.mv || d.cmc || d.manaValue || 0) || 0;
+
+  // crude best-effort colors
+  let colors = [];
+  try {
+    if (d.colors) {
+      const parsed = JSON.parse(d.colors);
+      if (Array.isArray(parsed)) colors = parsed.slice();
+    } else if (d.colorIdentity) {
+      const parsed = JSON.parse(d.colorIdentity);
+      if (Array.isArray(parsed)) colors = parsed.slice();
+    }
+  } catch {}
+
+  const cid = d.cid || null;
+
+  const payload = {
+    seat,
+    name,
+    typeLine,
+    mv,
+    colors,
+    cid
+  };
+
+  // 1) Feed TurnUpkeep tallies (what you already had)
+  try {
+    TurnUpkeep.noteCast?.(payload);
+  } catch (e) {
+    console.warn('[CardPlacement] noteCast failed', e);
   }
 
-
-  const mc = _calcManaColorPayload(el);
-  const payload = {
-    seat: Number(fromSeat) || 1,
-    cid:  el.dataset.cid,
-    name: el.dataset.name || el.title || '',
-    typeLine: el.dataset.typeLine || '',
-    primaryType: _primaryCardType(el),
-    types: _collectAllTypes(el),
-
-    // color + cost info
-    colors: mc.colors || [],
-    manaCost: mc.manaCostRaw || '',                      // "true" printed cost, e.g. "{2}{B}"
-    manaCostRaw: mc.manaCostRaw || '',                   // keep for backwards compatibility
-    manaValue: typeof mc.manaValue === 'number' ? mc.manaValue : 0 // e.g. 3
-  };
-  try { window.TurnUpkeep?.noteCast?.(payload); } catch {}
+  // 2) 🔴 NEW: fire the event that StatsWatcherActions listens for
+  try {
+    window.dispatchEvent(
+      new CustomEvent('spell:cast', { detail: payload })
+    );
+  } catch (e) {
+    console.warn('[CardPlacement] spell:cast dispatch failed', e, payload);
+  }
 }
+
+
 
 
   
@@ -621,11 +699,20 @@ try{
 
   // Defer spawn broadcast until we know the final drop.
   // This prevents leaking the card if the user drags it back over the hand.
-  try {
+    try {
     el.dataset.pendingSpawn = 'true';
     el._finalizeSpawn = () => {
       if (el.dataset.pendingSpawn !== 'true') return; // already finalized/cancelled
       el.dataset.pendingSpawn = 'false';
+
+      // 🟦 Make sure ownership + fieldSide are stamped so we KNOW if it's on the field
+      try {
+        if (typeof _applyOwnershipAfterDrop === 'function') {
+          _applyOwnershipAfterDrop(el);
+        }
+      } catch (e) {
+        console.warn('[Place:spawnCardAtPointer] _applyOwnershipAfterDrop failed in _finalizeSpawn', e);
+      }
 
       const ownerNow = el.dataset.ownerCurrent || el.dataset.owner || String(mySeat());
       const px = parseFloat(el.style.left) || 0;
@@ -636,7 +723,7 @@ try{
       const snap = _snapshotRules(el);
 
       const pkt = {
-        senderSeat       : String(mySeat()) || '1',
+        senderSeat           : String(mySeat()) || '1',
         type                 : 'spawn',
         origin               : 'hand',
         cid                  : id,
@@ -663,6 +750,48 @@ try{
 
       (window.rtcSend || window.peer?.send)?.(pkt);
 
+          // 🔄 Table presence for brand-new spawns (hand → table path)
+      try {
+        const cid       = el.dataset.cid || id;
+        const shownName = el.dataset.name || name || el.getAttribute('alt') || '';
+        const ownerNowResolved =
+          el.dataset.ownerCurrent || el.dataset.owner || String(ownerNow);
+
+        // Authoritative flag: this card is now on the battlefield
+        el.dataset.onTable = 'true';
+
+        const nowOnTable         = el.dataset.onTable === 'true';
+        const nowInCommanderZone = el.dataset.inCommandZone === 'true';
+        const fieldSide          = el.dataset.fieldSide || null;
+
+        if (nowOnTable) {
+          console.log('[TABLE] card spawned onto table', {
+            cid,
+            name: shownName,
+            onTable: nowOnTable,
+            fieldSide,
+            inCommandZone: nowInCommanderZone,
+            ownerCurrent: ownerNowResolved
+          });
+
+          window.dispatchEvent(
+            new CustomEvent('card:tablePresence', {
+              detail: {
+                cid,
+                name: shownName,
+                onTable: nowOnTable,
+                inCommandZone: nowInCommanderZone,
+                fieldSide,
+                ownerCurrent: ownerNowResolved
+              }
+            })
+          );
+        }
+      } catch (e) {
+        console.warn('[Place:spawnCardAtPointer] tablePresence emit failed', e);
+      }
+
+
       // LOCAL: count cast immediately (lands auto-skipped)
       _emitCastFor(el, mySeat());
     };
@@ -670,9 +799,29 @@ try{
 
 
 
+
   return el;
 }
 
+
+// Listen for table presence events from spawn/move/remove and bridge into StatsRulesOverlay
+if (typeof window !== 'undefined') {
+  window.addEventListener('card:tablePresence', (ev) => {
+    const detail = ev?.detail || {};
+
+    // Bridge into StatsRulesOverlay if it’s loaded
+    try {
+      window.StatsRulesOverlay?.handleTablePresence?.(detail);
+    } catch (err) {
+      console.warn('[Place] StatsRulesOverlay.handleTablePresence failed', err, detail);
+    }
+
+    // Keep the debug log you’ve been using
+    try {
+      console.log('[EVENT] card:tablePresence', detail);
+    } catch {}
+  });
+}
 
 
 
@@ -891,6 +1040,41 @@ function evaluateDropZones(el) {
         null
       );
     } catch {}
+
+    // 🔻 Mark as no longer on the table + emit presence event
+    try {
+      el.dataset.onTable = 'false';
+      delete el.dataset.fieldSide;
+      el.dataset.inCommandZone = 'false';
+
+      const cid         = el.dataset.cid || '';
+      const shownName   = el.dataset.name || el.title || '';
+      const ownerNow    = el.dataset.ownerCurrent || el.dataset.owner || null;
+
+      console.log('[TABLE] card left table → hand', {
+        cid,
+        name: shownName,
+        fieldSide: null,
+        inCommandZone: false,
+        ownerCurrent: ownerNow
+      });
+
+      window.dispatchEvent(
+        new CustomEvent('card:tablePresence', {
+          detail: {
+            cid,
+            name: shownName,
+            onTable: false,
+            inCommandZone: false,
+            fieldSide: null,
+            ownerCurrent: ownerNow
+          }
+        })
+      );
+    } catch (e) {
+      console.warn('[DropZones] hand return tablePresence emit failed', e);
+    }
+
     // mirror finalizeDrop's removeCard(null,'player')
     try {
       (function removeToHand() {
@@ -903,6 +1087,7 @@ function evaluateDropZones(el) {
     } catch {}
     return;
   }
+
 
   // helpers that mirror finalizeDrop’s internals:
   const sendRemove = (finalZone, ownerSide) => {
@@ -922,6 +1107,43 @@ function evaluateDropZones(el) {
       }
     } catch {}
 
+    // 🔻 Mark as no longer on the table + emit presence event
+    try {
+      el.dataset.onTable = 'false';
+      delete el.dataset.fieldSide;
+      el.dataset.inCommandZone = 'false';
+
+      const shownName = el.dataset.name || el.title || '';
+      const ownerNow  = el.dataset.ownerCurrent || el.dataset.owner || null;
+
+      console.log('[TABLE] card left table →', finalZone || '(hand/deck)', {
+        cid: cidVal,
+        name: shownName,
+        fieldSide: null,
+        inCommandZone: false,
+        ownerCurrent: ownerNow,
+        zone: finalZone,
+        ownerSide
+      });
+
+      window.dispatchEvent(
+        new CustomEvent('card:tablePresence', {
+          detail: {
+            cid: cidVal,
+            name: shownName,
+            onTable: false,
+            inCommandZone: false,
+            fieldSide: null,
+            ownerCurrent: ownerNow,
+            zone: finalZone,
+            ownerSide
+          }
+        })
+      );
+    } catch (e) {
+      console.warn('[DropZones] sendRemove tablePresence emit failed', e);
+    }
+
     try { window.Tooltip?.hide?.(); } catch {}
     try { window.Badges?.detach?.(el); } catch {}
     try { el.remove(); } catch {}
@@ -931,6 +1153,7 @@ function evaluateDropZones(el) {
       type: 'remove', cid: cidVal, zone: finalZone, ownerSide
     });
   };
+
 
   // 2) MY graveyard / exile
   if (__overZoneCenter(el, 'pl-graveyard')) {
@@ -996,10 +1219,48 @@ function evaluateDropZones(el) {
 
   // 4) MY deck: open modal then remove to 'deck'
   if (__overZoneCenter(el, 'pl-deck')) {
-    // re-use existing modal helper if present on this module
+    // Prefer the full Top / Bottom / Return Multiple… modal if available
+    if (typeof showDeckInsertOptions === 'function') {
+      showDeckInsertOptions(el, (choice) => {
+        // choice will be 'Top' or 'Bottom' here.
+        const pos = (choice === 'Bottom') ? 'bottom' : 'top';
+
+        try {
+          let ok = false;
+          if (typeof window.DeckLoading?.insertFromTable === 'function') {
+            ok = !!window.DeckLoading.insertFromTable(el, pos);
+          }
+          if (!ok) console.warn('[DropZones] insertFromTable failed for', pos);
+
+          // mirror your existing TurnUpkeep noteLibrary behavior
+          try {
+            const seatNum = Number(window.mySeat?.() ?? 1);
+            window.TurnUpkeep?.noteLibrary?.(
+              +1,
+              {
+                seat:   seatNum,
+                reason: 'return',
+                via:    'drop',
+                pos
+              }
+            );
+          } catch (err) {
+            console.warn('[DropZones] noteLibrary failed', err);
+          }
+        } catch (e) {
+          console.warn('[DropZones] deck insert (modal) failed', e);
+        }
+
+        // finally remove the card from table + RTC broadcast
+        return sendRemove('deck','player');
+      });
+
+      // IMPORTANT: do not remove now – wait for modal choice to fire sendRemove
+      return;
+    }
+
+    // Fallback: if somehow the modal helper isn't available, behave like before (auto-top)
     try {
-      // Existing showDeckInsertOptions closure lives inside enableDrag,
-      // so we fall back to the DeckLoading API directly:
       const pos = 'top'; // default top if no popup available here
       let ok = false;
       if (typeof window.DeckLoading?.insertFromTable === 'function') {
@@ -1013,10 +1274,10 @@ function evaluateDropZones(el) {
         window.TurnUpkeep?.noteLibrary?.(
           +1,
           {
-            seat: seatNum,
+            seat:   seatNum,
             reason: 'return',
-            via: 'drop',
-            pos    : pos
+            via:    'drop',
+            pos
           }
         );
       } catch (err) {
@@ -1027,6 +1288,7 @@ function evaluateDropZones(el) {
     }
     return sendRemove('deck','player');
   }
+
 
 }
 
@@ -1081,7 +1343,10 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
     let lastSendTs     = 0;
     const MIN_SEND_MS  = 16;
     const MOVE_TOLERANCE_PX = 4; // below this = tap, above this = real drag
-
+	let wasOnTable     = false;
+	let wasInCommandZone  = false;
+		
+		
     function streamKick() {
       if (streamRAF) return;
       const loop = (t) => {
@@ -1119,17 +1384,33 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
       lastSentX = lastSentY = NaN;
     }
 
-    // -------------------------------------------------
-    // BEGIN DRAG
-    // -------------------------------------------------
-    const onDown = (sx, sy, target, pointerId) => {
-      // don't start drag if clicking UI overlay elements on the card
-      if (target.closest?.('.ui-block')) return false;
+   // -------------------------------------------------
+// BEGIN DRAG
+// -------------------------------------------------
+const onDown = (sx, sy, target, pointerId) => {
+  // don't start drag if clicking UI overlay elements on the card
+  if (target.closest?.('.ui-block')) return false;
 
-      // if we're already dragging with some pointer, ignore extras (2nd finger, etc.)
-      if (dragging && activePointer !== null && activePointer !== pointerId) {
-        return false;
-      }
+  // if we're already dragging with some pointer, ignore extras (2nd finger, etc.)
+  if (dragging && activePointer !== null && activePointer !== pointerId) {
+    return false;
+  }
+
+  // NEW: snapshot whether this card was on the table at drag start
+  wasOnTable = !!el.dataset.fieldSide;
+
+  // NEW: snapshot whether this card was in the command zone at drag start
+  wasInCommandZone = (el.dataset.inCommandZone === 'true');
+
+  // (optional) debug:
+  // console.log('[TABLE] drag start', {
+  //   cid: el.dataset.cid,
+  //   wasOnTable,
+  //   wasInCommandZone,
+  //   fieldSide: el.dataset.fieldSide ?? null,
+  //   inCommandZone: el.dataset.inCommandZone ?? null
+  // });
+
 
       dragging      = true;
       didMove       = false;
@@ -1138,6 +1419,7 @@ window._applyOwnershipAfterDrop = _applyOwnershipAfterDrop;
       startSy       = sy;
       startLeft     = parseFloat(el.style.left) || 0;
       startTop      = parseFloat(el.style.top)  || 0;
+
 
       document.body.style.cursor = 'grabbing';
       el.classList.add('is-dragging');
@@ -1718,49 +2000,161 @@ function openReturnMultipleOverlay(){
   }
 
   function insertExact(el, preSnap, where /* 'top' | 'bottom' */){
-    if (!window.DeckLoading || typeof window.DeckLoading.insertFromTable !== 'function') {
-      console.warn('[ReturnMultiple] DeckLoading.insertFromTable not available.');
+    const DL = window.DeckLoading;
+    if (!DL || !DL.state) {
+      console.warn('[ReturnMultiple] DeckLoading.state not available.');
       return { ok:false, entry:null, deckSize:0 };
     }
-    const ok = window.DeckLoading.insertFromTable(el, where);
-let entryRef = null, deckSize = 0;
-try {
-  const lib = window.DeckLoading.state?.library || [];
-  deckSize = lib.length;
-  entryRef = (where === 'bottom') ? lib[lib.length - 1] : lib[0];
-  if (entryRef && typeof entryRef === 'object') {
-    entryRef.__cid          = el?.dataset?.cid || '';
-    entryRef.__datasetRaw   = { ...(preSnap?.dsRaw || {}) };
-    entryRef.__attributesRaw= { ...(preSnap?.attrs || {}) };
-  }
-} catch {}
 
-// ✅ note a single card returned to library (works for Top, Bottom, and Return Multiple)
-try {
-  const seatNum = Number(
-    el?.dataset?.ownerCurrent ||
-    el?.dataset?.ownerOriginal ||
-    window.mySeat?.() ||
-    1
-  );
+    const d = el?.dataset || {};
+    const isHand =
+      el.classList?.contains('hand-card') ||
+      el.closest?.('[data-zone="hand"]');
 
-  window.TurnUpkeep?.noteLibrary?.(
-    +1,
-    {
-      seat: seatNum,             // 🔹 correct field for TurnUpkeep
-      reason: 'return',
-      pos: where,                // 'top' | 'bottom'
-      via: 'insertExact',        // from table / hand / zone -> library
-      cid: el?.dataset?.cid || null,
-      deckSizeAfter: deckSize
+    let ok       = false;
+    let entryRef = null;
+    let deckSize = 0;
+
+    try {
+      if (isHand) {
+        // ── HAND PATH ──
+        const state = DL.state;
+        const lib   = state.library || (state.library = []);
+
+        // Use our rules snapshot to mirror what _entryFromHandImg would build.
+        let rules = { typeLine: '', oracle: '', baseTypes: [], baseAbilities: [] };
+        try {
+          if (typeof _snapshotRules === 'function') {
+            rules = _snapshotRules(el) || rules;
+          }
+        } catch {}
+
+        const name =
+          d.cardName ||
+          d.name ||
+          el.title ||
+          el.alt ||
+          'Card';
+
+        const imgUrl =
+          el.currentSrc ||
+          el.src ||
+          d.imgFront ||
+          d.imageUrl ||
+          '';
+
+        const entry = {
+          // core identity
+          name,
+          imageUrl: imgUrl,
+
+          // active-face rules
+          typeLine    : rules.typeLine   || d.typeLine || '',
+          oracle      : rules.oracle     || d.oracle   || '',
+          baseTypes   : Array.isArray(rules.baseTypes) ? rules.baseTypes.slice() : [],
+          baseAbilities: Array.isArray(rules.baseAbilities) ? rules.baseAbilities.slice() : [],
+
+          // side info
+          currentSide : d.currentSide || 'front'
+        };
+
+        // front/back faces (if present on dataset)
+        if (d.imgFront || imgUrl) entry.imgFront = d.imgFront || imgUrl;
+        if (d.imgBack)            entry.imgBack  = d.imgBack;
+
+        if (d.frontTypeLine) entry.frontTypeLine = d.frontTypeLine;
+        if (d.frontOracle)   entry.frontOracle   = d.frontOracle;
+        if (d.backTypeLine)  entry.backTypeLine  = d.backTypeLine;
+        if (d.backOracle)    entry.backOracle    = d.backOracle;
+
+        if (d.frontBaseTypes) {
+          try {
+            const arr = JSON.parse(d.frontBaseTypes);
+            if (Array.isArray(arr)) entry.frontBaseTypes = arr.slice();
+          } catch {}
+        }
+        if (d.frontBaseAbilities) {
+          try {
+            const arr = JSON.parse(d.frontBaseAbilities);
+            if (Array.isArray(arr)) entry.frontBaseAbilities = arr.slice();
+          } catch {}
+        }
+        if (d.backBaseTypes) {
+          try {
+            const arr = JSON.parse(d.backBaseTypes);
+            if (Array.isArray(arr)) entry.backBaseTypes = arr.slice();
+          } catch {}
+        }
+        if (d.backBaseAbilities) {
+          try {
+            const arr = JSON.parse(d.backBaseAbilities);
+            if (Array.isArray(arr)) entry.backBaseAbilities = arr.slice();
+          } catch {}
+        }
+
+        // Put it on top or bottom
+        if (where === 'bottom') {
+          lib.push(entry);
+          entryRef = lib[lib.length - 1] || null;
+        } else {
+          lib.unshift(entry);
+          entryRef = lib[0] || null;
+        }
+
+        deckSize = lib.length;
+        ok = true;
+      } else {
+        // ── TABLE / ZONE PATH (existing behavior) ──
+        if (typeof DL.insertFromTable !== 'function') {
+          console.warn('[ReturnMultiple] DeckLoading.insertFromTable not available.');
+          return { ok:false, entry:null, deckSize:0 };
+        }
+
+        ok = !!DL.insertFromTable(el, where);
+
+        try {
+          const lib = DL.state?.library || [];
+          deckSize  = lib.length;
+          entryRef  = (where === 'bottom') ? lib[lib.length - 1] : lib[0] || null;
+        } catch {}
+      }
+
+      // Attach debug metadata for whichever entry we just touched
+      if (entryRef && typeof entryRef === 'object') {
+        entryRef.__cid           = d.cid || '';
+        entryRef.__datasetRaw    = { ...(preSnap?.dsRaw  || {}) };
+        entryRef.__attributesRaw = { ...(preSnap?.attrs  || {}) };
+      }
+    } catch (e) {
+      console.warn('[ReturnMultiple] insertExact failed', e);
+      ok = false;
     }
-  );
-} catch {}
 
+    // ✅ note a single card returned to library (works for Top, Bottom, and Return Multiple)
+    try {
+      const seatNum = Number(
+        d.ownerCurrent ||
+        d.ownerOriginal ||
+        window.mySeat?.() ||
+        1
+      );
 
-return { ok, entry: entryRef, deckSize };
+      window.TurnUpkeep?.noteLibrary?.(
+        +1,
+        {
+          seat:          seatNum,
+          reason:        'return',
+          pos:           where,          // 'top' | 'bottom'
+          via:           'insertExact',  // from table / hand / zone -> library
+          cid:           d.cid || null,
+          deckSizeAfter: deckSize
+        }
+      );
+    } catch {}
 
+    return { ok, entry: entryRef, deckSize };
   }
+
 
   function richestNodeForCid(cid){
     const nodes = Array.from(document.querySelectorAll(`[data-cid="${CSS.escape(String(cid))}"]`));
@@ -1845,396 +2239,269 @@ return { ok, entry: entryRef, deckSize };
 
 
 
-    const finalizeDrop = () => {
-      // same body you already had in onUp(), but we'll conditionally skip
-      // zone moves / ownership spam if this was just a tap (didMove === false)
+ const finalizeDrop = () => {
+  // same body you already had in onUp(), but we'll conditionally skip
+  // zone moves / ownership spam if this was just a tap (didMove === false)
 
-      // turn off visual drag state
-      document.body.style.cursor = '';
-      el.classList.remove('is-dragging');
-      streamStop();
-
-      // If it was a drag (we actually moved):
-      if (didMove) {
-        // leave low-profile mode now that we've dropped
-        try {
-          if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
-            window.Tooltip.setLowProfile(false, el);
-          }
-        } catch (e) {
-          console.warn('[Place:drag] failed to exit lowProfile tooltip mode', e);
-        }
-
-        // final XY where it landed
-        const x = parseFloat(el.style.left) || 0;
-        const y = parseFloat(el.style.top)  || 0;
-
-        // 1) Recompute control/side now that it's dropped
-        const ownershipSnapshot = _applyOwnershipAfterDrop(el);
-        // 1.5) Commander zone snap
-        const wasInCommander = _markCommanderZoneStatus(el);
-        if (wasInCommander) {
-          _snapToCommanderZone(el);
-          _markCommanderZoneStatus(el);
-        }
-
-        // 2) Broadcast final MOVE
-        try {
-          const mc = _calcManaColorPayload(el);
-         //console.log(
-         //  '%c[COLOR FINAL MOVE]', 'color:#ff0;font-weight:bold',
-         //  {
-         //    cid: el.dataset.cid,
-         //    sendingColors: mc.colors,
-         //    manaCostRaw: mc.manaCostRaw
-         //  }
-         //);
-
-          // full=true so we include control, zones, sickness, mana/colors etc.
-          const packetMove = _buildMovePacketFor(el, x, y, /*full=*/true);
-
-          // make sure ownership/side reflect where it actually landed
-          packetMove.ownerOriginal = ownershipSnapshot?.ownerOriginal
-                                   || el.dataset.ownerOriginal
-                                   || packetMove.ownerOriginal
-                                   || null;
-
-          packetMove.ownerCurrent  = ownershipSnapshot?.ownerCurrent
-                                   || el.dataset.ownerCurrent
-                                   || packetMove.ownerCurrent
-                                   || null;
-
-          packetMove.fieldSide     = ownershipSnapshot?.fieldSide
-                                   || el.dataset.fieldSide
-                                   || packetMove.fieldSide
-                                   || null;
-
-          packetMove.inCommandZone = el.dataset.inCommandZone
-                                   || packetMove.inCommandZone
-                                   || null;
-
-          (window.rtcSend || window.peer?.send)?.(packetMove);
-
-          //if (DBG.on) {
-          //  console.log('%c[Place:drag→send final move]', 'color:#6cf', packetMove);
-          //}
-        } catch (e) {
-          console.warn('[Place:onUp] final move send failed', e);
-        }
-
-        // 3) ALSO broadcast owner control swap info
-        try {
-          const mc2 = _calcManaColorPayload(el);
-          const packetSwap = {
-  type          : 'owner-swap',
-  cid           : el.dataset.cid,
-
-  // NEW: who sent this
-  senderSeat    : String(mySeat()) || '1',
-
-  ownerOriginal : ownershipSnapshot?.ownerOriginal || el.dataset.ownerOriginal || null,
-  ownerCurrent  : ownershipSnapshot?.ownerCurrent  || el.dataset.ownerCurrent  || null,
-  fieldSide     : ownershipSnapshot?.fieldSide     || el.dataset.fieldSide     || null,
-  inCommandZone : el.dataset.inCommandZone         || null,
-  manaCostRaw   : mc2.manaCostRaw,
-  colors        : mc2.colors
-};
-
-          (window.rtcSend || window.peer?.send)?.(packetSwap);
-          //if (DBG.on) {
-          //  console.log('%c[Place:drag→send owner-swap]', 'color:#fc6', packetSwap);
-          //}
-        } catch (e) {
-          console.warn('[Place:onUp] owner-swap send failed', e);
-        }
-
-        // 🔍 ZONE DROP CHECK (grave/exile/deck/hand)
-        const rect = el.getBoundingClientRect();
-        const cx = rect.left + rect.width/2;
-        const cy = rect.top  + rect.height/2;
-
-        const isOver = id => {
-          const zone = document.getElementById(id);
-          if (!zone) return false;
-          const r = zone.getBoundingClientRect();
-          return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
-        };
-
-        const removeCard = (finalZone = null, finalOwner = 'player') => {
-  // finalZone: 'graveyard' | 'exile' | 'deck' | null
-  // finalOwner: 'player' | 'opponent'
-  const cidVal = el.dataset.cid;
-  // console.warn('[REMOVE] cleanup', { cidVal, finalZone, finalOwner });
-
-  // If we're explicitly sending this to a zone (grave/exile/etc),
-  // update ownership snapshot on the element first so the state we
-  // broadcast + record matches reality.
-  if (finalOwner === 'player') {
-    el.dataset.ownerCurrent = String(mySeat());
-    el.dataset.owner        = String(mySeat());
-  } else if (finalOwner === 'opponent') {
-    const otherSeat = _otherSeatNum(mySeat());
-    el.dataset.ownerCurrent = String(otherSeat);
-    el.dataset.owner        = String(otherSeat);
-  }
-
-  // Record to the correct zone list
+  // 🔵 INITIAL: unconditional pre-drop snapshot of fieldSide / inCommandZone
   try {
-    if (
-      (finalZone === 'graveyard' || finalZone === 'exile') &&
-      (finalOwner === 'player' || finalOwner === 'opponent')
-    ) {
-      Zones?.recordCardToZone?.(finalOwner, finalZone, el);
-
-      // console.log('[REMOVE] Zones.recordCardToZone stored', {
-      //   ownerSide: finalOwner,
-      //   zone: finalZone,
-      //   cid: cidVal,
-      //   name: el.dataset.name || el.title || '',
-      //   img: el.currentSrc || el.src || '',
-      //   typeLine: el.dataset.typeLine || ''
-      // });
-    }
-  } catch (err) {
-    console.warn('[REMOVE] recordCardToZone failed', err);
-  }
-
-  // Kill tooltip
-  try {
-    window.Tooltip?.hide?.();
+    console.log('[DROP:BEFORE]', {
+      cid: el?.dataset?.cid,
+      name: el?.dataset?.name || el?.title || '',
+      fieldSide: el?.dataset?.fieldSide ?? null,
+      inCommandZone: el?.dataset?.inCommandZone ?? null
+    });
   } catch (e) {
-    console.warn('[REMOVE] Tooltip cleanup error:', e);
+    console.warn('[DROP:BEFORE] logging failed', e);
   }
 
-  // Detach badges/overlays so we don't leak DOM junk
-  try {
-    if (window.Badges?.detach) {
-      window.Badges.detach(el);
-    } else {
-      // console.warn('[REMOVE] Badges.detach not available');
-    }
-  } catch (e) {
-    console.warn('[REMOVE] Badges cleanup error:', e);
-  }
+  // turn off visual drag state
+  document.body.style.cursor = '';
+  el.classList.remove('is-dragging');
+  streamStop();
 
-  // Physically remove card from table
-  try { el.remove(); } catch {}
-  state.byCid.delete(cidVal);
+  // If it was a drag (we actually moved):
+  if (didMove) {
 
-  // Broadcast remove so opponent mirrors it.
-  // IMPORTANT: include both zone and who got it.
-  try {
-    const packetRemove = {
-      type: 'remove',
-      cid: cidVal,
-      zone: finalZone || '',
-      ownerSide: finalOwner // <-- tells remote whose pile it went to
-    };
-    (window.rtcSend || window.peer?.send)?.(packetRemove);
-    // if (DBG.on) console.log('[Place:remove→send]', packetRemove);
-  } catch (e) {
-    console.warn('[REMOVE] RTC send failed:', e);
-  }
-};
-
-
-        // ---- DROP DEST DESTINATION LOGIC ----
-        // ---- DROP DEST DESTINATION LOGIC ----
-        // Recheck card center after drop
-        const rect2 = el.getBoundingClientRect();
-        const cx2 = rect2.left + rect2.width / 2;
-        const cy2 = rect2.top  + rect2.height / 2;
-
-        // helper: generic center-point test (kept for most zones)
-const overZoneCenter = (zoneId) => {
-  const z = document.getElementById(zoneId);
-  if (!z) return false;
-  const zr = z.getBoundingClientRect();
-  return (
-    cx2 >= zr.left &&
-    cx2 <= zr.right &&
-    cy2 >= zr.top &&
-    cy2 <= zr.bottom
-  );
-};
-
-// helper: rectangle intersection test between the card and a zone
-// tol expands the zone upward a bit (so near-edge drops still count)
-const overZoneByIntersect = (zoneId, tol = 0) => {
-  const z = document.getElementById(zoneId);
-  if (!z) return false;
-
-  const zr = z.getBoundingClientRect();
-  const cr = el.getBoundingClientRect();
-
-  // expand zone upward by tol to make catching easier at top edge
-  const zl = zr.left;
-  const zrgt = zr.right;
-  const zt = zr.top - tol;
-  const zb = zr.bottom;
-
-  const cl = cr.left;
-  const crgt = cr.right;
-  const ct = cr.top;
-  const cb = cr.bottom;
-
-  const horiz = (cl < zrgt) && (crgt > zl);
-  const vert  = (ct < zb)   && (cb > zt);
-  return horiz && vert;
-};
-
-
-        // Before any zone action, if spawn is still pending and we're NOT in hand, finalize it.
-if (el.dataset.pendingSpawn === 'true' && !overZoneByIntersect('handZone', 12)) {
-  try { el._finalizeSpawn?.(); } catch {}
-}
-
-
-// 1. Hand (goes back to MY hand, not anyone's grave/exile)
-// Use rectangle intersection for Hand so drops near the top edge still count.
-if (overZoneByIntersect('handZone', /*tol=*/12)) {
-  if (el.dataset.pendingSpawn === 'true') {
-    try { window.Tooltip?.hide?.(); } catch {}
+    // leave low-profile mode now that we've dropped
     try {
-      window.flyDrawToHand?.(
-        { name: el.title || '', imageUrl: el.currentSrc || el.src },
-        null
-      );
-    } catch {}
-    // 🔹 Count as a RETURN to hand (not a draw)
-    try { window.TurnUpkeep?.noteHand?.(+1, { reason: 'return', via: 'drop' }); } catch {}
-
-    try { el.remove(); } catch {}
-    try { state.byCid.delete(el.dataset.cid); } catch {}
-    el.dataset.pendingSpawn = 'false';
-    return;
-  } else {
-    try {
-      window.flyDrawToHand?.(
-        { name: el.title || '', imageUrl: el.currentSrc || el.src },
-        null
-      );
-    } catch {}
-    // 🔹 Count as a RETURN to hand (not a draw)
-    try { window.TurnUpkeep?.noteHand?.(+1, { reason: 'return', via: 'drop' }); } catch {}
-
-    removeCard(null, 'player');
-  }
-}
-
-
-
-
-        // 2. MY graveyard / exile
-        else if (overZoneCenter('pl-graveyard')) {
-  removeCard('graveyard', 'player');
-  try { window.TurnUpkeep?.noteGrave?.(); } catch {}
-}
-
-
-else if (overZoneCenter('pl-exile')) {
-  removeCard('exile', 'player');
-  try { window.TurnUpkeep?.noteExile?.(); } catch {}
-}
-
-
-
-        // 3. OPPONENT graveyard / exile
-        //    NOTE: zones.js builds ids "op-graveyard" / "op-exile"
-        //    (NOT "opp-...")
-        else if (overZoneCenter('op-graveyard')) {
-  removeCard('graveyard', 'opponent');
-  try { window.TurnUpkeep?.noteGrave?.(); } catch {}
-}
-
-
-        else if (overZoneCenter('op-exile')) {
-  removeCard('exile', 'opponent');
-  try { window.TurnUpkeep?.noteExile?.(); } catch {}
-}
-
-
-
-        // 4. MY deck (top/bottom/random popup then remove from table)
-else if (overZoneCenter('pl-deck')) {
-  showDeckInsertOptions(el, (choice) => {
-    const pos = String(choice || 'top').toLowerCase(); // 'top' | 'bottom' | 'random'
-    let ok = false;
-    try {
-      if (typeof DeckLoading?.insertFromTable === 'function') {
-        ok = !!DeckLoading.insertFromTable(el, pos);
-      } else {
-        console.warn('[Deck] DeckLoading.insertFromTable not found (module import missing?)');
-      }
-
-      if (pos === 'random' && typeof DeckLoading?.shuffleLibrary === 'function') {
-        // only shuffle if user confirmed in the popup; log already printed there
-        // DeckLoading.shuffleLibrary();
+      if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
+        window.Tooltip.setLowProfile(false, el);
       }
     } catch (e) {
-      console.warn('[Deck] insertFromTable threw:', e);
+      console.warn('[Place:drag] failed to exit lowProfile tooltip mode', e);
     }
 
-    if (!ok) {
-      console.warn('[Deck] insertFromTable failed — removing from table anyway');
-    } else {
-      // 🔹 Tell TurnUpkeep a card went back into our library (Top/Bottom/Random)
-      try {
-        const seatNum = Number(
-          el?.dataset?.ownerCurrent ||
-          el?.dataset?.ownerOriginal ||
-          (typeof window.mySeat === 'function' ? window.mySeat() : 1)
-        );
+    // final XY where it landed
+    const x = parseFloat(el.style.left) || 0;
+    const y = parseFloat(el.style.top)  || 0;
 
-        let deckSizeAfter = 0;
+    // 1) Recompute control/side now that it's dropped
+    const ownershipSnapshot = _applyOwnershipAfterDrop(el);
+    // 1.5) Commander zone snap
+    const wasInCommander = _markCommanderZoneStatus(el);
+    if (wasInCommander) {
+      _snapToCommanderZone(el);
+      _markCommanderZoneStatus(el);
+    }
+
+    // 2) Broadcast final MOVE
+    try {
+      const mc = _calcManaColorPayload(el);
+
+      // full=true so we include control, zones, sickness, mana/colors etc.
+      const packetMove = _buildMovePacketFor(el, x, y, /*full=*/true);
+
+      // make sure ownership/side reflect where it actually landed
+      packetMove.ownerOriginal = ownershipSnapshot?.ownerOriginal
+                               || el.dataset.ownerOriginal
+                               || packetMove.ownerOriginal
+                               || null;
+
+      packetMove.ownerCurrent  = ownershipSnapshot?.ownerCurrent
+                               || el.dataset.ownerCurrent
+                               || packetMove.ownerCurrent
+                               || null;
+
+      packetMove.fieldSide     = ownershipSnapshot?.fieldSide
+                               || el.dataset.fieldSide
+                               || packetMove.fieldSide
+                               || null;
+
+      packetMove.inCommandZone = el.dataset.inCommandZone
+                               || packetMove.inCommandZone
+                               || null;
+
+      (window.rtcSend || window.peer?.send)?.(packetMove);
+
+      //if (DBG.on) {
+      //  console.log('%c[Place:drag→send final move]', 'color:#6cf', packetMove);
+      //}
+    } catch (e) {
+      console.warn('[Place:onUp] final move send failed', e);
+    }
+
+    // 3) ALSO broadcast owner control swap info
+    try {
+      const mc2 = _calcManaColorPayload(el);
+      const packetSwap = {
+        type          : 'owner-swap',
+        cid           : el.dataset.cid,
+
+        // NEW: who sent this
+        senderSeat    : String(mySeat()) || '1',
+
+        ownerOriginal : ownershipSnapshot?.ownerOriginal || el.dataset.ownerOriginal || null,
+        ownerCurrent  : ownershipSnapshot?.ownerCurrent  || el.dataset.ownerCurrent  || null,
+        fieldSide     : ownershipSnapshot?.fieldSide     || el.dataset.fieldSide     || null,
+        inCommandZone : el.dataset.inCommandZone         || null,
+        manaCostRaw   : mc2.manaCostRaw,
+        colors        : mc2.colors
+      };
+
+      (window.rtcSend || window.peer?.send)?.(packetSwap);
+      //if (DBG.on) {
+      //  console.log('%c[Place:drag→send owner-swap]', 'color:#fc6', packetSwap);
+      //}
+    } catch (e) {
+      console.warn('[Place:onUp] owner-swap send failed', e);
+    }
+
+    // ✅ NEW: delegate all zone logic (hand / grave / exile / deck) to evaluateDropZones,
+    // but first, mirror the old "return to hand" tally so stats stay identical.
+    try {
+      const inHandNow = __overZoneByIntersect(el, 'handZone', /*tol=*/12);
+      if (inHandNow) {
         try {
-          const lib =
-            (DeckLoading?.state?.library) ||
-            (window.DeckLoading?.state?.library) ||
-            [];
-          deckSizeAfter = lib.length;
-        } catch {}
+          const seatNow =
+            (typeof window.mySeat === 'function')
+              ? Number(window.mySeat())
+              : 1;
 
-        window.TurnUpkeep?.noteLibrary?.(
-          +1,
-          {
-            seat: seatNum,
+          window.TurnUpkeep?.noteHand?.(+1, {
+            seat:   seatNow,
             reason: 'return',
-            pos,                          // 'top' | 'bottom' | 'random'
-            via: 'deckInsertSingle',      // single-card popup path
-            cid: el?.dataset?.cid || null,
-            deckSizeAfter
-          }
-        );
-      } catch (err) {
-        console.warn('[Deck] noteLibrary failed', err);
+            via:    'drop'
+          });
+        } catch (err) {
+          console.warn('[Place] TurnUpkeep.noteHand(+1) failed on hand return (delegate path)', err);
+        }
       }
+    } catch (e) {
+      console.warn('[Place] inHandNow / noteHand check failed', e);
     }
 
-    removeCard('deck', 'player'); // keep visual state in sync
-  });
+    // 🔻 All zone moves + onTable flipping + tablePresence logs happen here now
+    try {
+      evaluateDropZones(el);
+    } catch (e) {
+      console.warn('[Place] evaluateDropZones failed', e);
+    }
+
+  } else {
+    // TAP ONLY (no movement)
+    // We ALREADY showed tooltip.onDown and set lowProfile(true).
+    // For a tap we actually want to UN-dock it so you can read it.
+    try {
+      if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
+        window.Tooltip.setLowProfile(false, el);
+      }
+    } catch (e) {
+      console.warn('[Place:tap] failed to exit lowProfile tooltip mode', e);
+    }
+    // We intentionally do NOT do owner-swap / zone-drop / move broadcast on pure tap.
+  }
+
+  // 🔄 Table presence debug + event:
+// This now runs for ANY drop, regardless of didMove.
+try {
+  const nowOnTable         = !!el.dataset.fieldSide;
+  const nowInCommanderZone = el.dataset.inCommandZone === 'true';
+  const cid                = el.dataset.cid || null;
+  const name               = el.dataset.name || el.getAttribute('alt') || '';
+
+  // NEW: detect commander being cast FROM the command zone:
+  //  - wasOnTable        === true   → it was already on the table (commander zone)
+  //  - nowOnTable        === true   → still on the table (battlefield)
+  //  - wasInCommandZone  === true   → drag started in the command zone
+  //  - nowInCommanderZone === false → dropped out of the command zone
+  const commanderCast =
+    wasOnTable &&
+    nowOnTable &&
+    wasInCommandZone &&
+    !nowInCommanderZone;
+
+  if (!wasOnTable && nowOnTable) {
+    console.log('[TABLE] card entered table', {
+      cid,
+      name,
+      fieldSide: el.dataset.fieldSide || null,
+      inCommandZone: nowInCommanderZone,
+      ownerCurrent: el.dataset.ownerCurrent || null
+    });
+
+    window.dispatchEvent(
+      new CustomEvent('card:tablePresence', {
+        detail: {
+          cid,
+          name,
+          onTable: true,
+          inCommandZone: nowInCommanderZone,
+          fieldSide: el.dataset.fieldSide || null,
+          ownerCurrent: el.dataset.ownerCurrent || null
+        }
+      })
+    );
+  }
+
+  // 🔸 NEW: commander cast event (command zone → battlefield)
+  if (commanderCast) {
+    console.log('[TABLE] commander cast from command zone', {
+      cid,
+      name,
+      fieldSide: el.dataset.fieldSide || null,
+      inCommandZone: nowInCommanderZone,
+      ownerCurrent: el.dataset.ownerCurrent || null
+    });
+
+    window.dispatchEvent(
+      new CustomEvent('card:tablePresence', {
+        detail: {
+          cid,
+          name,
+          onTable: true,                    // still on table, but now actually "cast"
+          inCommandZone: nowInCommanderZone, // should now be false
+          fieldSide: el.dataset.fieldSide || null,
+          ownerCurrent: el.dataset.ownerCurrent || null
+        }
+      })
+    );
+  }
+
+  if (wasOnTable && !nowOnTable) {
+    console.log('[TABLE] card left table', {
+      cid,
+      name,
+      fieldSide: el.dataset.fieldSide || null, // likely null now
+      inCommandZone: nowInCommanderZone,
+      ownerCurrent: el.dataset.ownerCurrent || null
+    });
+
+    window.dispatchEvent(
+      new CustomEvent('card:tablePresence', {
+        detail: {
+          cid,
+          name,
+          onTable: false,
+          inCommandZone: nowInCommanderZone,
+          fieldSide: el.dataset.fieldSide || null,
+          ownerCurrent: el.dataset.ownerCurrent || null
+        }
+      })
+    );
+  }
+} catch (e) {
+  console.warn('[TABLE] tablePresence debug failed', e);
+}
+
+  // 🔵 FINAL: unconditional post-drop snapshot of fieldSide / inCommandZone
+  try {
+    console.log('[DROP:AFTER]', {
+      cid: el?.dataset?.cid,
+      name: el?.dataset?.name || el?.title || '',
+      fieldSide: el?.dataset?.fieldSide ?? null,
+      inCommandZone: el?.dataset?.inCommandZone ?? null
+    });
+  } catch (e) {
+    console.warn('[DROP:AFTER] logging failed', e);
+  }
+
+  // unlock so remote can move it again
+  localDragLock.delete(el.dataset.cid);
 }
 
 
-        // (future: if you want to let me tuck into opponent's deck, mirror this with 'op-deck')
 
-      } else {
-        // TAP ONLY (no movement)
-        // We ALREADY showed tooltip.onDown and set lowProfile(true).
-        // For a tap we actually want to UN-dock it so you can read it.
-        try {
-          if (window.Tooltip && typeof window.Tooltip.setLowProfile === 'function') {
-            window.Tooltip.setLowProfile(false, el);
-          }
-        } catch (e) {
-          console.warn('[Place:tap] failed to exit lowProfile tooltip mode', e);
-        }
-        // We intentionally do NOT do owner-swap / zone-drop / move broadcast on pure tap.
-      }
-
-      // unlock so remote can move it again
-      localDragLock.delete(el.dataset.cid);
-    };
 
     const onUp = (pointerId) => {
       if (!dragging) return;
@@ -2603,18 +2870,42 @@ const outY = willMirror ? mirrorTopY(inY, cardH) : inY;
 
   // Build/update element
   let el = document.querySelector(`img.table-card[data-cid="${msg.cid}"]`);
-  if (!el) {
-    el = makeCardEl(msg.cid, msg.name, msg.img);
-    w.appendChild(el);
+if (!el) {
+  el = makeCardEl(msg.cid, msg.name, msg.img);
+  w.appendChild(el);
+  // Fresh remote spawn: wire up drag immediately
+  try {
     enableDrag(el);
-  } else {
-    if (msg.img)  el.src = msg.img;
-    if (msg.name) { el.title = msg.name; el.dataset.name = msg.name; }
+  } catch (e) {
+    console.warn('[RTC:spawn] enableDrag failed on fresh remote card', e);
   }
+} else {
+  if (msg.img)  el.src = msg.img;
+  if (msg.name) { el.title = msg.name; el.dataset.name = msg.name; }
+}
 
-  el.classList.add('remote-smooth');
-  el.style.left = `${inX}px`;
-  el.style.top  = `${outY}px`;
+// If this spawn is upgrading a temporary back-only ghost from hand,
+// clear the ghost marker and optionally trigger a flip animation hook.
+if (el.dataset.ghost === 'hand-drag') {
+  delete el.dataset.ghost;
+  el.classList.remove('remote-ghost-from-hand');
+  try {
+    el.classList.add('flip-from-back');
+    setTimeout(() => el.classList.remove('flip-from-back'), 350);
+  } catch (_) {}
+
+  // 🔵 NEW: ghost stubs were created without drag; upgrade them now
+  try {
+    enableDrag(el);
+  } catch (e) {
+    console.warn('[RTC:spawn] enableDrag failed on upgraded ghost card', e);
+  }
+}
+
+el.classList.add('remote-smooth');
+el.style.left = `${inX}px`;
+el.style.top  = `${outY}px`;
+
 
   // sync datasets (ownerCurrent, manaCostRaw, etc.) ... [rest of the body you already have stays the same]
   // ...
@@ -2721,9 +3012,6 @@ console.log('%c[RTC:spawn APPLY]', 'color:#8f8',
 
   // ---------- Public: apply remote move (mirror Y if from other seat) ----------
 function applyRemoteMove(msg) {
-  const el = document.querySelector(`img.table-card[data-cid="${msg.cid}"]`);
-  if (!el) return;
-
   // --- identify seats -------------------------------------------------
   const mySeatNum = Number(
     (typeof window.mySeat === 'function')
@@ -2751,8 +3039,33 @@ function applyRemoteMove(msg) {
     return;
   }
 
-// --- sender vs me (for mirror math) ---------------------------------
-const fromOther = (senderSeatNum !== mySeatNum);
+  let el = document.querySelector(`img.table-card[data-cid="${msg.cid}"]`);
+
+  // If this is a ghost drag from the opponent's hand and we don't
+  // have a DOM node yet, create a back-only stub so we can show motion.
+  if (!el && msg.ghost === 'hand-drag') {
+    const w = worldEl();
+    if (!w) return;
+
+    const backUrl =
+      (typeof window.DECK_BACK_URL === 'string' && window.DECK_BACK_URL) ||
+      msg.backImg ||
+      msg.img ||
+      '';
+
+    el = makeCardEl(msg.cid, '', backUrl);
+    w.appendChild(el);
+
+    el.dataset.ghost = 'hand-drag';
+    el.dataset.owner = String(senderSeatNum);
+    el.dataset.ownerCurrent = String(senderSeatNum);
+    el.classList.add('remote-ghost-from-hand');
+  }
+
+  if (!el) return;
+
+  // --- sender vs me (for mirror math) ---------------------------------
+  const fromOther = (senderSeatNum !== mySeatNum);
 
   // --- OWNERSHIP / STATE SYNC ----------------------------------------
   if (msg.ownerOriginal != null) {
@@ -2808,9 +3121,9 @@ const fromOther = (senderSeatNum !== mySeatNum);
   // don't mirror blockers mid-block so combat lines don't flip under you
   const isBlockerContext = el.classList.contains('battle-blocker');
 
-const willMirror = FORCE_MIRROR_TEST
-  ? true
-  : (fromOther && !isBlockerContext);
+  const willMirror = FORCE_MIRROR_TEST
+    ? true
+    : (fromOther && !isBlockerContext);
   
   const outY = willMirror ? mirrorTopY(inY, cardH) : inY;
 

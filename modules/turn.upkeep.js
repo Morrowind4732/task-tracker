@@ -5,7 +5,9 @@
 // + NEW: flat key export (mine/opp × tapped/untapped × type/subtype/color).
 
 import { UserInterface } from './user.interface.js';
+import { StatsWatcherActions } from './stats.watcher.actions.js';
 
+StatsWatcherActions.init();
 const Phase = Object.freeze({
   UNTAP: 'untap',
   UPKEEP_DRAW: 'upkeep_draw', // ← single combined phase
@@ -69,12 +71,16 @@ function freshSeatTallies(){
     startLibrary: null,   // snapshot at start of turn
     libraryIn: 0,         // 🔹 cards returned to library this turn
     libraryOut: 0,        // 🔹 cards that left library this turn
-    netLibrary: 0, 
+    netLibrary: 0,
+    libraryCurrent: null, // 🔹 absolute current library size (mirrored via RTC)
 
     // 🔹 hand movement
     returnsToHand: 0,
     leavesHand: 0,
     netHand: 0,
+    handCount: null,      // 🔹 absolute current hand size (mirrored via RTC)
+
+
 
     // 🔹 per-seat GY / Exile splits
     toGraveyardFromHand: 0,
@@ -83,6 +89,7 @@ function freshSeatTallies(){
     toExileTotal: 0,
 
     scries: 0,
+    tutors: 0,           // 🔹 NEW: per-seat tutors
     surveils: 0,
     investigates: 0,
     attackersDeclared: 0,
@@ -145,6 +152,41 @@ function _broadcastPhase(){
 function normKey(s){
   return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'');
 }
+
+function _computeHandCountDOMForSeat(seat) {
+  const seatStr = String(seat === 2 ? 2 : 1);
+  let count = 0;
+  try {
+    const handEls = document.querySelectorAll(
+      'img.hand-card[data-cid], img[data-zone="hand"][data-cid]'
+    );
+    handEls.forEach(el => {
+      const owner = (el.dataset.ownerCurrent ?? el.dataset.owner ?? '')
+        .toString()
+        .match(/\d+/)?.[0] || '1';
+      if (owner === seatStr) count++;
+    });
+  } catch {}
+  return count;
+}
+
+// We only know our own library size locally (via DeckLoading.state.library).
+// Remote seats receive their absolute size via RTC 'library_abs'.
+function _computeLibraryCountForSeat(seat) {
+  const s = seatKey(seat);
+  const mine = mySeatNum();
+  if (s !== mine) return null;
+
+  try {
+    // best-effort: current local library size
+    const len = (window.DeckLoading?.state?.library?.length) | 0;
+    return len;
+  } catch {
+    return null;
+  }
+}
+
+
 
 // Small MV helper from a mana cost string like "{1}{B}{B}"
 function computeManaValueFromCost(costStr) {
@@ -546,9 +588,23 @@ function _resetTalliesForNewTurn(){
     const mySeat = Number(window.mySeat?.() ?? 1);
     const libLen = (window.DeckLoading?.state?.library?.length) | 0;
     _Tallies.bySeat[mySeat].startLibrary = libLen;
-    // leave opponent as null unless you mirror counts
+
+    // also emit a stats event + RTC packet so the opponent can display it
+    _emitStatsEvent('library_start', {
+      seat:   mySeat,
+      delta:  libLen,          // treat as "absolute" for this metric
+      source: 'local',
+      raw:    { absolute: libLen }
+    });
+
+    _sendStatsUpdate('library_start', {
+      seat:     mySeat,
+      delta:    libLen,        // ensures applyRemoteStatsUpdate doesn't early-return
+      absolute: libLen
+    });
   } catch {}
 }
+
 
 // -----------------------------
 // Stats RTC helpers
@@ -583,8 +639,17 @@ function applyRemoteStatsUpdate(msg = {}) {
     const metric = String(metricRaw).toLowerCase();
     if (!metric) return;
 
-    const delta = Number(msg.delta) || 0;
-    if (!delta) return;
+    const delta = Number(msg.delta);
+    const isAbsoluteMetric =
+      metric === 'library_start' ||
+      metric === 'hand_abs'      ||
+      metric === 'library_abs';
+
+    if (!isAbsoluteMetric && (!Number.isFinite(delta) || delta === 0)) {
+      return;
+    }
+
+
 
     const seat = seatKey(msg.seat ?? msg.forSeat ?? msg.fromSeat ?? _S.activeSeat);
     const seatTallies = _Tallies.bySeat[seat];
@@ -596,6 +661,19 @@ function applyRemoteStatsUpdate(msg = {}) {
         seatTallies.draws = (seatTallies.draws || 0) + d;
         break;
       }
+	  
+	  case 'lifegain':
+        seatTallies.lifegain = (seatTallies.lifegain || 0) + Math.abs(delta);
+        break;
+
+      case 'lifeloss':
+        seatTallies.lifeloss = (seatTallies.lifeloss || 0) + Math.abs(delta);
+        break;
+
+      // 🔧 future metrics can be wired here:
+      // case 'library_in':
+      //   seatTallies.libraryIn = (seatTallies.libraryIn || 0) + delta;
+      //   break;
 	  
 	  case 'scry': {
         const d = Math.abs(delta);
@@ -661,8 +739,39 @@ function applyRemoteStatsUpdate(msg = {}) {
         break;
       }
 
+
+      // absolute hand size from remote seat
+      case 'hand_abs': {
+        const abs =
+          Number(msg.absolute ?? msg.size ?? msg.value ?? msg.delta);
+        if (Number.isFinite(abs)) {
+          seatTallies.handCount = abs;
+
+          // 🔹 Whenever we learn a new absolute hand size for the remote seat,
+          //     refresh the tiny opponent-hand HUD.
+          try {
+            window.UserInterface?.updateOpponentHandStrip?.();
+          } catch (e) {
+            console.warn('[TurnUpkeep] updateOpponentHandStrip failed on hand_abs', e);
+          }
+        }
+        break;
+      }
+
+
+      // absolute library size from remote seat
+      case 'library_abs': {
+        const abs =
+          Number(msg.absolute ?? msg.size ?? msg.value ?? msg.delta);
+        if (Number.isFinite(abs)) {
+          seatTallies.libraryCurrent = abs;
+        }
+        break;
+      }
+
+
       case 'hand': {
-        const d = delta;
+        const d = Number.isFinite(delta) ? delta : 0;
         if (d === 0) break;
 
         if (d > 0) {
@@ -679,6 +788,16 @@ function applyRemoteStatsUpdate(msg = {}) {
         seatTallies.netHand =
           (seatTallies.returnsToHand || 0) -
           (seatTallies.leavesHand    || 0);
+        break;
+      }
+
+      case 'library_start': {
+        // absolute library size at start of turn for this seat
+        const abs =
+          Number(msg.absolute ?? msg.size ?? msg.value ?? msg.delta);
+        if (Number.isFinite(abs)) {
+          seatTallies.startLibrary = abs;
+        }
         break;
       }
 
@@ -699,10 +818,28 @@ function applyRemoteStatsUpdate(msg = {}) {
         break;
       }
 
+	  
+	        case 'tutors': {
+        const d = Math.abs(Number(delta) || 0);
+
+        // global
+        _Tallies.tutors = (_Tallies.tutors || 0) + d;
+
+        // per-seat
+        seatTallies.tutors = (seatTallies.tutors || 0) + d;
+        break;
+      }
+
       // 🔧 other metrics can be wired here later
       default:
         console.warn('[TurnUpkeep] applyRemoteStatsUpdate: unknown metric', msg);
         break;
+    }
+	
+	    // Keep netLife consistent on remote side too
+    if (metric === 'lifegain' || metric === 'lifeloss') {
+      seatTallies.netLife =
+        (seatTallies.lifegain || 0) - (seatTallies.lifeloss || 0);
     }
 
     // Let watchers know this was applied from RTC.
@@ -800,12 +937,50 @@ function recordTap(seat, cid){ recordTapInternal(seatKey(seat), cid); }
 function recordTapInternal(s, cid){ _Tallies.bySeat[s].taps++; }
 function recordUntap(seat, cid){ recordUntapInternal(seatKey(seat), cid); }
 function recordUntapInternal(s, cid){ _Tallies.bySeat[s].untaps++; }
-function recordLife(seat, {gain=0,loss=0}={}){
+function recordLife(seat, { gain = 0, loss = 0 } = {}) {
   const s = seatKey(seat);
-  if (gain) _Tallies.bySeat[s].lifegain += Math.abs(gain|0);
-  if (loss) _Tallies.bySeat[s].lifeloss += Math.abs(loss|0);
-  _Tallies.bySeat[s].netLife = _Tallies.bySeat[s].lifegain - _Tallies.bySeat[s].lifeloss;
+  const gainAmt = Math.max(0, gain | 0);
+  const lossAmt = Math.max(0, loss | 0);
+
+  if (gainAmt) {
+    _Tallies.bySeat[s].lifegain = (_Tallies.bySeat[s].lifegain || 0) + gainAmt;
+  }
+  if (lossAmt) {
+    _Tallies.bySeat[s].lifeloss = (_Tallies.bySeat[s].lifeloss || 0) + lossAmt;
+  }
+
+  _Tallies.bySeat[s].netLife =
+    (_Tallies.bySeat[s].lifegain || 0) - (_Tallies.bySeat[s].lifeloss || 0);
+
+  // 🔵 Tell the watcher a life stat changed (local side)
+  if (gainAmt) {
+    _emitStatsEvent('lifegain', {
+      seat: s,
+      delta: gainAmt,
+      source: 'local',
+      raw: { seat, gain: gainAmt, loss: 0 }
+    });
+
+    // mirror to opponent so their tallies / rules also see it
+    try {
+      _sendStatsUpdate('lifegain', { seat: s, delta: gainAmt });
+    } catch {}
+  }
+
+  if (lossAmt) {
+    _emitStatsEvent('lifeloss', {
+      seat: s,
+      delta: lossAmt,
+      source: 'local',
+      raw: { seat, gain: 0, loss: lossAmt }
+    });
+
+    try {
+      _sendStatsUpdate('lifeloss', { seat: s, delta: lossAmt });
+    } catch {}
+  }
 }
+
 function recordCounter(kind, delta=1){ inc(_Tallies.countersPlaced, String(kind), delta); }
 function recordToken(kind, delta=1){ inc(_Tallies.tokensCreated , String(kind), delta); }
 
@@ -829,6 +1004,33 @@ function recordScry(seat, n){
     delta
   });
 }
+
+function recordTutor(seat, n){
+  const s     = seatKey(seat);
+  const delta = Math.max(1, n|0);
+
+  // global counter
+  _Tallies.tutors = (_Tallies.tutors || 0) + delta;
+
+  // per-seat counter used by TurnStatsOverlay
+  const seatTallies = _Tallies.bySeat[s];
+  if (seatTallies) {
+    seatTallies.tutors = (seatTallies.tutors || 0) + delta;
+  }
+
+  _emitStatsEvent('tutors', {
+    seat:   s,
+    delta,
+    source: 'local',
+    raw:    { seat, n }
+  });
+
+  _sendStatsUpdate('tutors', {
+    seat:  s,
+    delta
+  });
+}
+
 
 function recordSurveil(seat, n){
   const s     = seatKey(seat);
@@ -1052,7 +1254,7 @@ function noteLibrary(delta = 1, { seat, reason = '', via = '', pos = '' } = {}){
 
 
 // --- NEW: hand movement (drop-to-hand vs leaving hand) ---
-function noteHand(delta = 1, { seat, reason = '', via = '' } = {}){
+function noteHand(delta = 1, { seat, reason = '', via = '' } = {}) {
   const s = seatKey(seat ?? _S.activeSeat);
   const d = (Number(delta) || 0);
 
@@ -1075,7 +1277,25 @@ function noteHand(delta = 1, { seat, reason = '', via = '' } = {}){
   // keep a net
   seatT.netHand = (seatT.returnsToHand || 0) - (seatT.leavesHand || 0);
 
-  // optional event for watchers/notifications
+  // 🔹 recompute absolute hand size for this seat from DOM
+  let absHand = null;
+  try {
+    absHand = _computeHandCountDOMForSeat(s);
+    if (Number.isFinite(absHand)) {
+      seatT.handCount = absHand;
+    }
+  } catch {}
+
+  // 🔹 recompute absolute library size for this seat (local seat only)
+  let absLib = null;
+  try {
+    absLib = _computeLibraryCountForSeat(s);
+    if (Number.isFinite(absLib)) {
+      seatT.libraryCurrent = absLib;
+    }
+  } catch {}
+
+  // optional event for watchers/notifications (delta-style)
   try {
     window.dispatchEvent(new CustomEvent('hand:delta', {
       detail: { seat: s, delta: d, reason, via,
@@ -1090,7 +1310,7 @@ function noteHand(delta = 1, { seat, reason = '', via = '' } = {}){
     }));
   } catch {}
 
-  // 🔹 stats event (local)
+  // 🔹 stats event (local, delta)
   _emitStatsEvent('hand', {
     seat: s,
     delta: d,
@@ -1098,14 +1318,48 @@ function noteHand(delta = 1, { seat, reason = '', via = '' } = {}){
     raw: { reason, via }
   });
 
-  // 🔹 RTC broadcast
+  // 🔹 RTC broadcast (delta)
   _sendStatsUpdate('hand', {
     seat: s,
     delta: d,
     reason,
     via
   });
+
+  // 🔹 stats event + RTC for absolute hand size
+  if (Number.isFinite(absHand)) {
+    _emitStatsEvent('hand_abs', {
+      seat:   s,
+      delta:  absHand, // treated as absolute
+      source: 'local',
+      raw:    { absolute: absHand }
+    });
+
+    _sendStatsUpdate('hand_abs', {
+      seat:     s,
+      delta:    absHand,   // keep non-zero so remote doesn't early-return
+      absolute: absHand
+    });
+  }
+
+  // 🔹 stats event + RTC for absolute library size (piggy-backing off hand updates)
+  if (Number.isFinite(absLib)) {
+    _emitStatsEvent('library_abs', {
+      seat:   s,
+      delta:  absLib, // treated as absolute
+      source: 'local',
+      raw:    { absolute: absLib }
+    });
+
+    _sendStatsUpdate('library_abs', {
+      seat:     s,
+      delta:    absLib,   // keep non-zero so remote doesn't early-return
+      absolute: absLib
+    });
+  }
 }
+
+
 
 
 
@@ -1359,11 +1613,14 @@ function debug(){
         libraryIn:s.libraryIn,
         libraryOut:s.libraryOut,
         netLibrary:s.netLibrary,
+        libraryCurrent:s.libraryCurrent,   // 🔹 NEW (absolute, mirrored)
 
         // hand
         returnsToHand:s.returnsToHand,
         leavesHand:s.leavesHand,
         netHand:s.netHand,
+        handCount:s.handCount,            // 🔹 NEW (absolute, mirrored)
+
 
         // grave / exile splits
         toGraveyardFromHand:s.toGraveyardFromHand,
@@ -1433,6 +1690,7 @@ export const TurnUpkeep = {
   recordScry,
   recordSurveil,
   recordInvestigate,
+  recordTutor,
   tallyAttackers,
   tallyBlockers,
   bump,

@@ -64,6 +64,9 @@ let _outcomeShown = false;
 // Burn effect: ensure we only fire once per outcome
 let _burnFired = false;
 
+  // Deck load status: used to gate the Close CTA
+  let _deckLoaded = false;
+
 
   // No autoClose flag present anymore.
   const _opts = {
@@ -115,8 +118,21 @@ let _burnFired = false;
   letter-spacing:.5px; font-weight:600; cursor:pointer;
   box-shadow:0 8px 24px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
   transition: transform .08s ease, box-shadow .2s ease, background .2s ease; }
-.portrait-overlay .cta button:hover{ box-shadow:0 10px 28px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.10); }
+}
+.portrait-overlay .cta button:hover{ box-shadow:0 18px 45px rgba(15,23,42,.95), 0 0 0 1px rgba(255,255,255,16); }
 .portrait-overlay .cta button:active{ transform: translateY(1px); }
+
+
+
+.portrait-overlay .cta button:active{ transform: translateY(1px); }
+/* Disabled = greyed out + no interaction */
+.portrait-overlay .cta button:disabled{
+  opacity:.55;
+  cursor:default;
+  box-shadow:0 0 0 1px rgba(148,163,184,.6);
+  background:radial-gradient(120% 200% at 50% 10%, #111827, #020617);
+}
+
 .portrait-overlay .close-debug { position:absolute; top:12px; right:12px; z-index:5; padding:8px 10px;
   border-radius:8px; border:1px solid #334155; color:#e5e7eb; background:#1e293b; cursor:pointer; display:none; }
 .portrait-overlay .result { position:absolute; top:18px; left:50%; transform:translateX(-50%);
@@ -216,17 +232,22 @@ overlay.appendChild(result);
   }
 
   function hide(){
-  const bothKnown = (typeof _dice?.p1?.value === 'number') && (typeof _dice?.p2?.value === 'number');
-  if (!bothKnown && !isDebugRoom()) return;
-  if (_DOM.overlay){
-    _DOM.overlay.classList.remove('portrait-visible');
-    setTimeout(() => {
-      if (_DOM.overlay) _DOM.overlay.classList.remove('portrait-open');
-      // Notify listeners that the overlay has closed
-      try { window.dispatchEvent(new CustomEvent('portraitOverlay:closed')); } catch {}
-    }, 200);
+    const bothKnown = (typeof _dice?.p1?.value === 'number') && (typeof _dice?.p2?.value === 'number');
+    const deckReady = _deckLoaded || isDebugRoom();
+
+    // Normal rooms: require both rolls AND deck loaded before closing.
+    if ((!bothKnown || !deckReady) && !isDebugRoom()) return;
+
+    if (_DOM.overlay){
+      _DOM.overlay.classList.remove('portrait-visible');
+      setTimeout(() => {
+        if (_DOM.overlay) _DOM.overlay.classList.remove('portrait-open');
+        // Notify listeners that the overlay has closed
+        try { window.dispatchEvent(new CustomEvent('portraitOverlay:closed')); } catch {}
+      }, 200);
+    }
   }
-}
+
 
 
   function destroy(){
@@ -1160,7 +1181,7 @@ if (!tie && !_burnFired){
 
 
 
-    // Flip CTA (always enable here)
+    // Flip CTA — but don't allow closing until the deck is fully loaded.
     if (_DOM.rollBtn){
       if (tie){
         _rollLocked.p1 = false; _rollLocked.p2 = false;
@@ -1168,11 +1189,18 @@ if (!tie && !_burnFired){
         _DOM.rollBtn.disabled = false;
         _DOM.rollBtn.onclick = () => rollForMySeat();
       } else {
-        _DOM.rollBtn.textContent = 'Close';
-        _DOM.rollBtn.disabled = false;
-        _DOM.rollBtn.onclick = () => hide();
+        if (_deckLoaded || isDebugRoom()){
+          _DOM.rollBtn.textContent = 'Close';
+          _DOM.rollBtn.disabled = false;
+          _DOM.rollBtn.onclick = () => hide();
+        } else {
+          _DOM.rollBtn.textContent = 'Loading decks…';
+          _DOM.rollBtn.disabled = true;
+          _DOM.rollBtn.onclick = null; // no-op while loading
+        }
       }
     }
+
 
     // Keep _rolled in sync so any other guards relying on it behave consistently.
     if (_rolled){
@@ -1324,8 +1352,10 @@ if (!tie && !_burnFired){
     _rollLocked = { p1:false, p2:false };
     _dice = { p1:{ seed:null, value:null }, p2:{ seed:null, value:null } };
     _outcomeShown = false;
-_burnFired = false;
-log('init: reset state; waiting for rolls');
+    _burnFired = false;
+    _deckLoaded = false;  // deck is not ready until deckloading:final-lib fires
+    log('init: reset state; waiting for rolls');
+
 
 
     if (_DOM.result){ _DOM.result.textContent = ''; _DOM.result.style.display = 'none'; }
@@ -1344,6 +1374,23 @@ log('init: reset state; waiting for rolls');
     log('setSendDiceRTC:', { has: !!_opts.sendDiceRTC });
   }
 
+  // Listen for deck-loading completion so we can unlock the Close CTA.
+  if (typeof window !== 'undefined' && !window.__PORTRAIT_DECKLOAD_HOOK){
+    window.__PORTRAIT_DECKLOAD_HOOK = 1;
+    try {
+      window.addEventListener('deckloading:final-lib', () => {
+        _deckLoaded = true;
+        try {
+          // Re-run the reconciler so the CTA updates from "Loading decks…" → "Close"
+          reconcileOutcome();
+        } catch (e){
+          warn('deckloading:final-lib handler failed', e);
+        }
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
 
   return {
     init,
@@ -1364,3 +1411,4 @@ log('init: reset state; waiting for rolls');
   };
 
 })();
+

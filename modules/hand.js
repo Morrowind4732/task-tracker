@@ -87,36 +87,60 @@ async function drawNToHand(n, deckEl){
   }
 
   for (let i = 0; i < n; i++) {
-  let drew = false;
+    let drew = false;
 
-  if (hasDrawOne) {
-    const card = DL.drawOne();
-    if (!card || !card.name) {
-      console.warn('[OpeningHand] library empty or card invalid at i=', i);
-      break;
+    if (hasDrawOne) {
+      const card = DL.drawOne();
+      if (!card || !card.name) {
+        console.warn('[OpeningHand] library empty or card invalid at i=', i);
+        break;
+      }
+      await flyDrawToHand(card, deckNode);   // ← hand stats handled inside flyDrawToHand
+      drew = true;
+    } else {
+      const ok = DL.drawOneToHand(deckNode);
+      if (!ok) {
+        console.warn('[OpeningHand] drawOneToHand failed at i=', i);
+        break;
+      }
+      drew = true;
+
+      // 🔵 NEW: legacy path still needs hand tally + RTC
+      try {
+        const seatNow =
+          (typeof window.mySeat === 'function')
+            ? Number(window.mySeat())
+            : 1;
+
+        window.TurnUpkeep?.noteHand?.(1, {
+          seat:   seatNow,
+          reason: 'draw',
+          via:    'drawOneToHand'
+        });
+      } catch (e) {
+        console.warn('[OpeningHand] noteHand failed for drawOneToHand', e);
+      }
+
+      await wait(60);
     }
-    await flyDrawToHand(card, deckNode);
-    drew = true;
-  } else {
-    const ok = DL.drawOneToHand(deckNode);
-    if (!ok) {
-      console.warn('[OpeningHand] drawOneToHand failed at i=', i);
-      break;
-    }
-    drew = true;
+
+    // 🔵 Real draw happened → bump draws + phase advance
+    try {
+      const seatNow =
+        (typeof window.mySeat === 'function')
+          ? Number(window.mySeat())
+          : 1;
+
+      window.TurnUpkeep?.recordDraw?.(seatNow, 1);
+      window.dispatchEvent(
+        new CustomEvent('turn:localDraw', { detail: { seat: seatNow } })
+      );
+    } catch {}
+
+    try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
     await wait(60);
   }
 
-  // 🔵 NEW: tell TurnUpkeep a real draw happened → flips Upkeep/Draw → Main 1
-  try {
-    const seatNow = (typeof window.mySeat === 'function') ? Number(window.mySeat()) : 1;
-    window.TurnUpkeep?.recordDraw?.(seatNow, 1);
-    window.dispatchEvent(new CustomEvent('turn:localDraw', { detail: { seat: seatNow }}));
-  } catch {}
-
-  try { window.dispatchEvent(new CustomEvent('deckloading:changed')); } catch {}
-  await wait(60);
-}
 
 }
 
@@ -404,8 +428,31 @@ export async function flyDrawToHand(card, deckEl){
   focus = insertAt;
   styleHandCardBase(img);
   attachHandGestures(img);
+
+  // 🔵 NEW: tell TurnUpkeep that the hand gained 1 card (stats + RTC 'hand' metric)
+  try {
+    const seatNow =
+      (typeof window.mySeat === 'function')
+        ? Number(window.mySeat())
+        : 1;
+
+    // This bumps:
+    //   - per-seat returnsToHand / netHand
+    //   - global handReturns / handLeaves
+    //   - emits 'hand:delta' locally
+    //   - sends stats:update { metric:'hand', delta:+1 } over RTC
+    window.TurnUpkeep?.noteHand?.(1, {
+      seat:   seatNow,
+      reason: 'draw',
+      via:    'flyDrawToHand'
+    });
+  } catch (e) {
+    console.warn('[Hand] flyDrawToHand → TurnUpkeep.noteHand failed', e);
+  }
+
   renderHand();
 }
+
 
 window.flyDrawToHand = flyDrawToHand; // convenience for Zones
 
@@ -609,6 +656,11 @@ function startGhostDrag(img, ev, opts = {}){
 
   let sx = ev.clientX, sy = ev.clientY;
 
+  let lastStreamX = NaN;
+  let lastStreamY = NaN;
+  let lastStreamTs = 0;
+
+
   const onMove = (e) => {
     sx = e.clientX;
     sy = e.clientY;
@@ -663,18 +715,36 @@ function startGhostDrag(img, ev, opts = {}){
         try { ghost.remove(); } catch {}
 
         const idx = handCards.indexOf(img);
-if (idx >= 0) handCards.splice(idx, 1);
+        if (idx >= 0) handCards.splice(idx, 1);
 
-// 🔹 Count a DECREASE from hand when promoting to table
-try { window.TurnUpkeep?.noteHand?.(-1, { reason: 'leave-hand', via: 'promote' }); } catch {}
+        // First update the DOM + focus so the hand zone actually reflects the new size
+        try { img.remove(); } catch {}
+        if (handCards.length === 0) {
+          focus = -1;
+        } else if (idx <= focus) {
+          focus = clamp(
+            focus - 1,
+            0,
+            Math.max(0, handCards.length - 1)
+          );
+        }
+        renderHand();
 
-try { img.remove(); } catch {}
-if (handCards.length === 0) {
-  focus = -1;
-} else if (idx <= focus) {
-  focus = clamp(focus - 1, 0, Math.max(0, handCards.length - 1));
-}
-renderHand();
+        // 🔹 Now that the DOM is correct, record a DECREASE from THIS SEAT's hand
+        try {
+          const seatNow =
+            (typeof window.mySeat === 'function')
+              ? Number(window.mySeat())
+              : 1;
+
+          window.TurnUpkeep?.noteHand?.(-1, {
+            seat:   seatNow,
+            reason: 'leave-hand',
+            via:    'promote'
+          });
+        } catch (e) {
+          console.warn('[Hand→Table] TurnUpkeep.noteHand(-1) failed', e);
+        }
 
 
         if (spawnedEl && opts.SHOW_TOOLTIP_EARLY){
@@ -713,10 +783,54 @@ renderHand();
       if (worldPos) {
         const cardH = getTableBaseHeightPx();
         const cardW = cardH * 0.714;
-        spawnedEl.style.left = (worldPos.wx - cardW/2) + 'px';
-        spawnedEl.style.top  = (worldPos.wy - cardH/2) + 'px';
+        const x = (worldPos.wx - cardW / 2);
+        const y = (worldPos.wy - cardH / 2);
+
+        spawnedEl.style.left = x + 'px';
+        spawnedEl.style.top  = y + 'px';
+
+        // 🔵 NEW: stream MOVE packets while dragging from hand,
+        //         but only as a "ghost" with the card back image.
+        const nowTs = (typeof performance !== 'undefined' && performance.now)
+          ? performance.now()
+          : Date.now();
+
+        // Throttle to ~30 fps and avoid duplicates
+        if ((x !== lastStreamX || y !== lastStreamY) && (nowTs - lastStreamTs) >= 32) {
+          lastStreamX = x;
+          lastStreamY = y;
+          lastStreamTs = nowTs;
+
+          try {
+            const mySeatFn = (typeof window.mySeat === 'function') ? window.mySeat : null;
+            const seatNow  = mySeatFn ? Number(mySeatFn()) : 1;
+
+            const pkt = {
+              type       : 'move',
+              cid        : spawnedEl.dataset.cid,
+              x,
+              y,
+              owner      : spawnedEl.dataset.ownerCurrent || spawnedEl.dataset.owner || String(seatNow),
+              senderSeat : String(seatNow) || '1'
+            };
+
+            // While this card is still a pending spawn from hand, mark
+            // the packet as a ghost so the opponent sees only the back.
+            if (spawnedEl.dataset.pendingSpawn === 'true') {
+              pkt.ghost = 'hand-drag';
+              if (typeof window.DECK_BACK_URL === 'string' && window.DECK_BACK_URL) {
+                pkt.backImg = window.DECK_BACK_URL;
+              }
+            }
+
+            (window.rtcSend || window.peer?.send)?.(pkt);
+          } catch (err) {
+            console.warn('[Hand→Table] streaming MOVE from hand failed', err);
+          }
+        }
       }
     }
+
   };
 
   const onUp = () => {

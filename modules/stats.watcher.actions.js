@@ -125,9 +125,14 @@ function _clearBindings() {
 const PLAYER_EVENT_METRIC_MAP = {
   gainlife: 'lifegain',
   loselife: 'lifeloss',
-  draw:     'draws'
-  // future: tutors, scries, surveils, etc.
+  draw:     'draws',
+  scry:     'scry',
+  surveil:  'surveil',
+  tutor:    'tutors'
+  // future: investigates, etc.
 };
+
+
 
 function _matchesSeatMode(seat, mode) {
   const s = seatKey(seat ?? mySeatSafe());
@@ -143,6 +148,94 @@ function _matchesSeatMode(seat, mode) {
       return true;
   }
 }
+
+  // Count how many cards on the battlefield a given seat controls that
+  // match the requested "controls" rule kind + value.
+  function _countControlledBoardMatches(seat, kind, value) {
+    const seatNum = Number(seat || 0);
+    if (!seatNum) return 0;
+    if (!value) return 0;
+
+    const val = String(value).trim().toLowerCase();
+    const kindKey = String(kind || '').toLowerCase();
+
+    // Table cards are your normal in-play permanents.
+    const cards = Array.from(
+      document.querySelectorAll('.table-card[data-field-side]')
+    );
+
+    let count = 0;
+
+    for (const el of cards) {
+      const d = el.dataset || {};
+
+      // Ignore anything that’s explicitly in the commander zone
+      if (d.inCommandZone === 'true') continue;
+
+      const owner = Number(d.ownerCurrent || d.owner || 0);
+      if (!owner || owner !== seatNum) continue;
+
+      // Type line text
+      const tl = String(
+        d.typeLine ||
+        d.frontTypeLine ||
+        d.backTypeLine ||
+        ''
+      ).toLowerCase();
+
+      // Parsed baseTypes snapshot, e.g. ["Creature","Minotaur","Warrior"]
+      let baseTypes = [];
+      if (d.baseTypes) {
+        try {
+          const parsed = JSON.parse(d.baseTypes);
+          if (Array.isArray(parsed)) {
+            baseTypes = parsed.map(x => String(x).toLowerCase());
+          }
+        } catch (_) {
+          // bad JSON? ignore and fall back to type line only
+        }
+      }
+
+      const hasType = (needle) => {
+        const n = String(needle).toLowerCase();
+        if (tl && tl.includes(n)) return true;
+        if (baseTypes.length && baseTypes.includes(n)) return true;
+        return false;
+      };
+
+      let matches = false;
+
+      // Card Type: Artifact / Enchantment / Creature / Planeswalker / etc.
+      if (kindKey === 'card type') {
+        if (hasType(val)) matches = true;
+      }
+
+      // Creature Type: Goblin, Elf, Dog, Minotaur, etc – only if it's a Creature.
+      else if (kindKey === 'creature type') {
+        const isCreature =
+          hasType('creature') ||
+          baseTypes.includes('creature');
+
+        const subtypeMatch = hasType(val);
+        if (isCreature && subtypeMatch) matches = true;
+      }
+
+      // Color Type (rough first pass, can be refined later).
+      else if (kindKey === 'color type') {
+        const colors = String(d.colors || d.color || '').toLowerCase();
+        if (colors && colors.includes(val)) matches = true;
+      }
+
+      // We’ll leave Creature Amount / Card Amount to the amount logic below.
+      if (matches) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+
 
 function _compilePlayerRule(rule, snap) {
   const eventKey = snap.playerEvent;
@@ -160,6 +253,37 @@ function _compilePlayerRule(rule, snap) {
     // 1) Tallies-based stats from TurnUpkeep
     if (eventType === 'stats:update') {
       const metric = String(event?.metric || '').toLowerCase();
+
+      // --- Special: "Discard to" → grave / exile from hand only ---
+      if (eventKey === 'discardto') {
+        const sub = String(snap.playerEventSub || '').toLowerCase(); // "graveyard" or "exile"
+
+        let wantMetric = null;
+        if (sub === 'graveyard') wantMetric = 'grave';
+        else if (sub === 'exile') wantMetric = 'exile';
+
+        // If a destination was chosen, require that specific metric.
+        if (wantMetric && metric !== wantMetric) return false;
+        // If no destination chosen, only accept grave/exile metrics at all.
+        if (!wantMetric && metric !== 'grave' && metric !== 'exile') return false;
+
+        const raw      = event.raw || {};
+        const fromZone = String(raw.fromZone || raw.from || raw.origin || '').toLowerCase();
+        const reason   = String(raw.reason || '').toLowerCase();
+        const via      = String(raw.via || '').toLowerCase();
+
+        const fromHand =
+          raw.fromHand === true ||
+          fromZone === 'hand' ||
+          reason === 'discard' ||
+          via === 'discard';
+
+        if (!fromHand) return false;
+
+        return _checkFrequencyForRule(rule.id, freq);
+      }
+
+      // --- Generic stat-backed events (life, draws, scries, surveils, etc.) ---
       const wantedMetric = PLAYER_EVENT_METRIC_MAP[eventKey];
 
       if (wantedMetric && metric === wantedMetric) {
@@ -205,10 +329,44 @@ function _compilePlayerRule(rule, snap) {
       return _checkFrequencyForRule(rule.id, freq);
     }
 
-    // discardto / sacrifice / controls / has will be wired later.
+        // 5) Controls: "If PLAYER controls ."
+    if (
+      eventKey === 'controls' &&
+      (
+        eventType === 'card:etb' ||
+        eventType === 'card:ltb' ||
+        eventType === 'card:moved' ||
+        eventType === 'card:tablePresence' ||  // 👈 new: board presence ping
+        eventType === 'stats:update'
+      )
+    ) {
+      const kind  = snap.controlsKind;      // "Creature Type", "Card Type", "Color Type", "Creature Amount", "Card Amount"
+      const value = snap.controlsValue;     // text for the type / color cases
+      const amt   = Number(snap.controlsAmount || 0); // for the Amount cases
+
+      if (!kind) return false;
+
+      const kindKey = String(kind).toLowerCase();
+      const count   = _countControlledBoardMatches(seat, kind, value);
+
+      // Amount kinds require meeting the threshold; typed/color kinds just need ≥ 1.
+      if (kindKey === 'creature amount' || kindKey === 'card amount') {
+        if (!amt) return false;
+        if (count < amt) return false;
+      } else {
+        if (count <= 0) return false;
+      }
+
+      return _checkFrequencyForRule(rule.id, freq);
+    }
+
+
+    // sacrifice / has will be wired later.
     return false;
   };
 }
+
+
 
 function _mapDuringPhaseToEvents(label) {
   switch (label) {
@@ -364,9 +522,11 @@ function _wireEventsOnce() {
   add('card:etb');       // detail: { cid, seat, fromZone, toZone:'table', ... }
   add('card:ltb');       // detail: { cid, seat, fromZone:'table', toZone, ... }
   add('card:moved');     // detail: { cid, seat, fromZone, toZone, cause? }
+  add('card:tablePresence'); // detail: { cid, name, onTable, inCommandZone, fieldSide, ownerCurrent }
 
   // Casting / life / counters / tokens
   add('spell:cast');     // detail: { cid, seat, name, typeLine, mv, colors, ... }
+
   add('life:changed');   // detail: { seat, gain, loss, net, sourceCid?, cause? }
   add('counter:placed'); // detail: { cid, seat, kind, delta }
   add('token:created');  // detail: { seat, kind, qty, cids? }
