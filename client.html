@@ -1,0 +1,1096 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NFR Invoice Uploader (V1)</title>
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:#111a33;
+      --panel2:#0f1730;
+      --text:#eaf0ff;
+      --muted:#a8b3d6;
+      --accent:#6aa6ff;
+      --good:#38d996;
+      --bad:#ff5f6d;
+      --warn:#ffcc66;
+      --border: rgba(255,255,255,.10);
+      --shadow: 0 12px 40px rgba(0,0,0,.35);
+      --radius: 16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; font-family:var(--sans); background:
+        radial-gradient(1200px 600px at 20% 10%, rgba(106,166,255,.18), transparent 60%),
+        radial-gradient(1000px 700px at 90% 30%, rgba(56,217,150,.10), transparent 55%),
+        var(--bg);
+      color:var(--text);
+      min-height:100vh;
+      display:flex;
+      align-items:flex-start;
+      justify-content:center;
+      padding:28px 16px;
+    }
+    .wrap{ width:min(980px, 100%); }
+
+    .topbar{
+      display:flex; gap:14px; align-items:center; justify-content:space-between;
+      margin-bottom:16px;
+    }
+    .brand{
+      display:flex; flex-direction:column; gap:2px;
+    }
+    .brand h1{ margin:0; font-size:18px; letter-spacing:.2px;}
+    .brand .sub{ color:var(--muted); font-size:13px;}
+
+    .pill{
+      display:inline-flex; gap:8px; align-items:center;
+      padding:8px 12px; border:1px solid var(--border); border-radius:999px;
+      background:rgba(255,255,255,.04);
+      font-size:13px; color:var(--muted);
+      max-width: 520px;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:16px;
+    }
+    @media (max-width: 860px){
+      .grid{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .card .head{
+      padding:14px 16px;
+      display:flex; align-items:center; justify-content:space-between;
+      background: rgba(0,0,0,.18);
+      border-bottom:1px solid var(--border);
+      gap:12px;
+      flex-wrap:wrap;
+    }
+    .card .head h2{ margin:0; font-size:14px; letter-spacing:.2px;}
+    .card .body{ padding:16px; background:rgba(0,0,0,.12); }
+
+    /* Labels: bigger + easier to read */
+    label{
+      display:block;
+      font-size:14px;
+      font-weight:600;
+      color:var(--text);
+      margin:0 0 8px;
+    }
+    input, select, button, textarea{ font:inherit; }
+    input[type="text"], input[type="email"], input[type="password"], input[type="date"], select{
+      width:100%;
+      padding:12px 12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      color: var(--text);
+      outline:none;
+      font-size:14px;
+    }
+    input::placeholder{ color: rgba(168,179,214,.6); }
+
+    .row{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    @media (max-width: 520px){ .row{ grid-template-columns: 1fr; } }
+
+    .btn{
+      border:1px solid var(--border);
+      background: rgba(106,166,255,.15);
+      color: var(--text);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      transition: transform .05s ease, background .2s ease;
+      user-select:none;
+    }
+    .btn:hover{ background: rgba(106,166,255,.22); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.secondary{ background: rgba(255,255,255,.06); }
+    .btn.danger{ background: rgba(255,95,109,.12); }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+    .stack{ display:flex; flex-direction:column; gap:12px; }
+
+    .status{
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      border-radius:12px;
+      padding:10px 12px;
+      color: var(--muted);
+      font-size:13px;
+      line-height:1.35;
+    }
+    .status.good{ color: var(--good); }
+    .status.bad{ color: var(--bad); }
+    .status.warn{ color: var(--warn); }
+
+    .mono{ font-family: var(--mono); font-size:12px; }
+    .tiny{ font-size:12px; color: var(--muted); }
+
+    .progress{
+      width:100%;
+      height:10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.04);
+      overflow:hidden;
+    }
+    .bar{
+      height:100%;
+      width:0%;
+      background: rgba(56,217,150,.55);
+      transition: width .15s ease;
+    }
+
+    .filebox{
+      border:1px dashed rgba(255,255,255,.22);
+      background: rgba(0,0,0,.16);
+      border-radius:12px;
+      padding:12px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+
+    .kbd{
+      display:inline-block;
+      border:1px solid var(--border);
+      background: rgba(255,255,255,.06);
+      padding:2px 6px;
+      border-radius:8px;
+      font-family: var(--mono);
+      font-size:11px;
+      color: var(--muted);
+    }
+
+    /* NEW: Clear visual separation between "Client search" and "Invoice form" */
+    .section{
+      border:1px solid rgba(255,255,255,.08);
+      background: rgba(0,0,0,.10);
+      border-radius:14px;
+      padding:14px;
+    }
+    .sectionHead{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:10px;
+    }
+    .sectionTitle{
+      font-weight:800;
+      letter-spacing:.2px;
+      font-size:13px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .spacerLine{
+      height:1px;
+      background: rgba(255,255,255,.08);
+      margin: 8px 0;
+    }
+
+    /* NEW: PDF preview */
+    .pdfPreviewWrap{
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:12px;
+      overflow:hidden;
+      background: rgba(0,0,0,.20);
+    }
+    .pdfPreview{
+      width:100%;
+      height:360px;
+      border:0;
+      display:block;
+    }
+
+    /* Modal */
+    #addClientModal{
+      position:fixed;
+      inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+      z-index:9999;
+      background: rgba(0,0,0,.78);
+      backdrop-filter: blur(4px);
+    }
+    #addClientModal[hidden]{ display:none !important; }
+    #addClientModal .card{ background: #0f1730; }
+    #addClientModal .body{ background: rgba(0,0,0,.30); }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <div class="topbar">
+      <div class="brand">
+        <h1>NFR Invoice Uploader</h1>
+        <div class="sub"></div>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <div class="pill" id="whoPill">Not signed in</div>
+        <div class="pill" id="adminPill" hidden>Admin: not verified</div>
+        <button class="btn secondary" id="signOutBtnUpload" hidden>Sign out</button>
+      </div>
+    </div>
+
+    <div class="stack" id="mainStack">
+
+      <!-- AUTH -->
+      <div class="card" id="authCard">
+        <div class="head">
+          <h2>1) Admin Sign-In</h2>
+        </div>
+
+        <div class="body">
+          <div class="stack">
+            <div>
+              <label>Email</label>
+              <input id="email" type="email" placeholder="invoices@email.com" autocomplete="username" />
+            </div>
+            <div>
+              <label>Password</label>
+              <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+            </div>
+            <div class="row">
+  <button class="btn" id="signInBtn" style="grid-column: 1 / -1;">Sign in</button>
+</div>
+
+            <div class="status" id="authStatus">Not signed in.</div>
+
+            <div class="tiny">
+              Tip: run this page via <span class="kbd">http://localhost</span> (not <span class="kbd">file://</span>).
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- UPLOADER -->
+      <div class="card" id="uploadCard" hidden>
+        <div class="head">
+          <h2>2) Upload Invoice PDF</h2>
+          <span class="tiny">Max PDF size enforced</span>
+        </div>
+
+        <div class="body">
+          <div class="stack">
+
+            <!-- SECTION: CLIENT PICKER -->
+            <div class="section">
+              <div class="sectionHead">
+                <div class="sectionTitle">Client selection</div>
+                <button class="btn secondary" id="addClientBtn" type="button" disabled style="padding:6px 10px; border-radius:10px;">
+                  + Add client
+                </button>
+              </div>
+
+              <div>
+                <label>Search client (from Firestore)</label>
+                <input
+                  id="clientSearch"
+                  type="text"
+                  placeholder="Start typing client name..."
+                  autocomplete="off"
+                  disabled
+                />
+                <div class="status tiny" id="clientResults" hidden style="margin-top:10px;"></div>
+
+                <!-- Keep UID for backend use, but hide it from the UI entirely -->
+                <input id="clientUidManual" type="text" hidden />
+              </div>
+            </div>
+
+            <!-- SECTION: INVOICE FORM -->
+            <div class="section">
+              <div class="sectionHead">
+                <div class="sectionTitle">Invoice details</div>
+                <div class="tiny" id="adminGateStatus">Admin verified. Ready.</div>
+              </div>
+
+              <div class="row">
+                <div>
+                  <label>Client Name</label>
+                  <input id="clientName" type="text" placeholder="Acme Construction" disabled />
+                </div>
+                <div>
+                  <label>Client Email</label>
+                  <input id="clientEmail" type="email" placeholder="client@domain.com" disabled />
+                </div>
+              </div>
+
+              <div class="row">
+                <div>
+                  <label>Dog Name</label>
+                  <input id="dogName" type="text" placeholder="Rex" disabled />
+                </div>
+                <div></div>
+              </div>
+
+              <div class="row">
+                <div>
+                  <label>Invoice Number</label>
+                  <input id="invoiceNumber" type="text" placeholder="INV-2026-0007" disabled />
+                </div>
+                <div>
+                  <label>Invoice Date</label>
+                  <input id="invoiceDate" type="date" disabled />
+                </div>
+              </div>
+
+              <div class="filebox">
+                <label>PDF File</label>
+                <input id="pdfFile" type="file" accept="application/pdf,.pdf" disabled />
+                <div class="tiny" id="fileMeta">No file selected.</div>
+
+                <!-- NEW: PDF preview -->
+                <div class="pdfPreviewWrap" id="pdfPreviewWrap" hidden>
+                  <iframe class="pdfPreview" id="pdfPreview" title="PDF preview"></iframe>
+                </div>
+
+                <div class="progress" aria-label="Upload progress">
+                  <div class="bar" id="progressBar"></div>
+                </div>
+              </div>
+
+              <div class="row">
+                <button class="btn" id="uploadBtn" disabled>Upload & Create Invoice Record</button>
+                <button class="btn danger" id="resetBtn" disabled>Reset Form</button>
+              </div>
+
+              <div class="status" id="uploadStatus">Waiting.</div>
+
+              <!-- NEW: Move storage path and debug down here (sleek top) -->
+              <div class="tiny mono" id="pathHint">
+                Storage path format:
+                <span class="kbd">invoices/&lt;clientEmail&gt;/Dogs/&lt;DogName&gt;/Dates/&lt;M-D-YYYY&gt;/Invoice/&lt;InvoiceID&gt;.pdf</span>
+              </div>
+
+              <div class="tiny mono" id="debugOut"></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Add Client Modal -->
+  <div id="addClientModal" hidden>
+    <div class="card" style="width:min(720px, 100%);">
+      <div class="head">
+        <h2>+ Add Client</h2>
+        <button class="btn secondary" id="closeAddClientBtn" type="button" style="padding:6px 10px;">X</button>
+      </div>
+      <div class="body">
+        <div class="stack">
+          <div class="status warn">
+            This creates a new client in Firestore and automatically generates a Client UID.
+          </div>
+
+          <div class="row">
+            <div>
+              <label>Client Name (required)</label>
+              <input id="newClientName" type="text" placeholder="Acme Construction" />
+            </div>
+            <div>
+              <label>Client Email</label>
+              <input id="newClientEmail" type="email" placeholder="client@domain.com" />
+            </div>
+          </div>
+
+          <div class="row">
+            <button class="btn" id="saveClientBtn" type="button">Add Client</button>
+            <button class="btn secondary" id="cancelClientBtn" type="button">Cancel</button>
+          </div>
+
+          <div class="status" id="addClientStatus">Waiting.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase (modular SDK) -->
+  <script type="module">
+    // ====== CONFIG YOU MUST SET ======
+    const firebaseConfig = {
+      apiKey: "AIzaSyBg4Drd4X2Jy0SodD8gL-nYd01GT0RIu24",
+      authDomain: "nfr-invoices.firebaseapp.com",
+      projectId: "nfr-invoices",
+      storageBucket: "nfr-invoices.firebasestorage.app",
+      messagingSenderId: "612294434678",
+      appId: "1:612294434678:web:639025c7a58acf518f2457"
+    };
+
+    // Must match your Storage/Firestore rules admin email EXACTLY
+    const ADMIN_EMAIL = "nfr.invoices@gmail.com";
+
+    // File size cap (bytes). 200 KB default.
+    const MAX_PDF_BYTES = 200 * 1024;
+
+    // ====== Imports ======
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+    import {
+      getFirestore,
+      collection,
+      getDocs,
+      doc,
+      setDoc,
+      addDoc,
+      serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    import {
+      getStorage,
+      ref,
+      uploadBytesResumable,
+      deleteObject
+    } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+
+    // ====== Init ======
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    // ====== DEBUG: expose to DevTools console ======
+    window._nfr = { app, auth, db, storage };
+
+    auth.onAuthStateChanged(async (u) => {
+      if(!u) return;
+      const t = await u.getIdTokenResult();
+      console.log("[AUTH DEBUG] user.email =", u.email);
+      console.log("[AUTH DEBUG] token.email =", t?.claims?.email);
+      console.log("[AUTH DEBUG] claims =", t?.claims);
+    });
+
+    // ====== UI elements ======
+    const el = (id) => document.getElementById(id);
+
+    const whoPill = el("whoPill");
+    const adminPill = el("adminPill");
+    const signOutBtnUpload = el("signOutBtnUpload");
+
+    const authStatus = el("authStatus");
+    const adminGateStatus = el("adminGateStatus");
+
+    const signInBtn = el("signInBtn");
+
+    // Add Client modal
+    const addClientBtn = el("addClientBtn");
+    const addClientModal = el("addClientModal");
+    const closeAddClientBtn = el("closeAddClientBtn");
+    addClientModal.hidden = true;
+    const cancelClientBtn = el("cancelClientBtn");
+    const saveClientBtn = el("saveClientBtn");
+    const addClientStatus = el("addClientStatus");
+    const newClientName = el("newClientName");
+    const newClientEmail = el("newClientEmail");
+
+    // Form fields
+    const clientSearch = el("clientSearch");
+    const clientResults = el("clientResults");
+    const clientUidManual = el("clientUidManual"); // hidden but still used
+    const clientName = el("clientName");
+    const clientEmail = el("clientEmail");
+    const dogName = el("dogName");
+    const invoiceNumber = el("invoiceNumber");
+    const invoiceDate = el("invoiceDate");
+    const pdfFile = el("pdfFile");
+    const fileMeta = el("fileMeta");
+    const uploadBtn = el("uploadBtn");
+    const resetBtn = el("resetBtn");
+    const uploadStatus = el("uploadStatus");
+    const debugOut = el("debugOut");
+    const progressBar = el("progressBar");
+
+    // PDF preview
+    const pdfPreviewWrap = el("pdfPreviewWrap");
+    const pdfPreview = el("pdfPreview");
+    let pdfObjectUrl = null;
+
+    function setStatus(node, msg, kind=""){
+      node.className = "status" + (kind ? " " + kind : "");
+      node.textContent = msg;
+    }
+
+    function setDebug(msg){
+      debugOut.textContent = msg;
+    }
+
+    function isAdminUser(user){
+      return !!user && (user.email || "").toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    }
+
+    // Firestore doc ids cannot contain "/" so we sanitize that (and trim).
+    function safeDocId(str){
+      return (str || "").trim().replaceAll("/", "-");
+    }
+
+    // Convert "YYYY-MM-DD" -> "M-D-YYYY" (no leading zeros), exactly like 1-5-2026
+    function toMDYYYY(iso){
+      const [y, m, d] = (iso || "").split("-").map(Number);
+      if(!y || !m || !d) return "";
+      return `${m}-${d}-${y}`;
+    }
+
+    function enableUploader(enabled){
+  clientSearch.disabled = !enabled;
+  clientName.disabled = !enabled;
+  clientEmail.disabled = !enabled;
+  dogName.disabled = !enabled;
+  invoiceNumber.disabled = !enabled;
+  invoiceDate.disabled = !enabled;
+  pdfFile.disabled = !enabled;
+
+  uploadBtn.disabled = !enabled;
+  resetBtn.disabled = !enabled;
+
+  addClientBtn.disabled = !enabled;
+}
+
+
+    function resetPdfPreview(){
+      if(pdfObjectUrl){
+        URL.revokeObjectURL(pdfObjectUrl);
+        pdfObjectUrl = null;
+      }
+      pdfPreview.src = "";
+      pdfPreviewWrap.hidden = true;
+    }
+
+    function resetForm(){
+      clientSearch.value = "";
+      clientUidManual.value = "";
+      clientName.value = "";
+      clientEmail.value = "";
+      dogName.value = "";
+      invoiceNumber.value = "";
+      invoiceDate.value = "";
+
+      pdfFile.value = "";
+      fileMeta.textContent = "No file selected.";
+      progressBar.style.width = "0%";
+      clientResults.hidden = true;
+
+      resetPdfPreview();
+
+      setStatus(uploadStatus, "Waiting.");
+      setDebug("");
+    }
+
+    resetBtn.addEventListener("click", resetForm);
+
+    // ====== Auth handlers ======
+    signInBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+
+      const email = el("email").value.trim();
+      const pass = el("password").value;
+
+      if (!email || !pass) {
+        setStatus(authStatus, "Enter email + password first.", "warn");
+        return;
+      }
+
+      const oldText = signInBtn.textContent;
+      signInBtn.disabled = true;
+      signInBtn.textContent = "Signing in...";
+
+      setStatus(authStatus, "Signing in...", "warn");
+      setDebug("");
+
+      try {
+        const cred = await signInWithEmailAndPassword(auth, email, pass);
+        const signedEmail = cred?.user?.email || "(no email)";
+        setStatus(authStatus, `✅ Signed in: ${signedEmail}`, "good");
+      } catch (err) {
+        console.error(err);
+
+        const code = err?.code || "";
+        let msg = err?.message || "Unknown error";
+
+        if (code === "auth/invalid-credential" || code === "auth/wrong-password") {
+          msg = "Wrong email or password.";
+        } else if (code === "auth/user-not-found") {
+          msg = "No user found for that email (did you add it in Firebase Auth?).";
+        } else if (code === "auth/too-many-requests") {
+          msg = "Too many attempts. Wait a bit and try again.";
+        } else if (code === "auth/network-request-failed") {
+          msg = "Network error. Check internet / firewall and try again.";
+        }
+
+        setStatus(authStatus, `❌ Sign-in failed: ${msg}`, "bad");
+        setDebug(JSON.stringify({ code: err?.code, message: err?.message }, null, 2));
+      } finally {
+        signInBtn.disabled = false;
+        signInBtn.textContent = oldText;
+      }
+    });
+	
+	// Enter key submits sign-in (email or password fields)
+["email", "password"].forEach((id) => {
+  const input = el(id);
+  input?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      signInBtn.click();
+    }
+  });
+});
+
+
+    async function handleSignOut(e){
+      e?.preventDefault?.();
+
+      await signOut(auth);
+
+      resetForm();
+      enableUploader(false);
+      showAuthOnly();
+
+      whoPill.textContent = "Not signed in";
+      adminPill.hidden = true;
+
+      setStatus(authStatus, "Signed out.", "warn");
+    }
+
+    signOutBtnUpload.addEventListener("click", handleSignOut);
+
+    // ====== Visibility Toggle ======
+    const authCard = el("authCard");
+    const uploadCard = el("uploadCard");
+
+    function showAuthOnly() {
+      authCard.hidden = false;
+      uploadCard.hidden = true;
+    }
+
+    function showUploaderOnly() {
+      authCard.hidden = true;
+      uploadCard.hidden = false;
+    }
+
+    // ====== Clients loader ======
+    let clientCache = [];
+
+    
+
+    async function loadClientsSafe(){
+      clientCache = [];
+      clientResults.hidden = true;
+      setDebug("");
+
+      try{
+        const snap = await getDocs(collection(db, "clients"));
+
+        snap.forEach(docSnap => {
+          const d = docSnap.data() || {};
+          clientCache.push({
+            uid: d.uid || docSnap.id,
+            name: d.name || "",
+            email: d.email || ""
+          });
+        });
+
+        if(clientCache.length === 0){
+          setStatus(uploadStatus, "No clients found in Firestore.", "warn");
+        } else {
+          setStatus(uploadStatus, `Loaded ${clientCache.length} client(s).`, "good");
+        }
+      }catch(err){
+        console.error(err);
+        setStatus(uploadStatus, `Could not load clients: ${err.code || err.message}`, "warn");
+        setDebug(JSON.stringify({ code: err.code, message: err.message }, null, 2));
+      }
+    }
+
+    // ====== Client search UI ======
+    clientSearch.addEventListener("input", () => {
+      const q = clientSearch.value.toLowerCase().trim();
+
+      if(!q){
+        clientResults.hidden = true;
+        return;
+      }
+
+      const matches = clientCache.filter(c =>
+        c.name.toLowerCase().startsWith(q)
+      );
+
+      if(!matches.length){
+        clientResults.textContent = "No matches.";
+        clientResults.hidden = false;
+        return;
+      }
+
+      clientResults.innerHTML = matches
+        .map(c => `
+          <div class="kbd" style="cursor:pointer" data-uid="${c.uid}">
+            ${c.name} — ${c.email || ""}
+          </div>
+        `)
+        .join("");
+
+      clientResults.hidden = false;
+    });
+
+    clientResults.addEventListener("click", (e) => {
+      const uid = e.target.dataset.uid;
+      if(!uid) return;
+
+      const c = clientCache.find(x => x.uid === uid);
+      if(!c) return;
+
+      clientSearch.value = c.name;
+      clientUidManual.value = c.uid;    // stored, not displayed
+      clientName.value = c.name;
+      clientEmail.value = c.email;
+
+      clientResults.hidden = true;
+    });
+
+    // ====== Add Client modal ======
+    function setAddClientStatus(msg, kind=""){
+      addClientStatus.className = "status" + (kind ? " " + kind : "");
+      addClientStatus.textContent = msg;
+    }
+
+    function openAddClient(){
+      newClientName.value = "";
+      newClientEmail.value = "";
+      setAddClientStatus("Waiting.");
+      addClientModal.hidden = false;
+      newClientName.focus();
+    }
+
+    function closeAddClient(){
+      addClientModal.hidden = true;
+    }
+
+    addClientBtn.addEventListener("click", openAddClient);
+    closeAddClientBtn.addEventListener("click", closeAddClient);
+    cancelClientBtn.addEventListener("click", closeAddClient);
+
+    saveClientBtn.addEventListener("click", async () => {
+      const user = auth.currentUser;
+      if(!isAdminUser(user)){
+        setAddClientStatus("Not admin. Cannot add clients.", "bad");
+        return;
+      }
+
+      const name = (newClientName.value || "").trim();
+      const email = (newClientEmail.value || "").trim();
+
+      if(!name){
+        setAddClientStatus("Client Name is required.", "bad");
+        return;
+      }
+
+      setAddClientStatus("Creating client...", "warn");
+      saveClientBtn.disabled = true;
+
+      try{
+        const docRef = await addDoc(collection(db, "clients"), {
+          name,
+          email: email || null,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+
+        const uid = docRef.id;
+
+        await setDoc(doc(db, "clients", uid), { uid }, { merge: true });
+
+        setAddClientStatus(`✅ Client created. UID saved.`, "good");
+
+        await loadClientsSafe();
+
+        clientSearch.value = name;
+        clientUidManual.value = uid;
+        clientName.value = name;
+        clientEmail.value = email;
+
+        closeAddClient();
+        setStatus(uploadStatus, `Client added: ${name}`, "good");
+      }catch(err){
+        console.error(err);
+        setAddClientStatus(`Failed to create client: ${err.code || err.message}`, "bad");
+      }finally{
+        saveClientBtn.disabled = false;
+      }
+    });
+
+    // ====== File checks + preview ======
+    pdfFile.addEventListener("change", () => {
+      const f = pdfFile.files?.[0];
+      progressBar.style.width = "0%";
+      setDebug("");
+      resetPdfPreview();
+
+      if(!f){
+        fileMeta.textContent = "No file selected.";
+        return;
+      }
+
+      const sizeKB = (f.size / 1024).toFixed(1);
+      fileMeta.textContent = `${f.name} • ${sizeKB} KB`;
+
+      const isPdfType = (f.type === "application/pdf");
+      const looksPdfName = (f.name || "").toLowerCase().endsWith(".pdf");
+
+      if(!isPdfType && !looksPdfName){
+        setStatus(uploadStatus, "That doesn’t look like a PDF. Please select a .pdf file.", "bad");
+        uploadBtn.disabled = true;
+        return;
+      }
+
+      if(f.size > MAX_PDF_BYTES){
+        const maxKB = (MAX_PDF_BYTES / 1024).toFixed(0);
+        setStatus(uploadStatus, `File too large (${sizeKB} KB). Max allowed is ${maxKB} KB.`, "bad");
+        uploadBtn.disabled = true;
+        return;
+      }
+
+      // Show preview
+      try{
+        pdfObjectUrl = URL.createObjectURL(f);
+        pdfPreview.src = pdfObjectUrl;
+        pdfPreviewWrap.hidden = false;
+      }catch(_){
+        // If preview fails, silently continue (upload still works)
+        pdfPreviewWrap.hidden = true;
+      }
+
+      if(!pdfFile.disabled){
+        uploadBtn.disabled = false;
+        setStatus(uploadStatus, "File looks good. Ready to upload.", "good");
+      }
+    });
+
+    // ====== Upload flow ======
+    uploadBtn.addEventListener("click", async () => {
+      setDebug("");
+
+      const user = auth.currentUser;
+      if(!isAdminUser(user)){
+        setStatus(uploadStatus, "Not admin. Upload blocked.", "bad");
+        return;
+      }
+
+      const clientUid = (clientUidManual.value || "").trim();
+      const cName = (clientName.value || "").trim();
+      const cEmailRaw = (clientEmail.value || "").trim();
+      const cEmail = cEmailRaw.toLowerCase();
+      const dogRaw = (dogName.value || "").trim();
+      const invNumRaw = (invoiceNumber.value || "").trim();
+      const invDateIso = (invoiceDate.value || "").trim();
+      const f = pdfFile.files?.[0];
+
+      if(!cEmail){
+        setStatus(uploadStatus, "Client Email is required (this is the folder key).", "bad");
+        return;
+      }
+      if(!dogRaw){
+        setStatus(uploadStatus, "Dog Name is required.", "bad");
+        return;
+      }
+      if(!invNumRaw){
+        setStatus(uploadStatus, "Invoice Number (InvoiceID) is required.", "bad");
+        return;
+      }
+      if(!invDateIso){
+        setStatus(uploadStatus, "Invoice Date is required.", "bad");
+        return;
+      }
+
+      const dogKey  = safeDocId(dogRaw);
+      const dateKey = toMDYYYY(invDateIso);
+      if(!dateKey){
+        setStatus(uploadStatus, "Invoice Date is invalid.", "bad");
+        return;
+      }
+      const invoiceKey = safeDocId(invNumRaw);
+
+      const dogRef = doc(db, "invoices", cEmail, "Dogs", dogKey);
+      const dateRef = doc(db, "invoices", cEmail, "Dogs", dogKey, "Dates", dateKey);
+
+      const invoiceRef = doc(
+        db,
+        "invoices", cEmail,
+        "Dogs", dogKey,
+        "Dates", dateKey,
+        "Invoice", invoiceKey
+      );
+
+      const storagePath = `invoices/${cEmail}/Dogs/${dogKey}/Dates/${dateKey}/Invoice/${invoiceKey}.pdf`;
+      const storageRef = ref(storage, storagePath);
+
+      setStatus(uploadStatus, "Uploading PDF to Storage...", "warn");
+      uploadBtn.disabled = true;
+
+      try{
+        const task = uploadBytesResumable(storageRef, f, {
+          contentType: "application/pdf",
+          customMetadata: {
+            invoiceId: invoiceKey,
+            clientEmail: cEmail,
+            invoiceNumber: invNumRaw
+          }
+        });
+
+        await new Promise((resolve, reject) => {
+          task.on("state_changed",
+            (snap) => {
+              const pct = (snap.bytesTransferred / snap.totalBytes) * 100;
+              progressBar.style.width = `${pct.toFixed(1)}%`;
+            },
+            (err) => reject(err),
+            () => resolve()
+          );
+        });
+
+        setStatus(uploadStatus, "Upload complete. Writing Firestore record...", "warn");
+
+        await setDoc(dogRef, {
+          dogKey,
+          dogName: dogRaw,
+          clientEmail: cEmail,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        await setDoc(dateRef, {
+          dateKey,
+          invoiceDateIso: invDateIso,
+          clientEmail: cEmail,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        const invoiceDoc = {
+          clientEmail: cEmail || null,
+          clientName: cName || null,
+          clientUid: clientUid || null,
+
+          dogKey,
+          dogName: dogRaw,
+          dateKey,
+          invoiceId: invoiceKey,
+
+          invoiceDateIso: invDateIso,
+          invoiceNumber: invNumRaw,
+
+          storagePath,
+          fileName: f.name,
+          fileSizeBytes: f.size,
+
+          paymentStatus: "unpaid",
+          uploadedBy: user.email || null,
+          uploadedAt: serverTimestamp()
+        };
+
+        await setDoc(invoiceRef, invoiceDoc);
+
+        setStatus(uploadStatus, `✅ Done. Invoice created: ${invoiceKey}`, "good");
+        setDebug(JSON.stringify({ invoiceId: invoiceKey, storagePath }, null, 2));
+      }catch(err){
+        console.error(err);
+        setStatus(uploadStatus, `Upload failed: ${err.code || err.message}`, "bad");
+        setDebug(JSON.stringify({ code: err.code, message: err.message }, null, 2));
+
+        try{
+          setStatus(uploadStatus, "Upload partially succeeded. Attempting cleanup (delete uploaded file)...", "warn");
+          await deleteObject(storageRef);
+          setStatus(uploadStatus, "Cleanup complete. No partial invoice left behind.", "good");
+        }catch(cleanErr){
+          console.error(cleanErr);
+          setStatus(uploadStatus, "Cleanup failed (manual cleanup may be needed). See debug.", "bad");
+          setDebug(JSON.stringify({
+            originalError: { code: err.code, message: err.message },
+            cleanupError: { code: cleanErr.code, message: cleanErr.message },
+            attemptedStoragePath: storagePath
+          }, null, 2));
+        }
+      } finally {
+        uploadBtn.disabled = pdfFile.files?.[0] ? false : true;
+      }
+    });
+
+    // ====== Auth state ======
+    onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        whoPill.textContent = "Not signed in";
+        adminPill.hidden = true;
+
+        signOutBtnUpload.disabled = true;
+        signOutBtnUpload.hidden = true;
+
+        enableUploader(false);
+        showAuthOnly();
+
+        setStatus(authStatus, "Not signed in.");
+        adminGateStatus.textContent = "Sign in as admin to enable uploading.";
+        adminGateStatus.className = "tiny";
+        return;
+      }
+
+      whoPill.textContent = user.email ? `Signed in: ${user.email}` : "Signed in";
+
+      signOutBtnUpload.hidden = false;
+      signOutBtnUpload.disabled = false;
+
+      if (!isAdminUser(user)) {
+        enableUploader(false);
+
+        adminPill.hidden = false;
+        adminPill.textContent = "Admin: NOT verified";
+        adminPill.style.color = "var(--bad)";
+
+        setStatus(authStatus, "Signed in, but NOT admin. Uploading disabled.", "bad");
+        adminGateStatus.textContent = `Not admin. Must sign in as ${ADMIN_EMAIL}.`;
+        adminGateStatus.className = "tiny";
+        showAuthOnly(); // keep them on auth card if not admin
+        return;
+      }
+
+      adminPill.hidden = false;
+      adminPill.textContent = "Admin verified. Ready.";
+      adminPill.style.color = "var(--good)";
+
+      setStatus(authStatus, "Signed in as admin. Uploading enabled.", "good");
+      adminGateStatus.textContent = "Admin verified. Ready.";
+      adminGateStatus.className = "tiny";
+
+      enableUploader(true);
+      showUploaderOnly();
+
+      await loadClientsSafe();
+    });
+
+    // Initial state
+    enableUploader(false);
+    resetForm();
+    showAuthOnly();
+  </script>
+</body>
+</html>

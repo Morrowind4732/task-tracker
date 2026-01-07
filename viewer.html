@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NFR Invoice Viewer</title>
+  <style>
+    :root{
+  --bg:#0a0c10;
+  --panel:#12151c;
+  --panel2:#0f1117;
+
+  --text:#eef2ff;
+  --muted:#a7afc6;
+
+  --border: rgba(255,255,255,.08);
+  --shadow: 0 18px 60px rgba(0,0,0,.55);
+  --radius: 18px;
+
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+
+  --accent:#7aa7ff;
+  --good:#38d996;
+  --bad:#ff5f6d;
+  --warn:#ffcc66;
+}
+
+body{
+  margin:0;
+  font-family:var(--sans);
+  color:var(--text);
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+  padding:28px 16px;
+
+  /* darker, “dashboard” feel */
+  background:
+    radial-gradient(1200px 700px at 20% 10%, rgba(122,167,255,.14), transparent 60%),
+    radial-gradient(900px 650px at 85% 25%, rgba(255,255,255,.05), transparent 55%),
+    radial-gradient(900px 650px at 70% 90%, rgba(56,217,150,.06), transparent 55%),
+    var(--bg);
+}
+
+    .wrap{ width:min(980px, 100%); }
+
+    /* ===== Top header bar (always visible) ===== */
+    .topbar{
+      display:flex; gap:14px; align-items:center; justify-content:space-between;
+      margin-bottom:16px;
+    }
+    .brand{ display:flex; flex-direction:column; gap:2px; }
+    .brand h1{ margin:0; font-size:18px; letter-spacing:.2px; }
+    .brand .sub{ color:var(--muted); font-size:13px; }
+    .topActions{ display:flex; gap:10px; align-items:center; }
+
+.card{
+  background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+  border:1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow:hidden;
+  margin-bottom:16px;
+}
+    .head{
+      padding:14px 16px;
+      display:flex; align-items:center; justify-content:space-between;
+      background: rgba(0,0,0,.18);
+      border-bottom:1px solid var(--border);
+      gap:12px;
+      flex-wrap:wrap;
+    }
+    .body{ padding:16px; background:rgba(0,0,0,.12); }
+    .pill{
+      display:inline-flex; gap:8px; align-items:center;
+      padding:8px 12px; border:1px solid var(--border); border-radius:999px;
+      background:rgba(255,255,255,.04);
+      font-size:13px; color:var(--muted);
+      max-width: 520px;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    label{ display:block; font-size:12px; color:var(--muted); margin:0 0 6px; }
+    input, select{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      color: var(--text);
+      outline:none;
+      font:inherit;
+    }
+    .row{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+@media (max-width: 720px){ .row{ grid-template-columns:1fr; } }
+
+/* Force a specific row to be vertical (used for the login fields) */
+.row.rowOneCol{ grid-template-columns: 1fr !important; }
+
+    .btn{
+      border:1px solid var(--border);
+      background: rgba(106,166,255,.15);
+      color: var(--text);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      user-select:none;
+    }
+    .btn.secondary{ background: rgba(255,255,255,.06); }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; }
+    .status{
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      border-radius:12px;
+      padding:10px 12px;
+      color: var(--muted);
+      font-size:13px;
+      line-height:1.35;
+      margin-top:12px;
+    }
+    .status.good{ color: var(--good); }
+    .status.bad{ color: var(--bad); }
+    .status.warn{ color: var(--warn); }
+    table{ width:100%; border-collapse:collapse; }
+    th, td{
+      text-align:left;
+      padding:10px 8px;
+      border-bottom:1px solid var(--border);
+      font-size:13px;
+      vertical-align:top;
+    }
+    th{ color:var(--muted); font-weight:600; }
+    .mono{ font-family: var(--mono); font-size:12px; color:var(--muted); }
+    .actions{ display:flex; gap:8px; flex-wrap:wrap; }
+
+/* Full-width buttons (used for auth submit) */
+.btnFull{
+  width:100%;
+  display:block;
+}
+
+
+    /* Small filter row in invoices header */
+    .filterWrap{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      flex-wrap:wrap;
+    }
+    .filterLabel{
+      font-size:12px;
+      color:var(--muted);
+      margin-right:6px;
+      white-space:nowrap;
+    }
+    .filterSelect{
+      width: 240px;
+      max-width: 100%;
+      padding:8px 10px;
+      border-radius:12px;
+    }
+    .rightMeta{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      margin-left:auto;
+      flex-wrap:wrap;
+    }
+	
+	/* ===== Mobile improvements ===== */
+@media (max-width: 560px){
+  .topbar{
+    flex-direction:column;
+    align-items:flex-start;
+    gap:10px;
+  }
+  .topActions{
+    width:100%;
+    justify-content:space-between;
+  }
+  .pill{
+    max-width: 62vw;
+  }
+
+  /* Keep table usable */
+  .body > div[style*="overflow:auto"]{
+    overflow-x:auto !important;
+  }
+  table{
+    min-width: 560px; /* prevents the “squish into nothing” problem */
+  }
+
+  /* Keep buttons readable */
+  .btn{
+    white-space:nowrap;
+  }
+}
+
+/* Improve dropdown readability */
+select option{
+  background-color: #12151c; /* solid panel color */
+  color: #eef2ff;            /* readable text */
+}
+
+
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+
+    <!-- ALWAYS-VISIBLE HEADER -->
+    <div class="topbar">
+      <div class="brand">
+        <h1>NF Retrievers Invoices</h1>
+        <div class="sub"></div>
+      </div>
+
+      <div class="topActions">
+        <div class="pill" id="whoPill">Not signed in</div>
+        <button class="btn secondary" id="signOutBtn" hidden>Sign out</button>
+      </div>
+    </div>
+
+    <!-- AUTH -->
+    <div class="card" id="authCard">
+      <div class="head">
+        <div style="font-weight:700;">Sign in</div>
+        <div class="mono"></div>
+      </div>
+
+      <div class="body" id="authBox">
+  <form id="signInForm">
+    <div class="row rowOneCol">
+      <div>
+        <label>Email</label>
+        <input
+          id="email"
+          type="email"
+          placeholder="client@email.com"
+          autocomplete="username"
+          required
+        />
+      </div>
+
+      <div>
+        <label>Password</label>
+        <input
+          id="password"
+          type="password"
+          placeholder="••••••••"
+          autocomplete="current-password"
+          required
+        />
+      </div>
+    </div>
+
+    <div class="row rowOneCol" style="margin-top:12px;">
+      <button class="btn btnFull" id="signInBtn" type="submit">
+        Sign in
+      </button>
+    </div>
+  </form>
+
+  <div class="status" id="status">Not signed in.</div>
+</div>
+
+    </div>
+
+    <!-- INVOICES -->
+    <div class="card" id="listCard" hidden>
+      <div class="head">
+        <div style="font-weight:700;">Your invoices</div>
+
+        <div class="filterWrap">
+          <span class="filterLabel">Filter by dog</span>
+          <select id="dogFilter" class="filterSelect" disabled>
+            <option value="__ALL__">All dogs</option>
+          </select>
+        </div>
+
+        <div class="rightMeta">
+          <div class="mono" id="countPill"></div>
+          <button class="btn secondary" id="refreshBtn2" disabled>Refresh</button>
+        </div>
+      </div>
+
+      <div class="body">
+        <div style="overflow:auto;">
+          <table>
+            <thead>
+  <tr>
+    <th>PDF</th>
+    <th>Date</th>
+    <th>Invoice #</th>
+    <th>Dog</th>
+    <th>Status</th>
+  </tr>
+</thead>
+
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="mono" id="debug"></div>
+
+  </div>
+
+  <script type="module">
+    const firebaseConfig = {
+      apiKey: "AIzaSyBg4Drd4X2Jy0SodD8gL-nYd01GT0RIu24",
+      authDomain: "nfr-invoices.firebaseapp.com",
+      projectId: "nfr-invoices",
+      storageBucket: "nfr-invoices.firebasestorage.app",
+      messagingSenderId: "612294434678",
+      appId: "1:612294434678:web:639025c7a58acf518f2457"
+    };
+
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+    import { getFirestore, collection, getDocs, addDoc, serverTimestamp, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+    import { getStorage, ref, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js";
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    const el = (id) => document.getElementById(id);
+
+// ===== URL email prefill (?e=someone@email.com) =====
+function getQueryParam(name){
+  try{
+    const url = new URL(window.location.href);
+    return (url.searchParams.get(name) || "").trim();
+  }catch(_){
+    return "";
+  }
+}
+
+function prefillEmailFromUrl(){
+  const emailFromUrl = getQueryParam("e");
+  if(!emailFromUrl) return;
+
+  const emailEl = el("email");
+  const passEl  = el("password");
+
+  // Fill email
+  emailEl.value = emailFromUrl;
+
+  // Focus password (mobile-friendly; delay helps iOS/Safari)
+  setTimeout(() => {
+    passEl.focus();
+    passEl.select?.();
+  }, 150);
+}
+
+function stripEmailFromUrl(){
+  try{
+    const url = new URL(window.location.href);
+    if(url.searchParams.has("e")){
+      url.searchParams.delete("e");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }catch(_){}
+}
+
+// Run once on page load
+prefillEmailFromUrl();
+stripEmailFromUrl();
+
+
+
+    // Topbar
+    const whoPill = el("whoPill");
+    const signOutBtn = el("signOutBtn");
+
+    // Auth
+    const authCard = el("authCard");
+    const signInBtn = el("signInBtn");
+const status = el("status");
+
+const signInForm = document.getElementById("signInForm");
+
+signInForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  signInBtn.click();
+});
+
+
+    // Invoices
+    const listCard = el("listCard");
+    const rows = el("rows");
+    const countPill = el("countPill");
+    const refreshBtn2 = el("refreshBtn2");
+    const dogFilter = el("dogFilter");
+
+    const debug = el("debug");
+
+    // State
+    let ALL_INVOICES = [];
+    let CURRENT_DOG_FILTER = "__ALL__";
+
+    function setStatus(msg, kind=""){
+      status.className = "status" + (kind ? " " + kind : "");
+      status.textContent = msg;
+    }
+
+    function setDebug(obj){
+      debug.textContent = obj ? JSON.stringify(obj, null, 2) : "";
+    }
+
+    function showAuthOnly(){
+      authCard.hidden = false;
+      listCard.hidden = true;
+      dogFilter.disabled = true;
+      refreshBtn2.disabled = true;
+      
+    }
+
+    function showInvoicesOnly(){
+      authCard.hidden = true;
+      listCard.hidden = false;
+    }
+
+    // If older invoice docs don't have storagePath saved, rebuild it from your known scheme.
+    function buildStoragePathFallback(inv){
+      const email = (inv.clientEmail || "").toLowerCase().trim();
+      const dogKey = (inv.dogKey || "").trim();
+      const dateKey = (inv.dateKey || "").trim();
+      const invoiceId = (inv.invoiceId || inv.invoiceNumber || inv.id || "").trim();
+      if(!email || !dogKey || !dateKey || !invoiceId) return "";
+      return `invoices/${email}/Dogs/${dogKey}/Dates/${dateKey}/Invoice/${invoiceId}.pdf`;
+    }
+
+    function getDogLabel(inv){
+      // Prefer a human name; fall back to key.
+      const name = (inv.dogName || "").trim();
+      if(name) return name;
+      return (inv.dogKey || "").trim();
+    }
+
+    function escapeHtml(s){
+      return (s ?? "").toString()
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function normalizeDogValue(label){
+      return (label || "").toLowerCase().trim();
+    }
+
+    function rebuildDogFilterOptions(invoices){
+      const dogSet = new Map(); // normalized -> display label (first seen)
+      for(const inv of invoices){
+        const label = getDogLabel(inv);
+        const key = normalizeDogValue(label);
+        if(!key) continue;
+        if(!dogSet.has(key)) dogSet.set(key, label);
+      }
+
+      // Sort by display label
+      const dogs = Array.from(dogSet.entries())
+        .map(([k, label]) => ({ k, label }))
+        .sort((a,b) => a.label.localeCompare(b.label));
+
+      // Rebuild select
+      dogFilter.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "__ALL__";
+      optAll.textContent = "All dogs";
+      dogFilter.appendChild(optAll);
+
+      for(const d of dogs){
+        const opt = document.createElement("option");
+        opt.value = d.k;
+        opt.textContent = d.label;
+        dogFilter.appendChild(opt);
+      }
+
+      // Keep current selection if still valid; else reset to ALL
+      const stillExists = dogs.some(d => d.k === CURRENT_DOG_FILTER);
+      if(CURRENT_DOG_FILTER !== "__ALL__" && !stillExists){
+        CURRENT_DOG_FILTER = "__ALL__";
+      }
+      dogFilter.value = CURRENT_DOG_FILTER;
+    }
+
+    function getFilteredInvoices(){
+      if(CURRENT_DOG_FILTER === "__ALL__") return ALL_INVOICES.slice();
+
+      return ALL_INVOICES.filter(inv => {
+        const label = getDogLabel(inv);
+        return normalizeDogValue(label) === CURRENT_DOG_FILTER;
+      });
+    }
+
+    async function openPdfAndLogView(inv, storagePath){
+  const url = await getDownloadURL(ref(storage, storagePath));
+  window.open(url, "_blank");
+
+  try{
+    const user = auth.currentUser;
+
+    const emailDoc = (user?.email || "").toLowerCase().trim();
+    const dogKey = (inv.dogKey || "").trim();
+    const dateKey = (inv.dateKey || "").trim();
+    const invoiceId = (inv.invoiceId || inv.invoiceNumber || inv.id || "").trim();
+
+    if(emailDoc && dogKey && dateKey && invoiceId){
+      // 1) Log the view
+      await addDoc(
+        collection(
+          db,
+          "invoices", emailDoc,
+          "Dogs", dogKey,
+          "Dates", dateKey,
+          "Invoice", invoiceId,
+          "Views"
+        ),
+        {
+          viewedAt: serverTimestamp(),
+          viewerUid: user.uid,
+          viewerEmail: (user.email || "").toLowerCase().trim()
+        }
+      );
+
+      // 2) Mark invoice as opened (so UI can say Reopen invoice)
+      await setDoc(
+        doc(
+          db,
+          "invoices", emailDoc,
+          "Dogs", dogKey,
+          "Dates", dateKey,
+          "Invoice", invoiceId
+        ),
+        { openedOnce: true, lastOpenedAt: serverTimestamp() },
+        { merge: true }
+      );
+    } else {
+      console.warn("[VIEW LOG] Missing keys:", { emailDoc, dogKey, dateKey, invoiceId });
+    }
+  }catch(viewErr){
+    console.warn("[VIEW LOG] Failed to write view log:", viewErr?.code || viewErr?.message, viewErr);
+  }
+}
+
+
+    function renderInvoiceRows(invoices){
+      rows.innerHTML = "";
+
+      if(!invoices.length){
+        rows.innerHTML = `<tr><td colspan="5" class="mono">No invoices found.</td></tr>`;
+        return;
+      }
+
+      for(const inv of invoices){
+        const tr = document.createElement("tr");
+
+        const date = inv.invoiceDateIso || inv.invoiceDate || inv.dateKey || "";
+        const invNum = inv.invoiceNumber || inv.invoiceId || inv.id || "";
+        const dog = getDogLabel(inv) || "";
+        const pay = inv.paymentStatus || "unknown";
+
+        const storagePath = (inv.storagePath || "").trim() || buildStoragePathFallback(inv);
+
+        tr.innerHTML = `
+  <td>
+    <div class="actions">
+      <button class="btn secondary" data-open="${escapeHtml(storagePath || "")}" ${storagePath ? "" : "disabled"}>
+        ${inv.openedOnce ? "Reopen invoice" : "Open invoice"}
+      </button>
+    </div>
+  </td>
+  <td>${escapeHtml(date)}</td>
+  <td>${escapeHtml(invNum)}</td>
+  <td>${escapeHtml(dog)}</td>
+  <td>${escapeHtml(pay)}</td>
+`;
+
+
+        const btn = tr.querySelector("button[data-open]");
+        btn?.addEventListener("click", async () => {
+          const path = btn.getAttribute("data-open");
+          if(!path) return;
+
+          btn.disabled = true;
+          const oldText = btn.textContent;
+          btn.textContent = "Opening...";
+
+          try{
+            await openPdfAndLogView(inv, path);
+            btn.textContent = oldText;
+          }catch(err){
+            console.error(err);
+            setStatus("Could not open PDF (permission or missing file).", "bad");
+            setDebug({ code: err?.code, message: err?.message, path });
+            btn.textContent = oldText;
+          }finally{
+            btn.disabled = false;
+          }
+        });
+
+        rows.appendChild(tr);
+      }
+    }
+
+    function updateCounts(filteredCount, totalCount){
+      if(filteredCount === totalCount){
+        countPill.textContent = `${totalCount} invoice(s)`;
+      } else {
+        countPill.textContent = `${filteredCount} shown • ${totalCount} total`;
+      }
+    }
+
+    function applyFilterAndRender(){
+      const filtered = getFilteredInvoices();
+      renderInvoiceRows(filtered);
+      updateCounts(filtered.length, ALL_INVOICES.length);
+    }
+
+    async function loadMyInvoices(){
+      const user = auth.currentUser;
+      if(!user){
+        setStatus("Not signed in.", "warn");
+        return;
+      }
+
+      const clientEmail = (user.email || "").toLowerCase().trim();
+      if(!clientEmail){
+        setStatus("Your account has no email on it. Cannot locate invoices.", "bad");
+        setDebug({ reason: "missing_user_email" });
+        return;
+      }
+
+      setStatus("Loading invoices...", "warn");
+      setDebug(null);
+      rows.innerHTML = "";
+      countPill.textContent = "";
+      dogFilter.disabled = true;
+
+      try{
+        const items = [];
+
+        // invoices/{email}/Dogs/{dog}/Dates/{date}/Invoice/{invoiceId}
+        const dogsSnap = await getDocs(collection(db, "invoices", clientEmail, "Dogs"));
+
+        for(const dogDoc of dogsSnap.docs){
+          const dogKey = dogDoc.id;
+
+          const datesSnap = await getDocs(collection(db, "invoices", clientEmail, "Dogs", dogKey, "Dates"));
+
+          for(const dateDoc of datesSnap.docs){
+            const dateKey = dateDoc.id;
+
+            const invSnap = await getDocs(collection(
+              db,
+              "invoices", clientEmail,
+              "Dogs", dogKey,
+              "Dates", dateKey,
+              "Invoice"
+            ));
+
+            invSnap.forEach(s => {
+              const d = s.data() || {};
+              items.push({
+                id: s.id,
+                ...d,
+                dogKey: d.dogKey || dogKey,
+                dateKey: d.dateKey || dateKey,
+                clientEmail: d.clientEmail || clientEmail
+              });
+            });
+          }
+        }
+
+        // Sort newest first
+        items.sort((a,b) => {
+          const da = a.invoiceDateIso || a.invoiceDate || "";
+          const db_ = b.invoiceDateIso || b.invoiceDate || "";
+          if(da < db_) return 1;
+          if(da > db_) return -1;
+          const ia = a.invoiceNumber || "";
+          const ib = b.invoiceNumber || "";
+          return ib.localeCompare(ia);
+        });
+
+        ALL_INVOICES = items;
+
+        if(!ALL_INVOICES.length){
+          rebuildDogFilterOptions([]);
+          dogFilter.disabled = true;
+          renderInvoiceRows([]);
+          updateCounts(0, 0);
+          setStatus("No invoices found for your account yet.", "good");
+          return;
+        }
+
+        rebuildDogFilterOptions(ALL_INVOICES);
+        dogFilter.disabled = false;
+
+        applyFilterAndRender();
+        setStatus("Loaded invoices.", "good");
+      }catch(err){
+        console.error(err);
+        setStatus(`Failed to load invoices: ${err?.code || err?.message}`, "bad");
+        setDebug({ code: err?.code, message: err?.message });
+      }
+    }
+
+    // ===== Events =====
+    signInBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      const email = el("email").value.trim();
+      const pass = el("password").value;
+
+      if(!email || !pass){
+        setStatus("Enter email + password.", "warn");
+        return;
+      }
+
+      signInBtn.disabled = true;
+      setStatus("Signing in...", "warn");
+
+      try{
+        await signInWithEmailAndPassword(auth, email, pass);
+      }catch(err){
+        console.error(err);
+        setStatus(`Sign-in failed: ${err?.code || err?.message}`, "bad");
+        setDebug({ code: err?.code, message: err?.message });
+      }finally{
+        signInBtn.disabled = false;
+      }
+    });
+	
+	// Enter key submits sign-in (email or password fields)
+["email", "password"].forEach((id) => {
+  const input = el(id);
+  input?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      signInBtn.click();
+    }
+  });
+});
+
+
+    refreshBtn2.addEventListener("click", loadMyInvoices);
+
+
+    dogFilter.addEventListener("change", () => {
+      CURRENT_DOG_FILTER = dogFilter.value || "__ALL__";
+      applyFilterAndRender();
+    });
+
+    signOutBtn.addEventListener("click", async () => {
+      await signOut(auth);
+
+      ALL_INVOICES = [];
+      CURRENT_DOG_FILTER = "__ALL__";
+
+      rows.innerHTML = "";
+      countPill.textContent = "";
+      dogFilter.innerHTML = `<option value="__ALL__">All dogs</option>`;
+      dogFilter.disabled = true;
+
+      refreshBtn2.disabled = true;
+
+
+      signOutBtn.hidden = true;
+      whoPill.textContent = "Not signed in";
+
+      showAuthOnly();
+      setStatus("Signed out.", "warn");
+    });
+
+    // ===== Auth state =====
+    onAuthStateChanged(auth, async (user) => {
+      if(!user){
+        whoPill.textContent = "Not signed in";
+        signOutBtn.hidden = true;
+
+        refreshBtn2.disabled = true;
+
+
+        ALL_INVOICES = [];
+        CURRENT_DOG_FILTER = "__ALL__";
+        rows.innerHTML = "";
+        countPill.textContent = "";
+        dogFilter.innerHTML = `<option value="__ALL__">All dogs</option>`;
+        dogFilter.disabled = true;
+
+        showAuthOnly();
+        setStatus("Not signed in.");
+        return;
+      }
+
+      whoPill.textContent = `Signed in: ${user.email || user.uid}`;
+      signOutBtn.hidden = false;
+
+      refreshBtn2.disabled = false;
+
+
+      showInvoicesOnly();
+      await loadMyInvoices();
+    });
+
+    // Initial state
+    showAuthOnly();
+  </script>
+</body>
+</html>
