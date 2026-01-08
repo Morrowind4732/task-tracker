@@ -124,14 +124,26 @@ body{
     .status.bad{ color: var(--bad); }
     .status.warn{ color: var(--warn); }
     table{ width:100%; border-collapse:collapse; }
-    th, td{
-      text-align:left;
-      padding:10px 8px;
-      border-bottom:1px solid var(--border);
-      font-size:13px;
-      vertical-align:top;
-    }
-    th{ color:var(--muted); font-weight:600; }
+th, td{
+  text-align:left;
+  padding:10px 8px;
+  border-bottom:1px solid var(--border);
+  font-size:13px;
+  vertical-align:top;
+}
+th{ color:var(--muted); font-weight:600; }
+
+/* === Tighten gap between PDF button column and Date column === */
+table th:first-child,
+table td:first-child{
+  padding-right:2px;          /* was 8px */
+  white-space:nowrap;         /* keeps button from expanding weirdly */
+}
+table th:nth-child(2),
+table td:nth-child(2){
+  padding-left:4px;           /* was 8px */
+}
+
     .mono{ font-family: var(--mono); font-size:12px; color:var(--muted); }
     .actions{ display:flex; gap:8px; flex-wrap:wrap; }
 
@@ -204,11 +216,83 @@ select option{
   color: #eef2ff;            /* readable text */
 }
 
+/* Tighten table row spacing slightly */
+.invoice-table td {
+  padding: 10px 14px; /* was likely 14–18px */
+  vertical-align: middle;
+}
+
+/* Tighten button height without changing style */
+.invoice-table .open-invoice-btn {
+  padding: 6px 14px;   /* reduce vertical padding */
+  margin: 0;           /* remove any accidental margins */
+  line-height: 1.2;
+}
+
+/* Tighten date text spacing */
+.invoice-table .invoice-date {
+  line-height: 1.2;
+}
+
+
+/* ===== Loading overlay (auto-login + invoice loading) ===== */
+.loadingOverlay{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(6px);
+  z-index: 9999;
+}
+.loadingOverlay[hidden]{ display:none; }
+
+.loadingCard{
+  width:min(420px, calc(100% - 32px));
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.03));
+  border:1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding:18px 18px 16px;
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.loadingSpinner{
+  width:22px;
+  height:22px;
+  border-radius:999px;
+  border:3px solid rgba(255,255,255,.18);
+  border-top-color: rgba(122,167,255,.95);
+  animation: spin .9s linear infinite;
+  flex:0 0 auto;
+}
+
+.loadingMsg{
+  font-size:14px;
+  color: var(--text);
+  line-height:1.3;
+}
+
+@keyframes spin{
+  to{ transform: rotate(360deg); }
+}
 
   </style>
 </head>
 
 <body>
+
+  <!-- LOADING OVERLAY (auto-login + invoice loading) -->
+  <div id="loadingOverlay" class="loadingOverlay" hidden>
+    <div class="loadingCard">
+      <div class="loadingSpinner" aria-hidden="true"></div>
+      <div class="loadingMsg" id="loadingMsg">Loading…</div>
+    </div>
+  </div>
+
   <div class="wrap">
 
     <!-- ALWAYS-VISIBLE HEADER -->
@@ -239,7 +323,7 @@ select option{
         <input
           id="email"
           type="email"
-          placeholder="client@email.com"
+          placeholder=""
           autocomplete="username"
           required
         />
@@ -250,7 +334,7 @@ select option{
         <input
           id="password"
           type="password"
-          placeholder="••••••••"
+          placeholder=""
           autocomplete="current-password"
           required
         />
@@ -264,7 +348,6 @@ select option{
     </div>
   </form>
 
-  <div class="status" id="status">Not signed in.</div>
 </div>
 
     </div>
@@ -289,7 +372,8 @@ select option{
 
       <div class="body">
         <div style="overflow:auto;">
-          <table>
+<table class="invoice-table">
+
             <thead>
   <tr>
     <th>PDF</th>
@@ -332,6 +416,21 @@ select option{
     const storage = getStorage(app);
 
     const el = (id) => document.getElementById(id);
+    // ===== Loading overlay (auto-login + invoice loading) =====
+    const loadingOverlay = el("loadingOverlay");
+    const loadingMsg = el("loadingMsg");
+
+    function showLoading(msg){
+      if(!loadingOverlay) return;
+      if(loadingMsg) loadingMsg.textContent = msg || "Loading…";
+      loadingOverlay.hidden = false;
+    }
+
+    function hideLoading(){
+      if(!loadingOverlay) return;
+      loadingOverlay.hidden = true;
+    }
+
 
 // ===== URL email prefill (?e=someone@email.com) =====
 function getQueryParam(name){
@@ -374,6 +473,9 @@ function stripEmailFromUrl(){
 prefillEmailFromUrl();
 stripEmailFromUrl();
 
+// Show a visual cue while Firebase restores a previous session (if any)
+showLoading("Attempting auto sign-in...");
+
 
 
     // Topbar
@@ -382,10 +484,10 @@ stripEmailFromUrl();
 
     // Auth
     const authCard = el("authCard");
-    const signInBtn = el("signInBtn");
-const status = el("status");
+const signInBtn = el("signInBtn");
 
 const signInForm = document.getElementById("signInForm");
+
 
 signInForm.addEventListener("submit", (e) => {
   e.preventDefault();
@@ -406,14 +508,10 @@ signInForm.addEventListener("submit", (e) => {
     let ALL_INVOICES = [];
     let CURRENT_DOG_FILTER = "__ALL__";
 
-    function setStatus(msg, kind=""){
-      status.className = "status" + (kind ? " " + kind : "");
-      status.textContent = msg;
-    }
-
     function setDebug(obj){
-      debug.textContent = obj ? JSON.stringify(obj, null, 2) : "";
-    }
+  debug.textContent = obj ? JSON.stringify(obj, null, 2) : "";
+}
+
 
     function showAuthOnly(){
       authCard.hidden = false;
@@ -575,7 +673,8 @@ signInForm.addEventListener("submit", (e) => {
         tr.innerHTML = `
   <td>
     <div class="actions">
-      <button class="btn secondary" data-open="${escapeHtml(storagePath || "")}" ${storagePath ? "" : "disabled"}>
+      <button class="btn secondary open-invoice-btn" data-open="${escapeHtml(storagePath || "")}" ${storagePath ? "" : "disabled"}>
+
         ${inv.openedOnce ? "Reopen invoice" : "Open invoice"}
       </button>
     </div>
@@ -600,13 +699,15 @@ signInForm.addEventListener("submit", (e) => {
             await openPdfAndLogView(inv, path);
             btn.textContent = oldText;
           }catch(err){
-            console.error(err);
-            setStatus("Could not open PDF (permission or missing file).", "bad");
-            setDebug({ code: err?.code, message: err?.message, path });
-            btn.textContent = oldText;
-          }finally{
-            btn.disabled = false;
-          }
+  console.error(err);
+  showLoading("Could not open PDF (permission or missing file).");
+  setDebug({ code: err?.code, message: err?.message, path });
+  setTimeout(() => hideLoading(), 1400);
+  btn.textContent = oldText;
+}finally{
+  btn.disabled = false;
+}
+
         });
 
         rows.appendChild(tr);
@@ -628,20 +729,24 @@ signInForm.addEventListener("submit", (e) => {
     }
 
     async function loadMyInvoices(){
-      const user = auth.currentUser;
-      if(!user){
-        setStatus("Not signed in.", "warn");
-        return;
-      }
+  const user = auth.currentUser;
+  if(!user){
+    hideLoading();
+    return;
+  }
 
-      const clientEmail = (user.email || "").toLowerCase().trim();
-      if(!clientEmail){
-        setStatus("Your account has no email on it. Cannot locate invoices.", "bad");
-        setDebug({ reason: "missing_user_email" });
-        return;
-      }
+  const clientEmail = (user.email || "").toLowerCase().trim();
+  if(!clientEmail){
+    showLoading("Account error: missing email.");
+    setDebug({ reason: "missing_user_email" });
+    // keep overlay visible a moment so user sees it
+    setTimeout(() => hideLoading(), 1200);
+    return;
+  }
 
-      setStatus("Loading invoices...", "warn");
+  showLoading("Loading your invoices...");
+
+
       setDebug(null);
       rows.innerHTML = "";
       countPill.textContent = "";
@@ -700,20 +805,29 @@ signInForm.addEventListener("submit", (e) => {
           dogFilter.disabled = true;
           renderInvoiceRows([]);
           updateCounts(0, 0);
-          setStatus("No invoices found for your account yet.", "good");
-          return;
+          hideLoading();
+return;
+
         }
 
         rebuildDogFilterOptions(ALL_INVOICES);
-        dogFilter.disabled = false;
+dogFilter.disabled = false;
 
-        applyFilterAndRender();
-        setStatus("Loaded invoices.", "good");
-      }catch(err){
+applyFilterAndRender();
+hideLoading();
+
+}catch(err){
+
         console.error(err);
-        setStatus(`Failed to load invoices: ${err?.code || err?.message}`, "bad");
-        setDebug({ code: err?.code, message: err?.message });
-      }
+        showLoading(`Failed to load invoices: ${err?.code || err?.message}`);
+setDebug({ code: err?.code, message: err?.message });
+// let them read it briefly, then dismiss
+setTimeout(() => hideLoading(), 1800);
+
+      }finally{
+  // Do not force-hide here; success/failure paths handle it.
+}
+
     }
 
     // ===== Events =====
@@ -723,22 +837,26 @@ signInForm.addEventListener("submit", (e) => {
       const pass = el("password").value;
 
       if(!email || !pass){
-        setStatus("Enter email + password.", "warn");
-        return;
-      }
+  showLoading("Enter email + password...");
+  setTimeout(() => hideLoading(), 900);
+  return;
+}
 
-      signInBtn.disabled = true;
-      setStatus("Signing in...", "warn");
+signInBtn.disabled = true;
+showLoading("Attempting sign-in...");
 
-      try{
-        await signInWithEmailAndPassword(auth, email, pass);
-      }catch(err){
-        console.error(err);
-        setStatus(`Sign-in failed: ${err?.code || err?.message}`, "bad");
-        setDebug({ code: err?.code, message: err?.message });
-      }finally{
-        signInBtn.disabled = false;
-      }
+try{
+  await signInWithEmailAndPassword(auth, email, pass);
+  // onAuthStateChanged will take over and switch to “Loading invoices...”
+}catch(err){
+  console.error(err);
+  showLoading(`Sign-in failed: ${err?.code || err?.message}`);
+  setDebug({ code: err?.code, message: err?.message });
+  setTimeout(() => hideLoading(), 1800);
+}finally{
+  signInBtn.disabled = false;
+}
+
     });
 	
 	// Enter key submits sign-in (email or password fields)
@@ -763,6 +881,7 @@ signInForm.addEventListener("submit", (e) => {
 
     signOutBtn.addEventListener("click", async () => {
       await signOut(auth);
+      hideLoading();
 
       ALL_INVOICES = [];
       CURRENT_DOG_FILTER = "__ALL__";
@@ -779,12 +898,13 @@ signInForm.addEventListener("submit", (e) => {
       whoPill.textContent = "Not signed in";
 
       showAuthOnly();
-      setStatus("Signed out.", "warn");
+
     });
 
     // ===== Auth state =====
     onAuthStateChanged(auth, async (user) => {
       if(!user){
+        hideLoading();
         whoPill.textContent = "Not signed in";
         signOutBtn.hidden = true;
 
@@ -799,8 +919,8 @@ signInForm.addEventListener("submit", (e) => {
         dogFilter.disabled = true;
 
         showAuthOnly();
-        setStatus("Not signed in.");
-        return;
+return;
+
       }
 
       whoPill.textContent = `Signed in: ${user.email || user.uid}`;
@@ -809,6 +929,7 @@ signInForm.addEventListener("submit", (e) => {
       refreshBtn2.disabled = false;
 
 
+      showLoading("Signed in. Loading invoices...");
       showInvoicesOnly();
       await loadMyInvoices();
     });
