@@ -1,0 +1,1075 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dog Ratings — Voice Logger</title>
+
+  <style>
+    :root{
+      --bg:#0a0c10;
+      --panel:#12151c;
+      --panel2:#0f1117;
+
+      --text:#eef2ff;
+      --muted:#a7afc6;
+
+      --border: rgba(255,255,255,.10);
+      --shadow: 0 18px 60px rgba(0,0,0,.55);
+      --radius: 18px;
+
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+
+      --accent:#7aa7ff;
+      --good:#38d996;
+      --bad:#ff5f6d;
+      --warn:#ffcc66;
+
+      /* Theme surfaces (these are swapped for light mode only) */
+      --card: rgba(255,255,255,.04);
+      --head: rgba(0,0,0,.20);
+      --surface: rgba(0,0,0,.18);
+    }
+
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background:
+        radial-gradient(900px 500px at 20% 10%, rgba(122,167,255,.10), transparent 55%),
+        radial-gradient(900px 500px at 80% 20%, rgba(56,217,150,.08), transparent 55%),
+        linear-gradient(180deg, #070910, #0a0c10 40%, #070910);
+      color:var(--text);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+    }
+
+    .wrap{
+      width:min(860px, 100%);
+    }
+
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:12px;
+      flex-wrap:wrap;
+    }
+
+    .brand{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+    }
+    .brand h1{
+      margin:0;
+      font-size:16px;
+      letter-spacing:.2px;
+    }
+    .brand .sub{
+      color:var(--muted);
+      font-size:12px;
+    }
+
+    .pill{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      padding:8px 12px;
+      border:1px solid var(--border);
+      border-radius:999px;
+      background: rgba(255,255,255,.04);
+      font-size:13px;
+      color:var(--muted);
+      max-width: 520px;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .card{
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+      background: var(--card);
+      backdrop-filter: blur(10px);
+    }
+
+    .head{
+      padding:12px 14px;
+      border-bottom:1px solid var(--border);
+      background: var(--head);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+
+    .head h2{
+      margin:0;
+      font-size:13px;
+      letter-spacing:.2px;
+      color:var(--muted);
+      text-transform: uppercase;
+      font-weight:900;
+    }
+    .body{
+      padding:14px;
+      background: var(--surface);
+    }
+
+
+    input, button { font:inherit; }
+
+    .btn{
+      border:1px solid var(--border);
+      background: rgba(122,167,255,.14);
+      color: var(--text);
+      padding:12px 14px;
+      border-radius:14px;
+      cursor:pointer;
+      transition: transform .05s ease, background .2s ease;
+      user-select:none;
+      font-weight:900;
+    }
+    .btn:hover{ background: rgba(122,167,255,.20); }
+    .btn:active{ transform: translateY(1px); }
+    .btn.secondary{ background: rgba(255,255,255,.06); }
+    .btn.danger{ background: rgba(255,95,109,.12); }
+    .btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+    .status{
+      margin-top:12px;
+      border:1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      border-radius:14px;
+      padding:10px 12px;
+      color: var(--muted);
+      font-size:13px;
+      line-height:1.35;
+    }
+    .status.good{ color: var(--good); }
+    .status.bad{ color: var(--bad); }
+    .status.warn{ color: var(--warn); }
+
+    /* Auth overlay card */
+    #authCard{ width:min(560px, 100%); margin:0 auto; }
+    label{
+      display:block;
+      font-size:13px;
+      font-weight:800;
+      color: var(--muted);
+      margin:0 0 6px;
+      text-transform: uppercase;
+      letter-spacing:.2px;
+    }
+    input[type="email"], input[type="password"]{
+      width:100%;
+      padding:14px 12px;
+      border-radius:14px;
+      border:1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      outline:none;
+      font-size:16px;
+    }
+
+    input::placeholder{ color: rgba(167,175,198,.55); }
+
+    .row2{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap:12px;
+    }
+    @media (max-width:520px){
+      .row2{ grid-template-columns: 1fr; }
+    }
+
+    /* Logger layout (mobile-first) */
+    #loggerCard{ width:min(720px, 100%); margin:0 auto; }
+    .loggerShell{
+      height: min(78vh, 680px);
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+    }
+    .dogBar{
+      flex: 0 0 12%;
+      min-height: 86px;
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:12px;
+      gap:12px;
+    }
+
+    .dogName{
+      font-size:26px;
+      font-weight:1000;
+      letter-spacing:.2px;
+      line-height:1.05;
+      overflow:hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 60%;
+    }
+    .dogHint{
+      font-size:12px;
+      color:var(--muted);
+      margin-top:4px;
+      font-weight:700;
+    }
+    .dogLeft{
+      display:flex;
+      flex-direction:column;
+      min-width:0;
+      flex:1;
+    }
+
+    .bigArea{
+      flex: 1;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      border:1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      padding:12px;
+    }
+
+    .bigBtn{
+      width:100%;
+      height:100%;
+      border-radius: 22px;
+      border:1px solid rgba(255,255,255,.10);
+      background: rgba(255,95,109,.16);
+      color:var(--text);
+      font-weight:1000;
+      font-size:42px;
+      cursor:pointer;
+      user-select:none;
+      transition: transform .05s ease, background .2s ease;
+    }
+    .bigBtn:hover{ background: rgba(255,95,109,.22); }
+    .bigBtn:active{ transform: translateY(1px); }
+    .bigBtn.recording{
+      background: rgba(56,217,150,.18);
+      border-color: rgba(56,217,150,.25);
+    }
+    .tinyNote{
+      margin-top:10px;
+      font-size:12px;
+      color:var(--muted);
+      font-family: var(--mono);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">
+        <h1>Dog Ratings — Voice Logger</h1>
+        <div class="sub">One-time sign-in, then tap & speak. Logs go to Firestore.</div>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+  <div class="pill" id="whoPill">Not signed in</div>
+</div>
+
+    </div>
+
+    <!-- AUTH CARD -->
+    <div class="card" id="authCard">
+      <div class="head">
+        <h2>Sign in</h2>
+      </div>
+      <div class="body">
+        <div>
+  <label>Email</label>
+  <input id="email" type="email" placeholder="" autocomplete="username" />
+</div>
+
+<div style="margin-top:12px;">
+  <label>Password</label>
+  <input id="password" type="password" placeholder="" autocomplete="current-password" />
+</div>
+
+
+        <div style="margin-top:12px;">
+          <button class="btn" id="signInBtn" style="width:100%;">Sign in</button>
+        </div>
+
+        <div class="status" id="authStatus">Not signed in.</div>
+      </div>
+    </div>
+
+    <!-- LOGGER CARD -->
+    <div class="card" id="loggerCard" hidden>
+      <div class="head">
+        <h2>Field logger</h2>
+      </div>
+      <div class="body">
+        <div class="loggerShell">
+          <div class="dogBar">
+            <div class="dogLeft">
+              <div class="dogName" id="dogName">No Dog</div>
+              <div class="dogHint">Tap “Dog”, speak the dog name.</div>
+            </div>
+            <button class="btn" id="dogBtn" style="min-width:140px; font-size:18px; padding:14px 16px;">🎤 Dog</button>
+          </div>
+
+          <div class="bigArea">
+            <button class="bigBtn" id="logBtn">🎙 LOG</button>
+          </div>
+
+          <div class="tinyNote" id="lastLog">Last log: (none)</div>
+        </div>
+
+        <div class="status" id="logStatus">Ready.</div>
+      </div>
+    </div>
+
+    <!-- DOGS CARD (third screen) -->
+    <div class="card" id="dogsCard" hidden style="width:min(720px, 100%); margin:12px auto 0;">
+      <div class="head">
+        <h2>Dogs</h2>
+      </div>
+
+      <div class="body">
+        <button class="btn" id="addDogBtn" style="width:100%;">+ Add New Dog</button>
+
+        <div class="status" id="dogsStatus">Loading dogs...</div>
+
+        <div id="dogsList" style="margin-top:12px; display:flex; flex-direction:column; gap:10px;"></div>
+
+        <!-- Add/Edit Dog Panel -->
+        <div id="dogFormWrap" hidden style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px;">
+          <div style="font-weight:1000; margin-bottom:10px;">Add Dog</div>
+
+          <div>
+            <label>Dog Name</label>
+            <input id="dogFormName" type="text" />
+          </div>
+
+          <div style="margin-top:12px;">
+            <label>Nickname (for disambiguation)</label>
+            <input id="dogFormNick" type="text" />
+          </div>
+
+          <div style="margin-top:12px;">
+            <label>Sex</label>
+            <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
+              <label style="text-transform:none; letter-spacing:0; font-weight:900; color:var(--text);">
+                <input type="radio" name="dogSex" value="girl" checked> Girl
+              </label>
+              <label style="text-transform:none; letter-spacing:0; font-weight:900; color:var(--text);">
+                <input type="radio" name="dogSex" value="boy"> Boy
+              </label>
+            </div>
+          </div>
+
+          <div style="margin-top:12px; display:flex; gap:10px;">
+            <button class="btn" id="dogFormSave" style="flex:1;">Save</button>
+            <button class="btn secondary" id="dogFormCancel" style="flex:1;">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<!-- Floating Menu Button -->
+<button id="fab" aria-label="Menu" style="
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: 62px;
+  height: 62px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(122,167,255,.18);
+  color: var(--text);
+  font-size: 26px;
+  font-weight: 1000;
+  box-shadow: var(--shadow);
+  display: none;
+  z-index: 9999;
+">☰</button>
+
+<!-- Floating Menu Panel -->
+<div id="fabMenu" style="
+  position: fixed;
+  right: 18px;
+  bottom: 92px;
+  width: min(280px, 86vw);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(0,0,0,.22);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: none;
+  z-index: 9999;
+">
+  <button id="menuDogs" class="btn secondary" style="width:100%; border-radius:0; border:0; border-bottom:1px solid var(--border); text-align:left;">
+    🐕 Manage Dogs
+  </button>
+  <button id="menuTheme" class="btn secondary" style="width:100%; border-radius:0; border:0; border-bottom:1px solid var(--border); text-align:left;">
+    🌙 Dark Mode
+  </button>
+  <button id="menuSignOut" class="btn danger" style="width:100%; border-radius:0; border:0; text-align:left;">
+    🚪 Sign out
+  </button>
+</div>
+
+
+<!-- OVERLAY: pick dog when multiple matches / manual selection -->
+<div id="overlay" hidden style="
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.62);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 9998;
+">
+
+  <div style="
+    width: min(720px, 96vw);
+    max-height: 86vh;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: rgba(0,0,0,.22);
+    backdrop-filter: blur(10px);
+    box-shadow: var(--shadow);
+    padding: 14px;
+  ">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+      <div id="overlayTitle" style="font-weight:1000;">Pick Dog</div>
+      <button id="overlayClose" class="btn secondary" style="padding:10px 12px;">Close</button>
+    </div>
+
+    <div id="overlayBody" style="margin-top:12px; display:flex; flex-direction:column; gap:10px;"></div>
+  </div>
+</div>
+
+ <script type="module">
+  // ====== Firebase config (your dog-ratings project) ======
+  const firebaseConfig = {
+    apiKey: "AIzaSyDr3T3gTys8PYLk7MrM5Phv9LvsMILHAzI",
+    authDomain: "dog-ratings.firebaseapp.com",
+    projectId: "dog-ratings",
+    storageBucket: "dog-ratings.firebasestorage.app",
+    messagingSenderId: "1095783362620",
+    appId: "1:1095783362620:web:b0cf3cfd85a08a092c9339"
+  };
+
+  // ====== Imports ======
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+  import {
+    getAuth,
+    onAuthStateChanged,
+    signInWithEmailAndPassword,
+    signOut,
+    setPersistence,
+    browserLocalPersistence
+  } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+
+  import {
+    getFirestore,
+    collection,
+    addDoc,
+    serverTimestamp,
+    doc,
+    setDoc,
+    deleteDoc,
+    getDocs,
+    query,
+    orderBy
+  } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+  // ====== Init ======
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  // Persist session across reloads (until site data is cleared)
+  await setPersistence(auth, browserLocalPersistence);
+
+  // ====== UI helpers ======
+  const el = (id) => document.getElementById(id);
+
+  const whoPill = el("whoPill");
+
+  const authCard = el("authCard");
+  const loggerCard = el("loggerCard");
+  const dogsCard = el("dogsCard");
+
+  const emailEl = el("email");
+  const passEl = el("password");
+  const signInBtn = el("signInBtn");
+  const authStatus = el("authStatus");
+
+  const dogNameEl = el("dogName");
+  const dogBtn = el("dogBtn");
+  const logBtn = el("logBtn");
+  const logStatus = el("logStatus");
+  const lastLog = el("lastLog");
+
+  const fab = el("fab");
+  const fabMenu = el("fabMenu");
+  const menuDogs = el("menuDogs");
+  const menuTheme = el("menuTheme");
+  const menuSignOut = el("menuSignOut");
+
+  const dogsStatus = el("dogsStatus");
+  const dogsList = el("dogsList");
+  const addDogBtn = el("addDogBtn");
+  const dogFormWrap = el("dogFormWrap");
+  const dogFormName = el("dogFormName");
+  const dogFormNick = el("dogFormNick");
+  const dogFormSave = el("dogFormSave");
+  const dogFormCancel = el("dogFormCancel");
+
+  const overlay = el("overlay");
+  const overlayTitle = el("overlayTitle");
+  const overlayBody = el("overlayBody");
+  const overlayClose = el("overlayClose");
+
+  function setStatus(node, msg, kind=""){
+    node.className = "status" + (kind ? " " + kind : "");
+    node.textContent = msg;
+  }
+
+  function showAuth(){
+    authCard.hidden = false;
+    loggerCard.hidden = true;
+    dogsCard.hidden = true;
+    fab.style.display = "none";
+    fabMenu.style.display = "none";
+  }
+
+  function showLogger(){
+    authCard.hidden = true;
+    loggerCard.hidden = false;
+    dogsCard.hidden = true;
+    fab.style.display = "block";
+    fabMenu.style.display = "none";
+  }
+
+  function showDogs(){
+    authCard.hidden = true;
+    loggerCard.hidden = true;
+    dogsCard.hidden = false;
+    fab.style.display = "block";
+    fabMenu.style.display = "none";
+  }
+
+  // ====== Theme (default light) ======
+  // Minimal: we only flip the existing palette by swapping CSS variables at runtime.
+  // Default is LIGHT.
+  let theme = localStorage.getItem("theme") || "light";
+  applyTheme(theme);
+
+  function applyTheme(mode){
+    theme = mode;
+    localStorage.setItem("theme", theme);
+
+    if(theme === "light"){
+      document.documentElement.style.setProperty("--bg", "#f5f7fb");
+      document.documentElement.style.setProperty("--panel", "#ffffff");
+      document.documentElement.style.setProperty("--panel2", "#f1f4fb");
+      document.documentElement.style.setProperty("--text", "#0b1020");
+      document.documentElement.style.setProperty("--muted", "#4b5568");
+      document.documentElement.style.setProperty("--border", "rgba(0,0,0,.10)");
+      document.documentElement.style.setProperty("--shadow", "0 18px 60px rgba(0,0,0,.18)");
+
+      document.documentElement.style.setProperty("--card", "rgba(255,255,255,.78)");
+      document.documentElement.style.setProperty("--head", "rgba(255,255,255,.58)");
+      document.documentElement.style.setProperty("--surface", "rgba(255,255,255,.55)");
+
+      document.body.style.background =
+        "radial-gradient(900px 500px at 20% 10%, rgba(122,167,255,.18), transparent 55%)," +
+        "radial-gradient(900px 500px at 80% 20%, rgba(56,217,150,.12), transparent 55%)," +
+        "linear-gradient(180deg, #f7f9ff, #f3f6ff 40%, #eef3ff)";
+
+      menuTheme.textContent = "🌙 Dark Mode";
+      whoPill.style.color = "var(--muted)";
+    }else{
+
+      document.documentElement.style.setProperty("--bg", "#0a0c10");
+      document.documentElement.style.setProperty("--panel", "#12151c");
+      document.documentElement.style.setProperty("--panel2", "#0f1117");
+      document.documentElement.style.setProperty("--text", "#eef2ff");
+      document.documentElement.style.setProperty("--muted", "#a7afc6");
+      document.documentElement.style.setProperty("--border", "rgba(255,255,255,.10)");
+      document.documentElement.style.setProperty("--shadow", "0 18px 60px rgba(0,0,0,.55)");
+
+      document.body.style.background =
+        "radial-gradient(900px 500px at 20% 10%, rgba(122,167,255,.10), transparent 55%)," +
+        "radial-gradient(900px 500px at 80% 20%, rgba(56,217,150,.08), transparent 55%)," +
+        "linear-gradient(180deg, #070910, #0a0c10 40%, #070910)";
+
+      menuTheme.textContent = "☀️ Light Mode";
+      whoPill.style.color = "var(--muted)";
+    }
+
+  }
+
+  // ====== Floating menu ======
+  function toggleMenu(){
+    fabMenu.style.display = (fabMenu.style.display === "none" || fabMenu.style.display === "") ? "block" : "none";
+  }
+  fab.addEventListener("click", () => toggleMenu());
+
+  menuTheme.addEventListener("click", () => {
+    applyTheme(theme === "light" ? "dark" : "light");
+    fabMenu.style.display = "none";
+  });
+
+  menuDogs.addEventListener("click", () => {
+    showDogs();
+  });
+
+  menuSignOut.addEventListener("click", async () => {
+    await signOut(auth);
+  });
+
+  // Close menu if you tap outside it
+  document.addEventListener("click", (e) => {
+    if(fabMenu.style.display !== "block") return;
+    if(e.target === fab) return;
+    if(fabMenu.contains(e.target)) return;
+    fabMenu.style.display = "none";
+  });
+
+  // ====== Overlay helpers ======
+  function openOverlay(title, nodes){
+    overlayTitle.textContent = title;
+    overlayBody.innerHTML = "";
+    for(const n of nodes) overlayBody.appendChild(n);
+    overlay.hidden = false;
+    overlay.style.display = "flex";
+  }
+  function closeOverlay(){
+    overlay.hidden = true;
+    overlay.style.display = "none";
+    overlayBody.innerHTML = "";
+  }
+
+  overlayClose.addEventListener("click", closeOverlay);
+  overlay.addEventListener("click", (e) => {
+    if(e.target === overlay) closeOverlay();
+  });
+
+  // ====== Speech recognition ======
+  function startSpeech(onResult, onEnd){
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if(!SR){
+      setStatus(logStatus, "SpeechRecognition not supported in this browser. Use Chrome on Android / desktop Chrome.", "bad");
+      onEnd?.();
+      return;
+    }
+
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+
+    rec.onresult = (e) => {
+      const text = e.results?.[0]?.[0]?.transcript || "";
+      onResult(text);
+    };
+    rec.onerror = (e) => {
+      setStatus(logStatus, "Speech error: " + (e?.error || "unknown"), "warn");
+      onEnd?.();
+    };
+    rec.onend = () => onEnd?.();
+
+    rec.start();
+  }
+
+  // ====== VoiceLogs (keep random IDs for Phase 1) ======
+  let currentDog = null;          // { id, name, nickname, sex }
+  let dogsCache = [];             // array of dog objects
+
+  async function writeVoiceLog({ type, text }){
+    const u = auth.currentUser;
+    await addDoc(collection(db, "voiceLogs"), {
+      uid: u?.uid || null,
+      email: u?.email || null,
+
+      dogId: currentDog?.id || null,
+      dogName: currentDog?.name || null,
+      dogNickname: currentDog?.nickname || null,
+      dogSex: currentDog?.sex || null,
+
+      type,               // "dog" or "log"
+      text: (text || "").trim(),
+      createdAt: serverTimestamp()
+    });
+  }
+
+  function setCurrentDog(d){
+    currentDog = d;
+    if(!d){
+      dogNameEl.textContent = "No Dog";
+      return;
+    }
+    dogNameEl.textContent = d.nickname ? `${d.name} (${d.nickname})` : d.name;
+  }
+
+  // ====== Dogs (Firestore synced for all employees) ======
+  function slug(s){
+    return (s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  function makeDogId(name, nickname, sex){
+    const n = slug(name);
+    const k = slug(nickname || name);
+    const sx = (sex === "boy") ? "boy" : "girl";
+    return `${n}__${k}__${sx}`;
+  }
+
+  async function loadDogs(){
+    setStatus(dogsStatus, "Loading dogs...", "warn");
+    dogsList.innerHTML = "";
+
+    const qy = query(collection(db, "dogs"), orderBy("name"));
+    const snap = await getDocs(qy);
+
+    dogsCache = snap.docs.map(d => {
+      const data = d.data();
+      return {
+        id: d.id,
+        name: data.name || "",
+        nickname: data.nickname || "",
+        sex: data.sex || "",
+        search: data.search || []
+      };
+    });
+
+    renderDogsList();
+    setStatus(dogsStatus, `Dogs loaded: ${dogsCache.length}`, "good");
+  }
+
+  function renderDogsList(){
+    dogsList.innerHTML = "";
+
+    if(dogsCache.length === 0){
+      const div = document.createElement("div");
+      div.className = "status warn";
+      div.textContent = "No dogs added yet. Tap “Add New Dog”.";
+      dogsList.appendChild(div);
+      return;
+    }
+
+    for(const d of dogsCache){
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.justifyContent = "space-between";
+      row.style.gap = "10px";
+      row.style.border = "1px solid var(--border)";
+      row.style.borderRadius = "14px";
+      row.style.padding = "10px 12px";
+      row.style.background = "rgba(0,0,0,.10)";
+
+      const left = document.createElement("div");
+      left.style.display = "flex";
+      left.style.flexDirection = "column";
+
+      const name = document.createElement("div");
+      name.style.fontWeight = "1000";
+      name.textContent = d.name;
+
+      const meta = document.createElement("div");
+      meta.style.color = "var(--muted)";
+      meta.style.fontSize = "12px";
+      meta.textContent = `${d.nickname || "(no nickname)"} • ${d.sex || "(sex?)"}`;
+
+      left.appendChild(name);
+      left.appendChild(meta);
+
+      const right = document.createElement("div");
+      right.style.display = "flex";
+      right.style.gap = "10px";
+
+      const del = document.createElement("button");
+      del.className = "btn danger";
+      del.textContent = "X";
+      del.style.padding = "10px 14px";
+      del.addEventListener("click", async () => {
+        await deleteDoc(doc(db, "dogs", d.id));
+        await loadDogs();
+      });
+
+      right.appendChild(del);
+
+      row.appendChild(left);
+      row.appendChild(right);
+
+      dogsList.appendChild(row);
+    }
+  }
+
+  function openDogForm(){
+    dogFormName.value = "";
+    dogFormNick.value = "";
+    const girl = document.querySelector('input[name="dogSex"][value="girl"]');
+    if(girl) girl.checked = true;
+    dogFormWrap.hidden = false;
+    dogFormName.focus();
+  }
+
+  function closeDogForm(){
+    dogFormWrap.hidden = true;
+    dogFormName.value = "";
+    dogFormNick.value = "";
+  }
+
+  addDogBtn.addEventListener("click", openDogForm);
+  dogFormCancel.addEventListener("click", closeDogForm);
+
+  dogFormSave.addEventListener("click", async () => {
+    const name = (dogFormName.value || "").trim();
+    const nickname = (dogFormNick.value || "").trim();
+    const sex = (document.querySelector('input[name="dogSex"]:checked')?.value || "girl");
+
+    if(!name){
+      setStatus(dogsStatus, "Dog name is required.", "warn");
+      return;
+    }
+
+    const dogId = makeDogId(name, nickname, sex);
+    const search = [
+      name.trim().toLowerCase(),
+      (nickname || "").trim().toLowerCase()
+    ].filter(Boolean);
+
+    await setDoc(doc(db, "dogs", dogId), {
+      name,
+      nickname,
+      sex,
+      search,
+      createdAt: serverTimestamp()
+    }, { merge: true });
+
+    closeDogForm();
+    await loadDogs();
+    setStatus(dogsStatus, "Saved dog.", "good");
+  });
+
+  // ====== Dog selection from voice (match -> disambiguate -> manual fallback) ======
+  function findDogMatches(spoken){
+    const t = (spoken || "").trim().toLowerCase();
+    if(!t) return [];
+    return dogsCache.filter(d => {
+      const s = (d.search || []).map(x => String(x).toLowerCase());
+      return s.includes(t) || d.name.toLowerCase() === t || (d.nickname || "").toLowerCase() === t;
+    });
+  }
+
+  function buildPickButtons(matches, onPick){
+    return matches.map(d => {
+      const b = document.createElement("button");
+      b.className = "btn";
+      b.style.width = "100%";
+      b.style.textAlign = "left";
+      b.textContent = d.nickname ? `${d.name} (${d.nickname}) — ${d.sex}` : `${d.name} — ${d.sex}`;
+      b.addEventListener("click", () => onPick(d));
+      return b;
+    });
+  }
+
+  function promptManualPick(){
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+    const nodes = [];
+
+    const alphaRow = document.createElement("div");
+    alphaRow.style.display = "flex";
+    alphaRow.style.flexWrap = "wrap";
+    alphaRow.style.gap = "8px";
+
+    const listWrap = document.createElement("div");
+    listWrap.style.display = "flex";
+    listWrap.style.flexDirection = "column";
+    listWrap.style.gap = "10px";
+    listWrap.style.marginTop = "12px";
+
+    function renderLetter(letter){
+      listWrap.innerHTML = "";
+      const filtered = dogsCache.filter(d => (d.name || "").toUpperCase().startsWith(letter));
+      if(filtered.length === 0){
+        const info = document.createElement("div");
+        info.className = "status warn";
+        info.textContent = `No dogs starting with ${letter}.`;
+        listWrap.appendChild(info);
+        return;
+      }
+      const btns = buildPickButtons(filtered, (d) => {
+        setCurrentDog(d);
+        closeOverlay();
+      });
+      for(const b of btns) listWrap.appendChild(b);
+    }
+
+    for(const L of letters){
+      const chip = document.createElement("button");
+      chip.className = "btn secondary";
+      chip.textContent = L;
+      chip.style.padding = "10px 12px";
+      chip.addEventListener("click", () => renderLetter(L));
+      alphaRow.appendChild(chip);
+    }
+
+    nodes.push(alphaRow);
+    nodes.push(listWrap);
+
+    openOverlay("Manual Dog Select", nodes);
+  }
+
+  function askManualSelect(){
+    const yes = document.createElement("button");
+    yes.className = "btn";
+    yes.style.width = "100%";
+    yes.textContent = "Yes — Manual Select";
+    yes.addEventListener("click", () => {
+      closeOverlay();
+      promptManualPick();
+    });
+
+    const no = document.createElement("button");
+    no.className = "btn secondary";
+    no.style.width = "100%";
+    no.textContent = "No — Cancel";
+    no.addEventListener("click", closeOverlay);
+
+    openOverlay("No dog name detected. Manual select?", [yes, no]);
+  }
+
+  // ====== Auth actions ======
+  async function doSignIn(){
+    const email = (emailEl.value || "").trim();
+    const pass = (passEl.value || "");
+
+    if(!email || !pass){
+      setStatus(authStatus, "Enter email + password first.", "warn");
+      return;
+    }
+
+    const old = signInBtn.textContent;
+    signInBtn.disabled = true;
+    signInBtn.textContent = "Signing in...";
+
+    setStatus(authStatus, "Signing in...", "warn");
+
+    try{
+      await signInWithEmailAndPassword(auth, email, pass);
+      setStatus(authStatus, "Signed in.", "good");
+    }catch(err){
+      const code = err?.code || "";
+      let msg = err?.message || "Unknown error";
+      if(code === "auth/invalid-credential" || code === "auth/wrong-password") msg = "Wrong email or password.";
+      if(code === "auth/user-not-found") msg = "No user found for that email (add user in Firebase Auth).";
+      if(code === "auth/too-many-requests") msg = "Too many attempts. Wait a bit.";
+      setStatus(authStatus, "Sign-in failed: " + msg, "bad");
+    }finally{
+      signInBtn.disabled = false;
+      signInBtn.textContent = old;
+    }
+  }
+
+  signInBtn.addEventListener("click", (e) => { e.preventDefault(); doSignIn(); });
+  [emailEl, passEl].forEach(inp => inp.addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){ e.preventDefault(); doSignIn(); }
+  }));
+
+  // ====== Logger buttons ======
+  dogBtn.addEventListener("click", () => {
+    setStatus(logStatus, "Listening for dog name...", "warn");
+
+    startSpeech(async (spoken) => {
+      const text = (spoken || "").trim();
+      lastLog.textContent = `Last log: [dog] ${text}`;
+
+      const matches = findDogMatches(text);
+
+      if(matches.length === 1){
+        setCurrentDog(matches[0]);
+        setStatus(logStatus, "Dog set.", "good");
+        await writeVoiceLog({ type:"dog", text });
+        return;
+      }
+
+      if(matches.length > 1){
+        const btns = buildPickButtons(matches, async (d) => {
+          setCurrentDog(d);
+          closeOverlay();
+          setStatus(logStatus, "Dog set.", "good");
+          await writeVoiceLog({ type:"dog", text });
+        });
+        openOverlay(`Which “${text}”?`, btns);
+        return;
+      }
+
+      setStatus(logStatus, "No matching dog found.", "warn");
+      askManualSelect();
+      await writeVoiceLog({ type:"dog", text });
+    }, () => {});
+  });
+
+  logBtn.addEventListener("click", () => {
+    logBtn.classList.add("recording");
+    setStatus(logStatus, "Listening...", "warn");
+
+    startSpeech(async (text) => {
+      lastLog.textContent = `Last log: ${text}`;
+      setStatus(logStatus, "Saved.", "good");
+      await writeVoiceLog({ type:"log", text });
+    }, () => {
+      logBtn.classList.remove("recording");
+    });
+  });
+
+  // ====== Auth state gate ======
+  onAuthStateChanged(auth, async (user) => {
+    if(!user){
+      whoPill.textContent = "Not signed in";
+      setCurrentDog(null);
+      showAuth();
+      return;
+    }
+
+    whoPill.textContent = user.email ? `Signed in: ${user.email}` : "Signed in";
+    showLogger();
+    setStatus(logStatus, "Ready.", "good");
+
+    // Load master dog list (shared for all employees)
+    await loadDogs();
+  });
+
+  // Initial view
+  showAuth();
+</script>
+
+</body>
+</html>
