@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles.css';
 import cardBackUrl from './assets/card-back.png';
+import titleScreenArtUrl from './assets/title-screen-art.png';
+import hostJoinScreenArtUrl from './assets/host-join-screen-art.png';
 import {
   DEFAULT_DEBUG_DECK,
   formatDeckImportDebugReportAll,
@@ -1584,15 +1586,18 @@ function App() {
   }
 
   if (screen === 'title') {
-    return <TitleScreen mode={mode} setMode={setMode} setScreen={setScreen} />;
+    return <TitleScreen mode={mode} setMode={setMode} setScreen={setScreen} setLobbyName={setLobbyName} />;
   }
 
-  if (screen === 'hostJoin' || screen === 'hostForm' || screen === 'joinForm' || screen === 'joining') {
+  if (screen === 'hostJoin') {
+    return <HostJoin setScreen={setScreen} />;
+  }
+
+  if (screen === 'hostForm' || screen === 'joinForm' || screen === 'joining') {
     return (
       <Shell>
-        <button className="ghost back" onClick={() => setScreen('title')}>← Back</button>
+        <button className="ghost back" onClick={() => setScreen('hostJoin')}>← Back</button>
         <h1>{MODES.find((m) => m.id === mode)?.name}</h1>
-        {screen === 'hostJoin' && <HostJoin setScreen={setScreen} />}
         {screen === 'hostForm' && (
           <ConnectionForm
             title="Host Lobby"
@@ -1674,71 +1679,135 @@ function Shell({ children }) {
   return <main className="app-shell">{children}</main>;
 }
 
-function TitleScreen({ mode, setMode, setScreen }) {
+
+function ArtHitboxButton({ className = '', label, onClick }) {
   return (
-    <main className="title-screen compact-title-screen">
-      <div className="title-backdrop-orb orb-one" />
-      <div className="title-backdrop-orb orb-two" />
-      <div className="title-backdrop-orb orb-three" />
-      <section className="title-hero single-screen-title">
-        <div className="title-hero-copy">
-          <p className="eyebrow">Remote tabletop proxy system</p>
-          <h1>Fancy Card Table</h1>
-          <p className="subtitle">A premium-feeling digital table for Commander nights, remote testing, and physics-inspired card play with your friends.</p>
-          <div className="feature-pills compact-pills">
-            <span>Realtime Lobby</span>
-            <span>Scryfall Import</span>
-            <span>Perspective Table</span>
-            <span>Drag · Tap · Stack</span>
+    <button type="button" className={`art-hitbox-button ${className}`.trim()} aria-label={label} onClick={onClick}>
+      <span className="sr-only">{label}</span>
+    </button>
+  );
+}
+
+function TitleOverlayModal({ title, copy, children, onClose }) {
+  return (
+    <div className="mini-modal-backdrop" onClick={onClose}>
+      <div className="mini-modal title-overlay-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-topline">
+          <div>
+            <p className="eyebrow">Title Menu</p>
+            <h2>{title}</h2>
+            {copy ? <p className="modal-copy">{copy}</p> : null}
+          </div>
+          <button className="round-close" type="button" onClick={onClose}>×</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TitleScreen({ mode, setMode, setScreen, setLobbyName }) {
+  const [modal, setModal] = useState(null);
+  const [exitMessageIndex, setExitMessageIndex] = useState(0);
+  const exitMessages = [
+    'You cannot escape the table.',
+    'Nice try. The cardboard realm has claimed you.',
+    'Exit Game is an illusion. Shuffle up instead.',
+    'The table votes no. One more game.'
+  ];
+
+  const launchMagic = ({ debug = false } = {}) => {
+    setMode('magic');
+    setLobbyName(debug ? 'debug-table' : 'tabletop-lobby');
+    setScreen('hostJoin');
+  };
+
+  return (
+    <main className="title-art-screen">
+      <div className="title-art-shell">
+        <div className="title-art-frame">
+          <img src={titleScreenArtUrl} alt="Tabletop title screen" className="title-art-image" />
+          <div className="art-hitbox-layer">
+            <ArtHitboxButton className="title-hitbox title-hitbox-new" label="New Game" onClick={() => setModal('new-game')} />
+            <ArtHitboxButton className="title-hitbox title-hitbox-load" label="Load Game" onClick={() => setModal('load-game')} />
+            <ArtHitboxButton className="title-hitbox title-hitbox-mtg" label="MTG Mode" onClick={() => launchMagic()} />
+            <ArtHitboxButton className="title-hitbox title-hitbox-debug" label="Debug Mode" onClick={() => launchMagic({ debug: true })} />
+            <ArtHitboxButton className="title-hitbox title-hitbox-options" label="Options" onClick={() => setModal('options')} />
+            <ArtHitboxButton className="title-hitbox title-hitbox-exit" label="Exit Game" onClick={() => { setExitMessageIndex((value) => (value + 1) % exitMessages.length); setModal('exit'); }} />
           </div>
         </div>
-        <div className="title-stage compact-stage">
-          <div className="stage-table">
-            <div className="stage-zone big">Battlefield</div>
-            <div className="stage-zone mid">Artifacts / Enchantments</div>
-            <div className="stage-zone small">Lands / Mana</div>
-            <div className="stage-card stage-card-a" />
-            <div className="stage-card stage-card-b" />
-            <div className="stage-card stage-card-c" />
-          </div>
+        <div className="title-art-helper-row">
+          <span className="title-art-helper-pill">MTG Mode is live now</span>
+          <span className="title-art-helper-pill">Debug Mode pre-fills a debug lobby name</span>
         </div>
-        <div className="title-mode-panel">
-          <div className="title-card-topline compact-mode-topline">
-            <div>
-              <p className="eyebrow">Mode selection</p>
-              <h2>Pick a table</h2>
-            </div>
-          </div>
-          <div className="mode-grid compact-mode-grid">
-            {MODES.map((item) => (
-              <button
-                key={item.id}
-                className={`mode-card compact-mode-card ${mode === item.id ? 'selected' : ''} ${!item.active ? 'disabled-mode' : ''}`}
-                onClick={() => {
-                  setMode(item.id);
-                  if (item.active) setScreen('hostJoin');
-                }}
-              >
-                <div className="mode-card-top">
-                  <span>{item.name}</span>
-                  <b>{item.active ? 'Now' : 'Soon'}</b>
+      </div>
+
+      {modal === 'new-game' && (
+        <TitleOverlayModal title="New Game" copy="This slot is reserved for your future non-MTG game modes. For now, MTG has its own dedicated button on the title screen." onClose={() => setModal(null)}>
+          <div className="title-overlay-grid">
+            {MODES.filter((item) => item.id !== 'magic').map((item) => (
+              <button key={item.id} type="button" className="title-overlay-card disabled" disabled>
+                <div className="title-overlay-card-top">
+                  <strong>{item.name}</strong>
+                  <b>Soon</b>
                 </div>
                 <small>{item.blurb}</small>
               </button>
             ))}
           </div>
-        </div>
-      </section>
+        </TitleOverlayModal>
+      )}
+
+      {modal === 'load-game' && (
+        <TitleOverlayModal title="Load Game" copy="This will eventually resume an in-progress saved match between you and your friends." onClose={() => setModal(null)}>
+          <div className="title-overlay-copy-stack">
+            <p>Saved-match resume is not wired up yet, but the menu slot is now reserved for it.</p>
+            <button type="button" className="primary" onClick={() => setModal(null)}>Got it</button>
+          </div>
+        </TitleOverlayModal>
+      )}
+
+      {modal === 'options' && (
+        <TitleOverlayModal title="Options" copy="This is the placeholder shell for the future settings menu." onClose={() => setModal(null)}>
+          <div className="title-option-list">
+            <div className="title-option-item"><strong>Audio</strong><span>Coming soon</span></div>
+            <div className="title-option-item"><strong>Mobile Controls</strong><span>Coming soon</span></div>
+            <div className="title-option-item"><strong>Card Scale / Zoom</strong><span>Coming soon</span></div>
+            <div className="title-option-item"><strong>Accessibility</strong><span>Coming soon</span></div>
+          </div>
+        </TitleOverlayModal>
+      )}
+
+      {modal === 'exit' && (
+        <TitleOverlayModal title="Exit Game" copy={exitMessages[exitMessageIndex]} onClose={() => setModal(null)}>
+          <div className="title-overlay-copy-stack">
+            <p>The browser version cannot really close itself, so this button is now a tiny in-universe joke.</p>
+            <button type="button" className="secondary" onClick={() => setModal(null)}>Return to the table</button>
+          </div>
+        </TitleOverlayModal>
+      )}
     </main>
   );
 }
 
 function HostJoin({ setScreen }) {
   return (
-    <div className="choice-row">
-      <button className="big-action" onClick={() => setScreen('hostForm')}>Host</button>
-      <button className="big-action" onClick={() => setScreen('joinForm')}>Join</button>
-    </div>
+    <main className="title-art-screen host-join-art-screen">
+      <button className="ghost art-screen-back" type="button" onClick={() => setScreen('title')}>← Back</button>
+      <div className="title-art-shell host-join-shell">
+        <div className="host-join-art-frame">
+          <img src={hostJoinScreenArtUrl} alt="MTG multiplayer setup screen" className="title-art-image host-join-art-image" />
+          <div className="art-hitbox-layer">
+            <ArtHitboxButton className="host-join-hitbox host-join-hitbox-host" label="Host Game" onClick={() => setScreen('hostForm')} />
+            <ArtHitboxButton className="host-join-hitbox host-join-hitbox-join" label="Join Game" onClick={() => setScreen('joinForm')} />
+          </div>
+        </div>
+        <div className="title-art-helper-row">
+          <span className="title-art-helper-pill">Host to create a lobby</span>
+          <span className="title-art-helper-pill">Join to enter a friend's lobby name</span>
+        </div>
+      </div>
+    </main>
   );
 }
 
