@@ -1227,12 +1227,12 @@ function App() {
   const [lobbyState, setLobbyState] = useState(null);
   const [status, setStatus] = useState('not connected');
   const [notice, setNotice] = useState('');
-  const [deckText, setDeckText] = useState(DEFAULT_DEBUG_DECK);
+  const [deckText, setDeckText] = useState('');
   const [deckLoading, setDeckLoading] = useState(false);
   const [deckLoadingSeat, setDeckLoadingSeat] = useState(null);
   const [deckInfo, setDeckInfo] = useState(null);
   const [deckInfoBySeat, setDeckInfoBySeat] = useState({});
-  const [deckTextBySeat, setDeckTextBySeat] = useState(() => Object.fromEntries(SEATS.map((seat) => [seat, DEFAULT_DEBUG_DECK])));
+  const [deckTextBySeat, setDeckTextBySeat] = useState(() => Object.fromEntries(SEATS.map((seat) => [seat, ''])));
   const [gameEvents, setGameEvents] = useState([]);
   const roomRef = useRef(null);
   const stateRef = useRef({});
@@ -1874,7 +1874,7 @@ function LobbyScreen(props) {
   const targetSeat = importSeat || localSeat;
   const localPlayerDeckReady = Boolean(players[localSeat]?.commanderName && players[localSeat]?.deckCount);
   const localPlayerReady = Boolean(players[localSeat]?.ready);
-  const targetDeckText = deckTextBySeat[targetSeat] ?? (targetSeat === localSeat ? deckText : DEFAULT_DEBUG_DECK);
+  const targetDeckText = deckTextBySeat[targetSeat] ?? (targetSeat === localSeat ? deckText : '');
   const [deckScan, setDeckScan] = useState(null);
   const [importDebugReport, setImportDebugReport] = useState(null);
   const [importDebugLoading, setImportDebugLoading] = useState(false);
@@ -2054,11 +2054,9 @@ function LobbyScreen(props) {
               </div>
               <button className="close round-close" onClick={() => setImportSeat(null)}>×</button>
             </div>
-            <p className="modal-copy">Paste a decklist. Empty box falls back to the Baru Wurmspeaker debug deck.</p>
+            <p className="modal-copy">Paste a decklist. Leave this empty and Load deck will use the built-in fallback deck.</p>
             <textarea value={targetDeckText} onChange={(e) => updateTargetDeckText(e.target.value)} spellCheck="false" />
             <div className="modal-actions">
-              <button className="secondary" onClick={() => updateTargetDeckText('')}>Clear to test fallback</button>
-              <button className="secondary" disabled={deckLoading || importDebugLoading} onClick={runDeckImportDebug}>{importDebugLoading ? 'Debugging...' : 'Debug import'}</button>
               <button className="secondary" disabled={deckLoading} onClick={() => { loadDeckForPlayer(targetSeat, targetDeckText); setImportSeat(null); }}>{deckLoading ? 'Loading...' : `Load deck for P${targetSeat}`}</button>
               {targetSeat === localSeat && <button className="primary" disabled={!localPlayerDeckReady && !localPlayerReady} onClick={() => { toggleReady(localSeat); setImportSeat(null); }}>{players[localSeat]?.ready ? 'Unready' : 'Ready up'}</button>}
             </div>
