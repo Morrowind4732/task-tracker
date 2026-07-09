@@ -1076,6 +1076,26 @@ function activeModLabel(mod) {
   return '';
 }
 
+function signedDelta(value = 0) {
+  const number = Number(value || 0);
+  if (!number) return '0';
+  return number > 0 ? `+${number}` : String(number);
+}
+
+function describeCardMod(mod = {}) {
+  if (!mod) return 'modifier';
+  const duration = activeModLabel(mod);
+  if (mod.kind === 'counter') {
+    const amount = Math.abs(Number(mod.counterAmount || 1));
+    const type = mod.counterType || `${signedDelta(mod.powerDelta)}/${signedDelta(mod.toughnessDelta)}`;
+    return `${amount} ${type} counter${amount === 1 ? '' : 's'}${duration}`;
+  }
+  if (mod.kind === 'pt') return `${signedDelta(mod.powerDelta)}/${signedDelta(mod.toughnessDelta)}${duration}`;
+  if (mod.kind === 'base_pt') return `base ${mod.basePower ?? '?'}/${mod.baseToughness ?? '?'}${duration}`;
+  if (mod.kind === 'trait' || mod.kind === 'choice') return `${mod.trait || mod.label || mod.value || 'Effect'}${duration}`;
+  return `${mod.label || mod.kind || 'modifier'}${duration}`;
+}
+
 function getCardStats(boardCard) {
   const activeCard = getActiveCardForBoard(boardCard);
   const rawPower = activeCard?.power;
@@ -1136,6 +1156,12 @@ function firstOpenSeat(players, requestedSeat) {
   for (let seat = start; seat <= 4; seat += 1) if (!players[seat]) return seat;
   for (let seat = 1; seat < start; seat += 1) if (!players[seat]) return seat;
   return null;
+}
+
+function seatForPlayerId(players = {}, playerId = '') {
+  if (!playerId) return null;
+  const entry = Object.entries(players || {}).find(([, player]) => player?.id === playerId);
+  return entry ? Number(entry[0]) : null;
 }
 
 function compactPlayer(player) {
@@ -1230,6 +1256,19 @@ function App() {
 
     if (type === 'join_request' && current.isHost && current.lobbyState) {
       updateHostLobby((lobby) => {
+        const existingSeat = seatForPlayerId(lobby.players, payload.playerId);
+        if (existingSeat && lobby.players?.[existingSeat]) {
+          const existingPlayer = lobby.players[existingSeat];
+          const nextPlayer = payload.name && payload.name !== existingPlayer.name
+            ? { ...existingPlayer, name: payload.name }
+            : existingPlayer;
+          const next = nextPlayer === existingPlayer
+            ? lobby
+            : { ...lobby, players: { ...lobby.players, [existingSeat]: nextPlayer } };
+          roomRef.current?.send('join_accepted', { targetId: payload.playerId, seat: existingSeat, state: next, alreadySeated: true });
+          return next;
+        }
+
         const seat = firstOpenSeat(lobby.players, payload.requestedSeat);
         if (!seat) {
           roomRef.current?.send('join_rejected', { targetId: payload.playerId, reason: 'Sorry, this lobby is full.' });
@@ -3244,6 +3283,10 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       setBoardCards((cards) => cards.map((card) => event.boardIds.includes(card.boardId) ? { ...card, tapped: event.tapped } : card));
       return;
     }
+    if (event.type === 'modify_cards') {
+      setBoardCards((cards) => applyModificationToCards(cards, event.boardIds || [], event.payload || {}));
+      return;
+    }
     if (event.type === 'ai_notice') {
       addAiThoughtLines(event.lines || [], event.mode || 'append', event.seat);
       return;
@@ -4206,11 +4249,61 @@ Reason: ${legality.reason}`);
     setSelection(null);
   }
 
-  function applyModification(payload) {
-    if (!selection?.boardIds?.length) return;
-    const mod = { id: crypto.randomUUID(), ...payload };
-    setBoardCards((cards) => cards.map((card) => selection.boardIds.includes(card.boardId) ? { ...card, mods: [...(card.mods || []), mod] } : card));
+  function applyModificationToCards(cards, targetIds = [], patch = {}) {
+    const idSet = new Set((targetIds || []).filter(Boolean));
+    if (!idSet.size) return cards;
+    const action = patch.action || 'add_mod';
+    if (action === 'add_mod') {
+      const mod = patch.mod || null;
+      if (!mod) return cards;
+      return cards.map((card) => idSet.has(card.boardId) ? { ...card, mods: [...(card.mods || []), mod] } : card);
+    }
+    if (action === 'remove_mod') {
+      const modIdSet = new Set([...(patch.modIds || []), patch.modId].filter(Boolean));
+      if (!modIdSet.size) return cards;
+      return cards.map((card) => idSet.has(card.boardId) ? { ...card, mods: (card.mods || []).filter((mod) => !modIdSet.has(mod.id)) } : card);
+    }
+    if (action === 'clear_temporary') {
+      return cards.map((card) => idSet.has(card.boardId) ? { ...card, mods: (card.mods || []).filter((mod) => !isEndOfTurnMod(mod)) } : card);
+    }
+    if (action === 'clear_linked') {
+      return cards.map((card) => idSet.has(card.boardId) ? { ...card, mods: (card.mods || []).filter((mod) => mod.duration !== 'linked') } : card);
+    }
+    if (action === 'clear_manual_mods') {
+      return cards.map((card) => idSet.has(card.boardId) ? { ...card, mods: [] } : card);
+    }
+    return cards;
+  }
+
+  function describeModificationPatch(patch = {}) {
+    if (patch.action === 'add_mod') return `added ${describeCardMod(patch.mod)}`;
+    if (patch.action === 'remove_mod') return 'removed one manual/AI effect';
+    if (patch.action === 'clear_temporary') return 'cleared end-of-turn effects';
+    if (patch.action === 'clear_linked') return 'cleared linked effects';
+    if (patch.action === 'clear_manual_mods') return 'cleared all modifiers';
+    return 'updated modifiers';
+  }
+
+  function applyModification(payload = {}) {
+    const targetIds = (modifyModal?.boardIds?.length ? modifyModal.boardIds : selection?.boardIds) || [];
+    if (!targetIds.length) return;
+    const patch = payload.action
+      ? payload
+      : {
+        action: 'add_mod',
+        mod: {
+          id: crypto.randomUUID(),
+          duration: payload.duration || 'permanent',
+          sourceId: payload.duration === 'linked' ? (payload.sourceId || targetIds[0]) : payload.sourceId,
+          ...payload
+        }
+      };
+    setBoardCards((cards) => applyModificationToCards(cards, targetIds, patch));
+    emit({ type: 'modify_cards', boardIds: targetIds, payload: patch });
+    const targetName = boardCards.find((card) => targetIds.includes(card.boardId))?.card?.name || `${targetIds.length} card${targetIds.length === 1 ? '' : 's'}`;
+    addGameNotice(`Manual correction: ${targetName} — ${describeModificationPatch(patch)}.`, localSeat);
     setModifyModal(null);
+    setSelection(null);
   }
 
   function applyActivation(payload) {
@@ -7757,49 +7850,154 @@ function AiReviewModal({ review, onApply, onApproveOnly, onReject, onClose }) {
 }
 
 function ModifyModal({ boardCards, selection, onApply, onClose }) {
-  const [powerDelta, setPowerDelta] = useState(0);
-  const [toughnessDelta, setToughnessDelta] = useState(0);
+  const targetIds = selection?.boardIds || [];
+  const targetCards = boardCards.filter((card) => targetIds.includes(card.boardId));
+  const primaryCard = targetCards[0] || null;
+  const primaryStats = primaryCard ? getCardStats(primaryCard) : null;
+  const activeMods = primaryCard?.mods || [];
   const [duration, setDuration] = useState('eot');
   const [trait, setTrait] = useState('');
-  const [kind, setKind] = useState('pt');
-  const [sourceId, setSourceId] = useState(selection?.boardIds?.[0] || '');
+  const [counterType, setCounterType] = useState('+1/+1');
+  const [counterAmount, setCounterAmount] = useState(1);
+  const [sourceId, setSourceId] = useState(targetIds[0] || '');
+  const [basePower, setBasePower] = useState(primaryStats?.power ?? '');
+  const [baseToughness, setBaseToughness] = useState(primaryStats?.toughness ?? '');
+  const selectedSourceId = duration === 'linked' ? (sourceId || targetIds[0] || '') : '';
+  const applyPt = (powerDelta, toughnessDelta) => onApply({ kind: 'pt', powerDelta, toughnessDelta, duration, sourceId: selectedSourceId });
+  const applyCounter = (powerDelta, toughnessDelta, type = counterType, amountOverride = counterAmount) => {
+    const amount = Math.max(1, Number(amountOverride || 1));
+    onApply({ kind: 'counter', counterType: type || '+1/+1', counterAmount: amount, powerDelta: Number(powerDelta || 0) * amount, toughnessDelta: Number(toughnessDelta || 0) * amount, duration: 'permanent', sourceId: selectedSourceId });
+  };
+  const addTrait = () => {
+    const cleaned = trait.trim();
+    if (!cleaned) return;
+    onApply({ kind: 'trait', trait: cleaned, duration, sourceId: selectedSourceId });
+  };
+  const setBaseStats = () => {
+    if (basePower === '' && baseToughness === '') return;
+    onApply({ kind: 'base_pt', basePower, baseToughness, duration, sourceId: selectedSourceId });
+  };
+  const removeMod = (modId) => onApply({ action: 'remove_mod', modIds: [modId] });
+  const clearTemporary = () => onApply({ action: 'clear_temporary' });
+  const clearLinked = () => onApply({ action: 'clear_linked' });
+  const clearAll = () => onApply({ action: 'clear_manual_mods' });
   return (
     <div className="mini-modal-backdrop" onClick={onClose}>
-      <section className="modify-modal mini-modal" onClick={(event) => event.stopPropagation()}>
-        <div className="modal-topline"><h2>Modify selected card</h2><button className="close round-close" onClick={onClose}>×</button></div>
-        <div className="modify-tabs">
-          <button className={kind === 'pt' ? 'active' : ''} onClick={() => setKind('pt')}>Power / Toughness</button>
-          <button className={kind === 'trait' ? 'active' : ''} onClick={() => setKind('trait')}>Type / Effect</button>
-        </div>
-        {kind === 'pt' ? (
-          <div className="pt-mod-grid intuitive-pt-grid">
-            <section className="pt-stat-column">
-              <label>Power <input type="number" value={powerDelta} onChange={(e) => setPowerDelta(Number(e.target.value) || 0)} /></label>
-              <button onClick={() => setPowerDelta((v) => v + 1)}>Increase power</button>
-              <button onClick={() => setPowerDelta((v) => v - 1)}>Decrease power</button>
-            </section>
-            <section className="pt-stat-column">
-              <label>Toughness <input type="number" value={toughnessDelta} onChange={(e) => setToughnessDelta(Number(e.target.value) || 0)} /></label>
-              <button onClick={() => setToughnessDelta((v) => v + 1)}>Increase toughness</button>
-              <button onClick={() => setToughnessDelta((v) => v - 1)}>Decrease toughness</button>
-            </section>
+      <section className="modify-modal mini-modal correction-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-topline">
+          <div>
+            <p className="eyebrow">Manual correction panel</p>
+            <h2>Modify / fix card</h2>
           </div>
-        ) : (
-          <label>Add type / effect <input value={trait} onChange={(e) => setTrait(e.target.value)} placeholder="Flying, Deathtouch, Vampire..." /></label>
-        )}
-        <div className="duration-row">
+          <button className="close round-close" onClick={onClose}>×</button>
+        </div>
+        <p className="modal-copy">Use this when the AI added the wrong effect, missed a counter, or you need to fix the table state on the fly. Changes sync to the table for the other players.</p>
+
+        <div className="modify-target-summary">
+          <strong>{targetCards.length === 1 ? primaryCard?.card?.name : `${targetCards.length} selected cards`}</strong>
+          {targetCards.length === 1 && primaryStats?.hasStats && <span className={`pt ${primaryStats.tone}`.trim()}>{primaryStats.power}/{primaryStats.toughness}</span>}
+          {targetCards.length > 1 && <span>Applies to all selected cards.</span>}
+        </div>
+
+        <div className="correction-duration-row">
+          <span>Duration</span>
           <button className={duration === 'eot' ? 'active' : ''} onClick={() => setDuration('eot')}>EOT</button>
-          <button className={duration === 'permanent' ? 'active' : ''} onClick={() => setDuration('permanent')}>∞</button>
+          <button className={duration === 'permanent' ? 'active' : ''} onClick={() => setDuration('permanent')}>Permanent</button>
           <button className={duration === 'linked' ? 'active' : ''} onClick={() => setDuration('linked')}>Linked</button>
         </div>
         {duration === 'linked' && (
-          <label>Linked source
+          <label className="linked-source-row">Linked source
             <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-              {boardCards.map((card) => <option key={card.boardId} value={card.boardId}>{card.card.name}</option>)}
+              {boardCards.map((card) => <option key={card.boardId} value={card.boardId}>{card.card?.name || 'Card'} — P{card.ownerSeat}</option>)}
             </select>
           </label>
         )}
-        <button className="primary" onClick={() => onApply(kind === 'pt' ? { kind: 'pt', powerDelta, toughnessDelta, duration, sourceId } : { kind: 'trait', trait, duration, sourceId })}>Apply modification</button>
+
+        <div className="correction-grid">
+          <section className="correction-card">
+            <div className="correction-card-head">
+              <h3>Power / Toughness</h3>
+              <small>Fast temporary buffs/debuffs</small>
+            </div>
+            <div className="quick-pt-pad">
+              <button className="plus-action" onClick={() => applyPt(1, 0)}>+1 Power</button>
+              <button className="plus-action" onClick={() => applyPt(0, 1)}>+1 Toughness</button>
+              <button className="plus-action wide" onClick={() => applyPt(1, 1)}>+1 / +1</button>
+              <button className="minus-action" onClick={() => applyPt(-1, 0)}>−1 Power</button>
+              <button className="minus-action" onClick={() => applyPt(0, -1)}>−1 Toughness</button>
+              <button className="minus-action wide" onClick={() => applyPt(-1, -1)}>−1 / −1</button>
+            </div>
+            <div className="base-pt-row">
+              <span>Set base P/T</span>
+              <input value={basePower} onChange={(event) => setBasePower(event.target.value)} placeholder="P" />
+              <input value={baseToughness} onChange={(event) => setBaseToughness(event.target.value)} placeholder="T" />
+              <button className="secondary" onClick={setBaseStats}>Set</button>
+            </div>
+          </section>
+
+          <section className="correction-card">
+            <div className="correction-card-head">
+              <h3>Counters</h3>
+              <small>Add missed counters or apply reverse counters</small>
+            </div>
+            <div className="counter-row">
+              <select value={counterType} onChange={(event) => setCounterType(event.target.value)}>
+                <option value="+1/+1">+1/+1</option>
+                <option value="-1/-1">-1/-1</option>
+                <option value="stun">stun</option>
+                <option value="shield">shield</option>
+                <option value="charge">charge</option>
+                <option value="custom">custom</option>
+              </select>
+              <input type="number" min="1" value={counterAmount} onChange={(event) => setCounterAmount(event.target.value)} />
+            </div>
+            {counterType === 'custom' && <input value={trait} onChange={(event) => setTrait(event.target.value)} placeholder="custom counter name" />}
+            <div className="counter-button-row">
+              <button className="plus-action" onClick={() => counterType === '-1/-1' ? applyCounter(-1, -1, '-1/-1') : counterType === '+1/+1' ? applyCounter(1, 1, '+1/+1') : applyCounter(0, 0, counterType === 'custom' ? trait.trim() || 'custom' : counterType)}>Add counter</button>
+              <button className="minus-action" onClick={() => applyCounter(-1, -1, '-1/-1')}>Add −1/−1</button>
+            </div>
+          </section>
+
+          <section className="correction-card">
+            <div className="correction-card-head">
+              <h3>Abilities / labels</h3>
+              <small>Add what the AI missed</small>
+            </div>
+            <input value={trait} onChange={(event) => setTrait(event.target.value)} placeholder="Flying, Deathtouch, Equipped, Can't block..." />
+            <div className="trait-shortcuts">
+              {['Flying', 'Trample', 'Vigilance', 'Haste', 'Deathtouch', 'Lifelink', 'Reach', 'Menace'].map((label) => (
+                <button key={label} className="secondary" onClick={() => onApply({ kind: 'trait', trait: label, duration, sourceId: selectedSourceId })}>{label}</button>
+              ))}
+            </div>
+            <button className="primary" disabled={!trait.trim()} onClick={addTrait}>Add custom effect</button>
+          </section>
+
+          <section className="correction-card active-effects-card">
+            <div className="correction-card-head">
+              <h3>Current added effects</h3>
+              <small>Remove AI mistakes without touching the card itself</small>
+            </div>
+            {targetCards.length !== 1 ? (
+              <p className="muted-text">Select one card to remove individual effects. Clear buttons still work on the selected group.</p>
+            ) : activeMods.length ? (
+              <div className="active-mod-list">
+                {activeMods.map((mod) => (
+                  <div key={mod.id} className="active-mod-row">
+                    <span>{describeCardMod(mod)}</span>
+                    <button className="icon-danger" title="Remove this effect" onClick={() => removeMod(mod.id)}>×</button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-text">No added effects or counters are currently tracked on this card.</p>
+            )}
+            <div className="clear-mod-grid">
+              <button className="secondary" onClick={clearTemporary}>Clear EOT</button>
+              <button className="secondary" onClick={clearLinked}>Clear linked</button>
+              <button className="secondary danger-action" onClick={clearAll}>Clear all</button>
+            </div>
+          </section>
+        </div>
       </section>
     </div>
   );
