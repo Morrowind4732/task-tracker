@@ -4211,42 +4211,42 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
 .art-hitbox-button::after {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
+  inset: 5px 7px;
+  border-radius: 12px;
   box-shadow: inset 0 0 0 0 rgba(255, 240, 194, 0.72), 0 0 0 0 rgba(66, 161, 255, 0.36);
   transition: box-shadow 0.18s ease, background 0.18s ease;
 }
 
 .art-hitbox-button:hover,
 .art-hitbox-button:focus-visible {
-  transform: translateY(-1px) scale(1.01);
+  transform: translateY(-1px);
 }
 
 .art-hitbox-button:hover::after,
 .art-hitbox-button:focus-visible::after {
-  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.01));
-  box-shadow: inset 0 0 0 3px rgba(249, 232, 184, 0.88), 0 0 0 4px rgba(67, 153, 255, 0.26), 0 18px 36px rgba(0, 0, 0, 0.30);
+  background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.006));
+  box-shadow: inset 0 0 0 2px rgba(249, 232, 184, 0.70), 0 0 18px rgba(67, 153, 255, 0.22);
 }
 
 .title-hitbox {
-  left: 35.2%;
-  width: 29.9%;
-  height: 5.9%;
+  left: 36.0%;
+  width: 28.0%;
+  height: 5.0%;
 }
-.title-hitbox-new { top: 52.5%; }
-.title-hitbox-load { top: 60.0%; }
-.title-hitbox-mtg { top: 67.1%; }
-.title-hitbox-debug { top: 74.0%; }
-.title-hitbox-options { top: 80.9%; }
-.title-hitbox-exit { top: 87.6%; }
+.title-hitbox-new { top: 51.4%; }
+.title-hitbox-load { top: 58.4%; }
+.title-hitbox-mtg { top: 65.2%; }
+.title-hitbox-debug { top: 72.0%; }
+.title-hitbox-options { top: 78.8%; }
+.title-hitbox-exit { top: 85.6%; }
 
 .host-join-hitbox {
-  left: 31.2%;
-  width: 37.0%;
-  height: 10.2%;
+  left: 32.2%;
+  width: 35.6%;
+  height: 8.9%;
 }
-.host-join-hitbox-host { top: 58.8%; }
-.host-join-hitbox-join { top: 76.0%; }
+.host-join-hitbox-host { top: 59.4%; }
+.host-join-hitbox-join { top: 76.2%; }
 
 .title-art-helper-row {
   display: flex;
@@ -4348,14 +4348,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     width: min(98vw, calc((100vh - 54px) * 1.7779));
   }
   .title-hitbox {
-    left: 34.7%;
-    width: 31.1%;
-    height: 6.35%;
+    left: 35.5%;
+    width: 29.0%;
+    height: 5.35%;
   }
   .host-join-hitbox {
-    left: 30.4%;
-    width: 39%;
-    height: 11.2%;
+    left: 31.5%;
+    width: 37.0%;
+    height: 9.65%;
   }
 }
 
@@ -4368,23 +4368,23 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     width: 100%;
   }
   .title-hitbox {
-    left: 33.4%;
-    width: 33.9%;
-    height: 7.2%;
+    left: 34.8%;
+    width: 30.4%;
+    height: 5.9%;
   }
-  .title-hitbox-new { top: 51.9%; }
-  .title-hitbox-load { top: 59.4%; }
-  .title-hitbox-mtg { top: 66.6%; }
-  .title-hitbox-debug { top: 73.6%; }
-  .title-hitbox-options { top: 80.5%; }
-  .title-hitbox-exit { top: 87.3%; }
+  .title-hitbox-new { top: 51.0%; }
+  .title-hitbox-load { top: 58.1%; }
+  .title-hitbox-mtg { top: 64.9%; }
+  .title-hitbox-debug { top: 71.8%; }
+  .title-hitbox-options { top: 78.7%; }
+  .title-hitbox-exit { top: 85.4%; }
   .host-join-hitbox {
-    left: 28.4%;
-    width: 43.2%;
-    height: 12.5%;
+    left: 30.8%;
+    width: 38.4%;
+    height: 10.6%;
   }
-  .host-join-hitbox-host { top: 57.8%; }
-  .host-join-hitbox-join { top: 75.3%; }
+  .host-join-hitbox-host { top: 59.0%; }
+  .host-join-hitbox-join { top: 75.8%; }
   .art-screen-back {
     position: static;
     justify-self: start;
