@@ -4029,3 +4029,109 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     font-size: 15px;
   }
 }
+
+/* v0.17 mobile controls: hand drag, pinch zoom, and visual linked-source picking */
+.table-wrap.is-pinching { cursor: zoom-in; }
+.table-wrap.is-pinching .table-world,
+.table-wrap.is-panning .table-world {
+  transition: none;
+}
+.hand-dock,
+.hand-fan,
+.hand-card,
+.board-card {
+  touch-action: none;
+}
+.hand-card {
+  -webkit-tap-highlight-color: transparent;
+}
+.linked-source-card-picker {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255,236,190,.14);
+  border-radius: 18px;
+  background: rgba(255,255,255,.045);
+}
+.linked-source-picker-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.linked-source-picker-head strong {
+  color: #fff4dc;
+  font-size: 15px;
+}
+.linked-source-picker-head span {
+  color: #b9aa8e;
+  font-size: 12px;
+  font-weight: 800;
+}
+.linked-source-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 2px 10px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.linked-source-card {
+  flex: 0 0 104px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  min-height: 186px;
+  padding: 8px;
+  border: 2px solid rgba(255,255,255,.12);
+  border-radius: 16px;
+  background: rgba(8,7,6,.70);
+  color: #f5e4c1;
+  text-align: left;
+  scroll-snap-align: start;
+  touch-action: manipulation;
+}
+.linked-source-card.active {
+  border-color: rgba(217,164,65,.95);
+  box-shadow: 0 0 0 3px rgba(217,164,65,.20), 0 12px 32px rgba(0,0,0,.38);
+  background: linear-gradient(180deg, rgba(217,164,65,.22), rgba(8,7,6,.74));
+}
+.linked-source-card img,
+.linked-source-placeholder {
+  width: 100%;
+  aspect-ratio: 488 / 680;
+  border-radius: 9px;
+  object-fit: cover;
+  background: rgba(255,255,255,.08);
+  box-shadow: 0 8px 18px rgba(0,0,0,.35);
+}
+.linked-source-placeholder {
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  color: #fff4dc;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+}
+.linked-source-card b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #fff6df;
+  font-size: 12px;
+}
+.linked-source-card small {
+  color: #cdbfa4;
+  font-size: 11px;
+  font-weight: 900;
+}
+@media (max-width: 760px) {
+  .linked-source-card {
+    flex-basis: 116px;
+    min-height: 202px;
+  }
+}

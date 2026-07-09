@@ -2312,12 +2312,17 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const resolvingAiStackRef = useRef(new Set());
   const [pan, setPan] = useState({ x: -1180, y: -1540 });
   const [zoom, setZoom] = useState(0.72);
+  const panRef = useRef({ x: -1180, y: -1540 });
+  const zoomRef = useRef(0.72);
+  const tableTouchPointersRef = useRef(new Map());
+  const pinchSessionRef = useRef(null);
   const [library, setLibrary] = useState([]);
   const [hand, setHand] = useState([]);
   const [boardCards, setBoardCards] = useState([]);
   const [dragging, setDragging] = useState(null);
   const draggingRef = useRef(null);
   const [remoteDrags, setRemoteDrags] = useState({});
+  const [remoteHandCounts, setRemoteHandCounts] = useState({});
   const [previewCard, setPreviewCard] = useState(null);
   const [handPreviewCard, setHandPreviewCard] = useState(null);
   const [boardHoverPreviewCard, setBoardHoverPreviewCard] = useState(null);
@@ -2369,6 +2374,14 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const players = lobbyState?.players || {};
   const aiSeats = SEATS.filter((seat) => players[seat]?.ai);
   const debugHasAi = aiSeats.length > 0;
+
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
 
   useEffect(() => {
     libraryRef.current = library;
@@ -2478,6 +2491,11 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }, [gameEvents]);
 
   useEffect(() => {
+    if (!localSeat) return;
+    emit({ type: 'hand_count_update', seat: localSeat, handCount: hand.length });
+  }, [hand.length, localSeat]);
+
+  useEffect(() => {
     const id = requestAnimationFrame(() => centerOnMyArea());
     return () => cancelAnimationFrame(id);
   }, [localSeat]);
@@ -2486,10 +2504,16 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     return () => {
       window.removeEventListener('pointermove', onTablePanMove);
       window.removeEventListener('pointerup', onTablePanEnd);
+      window.removeEventListener('pointercancel', onTablePanEnd);
+      window.removeEventListener('pointermove', onTableTouchMove);
+      window.removeEventListener('pointerup', onTableTouchEnd);
+      window.removeEventListener('pointercancel', onTableTouchEnd);
       window.removeEventListener('pointermove', onWindowDragMove);
       window.removeEventListener('pointerup', onWindowDragEnd);
+      window.removeEventListener('pointercancel', onWindowDragCancel);
       window.removeEventListener('pointermove', onBoardPointerMove);
       window.removeEventListener('pointerup', onBoardPointerUp);
+      window.removeEventListener('pointercancel', onBoardPointerUp);
     };
   }, []);
 
@@ -2773,44 +2797,52 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     return Math.max(0.34, Math.min(1.75, Number(value) || 1));
   }
 
-  function centerOnMyArea(nextZoom = zoom) {
+  function setCamera(nextPan, nextZoom) {
+    const safeZoom = clampZoom(nextZoom);
+    const safePan = { x: Math.round(nextPan.x), y: Math.round(nextPan.y) };
+    panRef.current = safePan;
+    zoomRef.current = safeZoom;
+    setPan(safePan);
+    setZoom(safeZoom);
+  }
+
+  function centerOnMyArea(nextZoom = zoomRef.current) {
     const rect = tableWrapRef.current?.getBoundingClientRect();
     if (!rect) return;
     const safeZoom = clampZoom(nextZoom);
     const relMat = PLAYER_MATS[0];
     const focusX = TABLE_SIZE.width * (relMat.x + relMat.w * 0.50);
     const focusY = TABLE_SIZE.height * (relMat.y + relMat.h * 0.56);
-    setZoom(safeZoom);
-    setPan({
-      x: Math.round(rect.width / 2 - focusX * safeZoom),
-      y: Math.round(rect.height * 0.60 - focusY * safeZoom)
-    });
+    setCamera({
+      x: rect.width / 2 - focusX * safeZoom,
+      y: rect.height * 0.60 - focusY * safeZoom
+    }, safeZoom);
   }
 
   function centerWholeTable() {
     const rect = tableWrapRef.current?.getBoundingClientRect();
     if (!rect) return;
     const fitZoom = clampZoom(Math.min((rect.width - 70) / TABLE_SIZE.width, (rect.height - 70) / TABLE_SIZE.height));
-    setZoom(fitZoom);
-    setPan({
-      x: Math.round(rect.width / 2 - (TABLE_SIZE.width * fitZoom) / 2),
-      y: Math.round(rect.height / 2 - (TABLE_SIZE.height * fitZoom) / 2)
-    });
+    setCamera({
+      x: rect.width / 2 - (TABLE_SIZE.width * fitZoom) / 2,
+      y: rect.height / 2 - (TABLE_SIZE.height * fitZoom) / 2
+    }, fitZoom);
   }
 
   function zoomAroundClient(nextZoom, clientX, clientY) {
     const rect = tableWrapRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const currentPan = panRef.current || pan;
+    const currentZoom = zoomRef.current || zoom;
     const safeZoom = clampZoom(nextZoom);
     const wrapX = clientX - rect.left;
     const wrapY = clientY - rect.top;
-    const worldX = (wrapX - pan.x) / zoom;
-    const worldY = (wrapY - pan.y) / zoom;
-    setZoom(safeZoom);
-    setPan({
-      x: Math.round(wrapX - worldX * safeZoom),
-      y: Math.round(wrapY - worldY * safeZoom)
-    });
+    const worldX = (wrapX - currentPan.x) / currentZoom;
+    const worldY = (wrapY - currentPan.y) / currentZoom;
+    setCamera({
+      x: wrapX - worldX * safeZoom,
+      y: wrapY - worldY * safeZoom
+    }, safeZoom);
   }
 
   function zoomFromCenter(nextZoom) {
@@ -3186,30 +3218,135 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     })));
   }
 
+  function safeSetPointerCapture(element, pointerId) {
+    try { element?.setPointerCapture?.(pointerId); } catch (_) {}
+  }
+
+  function safeReleasePointerCapture(element, pointerId) {
+    try { element?.releasePointerCapture?.(pointerId); } catch (_) {}
+  }
+
   function startTablePan(event) {
     if (dragging) return;
     if (event.target.closest('button, .board-card, .hand-card, .deck-stack, input, textarea, select, .radial-card-menu, .card-tooltip, .deck-import-modal, .modify-modal, .activate-modal, .ai-review-modal, .ai-missing-report-modal, .dev-console, .combat-modal, .life-tracker-panel, .zone-browser-modal, .add-card-modal, .zone-hotspot')) return;
     clearFloatingUi();
     event.preventDefault();
-    panSessionRef.current = { startX: event.clientX, startY: event.clientY, baseX: pan.x, baseY: pan.y };
+
+    if (event.pointerType === 'touch') {
+      safeSetPointerCapture(tableWrapRef.current, event.pointerId);
+      tableTouchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      window.addEventListener('pointermove', onTableTouchMove, { passive: false });
+      window.addEventListener('pointerup', onTableTouchEnd);
+      window.addEventListener('pointercancel', onTableTouchEnd);
+      if (tableTouchPointersRef.current.size >= 2) {
+        beginPinchZoom();
+        return;
+      }
+      const currentPan = panRef.current || pan;
+      panSessionRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: currentPan.x, baseY: currentPan.y };
+      tableWrapRef.current?.classList.add('is-panning');
+      return;
+    }
+
+    const currentPan = panRef.current || pan;
+    panSessionRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: currentPan.x, baseY: currentPan.y };
     tableWrapRef.current?.classList.add('is-panning');
     window.addEventListener('pointermove', onTablePanMove);
     window.addEventListener('pointerup', onTablePanEnd, { once: true });
+    window.addEventListener('pointercancel', onTablePanEnd, { once: true });
   }
 
   function onTablePanMove(event) {
     const session = panSessionRef.current;
-    if (!session) return;
-    setPan({
+    if (!session || (session.pointerId != null && event.pointerId !== session.pointerId)) return;
+    const nextPan = {
       x: session.baseX + event.clientX - session.startX,
       y: session.baseY + event.clientY - session.startY
-    });
+    };
+    panRef.current = nextPan;
+    setPan(nextPan);
   }
 
   function onTablePanEnd() {
     panSessionRef.current = null;
     tableWrapRef.current?.classList.remove('is-panning');
     window.removeEventListener('pointermove', onTablePanMove);
+    window.removeEventListener('pointerup', onTablePanEnd);
+    window.removeEventListener('pointercancel', onTablePanEnd);
+  }
+
+  function getTouchPointerPair() {
+    return Array.from(tableTouchPointersRef.current.values()).slice(0, 2);
+  }
+
+  function pointerDistance(a, b) {
+    return Math.hypot((b?.x || 0) - (a?.x || 0), (b?.y || 0) - (a?.y || 0));
+  }
+
+  function pointerMidpoint(a, b) {
+    return { x: ((a?.x || 0) + (b?.x || 0)) / 2, y: ((a?.y || 0) + (b?.y || 0)) / 2 };
+  }
+
+  function beginPinchZoom() {
+    const [a, b] = getTouchPointerPair();
+    if (!a || !b) return;
+    const rect = tableWrapRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const distance = Math.max(12, pointerDistance(a, b));
+    const midpoint = pointerMidpoint(a, b);
+    const currentPan = panRef.current || pan;
+    const currentZoom = zoomRef.current || zoom;
+    const wrapX = midpoint.x - rect.left;
+    const wrapY = midpoint.y - rect.top;
+    pinchSessionRef.current = {
+      startDistance: distance,
+      startZoom: currentZoom,
+      anchorWorldX: (wrapX - currentPan.x) / currentZoom,
+      anchorWorldY: (wrapY - currentPan.y) / currentZoom
+    };
+    panSessionRef.current = null;
+    tableWrapRef.current?.classList.remove('is-panning');
+    tableWrapRef.current?.classList.add('is-pinching');
+  }
+
+  function onTableTouchMove(event) {
+    if (!tableTouchPointersRef.current.has(event.pointerId)) return;
+    event.preventDefault();
+    tableTouchPointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (tableTouchPointersRef.current.size >= 2) {
+      if (!pinchSessionRef.current) beginPinchZoom();
+      const session = pinchSessionRef.current;
+      const [a, b] = getTouchPointerPair();
+      const rect = tableWrapRef.current?.getBoundingClientRect();
+      if (!session || !a || !b || !rect) return;
+      const distance = Math.max(12, pointerDistance(a, b));
+      const midpoint = pointerMidpoint(a, b);
+      const nextZoom = clampZoom(session.startZoom * (distance / Math.max(12, session.startDistance)));
+      setCamera({
+        x: midpoint.x - rect.left - session.anchorWorldX * nextZoom,
+        y: midpoint.y - rect.top - session.anchorWorldY * nextZoom
+      }, nextZoom);
+      return;
+    }
+
+    onTablePanMove(event);
+  }
+
+  function onTableTouchEnd(event) {
+    tableTouchPointersRef.current.delete(event.pointerId);
+    safeReleasePointerCapture(tableWrapRef.current, event.pointerId);
+    if (tableTouchPointersRef.current.size < 2) {
+      pinchSessionRef.current = null;
+      tableWrapRef.current?.classList.remove('is-pinching');
+    }
+    if (tableTouchPointersRef.current.size === 0) {
+      panSessionRef.current = null;
+      tableWrapRef.current?.classList.remove('is-panning');
+      window.removeEventListener('pointermove', onTableTouchMove);
+      window.removeEventListener('pointerup', onTableTouchEnd);
+      window.removeEventListener('pointercancel', onTableTouchEnd);
+    }
   }
 
   function emit(event) {
@@ -3285,6 +3422,12 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     }
     if (event.type === 'modify_cards') {
       setBoardCards((cards) => applyModificationToCards(cards, event.boardIds || [], event.payload || {}));
+      return;
+    }
+    if (event.type === 'hand_count_update') {
+      if (Number(event.seat) !== Number(localSeat)) {
+        setRemoteHandCounts((current) => ({ ...current, [event.seat]: Math.max(0, Number(event.handCount || 0)) }));
+      }
       return;
     }
     if (event.type === 'ai_notice') {
@@ -3460,19 +3603,21 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   function startDragFromHand(card, index, event) {
     event.preventDefault();
     event.stopPropagation();
+    safeSetPointerCapture(event.currentTarget, event.pointerId);
     const point = getTablePoint(event.clientX, event.clientY);
-    const nextDrag = { source: 'hand', card, handIndex: index, point };
+    const nextDrag = { source: 'hand', card, handIndex: index, point, pointerId: event.pointerId, startedAt: Date.now() };
     draggingRef.current = nextDrag;
     setDragging(nextDrag);
     emit({ type: 'drag_preview', ownerSeat: localSeat, canonical: viewToCanonical(point, localSeat) });
-    window.addEventListener('pointermove', onWindowDragMove);
+    window.addEventListener('pointermove', onWindowDragMove, { passive: false });
     window.addEventListener('pointerup', onWindowDragEnd, { once: true });
     window.addEventListener('pointercancel', onWindowDragCancel, { once: true });
   }
 
   function onWindowDragMove(event) {
     const current = draggingRef.current;
-    if (!current) return;
+    if (!current || (current.pointerId != null && event.pointerId !== current.pointerId)) return;
+    event.preventDefault?.();
     const point = getTablePoint(event.clientX, event.clientY);
     emit({ type: 'drag_preview', ownerSeat: localSeat, canonical: viewToCanonical(point, localSeat) });
     const nextDrag = { ...current, point };
@@ -3494,8 +3639,9 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }
 
   function onWindowDragEnd(event) {
-    clearHandDragListeners();
     const current = draggingRef.current;
+    if (current?.pointerId != null && event.pointerId !== current.pointerId) return;
+    clearHandDragListeners();
     draggingRef.current = null;
     setDragging(null);
     if (!current) {
@@ -4302,8 +4448,6 @@ Reason: ${legality.reason}`);
     emit({ type: 'modify_cards', boardIds: targetIds, payload: patch });
     const targetName = boardCards.find((card) => targetIds.includes(card.boardId))?.card?.name || `${targetIds.length} card${targetIds.length === 1 ? '' : 's'}`;
     addGameNotice(`Manual correction: ${targetName} — ${describeModificationPatch(patch)}.`, localSeat);
-    setModifyModal(null);
-    setSelection(null);
   }
 
   function applyActivation(payload) {
@@ -6023,7 +6167,7 @@ Reason: ${legality.reason}`);
           <PerspectiveSeats players={players} localSeat={localSeat} />
           <ZoneGuides players={players} localSeat={localSeat} />
           <ZoneHotspots players={players} localSeat={localSeat} onOpenZone={(seat, zone) => setZoneBrowser({ seat, zone, reveal: false })} />
-          <OpponentHandFans players={players} localSeat={localSeat} aiStates={aiStates} localHandCount={hand.length} localSeatId={localSeat} />
+          <OpponentHandFans players={players} localSeat={localSeat} aiStates={aiStates} remoteHandCounts={remoteHandCounts} localHandCount={hand.length} localSeatId={localSeat} />
           {dragging?.point && <ZoneSlotPreview target={getZoneTargetFromPoint(dragging.point)} localSeat={localSeat} />}
           {SEATS.map((seat) => players[seat] ? (
             <DeckStack
@@ -7066,13 +7210,15 @@ function getBoardCardStyle(boardCard, localSeat, allBoardCards = []) {
   };
 }
 
-function OpponentHandFans({ players, localSeat, aiStates, localHandCount = 0, localSeatId }) {
+function OpponentHandFans({ players, localSeat, aiStates, remoteHandCounts = {}, localHandCount = 0, localSeatId }) {
   return (
     <div className="opponent-hand-layer">
       {SEATS.filter((seat) => players[seat] && seat !== localSeatId).map((seat) => {
         const rel = relativeSeat(seat, localSeat);
-        const count = players[seat]?.ai ? (aiStates[seat]?.hand?.length || 0) : Math.max(0, Number(players[seat]?.handCount || 0));
-        if (!count) return null;
+        const hasRemoteCount = Object.prototype.hasOwnProperty.call(remoteHandCounts, seat);
+        const count = players[seat]?.ai
+          ? (aiStates[seat]?.hand?.length || 0)
+          : Math.max(0, Number(hasRemoteCount ? remoteHandCounts[seat] : (players[seat]?.handCount || 0)));
         const mat = PLAYER_MATS[rel] || PLAYER_MATS[0];
         const center = rel === 2
           ? localMatToPoint(rel, 0.5, -0.045)
@@ -7863,6 +8009,12 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
   const [basePower, setBasePower] = useState(primaryStats?.power ?? '');
   const [baseToughness, setBaseToughness] = useState(primaryStats?.toughness ?? '');
   const selectedSourceId = duration === 'linked' ? (sourceId || targetIds[0] || '') : '';
+  const sourceCards = boardCards.filter((card) => isBattlefieldZone(card.zone) || ['command', 'graveyard', 'exile'].includes(card.zone));
+  useEffect(() => {
+    if (duration !== 'linked') return;
+    if (sourceId && sourceCards.some((card) => card.boardId === sourceId)) return;
+    setSourceId(sourceCards[0]?.boardId || targetIds[0] || '');
+  }, [duration, sourceId, sourceCards, targetIds]);
   const applyPt = (powerDelta, toughnessDelta) => onApply({ kind: 'pt', powerDelta, toughnessDelta, duration, sourceId: selectedSourceId });
   const applyCounter = (powerDelta, toughnessDelta, type = counterType, amountOverride = counterAmount) => {
     const amount = Math.max(1, Number(amountOverride || 1));
@@ -7906,11 +8058,32 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
           <button className={duration === 'linked' ? 'active' : ''} onClick={() => setDuration('linked')}>Linked</button>
         </div>
         {duration === 'linked' && (
-          <label className="linked-source-row">Linked source
-            <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-              {boardCards.map((card) => <option key={card.boardId} value={card.boardId}>{card.card?.name || 'Card'} — P{card.ownerSeat}</option>)}
-            </select>
-          </label>
+          <div className="linked-source-card-picker">
+            <div className="linked-source-picker-head">
+              <strong>Linked source</strong>
+              <span>Tap the card responsible for this correction.</span>
+            </div>
+            <div className="linked-source-strip" role="listbox" aria-label="Linked source card choices">
+              {sourceCards.map((card) => {
+                const active = card.boardId === selectedSourceId;
+                return (
+                  <button
+                    key={card.boardId}
+                    type="button"
+                    className={`linked-source-card ${active ? 'active' : ''}`.trim()}
+                    onClick={() => setSourceId(card.boardId)}
+                    role="option"
+                    aria-selected={active}
+                    title={`${card.card?.name || 'Card'} — Player ${card.ownerSeat}`}
+                  >
+                    {card.card?.image ? <img src={card.card.image} alt={card.card?.name || 'Card'} /> : <span className="linked-source-placeholder">{card.card?.name || 'Card'}</span>}
+                    <b>{card.card?.name || 'Card'}</b>
+                    <small>P{card.ownerSeat} · {card.zone}</small>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
 
         <div className="correction-grid">
