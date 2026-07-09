@@ -4245,7 +4245,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
   width: 35.6%;
   height: 8.9%;
 }
-.host-join-hitbox-host { top: 59.4%; }
+.host-join-hitbox-host {
+  top: 59.9%;
+  height: 8.35%;
+}
 .host-join-hitbox-join { top: 76.2%; }
 
 .title-art-helper-row {
@@ -4357,6 +4360,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     width: 37.0%;
     height: 9.65%;
   }
+  .host-join-hitbox-host {
+    top: 60.2%;
+    height: 9.0%;
+  }
 }
 
 @media (max-width: 620px) {
@@ -4383,7 +4390,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     width: 38.4%;
     height: 10.6%;
   }
-  .host-join-hitbox-host { top: 59.0%; }
+  .host-join-hitbox-host {
+    top: 59.5%;
+    height: 9.9%;
+  }
   .host-join-hitbox-join { top: 75.8%; }
   .art-screen-back {
     position: static;
