@@ -2647,16 +2647,20 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }, []);
 
   useEffect(() => {
-    const blockNativeCardImageActions = (event) => {
+    const blockNativeGameSurfaceActions = (event) => {
       const target = event.target;
-      if (!target?.closest?.('.board-card, .hand-card, .hand-preview, .card-tooltip, .reveal-overlay, .zone-browser-modal, .draw-animation')) return;
+      if (!target?.closest) return;
+      const editable = target.closest('input, textarea, select, [contenteditable="true"]');
+      if (editable) return;
+      const gameSurface = target.closest('.game-screen, .board-card, .hand-card, .hand-preview, .card-tooltip, .reveal-overlay, .zone-browser-modal, .draw-animation');
+      if (!gameSurface) return;
       event.preventDefault();
     };
-    document.addEventListener('contextmenu', blockNativeCardImageActions);
-    document.addEventListener('dragstart', blockNativeCardImageActions);
+    document.addEventListener('contextmenu', blockNativeGameSurfaceActions, true);
+    document.addEventListener('dragstart', blockNativeGameSurfaceActions, true);
     return () => {
-      document.removeEventListener('contextmenu', blockNativeCardImageActions);
-      document.removeEventListener('dragstart', blockNativeCardImageActions);
+      document.removeEventListener('contextmenu', blockNativeGameSurfaceActions, true);
+      document.removeEventListener('dragstart', blockNativeGameSurfaceActions, true);
     };
   }, []);
 
