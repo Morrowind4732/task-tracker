@@ -3131,9 +3131,10 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
 
   function toggleEmptyTableZoom(clientX, clientY) {
     const currentZoom = zoomRef.current || zoom;
-    if (Math.abs(currentZoom - 1) > 0.015) {
+    const fullTableZoom = 0.34;
+    if (Math.abs(currentZoom - fullTableZoom) > 0.015) {
       previousZoomBeforeToggleRef.current = currentZoom;
-      zoomAroundClient(1, clientX, clientY);
+      zoomAroundClient(fullTableZoom, clientX, clientY);
       return;
     }
     const restoreZoom = previousZoomBeforeToggleRef.current || 0.72;
