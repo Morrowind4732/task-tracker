@@ -5566,3 +5566,108 @@ body,
     max-height: calc(22vh - 42px) !important;
   }
 }
+
+
+/* v0.30 AI thought visibility + desktop-like mobile HUD */
+.ai-thought-log.is-idle {
+  opacity: .96;
+}
+
+.ai-thought-empty {
+  color: #cdbfa4 !important;
+  font-style: italic;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .game-hud {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    max-height: none !important;
+    overflow: visible !important;
+    grid-template-columns: none !important;
+  }
+
+  .game-hud > button,
+  .game-hud .secondary,
+  .game-hud .primary {
+    flex: 0 0 auto;
+  }
+
+  .game-hud > div:not(.zoom-controls) {
+    flex: 0 1 auto;
+    min-width: 92px;
+  }
+
+  .game-hud .phase-pill {
+    min-width: 128px !important;
+  }
+
+  .zoom-controls {
+    flex: 0 1 250px !important;
+    grid-column: auto !important;
+    min-width: 210px !important;
+    width: auto !important;
+  }
+
+  .pan-hint {
+    flex: 1 1 260px;
+    margin-left: auto;
+    text-align: right;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    display: grid !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: fixed !important;
+    top: var(--hud-panel-top) !important;
+    right: 10px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: min(390px, calc(100vw - 20px)) !important;
+    max-height: min(44vh, 420px) !important;
+    z-index: 1162 !important;
+    pointer-events: auto !important;
+  }
+
+  .ai-thought-log.collapsed {
+    width: min(330px, calc(100vw - 20px)) !important;
+    max-height: none !important;
+  }
+
+  .ai-thought-log-lines {
+    max-height: min(34vh, 340px) !important;
+  }
+}
+
+@media (max-width: 760px) and (orientation: landscape) {
+  .pan-hint {
+    display: block !important;
+    font-size: 11px;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    width: min(360px, calc(100vw - 20px)) !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .game-hud > div:not(.zoom-controls) {
+    min-width: 86px;
+  }
+
+  .zoom-controls {
+    flex-basis: 220px !important;
+    min-width: 190px !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    width: min(300px, calc(100vw - 20px)) !important;
+  }
+}

@@ -2558,7 +2558,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const [aiReviewQueue, setAiReviewQueue] = useState([]);
   const [pendingAiAfterReview, setPendingAiAfterReview] = useState(null);
   const [aiThoughtLog, setAiThoughtLog] = useState([]);
-  const [aiThoughtCollapsed, setAiThoughtCollapsed] = useState(false);
+  const [aiThoughtCollapsed, setAiThoughtCollapsed] = useState(true);
   const [hideTraitBadges, setHideTraitBadges] = useState(false);
   const [aiCardAnim, setAiCardAnim] = useState(null);
   const [devConsoleOpen, setDevConsoleOpen] = useState(false);
@@ -6892,18 +6892,20 @@ function ToastStack({ toasts = [], onDismiss }) {
 
 
 function AiThoughtLog({ entries = [], collapsed = false, onToggle }) {
-  if (!entries.length) return null;
-  const latestSeat = entries[entries.length - 1]?.seat;
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const latestSeat = safeEntries[safeEntries.length - 1]?.seat;
   return (
-    <aside className={`ai-thought-log ${collapsed ? 'collapsed' : ''}`} aria-live="polite">
+    <aside className={`ai-thought-log ${collapsed ? 'collapsed' : ''} ${safeEntries.length ? '' : 'is-idle'}`.trim()} aria-live="polite">
       <div className="ai-thought-log-title">
         <span>AI thought log</span>
-        <b>{latestSeat ? `Player ${latestSeat}` : 'Debug'}</b>
+        <b>{latestSeat ? `Player ${latestSeat}` : 'Ready'}</b>
         <button className="thought-collapse-button" onClick={onToggle}>{collapsed ? 'Expand' : 'Collapse'}</button>
       </div>
       {!collapsed && (
         <div className="ai-thought-log-lines">
-          {entries.slice(-80).map((entry) => <p key={entry.id}><ManaText text={entry.text} /></p>)}
+          {safeEntries.length
+            ? safeEntries.slice(-80).map((entry) => <p key={entry.id}><ManaText text={entry.text} /></p>)
+            : <p className="ai-thought-empty">No AI thoughts yet. They will appear here when an AI player evaluates actions.</p>}
         </div>
       )}
     </aside>
