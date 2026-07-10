@@ -26,6 +26,46 @@ export function getOrCreatePlayerId() {
   return id;
 }
 
+
+
+export const GAME_SAVE_TABLE = 'fct_game_saves';
+
+export function normalizeSaveLobbyName(lobbyName = '') {
+  return String(lobbyName || 'debug-table').trim().toLowerCase().replace(/[^a-z0-9:_-]+/g, '-').slice(0, 80) || 'debug-table';
+}
+
+export async function loadGameSave(lobbyName) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error('Supabase is not configured, so saved games cannot be loaded.');
+  const safeLobby = normalizeSaveLobbyName(lobbyName);
+  const { data, error } = await supabase
+    .from(GAME_SAVE_TABLE)
+    .select('lobby_name, mode, save_data, updated_at, created_at')
+    .eq('lobby_name', safeLobby)
+    .maybeSingle();
+  if (error) throw error;
+  return data || null;
+}
+
+export async function saveGameState(lobbyName, mode, saveData) {
+  const supabase = getSupabaseClient();
+  if (!supabase) throw new Error('Supabase is not configured, so saved games cannot be saved.');
+  const safeLobby = normalizeSaveLobbyName(lobbyName);
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from(GAME_SAVE_TABLE)
+    .upsert({
+      lobby_name: safeLobby,
+      mode: mode || 'magic',
+      save_data: saveData,
+      updated_at: now
+    }, { onConflict: 'lobby_name' })
+    .select('lobby_name, mode, updated_at')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 export function createRealtimeRoom(roomName, playerId, onMessage, onStatus) {
   const safeName = roomName.toLowerCase().replace(/[^a-z0-9:_-]+/g, '-').slice(0, 80);
   const localChannelName = `fancy-card-table:${safeName}`;
