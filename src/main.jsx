@@ -1002,6 +1002,17 @@ function cardBaseTraits(card) {
   return traits.slice(0, 18);
 }
 
+function suppressedTraitKeys(boardCard = {}) {
+  return new Set((boardCard?.mods || [])
+    .filter((mod) => mod.kind === 'suppress_trait' && (mod.trait || mod.label || mod.value))
+    .map((mod) => String(mod.trait || mod.label || mod.value).toLowerCase()));
+}
+
+function visibleBaseTraitsForBoardCard(boardCard = {}) {
+  const suppressed = suppressedTraitKeys(boardCard);
+  return cardBaseTraits(getActiveCardForBoard(boardCard)).filter((trait) => !suppressed.has(String(trait).toLowerCase()));
+}
+
 function cardFaces(card = {}) {
   return Array.isArray(card?.raw?.cardFaces) ? card.raw.cardFaces.filter(Boolean) : [];
 }
@@ -1107,6 +1118,7 @@ function describeCardMod(mod = {}) {
   }
   if (mod.kind === 'pt') return `${signedDelta(mod.powerDelta)}/${signedDelta(mod.toughnessDelta)}${duration}`;
   if (mod.kind === 'base_pt') return `base ${mod.basePower ?? '?'}/${mod.baseToughness ?? '?'}${duration}`;
+  if (mod.kind === 'suppress_trait') return `remove ${mod.trait || mod.label || mod.value || 'printed trait'}${duration}`;
   if (mod.kind === 'trait' || mod.kind === 'choice') return `${mod.trait || mod.label || mod.value || 'Effect'}${duration}`;
   return `${mod.label || mod.kind || 'modifier'}${duration}`;
 }
@@ -1139,7 +1151,7 @@ function getCardStats(boardCard) {
 }
 
 function getCardTraits(boardCard) {
-  const base = cardBaseTraits(getActiveCardForBoard(boardCard));
+  const base = visibleBaseTraitsForBoardCard(boardCard);
   const extras = (boardCard?.mods || []).filter((mod) => (mod.kind === 'trait' || mod.kind === 'choice') && mod.trait).map((mod) => `${mod.trait}${activeModLabel(mod)}`);
   const seen = new Set();
   return [...base, ...extras].filter((trait) => {
@@ -8445,16 +8457,17 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
   const [baseToughness, setBaseToughness] = useState(primaryStats?.toughness ?? '');
   const selectedSourceId = duration === 'linked' ? (sourceId || targetIds[0] || '') : '';
   const sourceCards = boardCards.filter((card) => isBattlefieldZone(card.zone));
-  const printedTraits = primaryCard ? cardBaseTraits(activeCard) : [];
+  const printedTraits = primaryCard ? visibleBaseTraitsForBoardCard(primaryCard) : [];
   const modifierTraitRows = activeMods
     .filter((mod) => (mod.kind === 'trait' || mod.kind === 'choice') && (mod.trait || mod.label || mod.value))
     .map((mod) => ({
       id: mod.id,
+      trait: mod.trait || mod.label || mod.value,
       label: `${mod.trait || mod.label || mod.value}${activeModLabel(mod)}`,
       source: mod.sourceId,
       removable: true
     }));
-  const printedTraitRows = printedTraits.map((label) => ({ id: `printed-${label}`, label, printed: true, removable: false }));
+  const printedTraitRows = printedTraits.map((label) => ({ id: `printed-${label}`, trait: label, label, printed: true, removable: true }));
   const currentAbilityRows = [...printedTraitRows, ...modifierTraitRows];
 
   useEffect(() => {
@@ -8468,7 +8481,21 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
     setSourceId(sourceCards[0]?.boardId || targetIds[0] || '');
   }, [duration, sourceId, sourceCards, targetIds]);
 
-  const applyPt = (powerDelta, toughnessDelta) => onApply({ kind: 'pt', powerDelta, toughnessDelta, duration, sourceId: selectedSourceId });
+  const nudgeStatValue = (value, delta) => {
+    const number = Number(value);
+    const fallback = Number.isFinite(Number(delta > 0 ? primaryStats?.power : primaryStats?.toughness)) ? Number(delta > 0 ? primaryStats?.power : primaryStats?.toughness) : 0;
+    return String((Number.isFinite(number) ? number : fallback) + delta);
+  };
+  const nudgePower = (delta) => setBasePower((value) => {
+    const number = Number(value);
+    const current = Number(primaryStats?.power);
+    return String((Number.isFinite(number) ? number : (Number.isFinite(current) ? current : 0)) + delta);
+  });
+  const nudgeToughness = (delta) => setBaseToughness((value) => {
+    const number = Number(value);
+    const current = Number(primaryStats?.toughness);
+    return String((Number.isFinite(number) ? number : (Number.isFinite(current) ? current : 0)) + delta);
+  });
   const applyCounter = (powerDelta, toughnessDelta, type = counterType, amountOverride = counterAmount) => {
     const amount = Math.max(1, Number(amountOverride || 1));
     const cleanType = type === 'custom' ? (customCounterName.trim() || 'custom') : (type || '+1/+1');
@@ -8480,10 +8507,22 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
     onApply({ kind: 'trait', trait: cleaned, duration, sourceId: selectedSourceId });
   };
   const setBaseStats = () => {
-    if (basePower === '' && baseToughness === '') return;
-    onApply({ kind: 'base_pt', basePower, baseToughness, duration, sourceId: selectedSourceId });
+    const currentPower = Number(primaryStats?.power);
+    const currentToughness = Number(primaryStats?.toughness);
+    const nextPower = Number(basePower);
+    const nextToughness = Number(baseToughness);
+    const powerDelta = Number.isFinite(nextPower) && Number.isFinite(currentPower) ? nextPower - currentPower : 0;
+    const toughnessDelta = Number.isFinite(nextToughness) && Number.isFinite(currentToughness) ? nextToughness - currentToughness : 0;
+    if (!powerDelta && !toughnessDelta) return;
+    onApply({ kind: 'pt', powerDelta, toughnessDelta, label: `Set current P/T to ${basePower || primaryStats?.power}/${baseToughness || primaryStats?.toughness}`, duration, sourceId: selectedSourceId });
   };
   const removeMod = (modId) => onApply({ action: 'remove_mod', modIds: [modId] });
+  const suppressPrintedTrait = (trait) => {
+    const cleaned = String(trait || '').trim();
+    if (!cleaned) return;
+    onApply({ kind: 'suppress_trait', trait: cleaned, label: `Remove printed ${cleaned}`, duration: 'permanent', sourceId: selectedSourceId });
+  };
+  const removeAbilityRow = (row) => row.printed ? suppressPrintedTrait(row.trait || row.label) : removeMod(row.id);
   const clearTemporary = () => onApply({ action: 'clear_temporary' });
   const clearLinked = () => onApply({ action: 'clear_linked' });
   const clearAll = () => onApply({ action: 'clear_manual_mods' });
@@ -8549,20 +8588,20 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
             </div>
             <div className="pt-adjust-panel">
               <div className="pt-adjust-column">
-                <button className="plus-action" onClick={() => applyPt(1, 0)}>+1</button>
+                <button className="plus-action" onClick={() => nudgePower(1)}>+1</button>
                 <label>
                   Power
                   <input value={basePower} onChange={(event) => setBasePower(event.target.value)} placeholder="P" />
                 </label>
-                <button className="minus-action" onClick={() => applyPt(-1, 0)}>−1</button>
+                <button className="minus-action" onClick={() => nudgePower(-1)}>−1</button>
               </div>
               <div className="pt-adjust-column">
-                <button className="plus-action" onClick={() => applyPt(0, 1)}>+1</button>
+                <button className="plus-action" onClick={() => nudgeToughness(1)}>+1</button>
                 <label>
                   Toughness
                   <input value={baseToughness} onChange={(event) => setBaseToughness(event.target.value)} placeholder="T" />
                 </label>
-                <button className="minus-action" onClick={() => applyPt(0, -1)}>−1</button>
+                <button className="minus-action" onClick={() => nudgeToughness(-1)}>−1</button>
               </div>
               <button className="secondary set-pt-button" onClick={setBaseStats}>Set current P/T</button>
             </div>
@@ -8601,9 +8640,12 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
             ) : currentAbilityRows.length ? (
               <div className="current-ability-list">
                 {currentAbilityRows.map((row) => (
-                  <div key={`${row.id}-${row.label}`} className={`current-ability-row ${row.printed ? 'printed' : 'removable'}`.trim()}>
+                  <div key={`${row.id}-${row.label}`} className={`current-ability-row ${row.printed ? 'printed removable' : 'removable'}`.trim()}>
                     <span>{row.label}</span>
-                    {row.printed ? <small>Printed</small> : <button className="icon-danger" title="Remove this added trait" onClick={() => removeMod(row.id)}>−</button>}
+                    <div className="ability-row-actions">
+                      {row.printed && <small>Printed</small>}
+                      <button className="icon-danger" title={row.printed ? 'Hide/remove this printed trait from this card' : 'Remove this added trait'} onClick={() => removeAbilityRow(row)}>−</button>
+                    </div>
                   </div>
                 ))}
               </div>

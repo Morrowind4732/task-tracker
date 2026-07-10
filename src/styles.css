@@ -4577,3 +4577,67 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     max-height: 320px;
   }
 }
+
+
+/* v0.20 modify UI hotfix: staged P/T controls + no overlap */
+.correction-card {
+  overflow: hidden;
+}
+.pt-adjust-panel {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  max-width: 100%;
+  overflow: hidden;
+}
+.pt-adjust-column {
+  min-width: 0;
+}
+.pt-adjust-column button,
+.pt-adjust-column input,
+.set-pt-button {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.pt-adjust-column label {
+  min-width: 0;
+}
+.pt-adjust-column label input {
+  display: block;
+}
+.counter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  width: 100%;
+}
+.counter-row select,
+.counter-row input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.ability-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.current-ability-row.printed.removable {
+  border-color: rgba(217,164,65,.24);
+  background: rgba(217,164,65,.08);
+}
+.current-ability-row.printed.removable .icon-danger {
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+}
+.current-ability-row small {
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .correction-grid {
+    grid-template-columns: 1fr;
+  }
+}
