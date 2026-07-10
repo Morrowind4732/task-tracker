@@ -34,7 +34,9 @@ import {
   canonicalToView,
   createRealtimeRoom,
   getOrCreatePlayerId,
+  loadGameSave,
   relativeSeat,
+  saveGameState,
   viewToCanonical
 } from './lib/realtime.js';
 
@@ -1234,12 +1236,28 @@ function App() {
   const [deckInfoBySeat, setDeckInfoBySeat] = useState({});
   const [deckTextBySeat, setDeckTextBySeat] = useState(() => Object.fromEntries(SEATS.map((seat) => [seat, ''])));
   const [gameEvents, setGameEvents] = useState([]);
+  const [loadGameMode, setLoadGameMode] = useState(false);
+  const [savedGameState, setSavedGameState] = useState(null);
+  const [savedGameMeta, setSavedGameMeta] = useState(null);
+  const [recentLobbyNames, setRecentLobbyNames] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('fct-recent-lobbies') || '[]').filter(Boolean).slice(0, 5);
+    } catch {
+      return [];
+    }
+  });
   const roomRef = useRef(null);
   const stateRef = useRef({});
 
   useEffect(() => {
-    stateRef.current = { isHost, lobbyState, playerId, localSeat };
-  }, [isHost, lobbyState, playerId, localSeat]);
+    stateRef.current = { isHost, lobbyState, playerId, localSeat, loadGameMode, savedGameState };
+  }, [isHost, lobbyState, playerId, localSeat, loadGameMode, savedGameState]);
+
+  useEffect(() => {
+    if (!localSeat || !savedGameState?.deckInfoBySeat?.[localSeat]) return;
+    setDeckInfo(savedGameState.deckInfoBySeat[localSeat]);
+    setDeckInfoBySeat((current) => ({ ...current, ...savedGameState.deckInfoBySeat }));
+  }, [localSeat, savedGameState]);
 
   useEffect(() => () => roomRef.current?.close(), []);
 
@@ -1276,15 +1294,16 @@ function App() {
           roomRef.current?.send('join_rejected', { targetId: payload.playerId, reason: 'Sorry, this lobby is full.' });
           return lobby;
         }
+        const savedDeckForSeat = current.savedGameState?.deckInfoBySeat?.[seat] || null;
         const player = {
           id: payload.playerId,
           name: payload.name || `Player ${seat}`,
           seat,
           team: seat === 1 || seat === 3 ? 'A' : 'B',
           ready: false,
-          commanderName: null,
-          commanderImage: null,
-          deckCount: 0
+          commanderName: savedDeckForSeat?.commanderName || null,
+          commanderImage: savedDeckForSeat?.commander?.image || savedDeckForSeat?.commanderImage || null,
+          deckCount: savedDeckForSeat?.totalCards || savedDeckForSeat?.deckCount || 0
         };
         const next = { ...lobby, players: { ...lobby.players, [seat]: player } };
         roomRef.current?.send('join_accepted', { targetId: payload.playerId, seat, state: next });
@@ -1332,6 +1351,10 @@ function App() {
     if (type === 'start_game') {
       hideDice3DOverlay();
       setLobbyState(payload.state);
+      if (payload.savedGameState) {
+        setSavedGameState(payload.savedGameState);
+        applySavedDeckPreview(payload.savedGameState);
+      }
       setGameEvents([]);
       setScreen('game');
     }
@@ -1353,9 +1376,44 @@ function App() {
     return room;
   }
 
-  function hostLobby(event) {
+  function rememberRecentLobbyName(name) {
+    const safeName = String(name || '').trim();
+    if (!safeName) return;
+    setRecentLobbyNames((current) => {
+      const next = [safeName, ...current.filter((item) => item !== safeName)].slice(0, 5);
+      localStorage.setItem('fct-recent-lobbies', JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function applySavedDeckPreview(saveData) {
+    const savedDecks = saveData?.deckInfoBySeat || {};
+    if (Object.keys(savedDecks).length) {
+      setDeckInfoBySeat(savedDecks);
+      if (localSeat && savedDecks[localSeat]) setDeckInfo(savedDecks[localSeat]);
+    }
+  }
+
+  async function hydrateSavedGameForLobby(nextLobbyName) {
+    const save = await loadGameSave(nextLobbyName);
+    if (!save?.save_data) {
+      setSavedGameState(null);
+      setSavedGameMeta(null);
+      setNotice(`No saved game found for lobby "${nextLobbyName}".`);
+      return null;
+    }
+    setSavedGameState(save.save_data);
+    setSavedGameMeta({ lobbyName: save.lobby_name, updatedAt: save.updated_at, mode: save.mode });
+    applySavedDeckPreview(save.save_data);
+    setNotice(`Loaded saved game for "${save.lobby_name}". Ready up to resume from Player ${save.save_data?.activeSeat || '?'}'s turn.`);
+    return save.save_data;
+  }
+
+  async function hostLobby(event) {
     event.preventDefault();
     localStorage.setItem('fct-display-name', displayName);
+    const safeLobbyName = lobbyName.trim() || 'debug-table';
+    rememberRecentLobbyName(safeLobbyName);
     const hostPlayer = {
       id: playerId,
       name: displayName || 'Host',
@@ -1368,21 +1426,61 @@ function App() {
     };
     setIsHost(true);
     setLocalSeat(1);
-    const nextLobby = createLobbyState({ mode, lobbyName: lobbyName.trim() || 'debug-table', hostPlayer });
+    setSavedGameState(null);
+    setSavedGameMeta(null);
+    const nextLobby = createLobbyState({ mode, lobbyName: safeLobbyName, hostPlayer });
     setLobbyState(nextLobby);
     connectRoom(mode, nextLobby.lobbyName);
     setScreen('lobby');
-    setNotice('Lobby hosted. You are Player 1.');
+    if (loadGameMode) {
+      setNotice('Hosting saved-game lobby. Loading save state...');
+      try {
+        const saveData = await hydrateSavedGameForLobby(safeLobbyName);
+        if (saveData?.deckInfoBySeat?.[1]) {
+          const deck = saveData.deckInfoBySeat[1];
+          setDeckInfo(deck);
+          setDeckInfoBySeat((current) => ({ ...current, ...saveData.deckInfoBySeat }));
+          setLobbyState((current) => current ? {
+            ...current,
+            startingSeat: saveData.activeSeat || current.startingSeat,
+            players: {
+              ...current.players,
+              1: {
+                ...current.players[1],
+                commanderName: deck.commanderName,
+                commanderImage: deck.commander?.image || deck.commanderImage || null,
+                deckCount: deck.totalCards || deck.deckCount || 0
+              }
+            }
+          } : current);
+        }
+      } catch (error) {
+        setNotice(`Saved-game load failed: ${error?.message || String(error)}`);
+      }
+    } else {
+      setNotice('Lobby hosted. You are Player 1.');
+    }
   }
 
-  function joinLobby(event) {
+  async function joinLobby(event) {
     event.preventDefault();
     localStorage.setItem('fct-display-name', displayName);
+    const safeLobbyName = lobbyName.trim() || 'debug-table';
+    rememberRecentLobbyName(safeLobbyName);
     setIsHost(false);
     setLocalSeat(null);
-    const room = connectRoom(mode, lobbyName.trim() || 'debug-table');
+    setSavedGameState(null);
+    setSavedGameMeta(null);
+    const room = connectRoom(mode, safeLobbyName);
     setScreen('joining');
-    setNotice('Sending join request...');
+    setNotice(loadGameMode ? 'Loading saved game and sending join request...' : 'Sending join request...');
+    if (loadGameMode) {
+      try {
+        await hydrateSavedGameForLobby(safeLobbyName);
+      } catch (error) {
+        setNotice(`Saved-game load failed: ${error?.message || String(error)}`);
+      }
+    }
     const joinPayload = { playerId, name: displayName || 'Guest', requestedSeat };
     setTimeout(() => room.send('join_request', joinPayload), 250);
     setTimeout(() => room.send('join_request', joinPayload), 1250);
@@ -1472,7 +1570,7 @@ function App() {
   function buildReadyPatchWithInitiative(targetSeat, nextReady) {
     const player = lobbyState?.players?.[targetSeat];
     const patch = { ready: nextReady };
-    if (nextReady && player && !player.initiativeRoll) {
+    if (!loadGameMode && nextReady && player && !player.initiativeRoll) {
       const seed = makeDiceSeed();
       patch.initiativeSeed = seed;
       patch.initiativeRoll = seededDieValue(seed, 20);
@@ -1576,9 +1674,11 @@ function App() {
       }
     }
     nextState = { ...nextState, players };
-    const startingSeat = getStartingSeatFromInitiative(players);
-    const started = { ...nextState, startingSeat, started: true };
-    roomRef.current?.send('start_game', { state: started });
+    const startingSeat = loadGameMode && savedGameState?.activeSeat
+      ? Number(savedGameState.activeSeat)
+      : getStartingSeatFromInitiative(players);
+    const started = { ...nextState, startingSeat, started: true, resumedFromSave: Boolean(loadGameMode && savedGameState) };
+    roomRef.current?.send('start_game', { state: started, savedGameState: loadGameMode ? savedGameState : null });
     hideDice3DOverlay();
     setLobbyState(started);
     setGameEvents([]);
@@ -1586,11 +1686,11 @@ function App() {
   }
 
   if (screen === 'title') {
-    return <TitleScreen mode={mode} setMode={setMode} setScreen={setScreen} setLobbyName={setLobbyName} />;
+    return <TitleScreen mode={mode} setMode={setMode} setScreen={setScreen} setLobbyName={setLobbyName} setLoadGameMode={setLoadGameMode} />;
   }
 
   if (screen === 'hostJoin') {
-    return <HostJoin setScreen={setScreen} />;
+    return <HostJoin setScreen={setScreen} loadGameMode={loadGameMode} />;
   }
 
   if (screen === 'hostForm' || screen === 'joinForm' || screen === 'joining') {
@@ -1605,6 +1705,8 @@ function App() {
             setLobbyName={setLobbyName}
             displayName={displayName}
             setDisplayName={setDisplayName}
+            recentLobbyNames={recentLobbyNames}
+            loadGameMode={loadGameMode}
             onSubmit={hostLobby}
             submitText="Host"
           />
@@ -1618,6 +1720,8 @@ function App() {
             setDisplayName={setDisplayName}
             requestedSeat={requestedSeat}
             setRequestedSeat={setRequestedSeat}
+            recentLobbyNames={recentLobbyNames}
+            loadGameMode={loadGameMode}
             onSubmit={joinLobby}
             submitText="Join"
             join
@@ -1644,6 +1748,8 @@ function App() {
         setDeckTextForSeat={setDeckTextForSeat}
         deckLoading={deckLoading}
         deckLoadingSeat={deckLoadingSeat}
+        loadGameMode={loadGameMode}
+        savedGameMeta={savedGameMeta}
         loadDeckForPlayer={loadDeckForPlayer}
         toggleReady={toggleReady}
         toggleAiSeat={toggleAiSeat}
@@ -1665,6 +1771,8 @@ function App() {
         playerId={playerId}
         deckInfo={deckInfo}
         deckInfoBySeat={deckInfoBySeat}
+        savedGameState={savedGameState}
+        setSavedGameState={setSavedGameState}
         gameEvents={gameEvents}
         sendGameEvent={(event) => roomRef.current?.send('game_event', event)}
         backToLobby={() => setScreen('lobby')}
@@ -1706,7 +1814,7 @@ function TitleOverlayModal({ title, copy, children, onClose }) {
   );
 }
 
-function TitleScreen({ mode, setMode, setScreen, setLobbyName }) {
+function TitleScreen({ mode, setMode, setScreen, setLobbyName, setLoadGameMode }) {
   const [modal, setModal] = useState(null);
   const [exitMessageIndex, setExitMessageIndex] = useState(0);
   const exitMessages = [
@@ -1716,8 +1824,9 @@ function TitleScreen({ mode, setMode, setScreen, setLobbyName }) {
     'The table votes no. One more game.'
   ];
 
-  const launchMagic = ({ debug = false } = {}) => {
+  const launchMagic = ({ debug = false, load = false } = {}) => {
     setMode('magic');
+    setLoadGameMode(Boolean(load));
     setLobbyName(debug ? 'debug-table' : 'tabletop-lobby');
     setScreen('hostJoin');
   };
@@ -1759,10 +1868,10 @@ function TitleScreen({ mode, setMode, setScreen, setLobbyName }) {
       )}
 
       {modal === 'load-game' && (
-        <TitleOverlayModal title="Load Game" copy="This will eventually resume an in-progress saved match between you and your friends." onClose={() => setModal(null)}>
+        <TitleOverlayModal title="Load Game" copy="Resume a saved match by hosting or joining with the same lobby name." onClose={() => setModal(null)}>
           <div className="title-overlay-copy-stack">
-            <p>Saved-match resume is not wired up yet, but the menu slot is now reserved for it.</p>
-            <button type="button" className="primary" onClick={() => setModal(null)}>Got it</button>
+            <p>Use the same lobby name you used before. The lobby will load the saved commanders/decks, lock deck importing, and resume the saved board after everyone readies up.</p>
+            <button type="button" className="primary" onClick={() => launchMagic({ load: true })}>Continue to Load Game</button>
           </div>
         </TitleOverlayModal>
       )}
@@ -1790,7 +1899,7 @@ function TitleScreen({ mode, setMode, setScreen, setLobbyName }) {
   );
 }
 
-function HostJoin({ setScreen }) {
+function HostJoin({ setScreen, loadGameMode = false }) {
   return (
     <main className="title-art-screen host-join-art-screen">
       <button className="ghost art-screen-back" type="button" onClick={() => setScreen('title')}>← Back</button>
@@ -1803,18 +1912,18 @@ function HostJoin({ setScreen }) {
           </div>
         </div>
         <div className="title-art-helper-row">
-          <span className="title-art-helper-pill">Host to create a lobby</span>
-          <span className="title-art-helper-pill">Join to enter a friend's lobby name</span>
+          <span className="title-art-helper-pill">{loadGameMode ? 'Load Game: use the saved lobby name' : 'Host to create a lobby'}</span>
+          <span className="title-art-helper-pill">{loadGameMode ? 'Deck imports lock when a save is loaded' : "Join to enter a friend's lobby name"}</span>
         </div>
       </div>
     </main>
   );
 }
 
-function ConnectionForm({ title, lobbyName, setLobbyName, displayName, setDisplayName, requestedSeat, setRequestedSeat, onSubmit, submitText, join }) {
+function ConnectionForm({ title, lobbyName, setLobbyName, displayName, setDisplayName, requestedSeat, setRequestedSeat, recentLobbyNames = [], loadGameMode = false, onSubmit, submitText, join }) {
   return (
     <form className="panel connection-form" onSubmit={onSubmit}>
-      <h2>{title}</h2>
+      <h2>{loadGameMode ? `${title} Saved Game` : title}</h2>
       <label>
         Your display name
         <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Brian" />
@@ -1823,6 +1932,16 @@ function ConnectionForm({ title, lobbyName, setLobbyName, displayName, setDispla
         Lobby name
         <input value={lobbyName} onChange={(e) => setLobbyName(e.target.value)} placeholder="debug-table" />
       </label>
+      {recentLobbyNames.length > 0 && (
+        <div className="recent-lobby-picker">
+          <span>Recent lobbies</span>
+          <div>
+            {recentLobbyNames.map((name) => (
+              <button key={name} type="button" className={name === lobbyName ? 'selected' : ''} onClick={() => setLobbyName(name)}>{name}</button>
+            ))}
+          </div>
+        </div>
+      )}
       {join && (
         <label>
           Preferred seat
@@ -1831,8 +1950,8 @@ function ConnectionForm({ title, lobbyName, setLobbyName, displayName, setDispla
           </select>
         </label>
       )}
-      <p className="hint">Tip: a lobby name containing <b>debug</b> can start with one real player and an AI opponent.</p>
-      <button className="primary" type="submit">{submitText}</button>
+      <p className="hint">{loadGameMode ? 'Load Game uses the lobby name as the save key. Deck importing will be locked after the save is found.' : <>Tip: a lobby name containing <b>debug</b> can start with one real player and an AI opponent.</>}</p>
+      <button className="primary" type="submit">{loadGameMode ? `${submitText} Saved Game` : submitText}</button>
     </form>
   );
 }
@@ -1852,6 +1971,8 @@ function LobbyScreen(props) {
     setDeckTextForSeat,
     deckLoading,
     deckLoadingSeat,
+    loadGameMode = false,
+    savedGameMeta = null,
     loadDeckForPlayer,
     toggleReady,
     toggleAiSeat,
@@ -2018,7 +2139,7 @@ function LobbyScreen(props) {
                   <CommanderPreview player={player} loading={isLoadingThisSeat} seat={seat} />
                   {(isYou || (isHost && player.ai)) && (
                     <div className="seat-action-stack">
-                      <button className="secondary import-deck-button" disabled={isLoadingThisSeat} onClick={() => openImportForSeat(seat)}>{seatDeckReady ? 'Change / Import Deck' : 'Import Deck'}</button>
+                      <button className="secondary import-deck-button" disabled={isLoadingThisSeat || loadGameMode} onClick={() => openImportForSeat(seat)}>{loadGameMode ? 'Deck Locked by Save' : (seatDeckReady ? 'Change / Import Deck' : 'Import Deck')}</button>
                       <button className="secondary" disabled={!seatDeckReady || isLoadingThisSeat} onClick={() => openDeckScanForSeat(seat)}>AI Check Deck</button>
                       <button className="primary" disabled={(!seatDeckReady && !player.ready) || isLoadingThisSeat} onClick={() => toggleReady(seat)}>{player.ready ? 'Unready' : 'Ready up'}</button>
                       {isHost && player.ai && <button className="secondary danger-lite" onClick={() => toggleAiSeat(seat)}>Remove AI</button>}
@@ -2040,7 +2161,7 @@ function LobbyScreen(props) {
       </section>
 
       <div className="lobby-status-strip">
-        <span>{notice || 'Import your deck from your player column, ready up, then start.'}</span>
+        <span>{notice || (loadGameMode ? 'Saved game loaded. Decks are locked; ready up to resume.' : 'Import your deck from your player column, ready up, then start.')}</span>
         {deckInfo && <b>{deckInfo.totalCards} cards · Commander: {deckInfo.commanderName}</b>}
       </div>
 
@@ -2370,7 +2491,7 @@ function DeckScanModal({ session, onApprove, onReject, onSkip, onStop }) {
   );
 }
 
-function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfoBySeat = {}, gameEvents, sendGameEvent, backToLobby }) {
+function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfoBySeat = {}, savedGameState = null, setSavedGameState = () => {}, gameEvents, sendGameEvent, backToLobby }) {
   const tableRef = useRef(null);
   const tableWrapRef = useRef(null);
   const handDockRef = useRef(null);
@@ -2435,6 +2556,15 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const watcherRunRef = useRef(new Set());
   const initialAiStartKeyRef = useRef('');
   const libraryRef = useRef([]);
+  const handRef = useRef([]);
+  const boardCardsRef = useRef([]);
+  const aiStatesRef = useRef({});
+  const lifeTotalsRef = useRef({});
+  const eliminatedSeatsRef = useRef([]);
+  const activeSeatRef = useRef(Number(lobbyState?.startingSeat || 1));
+  const turnRef = useRef(1);
+  const saveAppliedRef = useRef('');
+  const saveInFlightRef = useRef(false);
   const drawAnimTimersRef = useRef(new Set());
   const toastTimersRef = useRef(new Set());
 
@@ -2454,6 +2584,34 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     libraryRef.current = library;
   }, [library]);
 
+  useEffect(() => {
+    handRef.current = hand;
+  }, [hand]);
+
+  useEffect(() => {
+    boardCardsRef.current = boardCards;
+  }, [boardCards]);
+
+  useEffect(() => {
+    aiStatesRef.current = aiStates;
+  }, [aiStates]);
+
+  useEffect(() => {
+    lifeTotalsRef.current = lifeTotals;
+  }, [lifeTotals]);
+
+  useEffect(() => {
+    eliminatedSeatsRef.current = eliminatedSeats;
+  }, [eliminatedSeats]);
+
+  useEffect(() => {
+    activeSeatRef.current = activeSeat;
+  }, [activeSeat]);
+
+  useEffect(() => {
+    turnRef.current = turn;
+  }, [turn]);
+
   useEffect(() => () => {
     for (const timer of drawAnimTimersRef.current) clearTimeout(timer);
     drawAnimTimersRef.current.clear();
@@ -2469,6 +2627,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }, [lobbyState?.startingSeat, localSeat]);
 
   useEffect(() => {
+    if (savedGameState?.kind === 'fct-save-v1') return;
     const playable = (deckInfo?.cards || []).filter((card) => card.name !== deckInfo?.commanderName);
     const shuffled = shuffleCards(playable);
     setHand(shuffled.slice(0, 7));
@@ -2495,7 +2654,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
         }
       ];
     });
-  }, [deckInfo, localSeat]);
+  }, [deckInfo, localSeat, savedGameState]);
 
   useEffect(() => {
     if (!isHost || !debugHasAi) return;
@@ -2561,6 +2720,17 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     if (!localSeat) return;
     emit({ type: 'hand_count_update', seat: localSeat, handCount: hand.length });
   }, [hand.length, localSeat]);
+
+  useEffect(() => {
+    if (!savedGameState || savedGameState.kind !== 'fct-save-v1' || !localSeat) return;
+    applySavedGameSnapshot(savedGameState);
+  }, [savedGameState, localSeat]);
+
+  useEffect(() => {
+    if (!localSeat || !lobbyState?.started) return;
+    const timer = setTimeout(() => publishHiddenZoneSnapshot(), 180);
+    return () => clearTimeout(timer);
+  }, [hand.length, library.length, localSeat, lobbyState?.started]);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => centerOnMyArea());
@@ -3497,6 +3667,20 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       }
       return;
     }
+    if (event.type === 'hidden_zone_snapshot') {
+      if (Number(event.seat) !== Number(localSeat)) {
+        setRemoteHandCounts((current) => ({ ...current, [event.seat]: Math.max(0, Number(event.handCount || event.hand?.length || 0)) }));
+        setSavedGameState((current) => mergeSavedHiddenZones(current || savedGameState || { kind: 'fct-save-v1', lobbyName: lobbyState?.lobbyName, mode: lobbyState?.mode || 'magic' }, event.seat, { hand: event.hand || [], library: event.library || [] }));
+      }
+      return;
+    }
+    if (event.type === 'save_state_committed') {
+      if (event.snapshot?.kind === 'fct-save-v1') {
+        setSavedGameState(event.snapshot);
+      }
+      addGameNotice(`Save updated for ${event.lobbyName || lobbyState?.lobbyName || 'lobby'}.`, event.snapshot?.activeSeat || null);
+      return;
+    }
     if (event.type === 'ai_notice') {
       addAiThoughtLines(event.lines || [], event.mode || 'append', event.seat);
       return;
@@ -3560,6 +3744,141 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   function showReveal(card) {
     setPreviewCard(card);
     setTimeout(() => setPreviewCard(null), 1350);
+  }
+
+  function mergeSavedHiddenZones(baseSave = {}, seat, zones = {}) {
+    if (!seat) return baseSave;
+    return {
+      ...(baseSave || {}),
+      kind: 'fct-save-v1',
+      hiddenZonesBySeat: {
+        ...(baseSave?.hiddenZonesBySeat || {}),
+        [seat]: {
+          hand: Array.isArray(zones.hand) ? zones.hand : [],
+          library: Array.isArray(zones.library) ? zones.library : [],
+          updatedAt: Date.now()
+        }
+      }
+    };
+  }
+
+  function currentHiddenZonesBySeat() {
+    const existing = savedGameState?.hiddenZonesBySeat || {};
+    const next = { ...existing };
+    if (localSeat) {
+      next[localSeat] = {
+        hand: handRef.current || [],
+        library: libraryRef.current || [],
+        updatedAt: Date.now()
+      };
+    }
+    Object.entries(aiStatesRef.current || {}).forEach(([seat, state]) => {
+      next[seat] = {
+        hand: state?.hand || [],
+        library: state?.library || [],
+        updatedAt: Date.now(),
+        ai: true
+      };
+    });
+    return next;
+  }
+
+  function buildGameSaveSnapshot(overrides = {}) {
+    const nextActiveSeat = Number(overrides.activeSeat ?? activeSeatRef.current ?? activeSeat ?? 1);
+    const nextTurn = Number(overrides.turn ?? turnRef.current ?? turn ?? 1);
+    const hiddenZonesBySeat = currentHiddenZonesBySeat();
+    return {
+      kind: 'fct-save-v1',
+      version: 1,
+      lobbyName: lobbyState?.lobbyName || 'debug-table',
+      mode: lobbyState?.mode || 'magic',
+      savedAt: new Date().toISOString(),
+      savedBySeat: localSeat,
+      turn: nextTurn,
+      activeSeat: nextActiveSeat,
+      phaseLabel: overrides.phaseLabel || phaseLabel,
+      landPlayedThisTurn: false,
+      lobbyState: {
+        ...lobbyState,
+        startingSeat: nextActiveSeat,
+        resumedFromSave: true
+      },
+      players,
+      deckInfoBySeat,
+      boardCards: overrides.boardCards || boardCardsRef.current || [],
+      hiddenZonesBySeat,
+      aiStates: aiStatesRef.current || {},
+      lifeTotals: lifeTotalsRef.current || {},
+      eliminatedSeats: eliminatedSeatsRef.current || [],
+      winnerSeat,
+      combatState: overrides.combatState || { phase: 'main', attackers: [], blockers: [], warnings: [], summary: null, attackingSeat: null, defendingSeat: null, pendingBlockerId: null },
+      stackItems,
+      remoteHandCounts: Object.fromEntries(Object.entries(hiddenZonesBySeat).map(([seat, zones]) => [seat, zones?.hand?.length || 0])),
+      camera: { pan: panRef.current, zoom: zoomRef.current }
+    };
+  }
+
+  function applySavedGameSnapshot(saveData) {
+    if (!saveData || saveData.kind !== 'fct-save-v1') return;
+    const applyKey = `${saveData.lobbyName || lobbyState?.lobbyName || 'save'}:${saveData.savedAt || 'unknown'}:${localSeat || 'no-seat'}`;
+    if (saveAppliedRef.current === applyKey) return;
+    saveAppliedRef.current = applyKey;
+
+    const localHidden = saveData.hiddenZonesBySeat?.[localSeat] || {};
+    const nextLibrary = Array.isArray(localHidden.library) ? localHidden.library : [];
+    const nextHand = Array.isArray(localHidden.hand) ? localHidden.hand : [];
+    libraryRef.current = nextLibrary;
+    handRef.current = nextHand;
+    boardCardsRef.current = saveData.boardCards || [];
+
+    setLibrary(nextLibrary);
+    setHand(nextHand);
+    setBoardCards(saveData.boardCards || []);
+    setAiStates(saveData.aiStates || {});
+    setLifeTotals(saveData.lifeTotals || Object.fromEntries(SEATS.map((seat) => [seat, { life: STARTING_LIFE, infect: STARTING_INFECT, commander: 0 }])));
+    setEliminatedSeats(saveData.eliminatedSeats || []);
+    setWinnerSeat(saveData.winnerSeat || null);
+    setTurn(Number(saveData.turn || 1));
+    setActiveSeat(Number(saveData.activeSeat || lobbyState?.startingSeat || 1));
+    setPhaseLabel(saveData.phaseLabel || turnStartPhaseLabel(saveData.activeSeat || lobbyState?.startingSeat || 1));
+    setCombatState(saveData.combatState || { phase: 'main', attackers: [], blockers: [], warnings: [], summary: null, attackingSeat: null, defendingSeat: null, pendingBlockerId: null });
+    setStackItems(saveData.stackItems || []);
+    setRemoteHandCounts(saveData.remoteHandCounts || Object.fromEntries(Object.entries(saveData.hiddenZonesBySeat || {}).map(([seat, zones]) => [seat, zones?.hand?.length || 0])));
+    setSelection(null);
+    setDragging(null);
+    draggingRef.current = null;
+    setModifyModal(null);
+    setActivateModal(null);
+    setResponsePrompt(null);
+    if (saveData.camera?.pan && saveData.camera?.zoom) setCamera(saveData.camera.pan, saveData.camera.zoom);
+    addGameNotice(`Loaded saved state for lobby "${saveData.lobbyName || lobbyState?.lobbyName}". Player ${saveData.activeSeat || '?'} is active.`, saveData.activeSeat);
+  }
+
+  async function persistGameSnapshot(snapshot, reason = 'manual') {
+    if (!snapshot || saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    try {
+      const result = await saveGameState(snapshot.lobbyName, snapshot.mode, snapshot);
+      addGameNotice(`Saved game state for ${snapshot.lobbyName} at end of turn.`, snapshot.activeSeat);
+      emit({ type: 'save_state_committed', lobbyName: snapshot.lobbyName, updatedAt: result?.updated_at || snapshot.savedAt, reason, snapshot });
+    } catch (error) {
+      console.warn('Game save failed:', error);
+      addGameNotice(`Save failed: ${error?.message || String(error)}`, localSeat);
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }
+
+  function publishHiddenZoneSnapshot() {
+    if (!localSeat) return;
+    emit({
+      type: 'hidden_zone_snapshot',
+      seat: localSeat,
+      hand: handRef.current || [],
+      library: libraryRef.current || [],
+      handCount: (handRef.current || []).length,
+      libraryCount: (libraryRef.current || []).length
+    });
   }
 
 
@@ -5852,21 +6171,30 @@ Reason: ${legality.reason}`);
     const nextSeat = occupiedSeats[(currentIndex + 1) % occupiedSeats.length] || occupiedSeats[0] || 1;
     const nextTurn = nextSeat === occupiedSeats[0] ? turn + 1 : turn;
     const nextPhaseLabel = turnStartPhaseLabel(nextSeat);
+    const nextCombatState = { phase: 'main', attackers: [], blockers: [], warnings: [], summary: null, attackingSeat: null, defendingSeat: null, pendingBlockerId: null };
+    const nextBoardCards = (boardCardsRef.current || boardCards).map((card) => {
+      const withoutEot = { ...card, mods: (card.mods || []).filter((mod) => !isEndOfTurnMod(mod)) };
+      if (withoutEot.ownerSeat !== nextSeat) return withoutEot;
+      const locked = /does(?:n'?t| not) untap/i.test(withoutEot.card?.oracleText || '');
+      return { ...withoutEot, tapped: locked ? withoutEot.tapped : false, controlledSinceStartOfTurn: true };
+    });
+    boardCardsRef.current = nextBoardCards;
+    activeSeatRef.current = nextSeat;
+    turnRef.current = nextTurn;
     setActiveSeat(nextSeat);
     setTurn(nextTurn);
     setPhaseLabel(nextPhaseLabel);
     setLandPlayedThisTurn(false);
-    setCombatState({ phase: 'main', attackers: [], blockers: [], warnings: [], summary: null, attackingSeat: null, defendingSeat: null, pendingBlockerId: null });
+    setCombatState(nextCombatState);
     setResponsePrompt(null);
     queueTurnStartToasts(nextSeat, nextTurn);
-    setBoardCards((cards) => cards.map((card) => {
-      if (card.ownerSeat !== nextSeat) return card;
-      const locked = /does(?:n'?t| not) untap/i.test(card.card?.oracleText || '');
-      return { ...card, tapped: locked ? card.tapped : false, controlledSinceStartOfTurn: true };
-    }));
+    setBoardCards(nextBoardCards);
     emit({ type: 'turn_update', activeSeat: nextSeat, turn: nextTurn, phaseLabel: nextPhaseLabel });
+    const snapshot = buildGameSaveSnapshot({ activeSeat: nextSeat, turn: nextTurn, phaseLabel: nextPhaseLabel, boardCards: nextBoardCards, combatState: nextCombatState });
+    setSavedGameState(snapshot);
+    setTimeout(() => persistGameSnapshot(snapshot, 'end-turn'), 80);
     setTurnEventLog([]);
-    setTimeout(() => fireWatchersForEvent({ id: safeId('turn-start'), type: 'turn_step', step: 'upkeep', seat: nextSeat }, boardCards), 80);
+    setTimeout(() => fireWatchersForEvent({ id: safeId('turn-start'), type: 'turn_step', step: 'upkeep', seat: nextSeat }, nextBoardCards), 80);
     if (isHost && players[nextSeat]?.ai) setTimeout(() => runAiTurn(nextSeat), 650);
   }
 

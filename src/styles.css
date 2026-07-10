@@ -4417,3 +4417,36 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
   }
 }
 
+
+
+/* v0.18 save-game lobby UX */
+.recent-lobby-picker {
+  display: grid;
+  gap: 8px;
+}
+.recent-lobby-picker > span {
+  color: #f1d08a;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-weight: 900;
+}
+.recent-lobby-picker > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.recent-lobby-picker button {
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 999px;
+  background: rgba(255,255,255,.07);
+  color: #f7ead0;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+.recent-lobby-picker button:hover,
+.recent-lobby-picker button.selected {
+  border-color: rgba(217,164,65,.72);
+  background: rgba(217,164,65,.16);
+}
