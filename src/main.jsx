@@ -2519,6 +2519,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const tableRef = useRef(null);
   const tableWrapRef = useRef(null);
   const handDockRef = useRef(null);
+  const gameHudRef = useRef(null);
   const panSessionRef = useRef(null);
   const boardPointerRef = useRef(null);
   const lastBoardTapRef = useRef(null);
@@ -2527,6 +2528,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const resolvingAiStackRef = useRef(new Set());
   const [pan, setPan] = useState({ x: -1180, y: -1540 });
   const [zoom, setZoom] = useState(0.72);
+  const [hudPanelTop, setHudPanelTop] = useState(150);
   const panRef = useRef({ x: -1180, y: -1540 });
   const zoomRef = useRef(0.72);
   const tableTouchPointersRef = useRef(new Map());
@@ -2606,6 +2608,27 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
+
+  useLayoutEffect(() => {
+    const updateHudPanelTop = () => {
+      const rect = gameHudRef.current?.getBoundingClientRect?.();
+      if (!rect) return;
+      const nextTop = Math.ceil(rect.bottom + 12);
+      setHudPanelTop((current) => Math.abs(current - nextTop) > 1 ? nextTop : current);
+    };
+    updateHudPanelTop();
+    const observer = typeof ResizeObserver !== 'undefined' && gameHudRef.current ? new ResizeObserver(updateHudPanelTop) : null;
+    observer?.observe(gameHudRef.current);
+    window.addEventListener('resize', updateHudPanelTop);
+    window.addEventListener('orientationchange', updateHudPanelTop);
+    const timer = setTimeout(updateHudPanelTop, 250);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateHudPanelTop);
+      window.removeEventListener('orientationchange', updateHudPanelTop);
+      clearTimeout(timer);
+    };
+  }, []);
 
   useEffect(() => {
     libraryRef.current = library;
@@ -6646,8 +6669,8 @@ Reason: ${legality.reason}`);
   }, {});
 
   return (
-    <main className="game-screen">
-      <header className="game-hud">
+    <main className="game-screen" style={{ '--hud-panel-top': `${hudPanelTop}px` }}>
+      <header className="game-hud" ref={gameHudRef}>
         <button className="ghost" onClick={backToLobby}>← Lobby</button>
         <div><b>Turn {turn}</b><span>Active: Player {activeSeat}</span></div>
         <div className="phase-pill"><span>Phase</span><b>{phaseLabel}</b></div>

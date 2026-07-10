@@ -5508,3 +5508,61 @@ body,
     width: min(280px, calc(100vw - 20px)) !important;
   }
 }
+
+
+/* v0.29 measured HUD panel anchor: no more breakpoint guessing */
+.game-screen {
+  --hud-panel-top: 150px;
+}
+
+.life-tracker-panel {
+  top: var(--hud-panel-top) !important;
+  bottom: auto !important;
+  z-index: 1160 !important;
+}
+
+.ai-thought-log,
+.ai-thought-log.collapsed {
+  top: var(--hud-panel-top) !important;
+  bottom: auto !important;
+  z-index: 1162 !important;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .life-tracker-panel {
+    position: fixed !important;
+    left: 10px !important;
+    right: auto !important;
+    transform: scale(.82) !important;
+    transform-origin: top left !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    position: fixed !important;
+    right: 10px !important;
+    left: auto !important;
+    width: min(310px, calc(100vw - 20px)) !important;
+    max-height: 24vh !important;
+  }
+
+  .ai-thought-log-lines {
+    max-height: calc(24vh - 42px) !important;
+  }
+}
+
+@media (max-width: 760px) and (orientation: landscape) {
+  .life-tracker-panel {
+    transform: scale(.74) !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    width: min(280px, calc(100vw - 20px)) !important;
+    max-height: 22vh !important;
+  }
+
+  .ai-thought-log-lines {
+    max-height: calc(22vh - 42px) !important;
+  }
+}
