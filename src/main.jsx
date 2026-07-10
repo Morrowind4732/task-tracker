@@ -62,6 +62,17 @@ const SIDE_ZONES = [
   { id: 'graveyard', label: 'Graveyard' }
 ];
 const MANAGED_PILE_ZONES = ['graveyard', 'exile'];
+
+function isCompleteGameSaveSnapshot(saveData) {
+  return Boolean(
+    saveData &&
+    saveData.kind === 'fct-save-v1' &&
+    saveData.savedAt &&
+    Array.isArray(saveData.boardCards) &&
+    saveData.hiddenZonesBySeat &&
+    saveData.deckInfoBySeat
+  );
+}
 const MANAGED_ZONE_IDS = ['graveyard', 'exile', 'library'];
 
 const TABLE_SIZE = { width: 3600, height: 2600 };
@@ -1294,7 +1305,7 @@ function App() {
           roomRef.current?.send('join_rejected', { targetId: payload.playerId, reason: 'Sorry, this lobby is full.' });
           return lobby;
         }
-        const savedDeckForSeat = current.savedGameState?.deckInfoBySeat?.[seat] || null;
+        const savedDeckForSeat = isCompleteGameSaveSnapshot(current.savedGameState) ? (current.savedGameState?.deckInfoBySeat?.[seat] || null) : null;
         const player = {
           id: payload.playerId,
           name: payload.name || `Player ${seat}`,
@@ -1351,7 +1362,7 @@ function App() {
     if (type === 'start_game') {
       hideDice3DOverlay();
       setLobbyState(payload.state);
-      if (payload.savedGameState) {
+      if (isCompleteGameSaveSnapshot(payload.savedGameState)) {
         setSavedGameState(payload.savedGameState);
         applySavedDeckPreview(payload.savedGameState);
       }
@@ -1674,11 +1685,12 @@ function App() {
       }
     }
     nextState = { ...nextState, players };
-    const startingSeat = loadGameMode && savedGameState?.activeSeat
+    const hasCompleteSave = loadGameMode && isCompleteGameSaveSnapshot(savedGameState);
+    const startingSeat = hasCompleteSave && savedGameState?.activeSeat
       ? Number(savedGameState.activeSeat)
       : getStartingSeatFromInitiative(players);
-    const started = { ...nextState, startingSeat, started: true, resumedFromSave: Boolean(loadGameMode && savedGameState) };
-    roomRef.current?.send('start_game', { state: started, savedGameState: loadGameMode ? savedGameState : null });
+    const started = { ...nextState, startingSeat, started: true, resumedFromSave: Boolean(hasCompleteSave) };
+    roomRef.current?.send('start_game', { state: started, savedGameState: hasCompleteSave ? savedGameState : null });
     hideDice3DOverlay();
     setLobbyState(started);
     setGameEvents([]);
@@ -2627,7 +2639,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }, [lobbyState?.startingSeat, localSeat]);
 
   useEffect(() => {
-    if (savedGameState?.kind === 'fct-save-v1') return;
+    if (isCompleteGameSaveSnapshot(savedGameState)) return;
     const playable = (deckInfo?.cards || []).filter((card) => card.name !== deckInfo?.commanderName);
     const shuffled = shuffleCards(playable);
     setHand(shuffled.slice(0, 7));
@@ -2722,7 +2734,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }, [hand.length, localSeat]);
 
   useEffect(() => {
-    if (!savedGameState || savedGameState.kind !== 'fct-save-v1' || !localSeat) return;
+    if (!isCompleteGameSaveSnapshot(savedGameState) || !localSeat) return;
     applySavedGameSnapshot(savedGameState);
   }, [savedGameState, localSeat]);
 
@@ -3675,7 +3687,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       return;
     }
     if (event.type === 'save_state_committed') {
-      if (event.snapshot?.kind === 'fct-save-v1') {
+      if (isCompleteGameSaveSnapshot(event.snapshot)) {
         setSavedGameState(event.snapshot);
       }
       addGameNotice(`Save updated for ${event.lobbyName || lobbyState?.lobbyName || 'lobby'}.`, event.snapshot?.activeSeat || null);
@@ -3819,7 +3831,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }
 
   function applySavedGameSnapshot(saveData) {
-    if (!saveData || saveData.kind !== 'fct-save-v1') return;
+    if (!isCompleteGameSaveSnapshot(saveData)) return;
     const applyKey = `${saveData.lobbyName || lobbyState?.lobbyName || 'save'}:${saveData.savedAt || 'unknown'}:${localSeat || 'no-seat'}`;
     if (saveAppliedRef.current === applyKey) return;
     saveAppliedRef.current = applyKey;
