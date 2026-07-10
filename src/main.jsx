@@ -4081,11 +4081,19 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     return localMatToPoint(rel, local.u, local.v);
   }
 
-  function animateAiHiddenMove(seat, zone, revealCard = null) {
+  function animateAiHiddenMove(seat, zone, revealCard = null, targetBoardCard = null, cardsSnapshot = null) {
     const from = getOpponentHandPoint(seat);
-    const to = getZoneCenterPoint(seat, zone);
+    const to = targetBoardCard
+      ? getBoardPoint(targetBoardCard, localSeat, cardsSnapshot || boardCards)
+      : getZoneCenterPoint(seat, zone);
     setAiCardAnim({ id: crypto.randomUUID(), seat, from, to, revealCard });
-    setTimeout(() => setAiCardAnim(null), revealCard ? 1040 : 760);
+    setTimeout(() => setAiCardAnim(null), revealCard ? 820 : 680);
+  }
+
+  function emitAiDragPreviewToBoardCard(seat, boardCard, cardsSnapshot = null) {
+    if (!boardCard) return;
+    const targetPoint = getBoardPoint(boardCard, localSeat, cardsSnapshot || boardCards);
+    emit({ type: 'drag_preview', ownerSeat: seat, canonical: viewToCanonical(targetPoint, localSeat) });
   }
 
   function getClientPointFromTablePoint(point) {
@@ -4094,10 +4102,23 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     return { x: rect.left + point.x * rect.width, y: rect.top + point.y * rect.height };
   }
 
-  function getHandTargetPoint() {
+  function getHandTargetPoint(nextHandCount = hand.length + 1, targetIndex = null) {
     const rect = handDockRef.current?.getBoundingClientRect();
     if (!rect) return { x: window.innerWidth * 0.5, y: window.innerHeight - 110 };
-    return { x: rect.left + rect.width * 0.52, y: rect.top + rect.height * 0.68 };
+    const count = Math.max(1, Number(nextHandCount || 1));
+    const index = targetIndex == null ? count - 1 : Math.max(0, Math.min(count - 1, Number(targetIndex)));
+    const mid = (count - 1) / 2;
+    const gap = Math.min(84, count > 1 ? 760 / (count - 1) : 0);
+    const distance = index - mid;
+    const offset = distance * gap;
+    const lowCurve = Math.abs(distance) * 7;
+    const existingCard = handDockRef.current?.querySelector?.('.hand-card');
+    const cardRect = existingCard?.getBoundingClientRect?.();
+    const cardHeight = cardRect?.height || (window.innerWidth <= 980 ? 154 : 198);
+    return {
+      x: rect.left + rect.width / 2 + offset,
+      y: rect.bottom - 14 - cardHeight / 2 + lowCurve
+    };
   }
 
   function drawCard(animated = true) {
@@ -4118,16 +4139,16 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       const animId = crypto.randomUUID();
       const fromTable = getZoneCenterPoint(localSeat, 'library');
       const fromClient = getClientPointFromTablePoint(fromTable);
-      const handTarget = getHandTargetPoint();
+      const handTarget = getHandTargetPoint(hand.length + 1, hand.length);
       setDrawAnims((items) => [...items, { id: animId, card: topCard, from: fromClient, to: handTarget }]);
       const commitTimer = setTimeout(() => {
         drawAnimTimersRef.current.delete(commitTimer);
         commitDraw();
-      }, 780);
+      }, 640);
       const clearTimer = setTimeout(() => {
         drawAnimTimersRef.current.delete(clearTimer);
         setDrawAnims((items) => items.filter((item) => item.id !== animId));
-      }, 900);
+      }, 760);
       drawAnimTimersRef.current.add(commitTimer);
       drawAnimTimersRef.current.add(clearTimer);
       return;
@@ -6492,9 +6513,9 @@ Reason: ${legality.reason}`);
       ];
       localBoardCards = afterCastCards;
       setBoardCards(afterCastCards);
-      animateAiHiddenMove(seat, zone, castCard);
+      animateAiHiddenMove(seat, zone, castCard, boardCard, afterCastCards);
       if (toTap.length) emit({ type: 'tap_cards', boardIds: toTap, tapped: true });
-      emit({ type: 'drag_preview', ownerSeat: seat, canonical: { x: 0.5, y: 0.12 } });
+      emitAiDragPreviewToBoardCard(seat, boardCard, afterCastCards);
       publishAiThought([
         `Main Phase 2: AI casts ${castCard.name} after combat.`,
         ...manaSourcesToUse.map((source) => `AI used ${source.sourceName}: ${source.costText || 'ability'} → add ${source.manaLabel}.`),
@@ -6561,9 +6582,9 @@ Reason: ${legality.reason}`);
         const boardCard = { boardId: crypto.randomUUID(), ownerSeat: seat, originalOwnerSeat: seat, controllerSeat: seat, zone: 'mana', slot: slotInfo.slot, stackIndex: slotInfo.stackIndex, tapped: aiCardEntersTapped(land), card: land, mods: [], enteredTurn: turn, controlledSinceTurn: turn, controlledSinceStartOfTurn: false, playedAt: Date.now() };
         localBoardCards = [...localBoardCards, boardCard];
         setBoardCards(localBoardCards);
-        animateAiHiddenMove(seat, 'mana', land);
+        animateAiHiddenMove(seat, 'mana', land, boardCard, localBoardCards);
         publishAiThought(`Main phase: AI played land ${land.name}${boardCard.stackIndex ? ` stacked with matching ${land.name}` : ''}${boardCard.tapped ? ' tapped' : ''}.`, 'append', seat);
-        emit({ type: 'drag_preview', ownerSeat: seat, canonical: { x: 0.5, y: 0.12 } });
+        emitAiDragPreviewToBoardCard(seat, boardCard, localBoardCards);
         setTimeout(() => emit({ type: 'play_card', card: boardCard }), 720);
       }
 
@@ -6613,9 +6634,9 @@ Reason: ${legality.reason}`);
         publishAiThought(useLines, 'append', seat);
         localBoardCards = afterCastCards;
         setBoardCards(afterCastCards);
-        animateAiHiddenMove(seat, zone, castCard);
+        animateAiHiddenMove(seat, zone, castCard, boardCard, afterCastCards);
         if (toTap.length) emit({ type: 'tap_cards', boardIds: toTap, tapped: true });
-        emit({ type: 'drag_preview', ownerSeat: seat, canonical: { x: 0.5, y: 0.12 } });
+        emitAiDragPreviewToBoardCard(seat, boardCard, afterCastCards);
         const stackId = crypto.randomUUID();
         setStackItems((items) => [...items, { id: stackId, seat, cardName: castCard.name, cardImage: castCard.image, label: `${castCard.name} on the stack` }]);
         const pendingInfo = { type: 'ai-cast', seat, stackId, boardCard, cardsSnapshot: afterCastCards, aiOverride: { ...current, hand: handNext, library: libraryNext } };

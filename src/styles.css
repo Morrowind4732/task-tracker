@@ -5957,3 +5957,36 @@ body,
     max-height: 230px !important;
   }
 }
+
+
+/* v0.32 gameplay animation realism */
+.draw-stage {
+  animation: drawBackStageRealistic .34s cubic-bezier(.2,.78,.28,1) forwards;
+}
+.draw-stage-front {
+  opacity: 0;
+  animation: drawFrontStageRealistic .72s cubic-bezier(.16,.86,.22,1) forwards;
+}
+@keyframes drawBackStageRealistic {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(.76) rotateY(0deg) rotate(-4deg); }
+  70% { opacity: 1; transform: translate(-50%, -50%) scale(.96) rotateY(0deg) rotate(-1deg); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.00) rotateY(90deg) rotate(0deg); }
+}
+@keyframes drawFrontStageRealistic {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.76) rotateY(-90deg) rotate(-4deg); }
+  18% { opacity: 1; transform: translate(-50%, -50%) scale(.98) rotateY(0deg) rotate(-2deg); }
+  100% { opacity: 1; transform: translate(calc(var(--draw-to-x) - var(--draw-x)), calc(var(--draw-to-y) - var(--draw-y))) scale(.46) rotate(6deg); }
+}
+.ai-card-animation {
+  animation: aiCardMoveRealistic .68s cubic-bezier(.16,.84,.24,1) forwards;
+}
+.ai-card-animation-front {
+  animation: aiCardReveal .24s ease .50s forwards;
+}
+.ai-card-animation.will-reveal .ai-card-animation-back {
+  animation: aiCardHideBack .16s ease .50s forwards;
+}
+@keyframes aiCardMoveRealistic {
+  0% { left: var(--ai-from-x); top: var(--ai-from-y); transform: translate(-50%, -50%) scale(.92) rotate(-3deg); }
+  100% { left: var(--ai-to-x); top: var(--ai-to-y); transform: translate(-50%, -50%) scale(1.02) rotate(0deg); }
+}
