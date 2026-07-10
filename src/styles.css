@@ -5446,3 +5446,65 @@ body,
     top: calc(194px + env(safe-area-inset-top, 0px)) !important;
   }
 }
+
+
+/* v0.28 mobile HUD panel placement v2: clear wrapped top bar */
+@media (max-width: 760px) {
+  .life-tracker-panel {
+    position: fixed !important;
+    top: calc(188px + env(safe-area-inset-top, 0px)) !important;
+    left: 10px !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: scale(.82) !important;
+    transform-origin: top left !important;
+    z-index: 1160 !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    position: fixed !important;
+    top: calc(188px + env(safe-area-inset-top, 0px)) !important;
+    right: 10px !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: min(310px, calc(100vw - 20px)) !important;
+    max-height: 24vh !important;
+    z-index: 1162 !important;
+  }
+
+  .ai-thought-log-lines {
+    max-height: calc(24vh - 42px) !important;
+  }
+}
+
+@media (max-width: 760px) and (orientation: landscape) {
+  .life-tracker-panel {
+    top: calc(174px + env(safe-area-inset-top, 0px)) !important;
+    transform: scale(.74) !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    top: calc(174px + env(safe-area-inset-top, 0px)) !important;
+    width: min(280px, calc(100vw - 20px)) !important;
+    max-height: 22vh !important;
+  }
+
+  .ai-thought-log-lines {
+    max-height: calc(22vh - 42px) !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .life-tracker-panel {
+    top: calc(224px + env(safe-area-inset-top, 0px)) !important;
+    transform: scale(.78) !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    top: calc(224px + env(safe-area-inset-top, 0px)) !important;
+    width: min(280px, calc(100vw - 20px)) !important;
+  }
+}
