@@ -4680,3 +4680,43 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     max-height: 400px;
   }
 }
+
+
+/* v0.22 quality of life interactions */
+.board-card,
+.hand-card,
+.card-tooltip,
+.hand-preview,
+.reveal-overlay,
+.draw-animation {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.board-card,
+.hand-card {
+  touch-action: none;
+}
+.board-card img,
+.hand-card img,
+.hand-preview img,
+.card-tooltip img,
+.reveal-overlay img,
+.draw-animation img {
+  -webkit-user-drag: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+  pointer-events: none;
+}
+@media (max-width: 980px) {
+  .hand-preview {
+    width: min(470px, 50vw);
+  }
+}
+@media (max-width: 620px) {
+  .hand-preview {
+    right: 10px;
+    top: 104px;
+    width: min(360px, 55vw);
+  }
+}

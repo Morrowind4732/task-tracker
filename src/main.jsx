@@ -2464,7 +2464,7 @@ function DeckScanModal({ session, onApprove, onReject, onSkip, onStop }) {
         </div>
         <div className="deck-scan-progress">Card {session.index + 1} / {progressTotal} · Reviewed this run: {session.reviewed || 0} · Auto-approved: {session.autoApproved || 0} · Skipped known: {session.skippedKnown || 0}</div>
         <div className="ai-review-layout">
-          <aside className="ai-review-card-art enlarged-review-art" onClick={() => setZoomedCard(true)}>{card.image ? <img src={card.image} alt={card.name} /> : <div className="no-image-card">{card.name}</div>}<span className="image-zoom-hint">Tap to inspect</span></aside>
+          <aside className="ai-review-card-art enlarged-review-art" onClick={() => setZoomedCard(true)}>{card.image ? <img src={card.image} alt={card.name} draggable="false" /> : <div className="no-image-card">{card.name}</div>}<span className="image-zoom-hint">Tap to inspect</span></aside>
           <section className="ai-review-main-copy">
             <div className="ai-oracle-box"><b>Oracle text being reviewed</b><OracleReviewText text={card.oracleText || 'No oracle text available.'} abilities={plan?.abilities || []} /></div>
             <div className="ai-confidence-row"><span>Detected actions: <b>{actions.length}</b></span><span>Confidence: <b>{plan?.confidence || 0}%</b></span><span>Auto threshold: <b>{AI_AUTO_APPROVE_CONFIDENCE}%</b></span></div>
@@ -2521,6 +2521,9 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const handDockRef = useRef(null);
   const panSessionRef = useRef(null);
   const boardPointerRef = useRef(null);
+  const lastBoardTapRef = useRef(null);
+  const lastEmptyTableTapRef = useRef(null);
+  const previousZoomBeforeToggleRef = useRef(0.72);
   const resolvingAiStackRef = useRef(new Set());
   const [pan, setPan] = useState({ x: -1180, y: -1540 });
   const [zoom, setZoom] = useState(0.72);
@@ -2641,6 +2644,20 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     drawAnimTimersRef.current.clear();
     for (const timer of toastTimersRef.current) clearTimeout(timer);
     toastTimersRef.current.clear();
+  }, []);
+
+  useEffect(() => {
+    const blockNativeCardImageActions = (event) => {
+      const target = event.target;
+      if (!target?.closest?.('.board-card, .hand-card, .hand-preview, .card-tooltip, .reveal-overlay, .zone-browser-modal, .draw-animation')) return;
+      event.preventDefault();
+    };
+    document.addEventListener('contextmenu', blockNativeCardImageActions);
+    document.addEventListener('dragstart', blockNativeCardImageActions);
+    return () => {
+      document.removeEventListener('contextmenu', blockNativeCardImageActions);
+      document.removeEventListener('dragstart', blockNativeCardImageActions);
+    };
   }, []);
 
   useEffect(() => {
@@ -3112,6 +3129,17 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     zoomAroundClient(nextZoom, rect.left + rect.width / 2, rect.top + rect.height / 2);
   }
 
+  function toggleEmptyTableZoom(clientX, clientY) {
+    const currentZoom = zoomRef.current || zoom;
+    if (Math.abs(currentZoom - 1) > 0.015) {
+      previousZoomBeforeToggleRef.current = currentZoom;
+      zoomAroundClient(1, clientX, clientY);
+      return;
+    }
+    const restoreZoom = previousZoomBeforeToggleRef.current || 0.72;
+    zoomAroundClient(restoreZoom, clientX, clientY);
+  }
+
   function handleWheelZoom(event) {
     event.preventDefault();
     const direction = event.deltaY > 0 ? -1 : 1;
@@ -3517,6 +3545,23 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   function startTablePan(event) {
     if (dragging) return;
     if (event.target.closest('button, .board-card, .hand-card, .deck-stack, input, textarea, select, .radial-card-menu, .card-tooltip, .deck-import-modal, .modify-modal, .activate-modal, .ai-review-modal, .ai-missing-report-modal, .dev-console, .combat-modal, .life-tracker-panel, .zone-browser-modal, .add-card-modal, .zone-hotspot')) return;
+    const secondTouchPointer = event.pointerType === 'touch' && tableTouchPointersRef.current.size > 0;
+    if (!secondTouchPointer) {
+      const now = Date.now();
+      const last = lastEmptyTableTapRef.current;
+      const closeEnough = last && Math.hypot(event.clientX - last.x, event.clientY - last.y) < 34;
+      const quickEnough = last && now - last.time < 340;
+      const samePointerKind = last && last.pointerType === event.pointerType;
+      if (closeEnough && quickEnough && samePointerKind) {
+        event.preventDefault();
+        event.stopPropagation();
+        lastEmptyTableTapRef.current = null;
+        clearFloatingUi();
+        toggleEmptyTableZoom(event.clientX, event.clientY);
+        return;
+      }
+      lastEmptyTableTapRef.current = { time: now, x: event.clientX, y: event.clientY, pointerType: event.pointerType };
+    }
     clearFloatingUi();
     event.preventDefault();
 
@@ -3531,13 +3576,13 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
         return;
       }
       const currentPan = panRef.current || pan;
-      panSessionRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: currentPan.x, baseY: currentPan.y };
+      panSessionRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: currentPan.x, baseY: currentPan.y, moved: false };
       tableWrapRef.current?.classList.add('is-panning');
       return;
     }
 
     const currentPan = panRef.current || pan;
-    panSessionRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: currentPan.x, baseY: currentPan.y };
+    panSessionRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, baseX: currentPan.x, baseY: currentPan.y, moved: false };
     tableWrapRef.current?.classList.add('is-panning');
     window.addEventListener('pointermove', onTablePanMove);
     window.addEventListener('pointerup', onTablePanEnd, { once: true });
@@ -3547,6 +3592,10 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   function onTablePanMove(event) {
     const session = panSessionRef.current;
     if (!session || (session.pointerId != null && event.pointerId !== session.pointerId)) return;
+    if (Math.hypot(event.clientX - session.startX, event.clientY - session.startY) > 10) {
+      session.moved = true;
+      lastEmptyTableTapRef.current = null;
+    }
     const nextPan = {
       x: session.baseX + event.clientX - session.startX,
       y: session.baseY + event.clientY - session.startY
@@ -4127,6 +4176,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     const distance = Math.hypot(dx, dy);
     const point = getTablePoint(event.clientX, event.clientY);
     if (!session.draggingStarted && distance > 8) {
+      lastBoardTapRef.current = null;
       session.draggingStarted = true;
       const cards = boardCards.filter((card) => session.boardIds.includes(card.boardId));
       setDragging({
@@ -4154,8 +4204,19 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     if (!session) return;
     const hadDrag = session.draggingStarted;
     if (!hadDrag) {
+      const now = Date.now();
+      const last = lastBoardTapRef.current;
+      const closeEnough = last && Math.hypot(event.clientX - last.x, event.clientY - last.y) < 34;
+      const quickEnough = last && now - last.time < 340;
+      const sameCard = last && last.boardId === session.boardCard.boardId;
       suppressNextBoardClick.current = true;
       setTimeout(() => { suppressNextBoardClick.current = false; }, 0);
+      if (sameCard && closeEnough && quickEnough) {
+        lastBoardTapRef.current = null;
+        toggleTapBoardIds(boardIdsForStackDrag(session.boardCard));
+        return;
+      }
+      lastBoardTapRef.current = { boardId: session.boardCard.boardId, time: now, x: event.clientX, y: event.clientY };
       handleBoardCardClick(session.boardCard);
       return;
     }
@@ -4814,6 +4875,19 @@ Reason: ${legality.reason}`);
     setBoardCards((cards) => cards.map((card) => selection.boardIds.includes(card.boardId) ? { ...card, tapped: shouldTap } : card));
     emit({ type: 'tap_cards', boardIds: selection.boardIds, tapped: shouldTap });
     setSelection(null);
+  }
+
+  function toggleTapBoardIds(boardIds = []) {
+    const ids = [...new Set((boardIds || []).filter(Boolean))];
+    if (!ids.length) return;
+    const liveCards = boardCards.filter((card) => ids.includes(card.boardId) && isBattlefieldZone(card.zone));
+    if (!liveCards.length) return;
+    const liveIds = liveCards.map((card) => card.boardId);
+    const shouldTap = liveCards.some((card) => !card.tapped);
+    setBoardCards((cards) => cards.map((card) => liveIds.includes(card.boardId) ? { ...card, tapped: shouldTap } : card));
+    emit({ type: 'tap_cards', boardIds: liveIds, tapped: shouldTap });
+    setSelection(null);
+    addGameNotice(`${shouldTap ? 'Tapped' : 'Untapped'} ${liveIds.length > 1 ? `${liveIds.length} card stack` : (liveCards[0]?.card?.name || 'card')} by double-tap.`, liveCards[0]?.ownerSeat || localSeat);
   }
 
   function adjustCommanderTax(boardId, delta) {
@@ -9023,7 +9097,7 @@ function BoardCard({ boardCard, localSeat, allBoardCards, selected, onClick, onP
       title={`${displayCard.name} (controller P${boardCard.ownerSeat}${boardCard.originalOwnerSeat && boardCard.originalOwnerSeat !== boardCard.ownerSeat ? `, owner P${boardCard.originalOwnerSeat}` : ''})`}
     >
       <div className="board-card-face">
-        {displayCard.image ? <img src={displayCard.image} alt={displayCard.name} /> : <span>{displayCard.name}</span>}
+        {displayCard.image ? <img src={displayCard.image} alt={displayCard.name} draggable="false" /> : <span>{displayCard.name}</span>}
       </div>
       {faces.length > 1 && <div className="transform-face-chip">Face {faceIndex + 1}/{faces.length}</div>}
       {!['graveyard', 'exile'].includes(boardCard.zone) && <CardBadges boardCard={boardCard} hideTraitBadges={hideTraitBadges} />}
@@ -9117,7 +9191,7 @@ function HandFan({ hand, dockRef, onPointerDown, setTooltipCard, previewCard, se
 function HandHoverPreview({ card }) {
   return (
     <aside className="hand-preview" aria-label={`Large preview of ${card.name}`}>
-      {card.image ? <img src={card.image} alt={card.name} /> : <div className="no-image-card">{card.name}</div>}
+      {card.image ? <img src={card.image} alt={card.name} draggable="false" /> : <div className="no-image-card">{card.name}</div>}
       <div className="hand-preview-caption">
         <strong>{card.name}</strong>
         {card.manaCost && <ManaText text={card.manaCost} className="mana-cost-inline" />}
@@ -9197,7 +9271,7 @@ function CardTooltip({ card, onClose }) {
     <aside className="card-tooltip redesigned-tooltip">
       <button className="close" onClick={onClose}>×</button>
       <div className="tooltip-card-art">
-        {actualCard.image ? <img src={actualCard.image} alt={actualCard.name} /> : <div className="no-image-card">{actualCard.name}</div>}
+        {actualCard.image ? <img src={actualCard.image} alt={actualCard.name} draggable="false" /> : <div className="no-image-card">{actualCard.name}</div>}
       </div>
       <div className="tooltip-card-info">
         <h2>{actualCard.name}</h2>
@@ -9215,7 +9289,7 @@ function RevealCard({ card }) {
   return (
     <div className="reveal-overlay">
       <div className="reveal-card slap">
-        {card.image ? <img src={card.image} alt={card.name} /> : <div className="no-image-card">{card.name}</div>}
+        {card.image ? <img src={card.image} alt={card.name} draggable="false" /> : <div className="no-image-card">{card.name}</div>}
       </div>
     </div>
   );
@@ -9232,8 +9306,8 @@ function DrawAnim({ card, from, to }) {
         '--draw-to-y': `${to.y}px`
       }}
     >
-      <div className="draw-card draw-stage"><img src={cardBackUrl} alt="Card back" /></div>
-      <div className="draw-card draw-stage draw-stage-front"><img src={card.image || cardBackUrl} alt={card.name} /></div>
+      <div className="draw-card draw-stage"><img src={cardBackUrl} alt="Card back" draggable="false" /></div>
+      <div className="draw-card draw-stage draw-stage-front"><img src={card.image || cardBackUrl} alt={card.name} draggable="false" /></div>
     </div>
   );
 }
