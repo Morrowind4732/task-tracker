@@ -2558,6 +2558,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const [aiReviewQueue, setAiReviewQueue] = useState([]);
   const [pendingAiAfterReview, setPendingAiAfterReview] = useState(null);
   const [aiThoughtLog, setAiThoughtLog] = useState([]);
+  const [aiThoughtVisible, setAiThoughtVisible] = useState(false);
   const [aiThoughtCollapsed, setAiThoughtCollapsed] = useState(true);
   const [hideTraitBadges, setHideTraitBadges] = useState(false);
   const [aiCardAnim, setAiCardAnim] = useState(null);
@@ -3459,6 +3460,29 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     }
     if (normalized === 'ai_confidence' || normalized.startsWith('ai_confidence ') || normalized === 'ai_under90' || normalized.startsWith('ai_under90 ') || normalized === 'ai_low_confidence' || normalized.startsWith('ai_low_confidence ') || normalized === 'ai report confidence' || normalized.startsWith('ai report confidence ')) {
       openAiConfidenceReport(raw);
+      setDevCommand('');
+      return;
+    }
+    if (['ai_thought on', 'ai_thoughts on', 'ai_log on', 'ai thoughts on', 'ai thought on'].includes(normalized)) {
+      setAiThoughtVisible(true);
+      setAiThoughtCollapsed(false);
+      setDevCommand('');
+      addGameNotice('Dev console: AI thought log enabled.', null);
+      return;
+    }
+    if (['ai_thought off', 'ai_thoughts off', 'ai_log off', 'ai thoughts off', 'ai thought off'].includes(normalized)) {
+      setAiThoughtVisible(false);
+      setDevCommand('');
+      addGameNotice('Dev console: AI thought log hidden.', null);
+      return;
+    }
+    if (['ai_thought toggle', 'ai_thoughts toggle', 'ai_log toggle', 'ai thoughts toggle', 'ai thought toggle'].includes(normalized)) {
+      setAiThoughtVisible((value) => {
+        const next = !value;
+        if (next) setAiThoughtCollapsed(false);
+        addGameNotice(`Dev console: AI thought log ${next ? 'enabled' : 'hidden'}.`, null);
+        return next;
+      });
       setDevCommand('');
       return;
     }
@@ -6777,7 +6801,7 @@ Reason: ${legality.reason}`);
       {winnerSeat && <div className="winner-banner">Player {winnerSeat} wins</div>}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <StackPanel items={stackItems} responsePrompt={responsePrompt} onPass={passPriority} onHold={holdPriorityForManualResponse} />
-      {debugHasAi && <AiThoughtLog entries={aiThoughtLog} collapsed={aiThoughtCollapsed} onToggle={() => setAiThoughtCollapsed((value) => !value)} />}
+      {debugHasAi && aiThoughtVisible && <AiThoughtLog entries={aiThoughtLog} collapsed={aiThoughtCollapsed} onToggle={() => setAiThoughtCollapsed((value) => !value)} />}
       <LifeTrackers players={players} lifeTotals={lifeTotals} localSeat={localSeat} onAdjust={updateLifeTotal} onSet={setLifeTotalDirect} />
       {devConsoleOpen && <DevConsole command={devCommand} setCommand={setDevCommand} onRun={runDevCommand} onClose={() => setDevConsoleOpen(false)} pendingTarget={pendingAiResetTarget} />}
       {aiMissingReport && <AiMissingReportModal report={aiMissingReport} onClose={() => setAiMissingReport(null)} />}
@@ -7045,6 +7069,8 @@ function LifeTrackers({ players, lifeTotals, localSeat, onAdjust, onSet }) {
 
 function DevConsole({ command, setCommand, onRun, onClose, pendingTarget }) {
   const quickCommands = [
+    { label: 'AI thoughts on', command: 'ai_thought on' },
+    { label: 'AI thoughts off', command: 'ai_thought off' },
     { label: 'Missing all', command: 'ai_missing all' },
     { label: 'Confidence all', command: 'ai_confidence all' },
     { label: 'Confidence P2', command: 'ai_confidence P2' },
@@ -7073,7 +7099,7 @@ function DevConsole({ command, setCommand, onRun, onClose, pendingTarget }) {
         </div>
       )}
       <form onSubmit={(event) => { event.preventDefault(); onRun(); }}>
-        <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="ai_confidence all" autoFocus />
+        <input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="ai_thought on" autoFocus />
         <button className="primary" type="submit">Run</button>
       </form>
     </aside>

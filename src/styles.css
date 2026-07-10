@@ -6149,16 +6149,20 @@ body,
   object-fit: contain;
 }
 
-.hidden-emblem-font:has(i.ms:empty) .hidden-emblem-fallback {
-  display: inline;
+
+
+/* v0.36 icon-font fallback + AI thought dev toggle */
+.hidden-emblem-font i.ms {
+  display: inline-flex !important;
+  font-family: mana, "Mana" !important;
+  font-style: normal;
 }
 
-.hidden-emblem-font:has(i.ms:empty) i.ms {
-  display: none;
+.hidden-emblem-font .hidden-emblem-fallback {
+  display: none !important;
 }
 
-@supports not selector(:has(*)) {
-  .hidden-emblem-font .hidden-emblem-fallback {
-    display: none;
-  }
+.hidden-emblem-font,
+.hidden-emblem-mana {
+  overflow: hidden;
 }
