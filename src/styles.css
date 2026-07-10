@@ -6112,3 +6112,53 @@ body,
     height: 11px;
   }
 }
+
+
+/* v0.35 hidden badge emblem names v2 */
+.hidden-emblem-font {
+  width: 18px;
+  min-width: 18px;
+  padding: 0;
+  font-size: 13px;
+  overflow: visible;
+}
+
+.hidden-emblem-font i.ms {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  color: #f6ead0;
+  text-shadow: 0 1px 2px rgba(0,0,0,.9);
+}
+
+.hidden-emblem-font .hidden-emblem-fallback {
+  display: none;
+}
+
+.hidden-emblem-mana {
+  width: 18px;
+  min-width: 18px;
+  padding: 0;
+}
+
+.hidden-emblem-mana img {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+}
+
+.hidden-emblem-font:has(i.ms:empty) .hidden-emblem-fallback {
+  display: inline;
+}
+
+.hidden-emblem-font:has(i.ms:empty) i.ms {
+  display: none;
+}
+
+@supports not selector(:has(*)) {
+  .hidden-emblem-font .hidden-emblem-fallback {
+    display: none;
+  }
+}

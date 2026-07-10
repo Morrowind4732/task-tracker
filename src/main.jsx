@@ -9321,9 +9321,12 @@ function CommanderTaxControls({ boardCard, onChange }) {
 }
 
 function cardColorLetters(card = {}) {
-  const direct = Array.isArray(card?.colors) && card.colors.length ? card.colors : (Array.isArray(card?.colorIdentity) ? card.colorIdentity : []);
+  const direct = Array.isArray(card?.colors) && card.colors.length
+    ? card.colors
+    : (Array.isArray(card?.colorIdentity) ? card.colorIdentity : []);
+  const fromCost = [...String(card?.manaCost || card?.raw?.mana_cost || '').matchAll(/\{([WUBRGC])(?:\/[^}]*)?\}/gi)].map((match) => match[1]);
   const seen = new Set();
-  return direct
+  return [...direct, ...fromCost]
     .map((value) => String(value || '').trim().toUpperCase())
     .filter((value) => ['W', 'U', 'B', 'R', 'G', 'C'].includes(value))
     .filter((value) => {
@@ -9348,58 +9351,63 @@ function hiddenTraitEmblemForLabel(traitLabel = '') {
   if (!clean) return null;
   const base = clean.replace(/\s*\([^)]*\)\s*/g, '').trim();
   const lower = base.toLowerCase();
+  const compactKey = lower.replace(/[^a-z0-9]/g, '');
   const iconMap = {
-    white: 'w',
-    blue: 'u',
-    black: 'b',
-    red: 'r',
-    green: 'g',
-    colorless: 'c',
-    flying: 'u',
-    vigilance: 'w',
-    lifelink: 'w',
-    firststrike: 'r',
-    'first strike': 'r',
-    doublestrike: 'r',
-    'double strike': 'r',
-    haste: 'r',
-    trample: 'g',
-    reach: 'g',
-    deathtouch: 'b',
-    menace: 'b',
-    toxic: 'b',
-    poisonous: 'b',
-    infect: 'b',
-    flash: 'u',
-    hexproof: 'u',
-    ward: 'u',
-    defender: 'w',
-    indestructible: 'c',
-    artifact: 'c',
-    treasure: 'c',
-    equipment: 'c',
-    vehicle: 'c',
-    land: 'g',
-    instant: 'u',
-    sorcery: 'r',
-    enchantment: 'w',
-    aura: 'w'
+    deathtouch: 'ability-deathtouch',
+    defender: 'ability-defender',
+    doublestrike: 'ability-double-strike',
+    'double strike': 'ability-double-strike',
+    firststrike: 'ability-first-strike',
+    'first strike': 'ability-first-strike',
+    flash: 'ability-flash',
+    flying: 'ability-flying',
+    haste: 'ability-haste',
+    hexproof: 'ability-hexproof',
+    indestructible: 'ability-indestructible',
+    lifelink: 'ability-lifelink',
+    menace: 'ability-menace',
+    reach: 'ability-reach',
+    trample: 'ability-trample',
+    vigilance: 'ability-vigilance',
+    ward: 'ability-ward',
+    toxic: 'ability-toxic',
+    infect: 'ability-infect',
+    prowess: 'ability-prowess',
+    protection: 'ability-protection',
+    shroud: 'ability-shroud',
+    fear: 'ability-fear',
+    skulk: 'ability-skulk',
+    convoke: 'ability-convoke',
+    delve: 'ability-delve',
+    riot: 'ability-riot',
+    annihilator: 'ability-annihilator',
+    landfall: 'ability-landfall',
+    artifact: 'artifact',
+    creature: 'creature',
+    enchantment: 'enchantment',
+    instant: 'instant',
+    land: 'land',
+    planeswalker: 'planeswalker',
+    sorcery: 'sorcery',
+    tribal: 'tribal',
+    token: 'token',
+    battle: 'battle',
+    commander: 'commander',
+    saga: 'saga',
+    aura: 'enchantment',
+    equipment: 'artifact',
+    vehicle: 'artifact',
+    treasure: 'artifact'
   };
   const abbrMap = {
-    creature: 'CR',
-    token: 'TOK',
-    planeswalker: 'PW',
-    battle: 'BAT',
-    saga: 'SAG',
-    equipment: 'EQ',
-    vehicle: 'VEH',
-    artifact: 'ART',
-    enchantment: 'ENC',
     legendary: 'LEG',
+    basic: 'BAS',
+    snow: 'SN',
     goblin: 'GOB',
     zombie: 'ZOM',
     elf: 'ELF',
     human: 'HUM',
+    druid: 'DRU',
     soldier: 'SOL',
     wizard: 'WIZ',
     dragon: 'DRG',
@@ -9408,11 +9416,13 @@ function hiddenTraitEmblemForLabel(traitLabel = '') {
     cleric: 'CLR',
     warrior: 'WAR',
     knight: 'KNI',
-    beast: 'BST'
+    beast: 'BST',
+    dinosaur: 'DINO',
+    merfolk: 'MRF',
+    snake: 'SNK'
   };
-  const compactKey = lower.replace(/[^a-z0-9]/g, '');
   const icon = iconMap[lower] || iconMap[compactKey];
-  if (icon) return { kind: 'icon', icon, title: clean, label: base };
+  if (icon) return { kind: 'font-icon', icon, title: clean, label: base };
   const short = abbrMap[lower]
     || (base.split(/\s+/).length > 1
       ? base.split(/\s+/).map((word) => word[0]).join('').slice(0, 3).toUpperCase()
@@ -9428,7 +9438,7 @@ function buildHiddenBadgeEmblems(boardCard, traits = [], counterSummary = {}) {
     const key = `color:${icon}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    emblems.push({ key, kind: 'icon', icon, title: `${color} color identity`, tone: 'color' });
+    emblems.push({ key, kind: 'mana-pip', icon, title: `${color} color identity`, tone: 'color' });
   }
   for (const trait of traits) {
     const emblem = hiddenTraitEmblemForLabel(trait);
@@ -9457,12 +9467,12 @@ function HiddenBadgeEmblemRail({ boardCard, traits = [], counterSummary = {} }) 
   return (
     <div className="hidden-emblem-rail">
       {emblems.map((emblem) => {
-        if (emblem.kind === 'icon') {
+        if (emblem.kind === 'mana-pip') {
           const iconName = manaIconName(emblem.icon) || emblem.icon;
           return (
             <span
               key={emblem.key}
-              className={`hidden-emblem hidden-emblem-icon ${manaSymbolColorClass(iconName)} ${emblem.tone === 'color' ? 'hidden-emblem-color' : ''}`.trim()}
+              className={`hidden-emblem hidden-emblem-mana ${manaSymbolColorClass(iconName)} hidden-emblem-color`.trim()}
               title={emblem.title}
               aria-label={emblem.title}
             >
@@ -9476,6 +9486,19 @@ function HiddenBadgeEmblemRail({ boardCard, traits = [], counterSummary = {} }) 
                   event.currentTarget.parentElement?.classList.add('hidden-emblem-missing-icon');
                 }}
               />
+            </span>
+          );
+        }
+        if (emblem.kind === 'font-icon') {
+          return (
+            <span
+              key={emblem.key}
+              className="hidden-emblem hidden-emblem-font"
+              title={emblem.title}
+              aria-label={emblem.title}
+            >
+              <i className={`ms ms-${emblem.icon}`} aria-hidden="true" />
+              <span className="hidden-emblem-fallback" aria-hidden="true">{String(emblem.label || emblem.title).slice(0, 3).toUpperCase()}</span>
             </span>
           );
         }
