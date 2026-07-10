@@ -6760,6 +6760,8 @@ Reason: ${legality.reason}`);
         </div>
       </section>
 
+      {dragging && <TouchDragLens dragging={dragging} />}
+
       <HandFan
         hand={hand}
         dockRef={handDockRef}
@@ -7850,10 +7852,16 @@ function getSelectionAnchor(selection, boardCards, localSeat) {
     const element = document.querySelector(`[data-board-card-id="${safeId}"]`);
     const rect = element?.getBoundingClientRect?.();
     if (rect?.width && rect?.height) {
-      const menuRadius = window.innerWidth <= 760 ? 98 : 136;
+      const isMobile = window.innerWidth <= 760;
+      const actionRadius = isMobile ? 86 : 118;
+      const menuRadius = isMobile ? 120 : 150;
       const x = Math.max(menuRadius, Math.min(window.innerWidth - menuRadius, rect.left + rect.width / 2));
-      const belowY = rect.bottom + (window.innerWidth <= 760 ? 42 : 54);
-      const y = Math.max(82, Math.min(window.innerHeight - 108, belowY));
+      // The radial menu is positioned by its center. Keep the center low enough that the
+      // top action button is below the selected card instead of under the player's thumb.
+      const belowY = rect.bottom + actionRadius + (isMobile ? 58 : 46);
+      const safeTop = 82;
+      const safeBottom = window.innerHeight - (isMobile ? 96 : 112);
+      const y = Math.max(safeTop, Math.min(safeBottom, belowY));
       return { x: `${Math.round(x)}px`, y: `${Math.round(y)}px` };
     }
   }
@@ -9078,58 +9086,63 @@ function DraggingPreview({ dragging }) {
     : [{ boardId: 'hand-drag', card: dragging.card }];
   const isTouchDrag = dragging.pointerType === 'touch' && Number.isFinite(dragging.clientX) && Number.isFinite(dragging.clientY);
   const firstCard = rawCards[0]?.card || dragging.card || {};
-  const touchGhost = isTouchDrag ? (
-    <div
-      className={`touch-drag-lens ${rawCards.length > 1 ? 'is-stack' : ''}`.trim()}
-      style={{ left: `${Math.max(78, dragging.clientX - 94)}px`, top: `${Math.max(84, dragging.clientY - 142)}px` }}
-      aria-label="Touch drag preview"
-    >
-      <div className="touch-drag-lens-pointer" />
-      <img src={firstCard.image || cardBackUrl} alt={firstCard.name || 'Moving card'} draggable="false" />
-      {rawCards.length > 1 && <b>{rawCards.length} cards</b>}
-    </div>
-  ) : null;
 
   if (rawCards.length <= 1) {
     const card = firstCard;
     return (
-      <>
-        <img
-          className={`dragging-card ${dragging.source === 'board' ? 'board-dragging-card' : ''} ${dragging.lifting ? 'is-lifting' : ''} ${isTouchDrag ? 'is-touch-covered' : ''}`.trim()}
-          src={card.image || cardBackUrl}
-          alt={card.name || 'Moving card'}
-          draggable="false"
-          style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
-        />
-        {isTouchDrag && <div className="touch-drop-target" style={{ left: `${dragging.clientX}px`, top: `${dragging.clientY}px` }} />}
-        {touchGhost}
-      </>
+      <img
+        className={`dragging-card ${dragging.source === 'board' ? 'board-dragging-card' : ''} ${dragging.lifting ? 'is-lifting' : ''} ${isTouchDrag ? 'is-touch-covered' : ''}`.trim()}
+        src={card.image || cardBackUrl}
+        alt={card.name || 'Moving card'}
+        draggable="false"
+        style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
+      />
     );
   }
   return (
+    <div
+      className={`dragging-stack-preview ${dragging.lifting ? 'is-lifting' : ''} ${isTouchDrag ? 'is-touch-covered' : ''}`.trim()}
+      style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
+      aria-label="Moving card stack"
+    >
+      {rawCards.map((boardCard, index) => {
+        const card = boardCard.card || {};
+        const outOfPlay = ['graveyard', 'exile', 'library'].includes(boardCard.zone);
+        return (
+          <img
+            key={boardCard.boardId || `${card.name || 'card'}-${index}`}
+            className={`dragging-stack-card ${boardCard.tapped && !outOfPlay ? 'is-tapped' : ''}`}
+            src={card.image || cardBackUrl}
+            alt={card.name || 'Moving card'}
+            draggable="false"
+            style={{ '--drag-stack-x': `${index * 18}px`, zIndex: 820 + index }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function TouchDragLens({ dragging }) {
+  if (!dragging || dragging.pointerType !== 'touch' || !Number.isFinite(dragging.clientX) || !Number.isFinite(dragging.clientY)) return null;
+  const rawCards = dragging.source === 'board' && dragging.cards?.length
+    ? [...dragging.cards].sort((a, b) => Number(a.stackIndex || 0) - Number(b.stackIndex || 0))
+    : [{ boardId: 'hand-drag', card: dragging.card }];
+  const firstCard = rawCards[0]?.card || dragging.card || {};
+  const lensX = Math.max(72, Math.min(window.innerWidth - 72, dragging.clientX - 104));
+  const lensY = Math.max(92, Math.min(window.innerHeight - 132, dragging.clientY - 156));
+  return (
     <>
+      <div className="touch-drop-target" style={{ left: `${dragging.clientX}px`, top: `${dragging.clientY}px` }} />
       <div
-        className={`dragging-stack-preview ${dragging.lifting ? 'is-lifting' : ''} ${isTouchDrag ? 'is-touch-covered' : ''}`.trim()}
-        style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
-        aria-label="Moving card stack"
+        className={`touch-drag-lens ${rawCards.length > 1 ? 'is-stack' : ''}`.trim()}
+        style={{ left: `${lensX}px`, top: `${lensY}px` }}
+        aria-label="Touch drag preview"
       >
-        {rawCards.map((boardCard, index) => {
-          const card = boardCard.card || {};
-          const outOfPlay = ['graveyard', 'exile', 'library'].includes(boardCard.zone);
-          return (
-            <img
-              key={boardCard.boardId || `${card.name || 'card'}-${index}`}
-              className={`dragging-stack-card ${boardCard.tapped && !outOfPlay ? 'is-tapped' : ''}`}
-              src={card.image || cardBackUrl}
-              alt={card.name || 'Moving card'}
-              draggable="false"
-              style={{ '--drag-stack-x': `${index * 18}px`, zIndex: 820 + index }}
-            />
-          );
-        })}
+        <div className="touch-drag-lens-pointer" />
+        <img src={firstCard.image || cardBackUrl} alt={firstCard.name || 'Moving card'} draggable="false" />
+        {rawCards.length > 1 && <b>{rawCards.length} cards</b>}
       </div>
-      {isTouchDrag && <div className="touch-drop-target" style={{ left: `${dragging.clientX}px`, top: `${dragging.clientY}px` }} />}
-      {touchGhost}
     </>
   );
 }

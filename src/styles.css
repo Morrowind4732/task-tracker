@@ -5217,3 +5217,56 @@ body,
     grid-template-columns: 1fr;
   }
 }
+
+
+/* v0.25 radial/thumb-zone + touch drag lens hotfix */
+@media (max-width: 760px) {
+  .radial-card-menu {
+    /* JS now places the center lower; keep the mobile radius compact. */
+    z-index: 1220;
+  }
+}
+
+.touch-drag-lens,
+.touch-drop-target {
+  position: fixed;
+  /* These are now rendered outside the transformed table surface, so viewport coords are reliable. */
+}
+
+.touch-drag-lens {
+  width: 118px;
+  z-index: 1600;
+}
+
+.touch-drop-target {
+  z-index: 1595;
+}
+
+.correction-modal {
+  max-height: calc(100vh - 16px);
+}
+
+@media (min-width: 900px) {
+  .correction-modal {
+    width: min(1240px, calc(100vw - 28px));
+    max-height: calc(100vh - 18px);
+  }
+
+  .visual-trait-badge-list {
+    max-height: 430px;
+  }
+
+  .active-mod-list {
+    max-height: 300px;
+  }
+}
+
+@media (max-width: 760px) {
+  .touch-drag-lens {
+    width: 108px;
+  }
+
+  .correction-modal {
+    max-height: calc(100vh - 12px);
+  }
+}
