@@ -4720,3 +4720,246 @@ input:focus, textarea:focus, select:focus { border-color: var(--gold); box-shado
     width: min(360px, 55vw);
   }
 }
+
+
+/* v0.23 mobile HUD / Chrome zoom polish */
+html,
+body,
+#root {
+  overscroll-behavior: none;
+}
+.game-screen,
+.game-hud,
+.table-wrap,
+.hand-dock {
+  touch-action: none;
+}
+.deck-import-modal,
+.mini-modal,
+.card-tooltip,
+.zone-browser-modal,
+.ai-review-modal,
+.ai-missing-report-modal,
+.dev-console,
+.combat-modal,
+.add-card-modal {
+  touch-action: pan-y;
+}
+
+@media (max-width: 760px) {
+  .game-screen {
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .game-hud {
+    min-height: unset;
+    max-height: 132px;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 14px;
+    overflow: hidden;
+    z-index: 980;
+  }
+
+  .game-hud > button,
+  .game-hud .secondary,
+  .game-hud .primary {
+    min-height: 38px;
+    padding: 7px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    line-height: 1.05;
+  }
+
+  .game-hud > div {
+    min-width: 0;
+    padding: 4px 5px;
+    border-radius: 10px;
+  }
+
+  .game-hud b {
+    font-size: 12px;
+  }
+
+  .game-hud span {
+    font-size: 10px;
+  }
+
+  .phase-pill {
+    min-width: 0 !important;
+  }
+
+  .response-toggle {
+    min-width: 0;
+  }
+
+  .zoom-controls {
+    grid-column: span 2;
+    min-width: 0 !important;
+    width: 100%;
+    gap: 5px;
+  }
+
+  .zoom-controls .mini {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+  }
+
+  .zoom-slider {
+    width: 100%;
+    min-width: 54px;
+  }
+
+  .zoom-controls span {
+    min-width: 32px;
+    font-size: 10px;
+  }
+
+  .pan-hint {
+    display: none;
+  }
+
+  .life-tracker-panel {
+    top: 150px;
+    left: 8px;
+    transform: scale(.78);
+    transform-origin: top left;
+    z-index: 90;
+    gap: 5px;
+  }
+
+  .life-tracker-card {
+    padding: 6px;
+    gap: 4px;
+    border-radius: 12px;
+  }
+
+  .life-tracker-card button {
+    padding: 4px 5px;
+    border-radius: 8px;
+  }
+
+  .ai-thought-log {
+    top: auto !important;
+    right: 8px;
+    left: auto;
+    bottom: calc(104px + env(safe-area-inset-bottom, 0px));
+    width: min(300px, calc(100vw - 16px));
+    max-height: 28vh;
+    padding: 8px;
+    border-radius: 14px;
+    z-index: 930;
+  }
+
+  .ai-thought-log-title {
+    gap: 6px;
+    font-size: 10px;
+  }
+
+  .ai-thought-log-title b {
+    font-size: 10px;
+  }
+
+  .thought-collapse-button {
+    padding: 4px 7px;
+    font-size: 10px;
+  }
+
+  .ai-thought-log-lines {
+    max-height: calc(28vh - 42px);
+  }
+
+  .ai-thought-log-lines p {
+    font-size: 10px;
+    line-height: 1.25;
+  }
+
+  .card-tooltip {
+    top: 92px;
+    left: 10px;
+    right: 10px;
+    width: auto;
+    max-height: calc(100vh - 190px);
+    border-radius: 18px;
+    padding: 12px;
+  }
+
+  .card-tooltip .close {
+    position: sticky;
+    top: 0;
+    float: none;
+    margin-left: auto;
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    font-size: 26px;
+    z-index: 4;
+    background: rgba(255,255,255,.16);
+  }
+
+  .redesigned-tooltip {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .redesigned-tooltip .tooltip-card-art {
+    display: grid;
+    place-items: center;
+  }
+
+  .redesigned-tooltip .tooltip-card-art img {
+    width: min(100%, 300px);
+  }
+
+  .card-tooltip h2 {
+    font-size: 22px;
+  }
+
+  .card-tooltip .type-line,
+  .card-tooltip .oracle-text {
+    font-size: 14px;
+  }
+
+  .card-tooltip .pt {
+    font-size: 20px;
+  }
+
+  .radial-action {
+    min-width: 60px;
+    min-height: 36px;
+    padding: 7px 8px;
+    font-size: 10px;
+    transform: rotate(var(--angle)) translate(86px) rotate(calc(-1 * var(--angle))) translate(-50%, -50%);
+  }
+
+  .radial-center {
+    width: 34px;
+    height: 34px;
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 420px) {
+  .game-hud {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-height: 172px;
+  }
+
+  .zoom-controls {
+    grid-column: span 3;
+  }
+
+  .life-tracker-panel {
+    top: 190px;
+  }
+
+  .ai-thought-log {
+    width: min(260px, calc(100vw - 16px));
+  }
+}

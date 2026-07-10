@@ -2656,11 +2656,22 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       if (!gameSurface) return;
       event.preventDefault();
     };
+    const blockNativeGameGesture = (event) => {
+      const target = event.target;
+      if (!target?.closest?.('.game-screen')) return;
+      event.preventDefault();
+    };
     document.addEventListener('contextmenu', blockNativeGameSurfaceActions, true);
     document.addEventListener('dragstart', blockNativeGameSurfaceActions, true);
+    document.addEventListener('gesturestart', blockNativeGameGesture, { capture: true, passive: false });
+    document.addEventListener('gesturechange', blockNativeGameGesture, { capture: true, passive: false });
+    document.addEventListener('gestureend', blockNativeGameGesture, { capture: true, passive: false });
     return () => {
       document.removeEventListener('contextmenu', blockNativeGameSurfaceActions, true);
       document.removeEventListener('dragstart', blockNativeGameSurfaceActions, true);
+      document.removeEventListener('gesturestart', blockNativeGameGesture, { capture: true });
+      document.removeEventListener('gesturechange', blockNativeGameGesture, { capture: true });
+      document.removeEventListener('gestureend', blockNativeGameGesture, { capture: true });
     };
   }, []);
 
