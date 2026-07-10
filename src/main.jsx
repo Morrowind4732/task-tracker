@@ -4117,7 +4117,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     event.stopPropagation();
     safeSetPointerCapture(event.currentTarget, event.pointerId);
     const point = getTablePoint(event.clientX, event.clientY);
-    const nextDrag = { source: 'hand', card, handIndex: index, point, pointerId: event.pointerId, startedAt: Date.now() };
+    const nextDrag = { source: 'hand', card, handIndex: index, point, pointerId: event.pointerId, pointerType: event.pointerType, clientX: event.clientX, clientY: event.clientY, startedAt: Date.now() };
     draggingRef.current = nextDrag;
     setDragging(nextDrag);
     emit({ type: 'drag_preview', ownerSeat: localSeat, canonical: viewToCanonical(point, localSeat) });
@@ -4132,7 +4132,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     event.preventDefault?.();
     const point = getTablePoint(event.clientX, event.clientY);
     emit({ type: 'drag_preview', ownerSeat: localSeat, canonical: viewToCanonical(point, localSeat) });
-    const nextDrag = { ...current, point };
+    const nextDrag = { ...current, point, clientX: event.clientX, clientY: event.clientY };
     draggingRef.current = nextDrag;
     setDragging(nextDrag);
   }
@@ -4178,6 +4178,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       boardIds: selectedIds,
       startX: event.clientX,
       startY: event.clientY,
+      pointerType: event.pointerType,
       draggingStarted: false
     };
     window.addEventListener('pointermove', onBoardPointerMove);
@@ -4201,6 +4202,9 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
         card: session.boardCard.card,
         cards,
         point,
+        pointerType: session.pointerType,
+        clientX: event.clientX,
+        clientY: event.clientY,
         lifting: true
       });
       requestAnimationFrame(() => {
@@ -4209,7 +4213,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     }
     if (session.draggingStarted) {
       emit({ type: 'drag_preview', ownerSeat: localSeat, canonical: viewToCanonical(point, localSeat) });
-      setDragging((current) => current ? { ...current, point } : current);
+      setDragging((current) => current ? { ...current, point, clientX: event.clientX, clientY: event.clientY } : current);
     }
   }
 
@@ -7841,8 +7845,20 @@ function DeckStack({ seat, localSeat, count, interactive, onDraw, onOpen }) {
 function getSelectionAnchor(selection, boardCards, localSeat) {
   const first = boardCards.find((card) => selection?.boardIds?.includes(card.boardId));
   if (!first) return { x: window.innerWidth * 0.5, y: window.innerHeight * 0.5 };
+  if (typeof document !== 'undefined') {
+    const safeId = String(first.boardId || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const element = document.querySelector(`[data-board-card-id="${safeId}"]`);
+    const rect = element?.getBoundingClientRect?.();
+    if (rect?.width && rect?.height) {
+      const menuRadius = window.innerWidth <= 760 ? 98 : 136;
+      const x = Math.max(menuRadius, Math.min(window.innerWidth - menuRadius, rect.left + rect.width / 2));
+      const belowY = rect.bottom + (window.innerWidth <= 760 ? 42 : 54);
+      const y = Math.max(82, Math.min(window.innerHeight - 108, belowY));
+      return { x: `${Math.round(x)}px`, y: `${Math.round(y)}px` };
+    }
+  }
   const point = getBoardPoint(first, localSeat, boardCards);
-  return { x: `${point.x * 100}%`, y: `${point.y * 100}%` };
+  return { x: `${Math.round(window.innerWidth * point.x)}px`, y: `${Math.round(window.innerHeight * point.y)}px` };
 }
 
 const MANA_PREVIEW_ORDER = ['W', 'U', 'B', 'R', 'G', 'C', 'ANY', '?'];
@@ -8685,33 +8701,62 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
           </div>
         )}
 
-        <div className="correction-grid">
-          <section className="correction-card">
-            <div className="correction-card-head">
-              <h3>Power / Toughness</h3>
-              <small>Adjust with +/- buttons or type exact current P/T and press Set.</small>
-            </div>
-            <div className="pt-adjust-panel">
-              <div className="pt-adjust-column">
-                <button className="plus-action" onClick={() => nudgePower(1)}>+1</button>
-                <label>
-                  Power
-                  <input value={basePower} onChange={(event) => setBasePower(event.target.value)} placeholder="P" />
-                </label>
-                <button className="minus-action" onClick={() => nudgePower(-1)}>−1</button>
-              </div>
-              <div className="pt-adjust-column">
-                <button className="plus-action" onClick={() => nudgeToughness(1)}>+1</button>
-                <label>
-                  Toughness
-                  <input value={baseToughness} onChange={(event) => setBaseToughness(event.target.value)} placeholder="T" />
-                </label>
-                <button className="minus-action" onClick={() => nudgeToughness(-1)}>−1</button>
-              </div>
-              <button className="secondary set-pt-button" onClick={setBaseStats}>Set current P/T</button>
+        <div className="visual-modify-shell">
+          <section className="visual-modify-card-stage" aria-label="Visual card correction preview">
+            <div className="visual-card-frame">
+              {activeCard?.image ? <img src={activeCard.image} alt={activeCard.name} draggable="false" /> : <div className="no-image-card">{activeCard?.name || 'Selected card'}</div>}
+              {targetCards.length === 1 && primaryStats?.hasStats && (
+                <div className={`visual-pt-badge ${primaryStats.tone}`.trim()}>
+                  <div className="visual-pt-buttons">
+                    <button type="button" onClick={() => nudgePower(1)}>+</button>
+                    <button type="button" onClick={() => nudgePower(-1)}>−</button>
+                  </div>
+                  <label><span>P</span><input value={basePower} onChange={(event) => setBasePower(event.target.value)} /></label>
+                  <b>/</b>
+                  <label><span>T</span><input value={baseToughness} onChange={(event) => setBaseToughness(event.target.value)} /></label>
+                  <div className="visual-pt-buttons">
+                    <button type="button" onClick={() => nudgeToughness(1)}>+</button>
+                    <button type="button" onClick={() => nudgeToughness(-1)}>−</button>
+                  </div>
+                  <button type="button" className="visual-set-pt" onClick={setBaseStats}>Set</button>
+                </div>
+              )}
             </div>
           </section>
 
+          <section className="visual-badge-editor">
+            <div className="visual-badge-editor-head">
+              <h3>Card badges</h3>
+              <small>Remove anything the card should not currently have, or add a missing label.</small>
+            </div>
+            {targetCards.length !== 1 ? (
+              <p className="muted-text">Select one card to edit its visible badges directly.</p>
+            ) : currentAbilityRows.length ? (
+              <div className="visual-trait-badge-list">
+                {currentAbilityRows.map((row) => (
+                  <button
+                    key={`${row.id}-${row.label}`}
+                    type="button"
+                    className={`visual-trait-chip ${row.printed ? 'printed' : 'added'}`.trim()}
+                    title={row.printed ? 'Remove/hide this printed trait from this card' : 'Remove this added trait'}
+                    onClick={() => removeAbilityRow(row)}
+                  >
+                    <span>{row.label}</span>
+                    <b>−</b>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-text">No visible keyword/type badges detected.</p>
+            )}
+            <div className="visual-add-badge-row">
+              <input value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="Add badge: Flying, Equipped, Can't block..." />
+              <button type="button" className="primary" disabled={!customLabel.trim()} onClick={addTrait}>+ Badge</button>
+            </div>
+          </section>
+        </div>
+
+        <div className="correction-grid correction-grid-compact">
           <section className="correction-card">
             <div className="correction-card-head">
               <h3>Counters</h3>
@@ -8732,34 +8777,6 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
             <div className="counter-button-row">
               <button className="plus-action" onClick={() => counterType === '-1/-1' ? applyCounter(-1, -1, '-1/-1') : counterType === '+1/+1' ? applyCounter(1, 1, '+1/+1') : applyCounter(0, 0, counterType)}>Add counter</button>
               <button className="minus-action" onClick={() => applyCounter(-1, -1, '-1/-1')}>Add −1/−1</button>
-            </div>
-          </section>
-
-          <section className="correction-card">
-            <div className="correction-card-head">
-              <h3>Abilities / labels</h3>
-              <small>Current printed and added traits. Remove accidental added traits here.</small>
-            </div>
-            {targetCards.length !== 1 ? (
-              <p className="muted-text">Select one card to audit its current abilities and labels.</p>
-            ) : currentAbilityRows.length ? (
-              <div className="current-ability-list">
-                {currentAbilityRows.map((row) => (
-                  <div key={`${row.id}-${row.label}`} className={`current-ability-row ${row.printed ? 'printed removable' : 'removable'}`.trim()}>
-                    <span>{row.label}</span>
-                    <div className="ability-row-actions">
-                      {row.printed && <small>Printed</small>}
-                      <button className="icon-danger" title={row.printed ? 'Hide/remove this printed trait from this card' : 'Remove this added trait'} onClick={() => removeAbilityRow(row)}>−</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted-text">No printed keywords/types or added ability labels were detected.</p>
-            )}
-            <div className="add-missing-label-row">
-              <input value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="Add missing label: Flying, Can't block, Equipped..." />
-              <button className="primary" disabled={!customLabel.trim()} onClick={addTrait}>Add label</button>
             </div>
           </section>
 
@@ -9059,37 +9076,61 @@ function DraggingPreview({ dragging }) {
   const rawCards = dragging.source === 'board' && dragging.cards?.length
     ? [...dragging.cards].sort((a, b) => Number(a.stackIndex || 0) - Number(b.stackIndex || 0))
     : [{ boardId: 'hand-drag', card: dragging.card }];
+  const isTouchDrag = dragging.pointerType === 'touch' && Number.isFinite(dragging.clientX) && Number.isFinite(dragging.clientY);
+  const firstCard = rawCards[0]?.card || dragging.card || {};
+  const touchGhost = isTouchDrag ? (
+    <div
+      className={`touch-drag-lens ${rawCards.length > 1 ? 'is-stack' : ''}`.trim()}
+      style={{ left: `${Math.max(78, dragging.clientX - 94)}px`, top: `${Math.max(84, dragging.clientY - 142)}px` }}
+      aria-label="Touch drag preview"
+    >
+      <div className="touch-drag-lens-pointer" />
+      <img src={firstCard.image || cardBackUrl} alt={firstCard.name || 'Moving card'} draggable="false" />
+      {rawCards.length > 1 && <b>{rawCards.length} cards</b>}
+    </div>
+  ) : null;
+
   if (rawCards.length <= 1) {
-    const card = rawCards[0]?.card || dragging.card || {};
+    const card = firstCard;
     return (
-      <img
-        className={`dragging-card ${dragging.source === 'board' ? 'board-dragging-card' : ''} ${dragging.lifting ? 'is-lifting' : ''}`}
-        src={card.image || cardBackUrl}
-        alt={card.name || 'Moving card'}
-        style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
-      />
+      <>
+        <img
+          className={`dragging-card ${dragging.source === 'board' ? 'board-dragging-card' : ''} ${dragging.lifting ? 'is-lifting' : ''} ${isTouchDrag ? 'is-touch-covered' : ''}`.trim()}
+          src={card.image || cardBackUrl}
+          alt={card.name || 'Moving card'}
+          draggable="false"
+          style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
+        />
+        {isTouchDrag && <div className="touch-drop-target" style={{ left: `${dragging.clientX}px`, top: `${dragging.clientY}px` }} />}
+        {touchGhost}
+      </>
     );
   }
   return (
-    <div
-      className={`dragging-stack-preview ${dragging.lifting ? 'is-lifting' : ''}`}
-      style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
-      aria-label="Moving card stack"
-    >
-      {rawCards.map((boardCard, index) => {
-        const card = boardCard.card || {};
-        const outOfPlay = ['graveyard', 'exile', 'library'].includes(boardCard.zone);
-        return (
-          <img
-            key={boardCard.boardId || `${card.name || 'card'}-${index}`}
-            className={`dragging-stack-card ${boardCard.tapped && !outOfPlay ? 'is-tapped' : ''}`}
-            src={card.image || cardBackUrl}
-            alt={card.name || 'Moving card'}
-            style={{ '--drag-stack-x': `${index * 18}px`, zIndex: 820 + index }}
-          />
-        );
-      })}
-    </div>
+    <>
+      <div
+        className={`dragging-stack-preview ${dragging.lifting ? 'is-lifting' : ''} ${isTouchDrag ? 'is-touch-covered' : ''}`.trim()}
+        style={{ left: `${dragging.point.x * 100}%`, top: `${dragging.point.y * 100}%` }}
+        aria-label="Moving card stack"
+      >
+        {rawCards.map((boardCard, index) => {
+          const card = boardCard.card || {};
+          const outOfPlay = ['graveyard', 'exile', 'library'].includes(boardCard.zone);
+          return (
+            <img
+              key={boardCard.boardId || `${card.name || 'card'}-${index}`}
+              className={`dragging-stack-card ${boardCard.tapped && !outOfPlay ? 'is-tapped' : ''}`}
+              src={card.image || cardBackUrl}
+              alt={card.name || 'Moving card'}
+              draggable="false"
+              style={{ '--drag-stack-x': `${index * 18}px`, zIndex: 820 + index }}
+            />
+          );
+        })}
+      </div>
+      {isTouchDrag && <div className="touch-drop-target" style={{ left: `${dragging.clientX}px`, top: `${dragging.clientY}px` }} />}
+      {touchGhost}
+    </>
   );
 }
 
@@ -9102,6 +9143,7 @@ function BoardCard({ boardCard, localSeat, allBoardCards, selected, onClick, onP
     <div
       role="button"
       tabIndex={0}
+      data-board-card-id={boardCard.boardId}
       className={`board-card ${boardCard.tapped && !['graveyard', 'exile', 'library'].includes(boardCard.zone) ? 'tapped' : ''} ${['graveyard', 'exile'].includes(boardCard.zone) ? 'out-of-play-card' : ''} ${selected ? 'selected-card' : ''} ${boardCard.isCommander ? 'commander-board-card' : ''} ${boardCard.transforming ? 'transforming-card' : ''} ${faces.length > 1 ? 'multi-face-card' : ''} stack-${Math.min(boardCard.stackIndex || 0, 5)}`}
       style={getBoardCardStyle(boardCard, localSeat, allBoardCards)}
       onClick={(event) => { event.stopPropagation(); onClick(); }}
