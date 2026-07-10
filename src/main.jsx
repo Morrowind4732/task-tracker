@@ -3422,7 +3422,20 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
 
 
   function cleanupLinkedModsForSources(cards = [], sourceIds = []) {
+    const byId = new Map((cards || []).map((card) => [card.boardId, card]));
     const idSet = new Set((sourceIds || []).filter(Boolean));
+
+    // A linked effect is only alive while its source card is actively on the battlefield.
+    // Graveyard/exile/command/library-style table zones still keep a board object, but they
+    // are not "in play", so linked buffs from those sources must fall off too.
+    for (const card of cards || []) {
+      for (const mod of card.mods || []) {
+        if (mod.duration !== 'linked' || !mod.sourceId) continue;
+        const source = byId.get(mod.sourceId);
+        if (!source || !isBattlefieldZone(source.zone)) idSet.add(mod.sourceId);
+      }
+    }
+
     if (!idSet.size) return cards;
     return (cards || []).map((card) => {
       const attachedSourceIds = (card.attachedSourceIds || []).filter((id) => !idSet.has(id));
@@ -4737,9 +4750,11 @@ Reason: ${legality.reason}`);
       const replacement = updatedCards.find((item) => item.boardId === card.boardId);
       return replacement || card;
     });
-    const prunedSnapshot = pruneBrokenAttachments(nextSnapshot);
+    const movedOutOfPlayIds = sourceIdsLeavingPlay(updatedCards);
+    const prunedSnapshot = cleanupLinkedModsForSources(pruneBrokenAttachments(nextSnapshot), movedOutOfPlayIds);
     setBoardCards(prunedSnapshot);
     emit({ type: 'reposition_cards', cards: prunedSnapshot });
+    if (movedOutOfPlayIds.length) emit({ type: 'linked_mod_cleanup', sourceIds: movedOutOfPlayIds, reason: `moved-to-${zone}` });
     updatedCards = updatedCards.map((updated) => prunedSnapshot.find((item) => item.boardId === updated.boardId) || updated);
     updatedCards.forEach((updated) => {
       const before = movingCards.find((item) => item.boardId === updated.boardId);
