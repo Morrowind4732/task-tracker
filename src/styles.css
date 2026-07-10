@@ -6015,3 +6015,100 @@ body,
   0% { left: var(--ai-from-x); top: var(--ai-from-y); transform: translate(-50%, -50%) scale(.92) rotate(-3deg); }
   100% { left: var(--ai-to-x); top: var(--ai-to-y); transform: translate(-50%, -50%) scale(1.02) rotate(0deg); }
 }
+
+
+/* v0.34 hidden badge emblem rail */
+.hidden-emblem-rail {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 7;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  width: 58px;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+.hidden-emblem {
+  position: relative;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(8,7,6,.88);
+  border: 1px solid rgba(255,255,255,.18);
+  box-shadow: 0 4px 10px rgba(0,0,0,.42);
+  color: #f7f1e6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  font-size: 9px;
+  font-weight: 1000;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  overflow: hidden;
+}
+
+.hidden-emblem-icon {
+  width: 18px;
+  min-width: 18px;
+  padding: 0;
+}
+
+.hidden-emblem-icon img {
+  width: 12px;
+  height: 12px;
+  object-fit: contain;
+}
+
+.hidden-emblem-letter {
+  position: absolute;
+  font-size: 0;
+  opacity: 0;
+}
+
+.hidden-emblem-icon.hidden-emblem-missing-icon .hidden-emblem-letter {
+  position: static;
+  font-size: 9px;
+  opacity: 1;
+}
+
+.hidden-emblem-text {
+  min-width: 24px;
+}
+
+.hidden-emblem-counter {
+  background: rgba(47, 128, 71, .92);
+  border-color: rgba(180, 255, 212, .34);
+  color: #eaf8ee;
+}
+
+.hidden-emblem-color {
+  box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 4px 10px rgba(0,0,0,.42);
+}
+
+@media (max-width: 980px) {
+  .hidden-emblem-rail {
+    width: 54px;
+    gap: 3px;
+  }
+
+  .hidden-emblem {
+    min-width: 17px;
+    height: 17px;
+    font-size: 8px;
+  }
+
+  .hidden-emblem-icon {
+    width: 17px;
+    min-width: 17px;
+  }
+
+  .hidden-emblem-icon img {
+    width: 11px;
+    height: 11px;
+  }
+}

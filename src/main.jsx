@@ -9320,6 +9320,180 @@ function CommanderTaxControls({ boardCard, onChange }) {
   );
 }
 
+function cardColorLetters(card = {}) {
+  const direct = Array.isArray(card?.colors) && card.colors.length ? card.colors : (Array.isArray(card?.colorIdentity) ? card.colorIdentity : []);
+  const seen = new Set();
+  return direct
+    .map((value) => String(value || '').trim().toUpperCase())
+    .filter((value) => ['W', 'U', 'B', 'R', 'G', 'C'].includes(value))
+    .filter((value) => {
+      if (seen.has(value)) return false;
+      seen.add(value);
+      return true;
+    });
+}
+
+function compactCounterLabel(counterType = '', amount = 1) {
+  const raw = String(counterType || '+1/+1').trim();
+  const short = raw === '+1/+1'
+    ? '+1'
+    : raw === '-1/-1'
+      ? '-1'
+      : raw.replace(/counter/ig, '').replace(/\s+/g, '').slice(0, 4) || raw.slice(0, 4);
+  return `${short}×${amount}`;
+}
+
+function hiddenTraitEmblemForLabel(traitLabel = '') {
+  const clean = String(traitLabel || '').trim();
+  if (!clean) return null;
+  const base = clean.replace(/\s*\([^)]*\)\s*/g, '').trim();
+  const lower = base.toLowerCase();
+  const iconMap = {
+    white: 'w',
+    blue: 'u',
+    black: 'b',
+    red: 'r',
+    green: 'g',
+    colorless: 'c',
+    flying: 'u',
+    vigilance: 'w',
+    lifelink: 'w',
+    firststrike: 'r',
+    'first strike': 'r',
+    doublestrike: 'r',
+    'double strike': 'r',
+    haste: 'r',
+    trample: 'g',
+    reach: 'g',
+    deathtouch: 'b',
+    menace: 'b',
+    toxic: 'b',
+    poisonous: 'b',
+    infect: 'b',
+    flash: 'u',
+    hexproof: 'u',
+    ward: 'u',
+    defender: 'w',
+    indestructible: 'c',
+    artifact: 'c',
+    treasure: 'c',
+    equipment: 'c',
+    vehicle: 'c',
+    land: 'g',
+    instant: 'u',
+    sorcery: 'r',
+    enchantment: 'w',
+    aura: 'w'
+  };
+  const abbrMap = {
+    creature: 'CR',
+    token: 'TOK',
+    planeswalker: 'PW',
+    battle: 'BAT',
+    saga: 'SAG',
+    equipment: 'EQ',
+    vehicle: 'VEH',
+    artifact: 'ART',
+    enchantment: 'ENC',
+    legendary: 'LEG',
+    goblin: 'GOB',
+    zombie: 'ZOM',
+    elf: 'ELF',
+    human: 'HUM',
+    soldier: 'SOL',
+    wizard: 'WIZ',
+    dragon: 'DRG',
+    angel: 'ANG',
+    vampire: 'VAM',
+    cleric: 'CLR',
+    warrior: 'WAR',
+    knight: 'KNI',
+    beast: 'BST'
+  };
+  const compactKey = lower.replace(/[^a-z0-9]/g, '');
+  const icon = iconMap[lower] || iconMap[compactKey];
+  if (icon) return { kind: 'icon', icon, title: clean, label: base };
+  const short = abbrMap[lower]
+    || (base.split(/\s+/).length > 1
+      ? base.split(/\s+/).map((word) => word[0]).join('').slice(0, 3).toUpperCase()
+      : base.slice(0, 3).toUpperCase());
+  return { kind: 'text', text: short, title: clean, label: base };
+}
+
+function buildHiddenBadgeEmblems(boardCard, traits = [], counterSummary = {}) {
+  const emblems = [];
+  const seen = new Set();
+  for (const color of cardColorLetters(getActiveCardForBoard(boardCard) || boardCard?.card || {})) {
+    const icon = String(color || '').toLowerCase();
+    const key = `color:${icon}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    emblems.push({ key, kind: 'icon', icon, title: `${color} color identity`, tone: 'color' });
+  }
+  for (const trait of traits) {
+    const emblem = hiddenTraitEmblemForLabel(trait);
+    if (!emblem) continue;
+    const key = `${emblem.kind}:${emblem.icon || emblem.text}:${String(emblem.title).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    emblems.push({ key, ...emblem });
+  }
+  for (const [kind, amount] of Object.entries(counterSummary || {})) {
+    const key = `counter:${kind}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    emblems.push({ key, kind: 'counter', text: compactCounterLabel(kind, amount), title: `${kind} counter ×${amount}` });
+  }
+  if (emblems.length > 10) {
+    const hiddenCount = emblems.length - 9;
+    return [...emblems.slice(0, 9), { key: 'more', kind: 'text', text: `+${hiddenCount}`, title: `${hiddenCount} more badge(s)` }];
+  }
+  return emblems;
+}
+
+function HiddenBadgeEmblemRail({ boardCard, traits = [], counterSummary = {} }) {
+  const emblems = buildHiddenBadgeEmblems(boardCard, traits, counterSummary);
+  if (!emblems.length) return null;
+  return (
+    <div className="hidden-emblem-rail">
+      {emblems.map((emblem) => {
+        if (emblem.kind === 'icon') {
+          const iconName = manaIconName(emblem.icon) || emblem.icon;
+          return (
+            <span
+              key={emblem.key}
+              className={`hidden-emblem hidden-emblem-icon ${manaSymbolColorClass(iconName)} ${emblem.tone === 'color' ? 'hidden-emblem-color' : ''}`.trim()}
+              title={emblem.title}
+              aria-label={emblem.title}
+            >
+              <span className="hidden-emblem-letter" aria-hidden="true">{String(emblem.icon).toUpperCase()}</span>
+              <img
+                src={manaIconUrl(iconName)}
+                alt=""
+                draggable="false"
+                onError={(event) => {
+                  event.currentTarget.style.display = 'none';
+                  event.currentTarget.parentElement?.classList.add('hidden-emblem-missing-icon');
+                }}
+              />
+            </span>
+          );
+        }
+        return (
+          <span
+            key={emblem.key}
+            className={`hidden-emblem hidden-emblem-text ${emblem.kind === 'counter' ? 'hidden-emblem-counter' : ''}`.trim()}
+            title={emblem.title}
+            aria-label={emblem.title}
+          >
+            {emblem.text}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function CardBadges({ boardCard, hideTraitBadges = false }) {
   const stats = getCardStats(boardCard);
   const traits = getCardTraits(boardCard);
@@ -9334,17 +9508,23 @@ function CardBadges({ boardCard, hideTraitBadges = false }) {
       {stats.hasStats && stats.power !== '' && stats.toughness !== '' && (
         <div className={`pt-badge ${stats.tone}`}>{stats.power}/{stats.toughness}</div>
       )}
-      {Object.entries(counterSummary).length > 0 && (
-        <div className="counter-badge-rail">
-          {Object.entries(counterSummary).map(([kind, amount]) => <span key={kind} className="counter-badge">{kind} ×{amount}</span>)}
-        </div>
-      )}
-      {!hideTraitBadges && traits.length > 0 && (
-        <div className="trait-badge-rail">
-          <div className={traits.length > 4 ? 'trait-badge-scroll' : ''}>
-            {traits.map((trait, index) => <span key={`${trait}-${index}`} className="trait-badge">{trait}</span>)}
-          </div>
-        </div>
+      {hideTraitBadges ? (
+        <HiddenBadgeEmblemRail boardCard={boardCard} traits={traits} counterSummary={counterSummary} />
+      ) : (
+        <>
+          {Object.entries(counterSummary).length > 0 && (
+            <div className="counter-badge-rail">
+              {Object.entries(counterSummary).map(([kind, amount]) => <span key={kind} className="counter-badge">{kind} ×{amount}</span>)}
+            </div>
+          )}
+          {traits.length > 0 && (
+            <div className="trait-badge-rail">
+              <div className={traits.length > 4 ? 'trait-badge-scroll' : ''}>
+                {traits.map((trait, index) => <span key={`${trait}-${index}`} className="trait-badge">{trait}</span>)}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </>
   );
