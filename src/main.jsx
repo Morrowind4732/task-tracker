@@ -3783,13 +3783,23 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       return;
     }
     if (event.type === 'play_card') {
+      const incomingCard = event.card;
+      const ownerSeat = incomingCard?.ownerSeat;
+      const remoteDragPoint = remoteDrags?.[ownerSeat]?.canonical ? canonicalToView(remoteDrags[ownerSeat].canonical, localSeat) : null;
       setRemoteDrags((current) => {
         const next = { ...current };
-        delete next[event.card.ownerSeat];
+        delete next[ownerSeat];
         return next;
       });
-      setBoardCards((cards) => [...cards.filter((card) => card.boardId !== event.card.boardId), event.card]);
-      if (event.card.ownerSeat !== localSeat) showReveal(event.card.card);
+      if (incomingCard?.ownerSeat !== localSeat) {
+        const hiddenCard = hideBoardCardUntilReveal(incomingCard);
+        const nextCards = [...boardCards.filter((card) => card.boardId !== incomingCard.boardId), hiddenCard];
+        setBoardCards(nextCards);
+        animateAiHiddenMove(incomingCard.ownerSeat, incomingCard.zone, incomingCard.card, incomingCard, nextCards, remoteDragPoint);
+        queueHiddenBoardReveal(incomingCard.boardId);
+        return;
+      }
+      setBoardCards((cards) => [...cards.filter((card) => card.boardId !== incomingCard.boardId), incomingCard]);
       return;
     }
     if (event.type === 'tap_cards') {
@@ -4081,13 +4091,29 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
     return localMatToPoint(rel, local.u, local.v);
   }
 
-  function animateAiHiddenMove(seat, zone, revealCard = null, targetBoardCard = null, cardsSnapshot = null) {
-    const from = getOpponentHandPoint(seat);
+  const HIDDEN_PLAY_REVEAL_MS = 760;
+
+  function animateAiHiddenMove(seat, zone, revealCard = null, targetBoardCard = null, cardsSnapshot = null, fromOverride = null) {
+    const from = fromOverride || getOpponentHandPoint(seat);
     const to = targetBoardCard
       ? getBoardPoint(targetBoardCard, localSeat, cardsSnapshot || boardCards)
       : getZoneCenterPoint(seat, zone);
     setAiCardAnim({ id: crypto.randomUUID(), seat, from, to, revealCard });
-    setTimeout(() => setAiCardAnim(null), revealCard ? 820 : 680);
+    setTimeout(() => setAiCardAnim(null), revealCard ? HIDDEN_PLAY_REVEAL_MS + 80 : 680);
+  }
+
+  function hideBoardCardUntilReveal(boardCard) {
+    return boardCard ? { ...boardCard, revealHidden: true } : boardCard;
+  }
+
+  function finishHiddenBoardReveal(boardId) {
+    if (!boardId) return;
+    setBoardCards((cards) => cards.map((card) => card.boardId === boardId ? { ...card, revealHidden: false } : card));
+  }
+
+  function queueHiddenBoardReveal(boardId, delay = HIDDEN_PLAY_REVEAL_MS) {
+    if (!boardId) return;
+    setTimeout(() => finishHiddenBoardReveal(boardId), delay);
   }
 
   function emitAiDragPreviewToBoardCard(seat, boardCard, cardsSnapshot = null) {
@@ -6507,13 +6533,19 @@ Reason: ${legality.reason}`);
       const zone = likelyZoneForCard(castCard);
       const slotInfo = nextSlot(seat, zone, castCard);
       const boardCard = { boardId: crypto.randomUUID(), ownerSeat: seat, originalOwnerSeat: seat, controllerSeat: seat, zone, slot: slotInfo.slot, stackIndex: slotInfo.stackIndex, tapped: aiCardEntersTapped(castCard), card: castCard, mods: [], enteredTurn: turn, controlledSinceTurn: turn, controlledSinceStartOfTurn: false, playedAt: Date.now() };
+      const hiddenBoardCard = hideBoardCardUntilReveal(boardCard);
       const afterCastCards = [
         ...localBoardCards.map((card) => toTap.includes(card.boardId) ? { ...card, tapped: true } : card),
         boardCard
       ];
+      const visualAfterCastCards = [
+        ...localBoardCards.map((card) => toTap.includes(card.boardId) ? { ...card, tapped: true } : card),
+        hiddenBoardCard
+      ];
       localBoardCards = afterCastCards;
-      setBoardCards(afterCastCards);
+      setBoardCards(visualAfterCastCards);
       animateAiHiddenMove(seat, zone, castCard, boardCard, afterCastCards);
+      queueHiddenBoardReveal(boardCard.boardId);
       if (toTap.length) emit({ type: 'tap_cards', boardIds: toTap, tapped: true });
       emitAiDragPreviewToBoardCard(seat, boardCard, afterCastCards);
       publishAiThought([
@@ -6581,11 +6613,12 @@ Reason: ${legality.reason}`);
         const slotInfo = nextSlot(seat, 'mana', land);
         const boardCard = { boardId: crypto.randomUUID(), ownerSeat: seat, originalOwnerSeat: seat, controllerSeat: seat, zone: 'mana', slot: slotInfo.slot, stackIndex: slotInfo.stackIndex, tapped: aiCardEntersTapped(land), card: land, mods: [], enteredTurn: turn, controlledSinceTurn: turn, controlledSinceStartOfTurn: false, playedAt: Date.now() };
         localBoardCards = [...localBoardCards, boardCard];
-        setBoardCards(localBoardCards);
+        setBoardCards((cards) => [...cards, hideBoardCardUntilReveal(boardCard)]);
         animateAiHiddenMove(seat, 'mana', land, boardCard, localBoardCards);
+        queueHiddenBoardReveal(boardCard.boardId);
         publishAiThought(`Main phase: AI played land ${land.name}${boardCard.stackIndex ? ` stacked with matching ${land.name}` : ''}${boardCard.tapped ? ' tapped' : ''}.`, 'append', seat);
         emitAiDragPreviewToBoardCard(seat, boardCard, localBoardCards);
-        setTimeout(() => emit({ type: 'play_card', card: boardCard }), 720);
+        setTimeout(() => emit({ type: 'play_card', card: boardCard }), HIDDEN_PLAY_REVEAL_MS);
       }
 
       let spellsCast = 0;
@@ -6633,8 +6666,12 @@ Reason: ${legality.reason}`);
         ];
         publishAiThought(useLines, 'append', seat);
         localBoardCards = afterCastCards;
-        setBoardCards(afterCastCards);
+        setBoardCards([
+          ...localBoardCards.filter((card) => card.boardId !== boardCard.boardId),
+          hideBoardCardUntilReveal(boardCard)
+        ]);
         animateAiHiddenMove(seat, zone, castCard, boardCard, afterCastCards);
+        queueHiddenBoardReveal(boardCard.boardId);
         if (toTap.length) emit({ type: 'tap_cards', boardIds: toTap, tapped: true });
         emitAiDragPreviewToBoardCard(seat, boardCard, afterCastCards);
         const stackId = crypto.randomUUID();
@@ -9252,7 +9289,7 @@ function BoardCard({ boardCard, localSeat, allBoardCards, selected, onClick, onP
       role="button"
       tabIndex={0}
       data-board-card-id={boardCard.boardId}
-      className={`board-card ${boardCard.tapped && !['graveyard', 'exile', 'library'].includes(boardCard.zone) ? 'tapped' : ''} ${['graveyard', 'exile'].includes(boardCard.zone) ? 'out-of-play-card' : ''} ${selected ? 'selected-card' : ''} ${boardCard.isCommander ? 'commander-board-card' : ''} ${boardCard.transforming ? 'transforming-card' : ''} ${faces.length > 1 ? 'multi-face-card' : ''} stack-${Math.min(boardCard.stackIndex || 0, 5)}`}
+      className={`board-card ${boardCard.revealHidden ? 'entering-hidden-card' : ''} ${boardCard.tapped && !['graveyard', 'exile', 'library'].includes(boardCard.zone) ? 'tapped' : ''} ${['graveyard', 'exile'].includes(boardCard.zone) ? 'out-of-play-card' : ''} ${selected ? 'selected-card' : ''} ${boardCard.isCommander ? 'commander-board-card' : ''} ${boardCard.transforming ? 'transforming-card' : ''} ${faces.length > 1 ? 'multi-face-card' : ''} stack-${Math.min(boardCard.stackIndex || 0, 5)}`}
       style={getBoardCardStyle(boardCard, localSeat, allBoardCards)}
       onClick={(event) => { event.stopPropagation(); onClick(); }}
       onPointerEnter={() => onPreviewChange?.(previewPayload)}

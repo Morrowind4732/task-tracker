@@ -5990,3 +5990,28 @@ body,
   0% { left: var(--ai-from-x); top: var(--ai-from-y); transform: translate(-50%, -50%) scale(.92) rotate(-3deg); }
   100% { left: var(--ai-to-x); top: var(--ai-to-y); transform: translate(-50%, -50%) scale(1.02) rotate(0deg); }
 }
+
+
+/* v0.33 opponent hidden-play reveal sequence */
+.board-card.entering-hidden-card {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+.ai-card-animation {
+  animation: aiCardMoveThenReveal .62s cubic-bezier(.16,.84,.24,1) forwards;
+}
+
+.ai-card-animation-front {
+  opacity: 0;
+  animation: aiCardReveal .18s ease .62s forwards;
+}
+
+.ai-card-animation.will-reveal .ai-card-animation-back {
+  animation: aiCardHideBack .14s ease .62s forwards;
+}
+
+@keyframes aiCardMoveThenReveal {
+  0% { left: var(--ai-from-x); top: var(--ai-from-y); transform: translate(-50%, -50%) scale(.92) rotate(-3deg); }
+  100% { left: var(--ai-to-x); top: var(--ai-to-y); transform: translate(-50%, -50%) scale(1.02) rotate(0deg); }
+}
