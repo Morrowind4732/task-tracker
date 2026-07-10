@@ -6760,7 +6760,16 @@ Reason: ${legality.reason}`);
         </div>
       </section>
 
-      {dragging && <TouchDragLens dragging={dragging} />}
+      {dragging && (
+        <TouchDragLens
+          dragging={dragging}
+          boardCards={visibleBoardCards}
+          players={players}
+          localSeat={localSeat}
+          target={dragging?.point ? getZoneTargetFromPoint(dragging.point) : null}
+          hideTraitBadges={hideTraitBadges}
+        />
+      )}
 
       <HandFan
         hand={hand}
@@ -9123,24 +9132,64 @@ function DraggingPreview({ dragging }) {
   );
 }
 
-function TouchDragLens({ dragging }) {
-  if (!dragging || dragging.pointerType !== 'touch' || !Number.isFinite(dragging.clientX) || !Number.isFinite(dragging.clientY)) return null;
+function TouchDragLens({ dragging, boardCards = [], players = {}, localSeat = 1, target = null, hideTraitBadges = true }) {
+  if (!dragging || dragging.pointerType !== 'touch' || !Number.isFinite(dragging.clientX) || !Number.isFinite(dragging.clientY) || !dragging.point) return null;
+
   const rawCards = dragging.source === 'board' && dragging.cards?.length
     ? [...dragging.cards].sort((a, b) => Number(a.stackIndex || 0) - Number(b.stackIndex || 0))
     : [{ boardId: 'hand-drag', card: dragging.card }];
-  const firstCard = rawCards[0]?.card || dragging.card || {};
-  const lensX = Math.max(72, Math.min(window.innerWidth - 72, dragging.clientX - 104));
-  const lensY = Math.max(92, Math.min(window.innerHeight - 132, dragging.clientY - 156));
+  const lensWidth = window.innerWidth <= 760 ? 226 : 250;
+  const lensHeight = window.innerWidth <= 760 ? 174 : 192;
+  const viewportInset = 12;
+  const lensX = Math.max(lensWidth / 2 + viewportInset, Math.min(window.innerWidth - lensWidth / 2 - viewportInset, dragging.clientX - 118));
+  const lensY = Math.max(lensHeight / 2 + 72, Math.min(window.innerHeight - lensHeight / 2 - viewportInset, dragging.clientY - 172));
+  const lensScale = window.innerWidth <= 760 ? 0.58 : 0.62;
+  const worldX = Number(dragging.point.x || 0.5) * TABLE_SIZE.width;
+  const worldY = Number(dragging.point.y || 0.5) * TABLE_SIZE.height;
+  const worldPanX = lensWidth / 2 - worldX * lensScale;
+  const worldPanY = (lensHeight - 28) / 2 - worldY * lensScale;
+  const targetLabel = target?.zone ? `${String(target.zone).replace(/-/g, ' ')} · P${target.ownerSeat || '?'}` : 'table';
+
   return (
     <>
       <div className="touch-drop-target" style={{ left: `${dragging.clientX}px`, top: `${dragging.clientY}px` }} />
       <div
-        className={`touch-drag-lens ${rawCards.length > 1 ? 'is-stack' : ''}`.trim()}
-        style={{ left: `${lensX}px`, top: `${lensY}px` }}
-        aria-label="Touch drag preview"
+        className={`touch-drag-lens touch-placement-lens ${rawCards.length > 1 ? 'is-stack' : ''}`.trim()}
+        style={{ left: `${lensX}px`, top: `${lensY}px`, width: `${lensWidth}px`, height: `${lensHeight}px` }}
+        aria-label="Touch placement preview"
       >
+        <div className="touch-placement-label">{targetLabel}</div>
+        <div className="touch-placement-window">
+          <div
+            className="touch-placement-world table-mat"
+            style={{
+              width: TABLE_SIZE.width,
+              height: TABLE_SIZE.height,
+              transform: `translate3d(${worldPanX}px, ${worldPanY}px, 0) scale(${lensScale})`
+            }}
+          >
+            <div className="table-center-title">{players && Object.values(players || {}).some(Boolean) ? 'Table' : ''}</div>
+            <PerspectiveSeats players={players} localSeat={localSeat} />
+            <ZoneGuides players={players} localSeat={localSeat} />
+            {target && <ZoneSlotPreview target={target} localSeat={localSeat} />}
+            {boardCards.map((boardCard) => (
+              <BoardCard
+                key={`lens-${boardCard.boardId}`}
+                boardCard={boardCard}
+                localSeat={localSeat}
+                selected={(dragging.boardIds || []).includes(boardCard.boardId)}
+                allBoardCards={boardCards}
+                onClick={() => {}}
+                onPointerStart={() => {}}
+                onPreviewChange={() => {}}
+                onCommanderTaxChange={() => {}}
+                hideTraitBadges={hideTraitBadges}
+              />
+            ))}
+          </div>
+          <div className="touch-placement-crosshair" />
+        </div>
         <div className="touch-drag-lens-pointer" />
-        <img src={firstCard.image || cardBackUrl} alt={firstCard.name || 'Moving card'} draggable="false" />
         {rawCards.length > 1 && <b>{rawCards.length} cards</b>}
       </div>
     </>

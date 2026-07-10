@@ -5270,3 +5270,145 @@ body,
     max-height: calc(100vh - 12px);
   }
 }
+
+
+/* v0.26 touch placement picture-in-picture lens */
+.touch-placement-lens {
+  padding: 8px;
+  border-radius: 18px;
+  background: rgba(8, 7, 6, .84);
+  border: 1px solid rgba(255,236,190,.44);
+  box-shadow: 0 24px 54px rgba(0,0,0,.68), 0 0 0 2px rgba(217,164,65,.13), inset 0 0 22px rgba(217,164,65,.06);
+  backdrop-filter: blur(7px);
+}
+
+.touch-placement-window {
+  position: relative;
+  width: 100%;
+  height: calc(100% - 28px);
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(217,164,65,.16), transparent 34%),
+    linear-gradient(145deg, #0c1f14, #07100b);
+  border: 1px solid rgba(255,236,190,.20);
+  box-shadow: inset 0 0 28px rgba(0,0,0,.62);
+}
+
+.touch-placement-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  pointer-events: none;
+  border-radius: 44px;
+  will-change: transform;
+}
+
+.touch-placement-world .zone-hotspot,
+.touch-placement-world .deck-stack,
+.touch-placement-world .opponent-hand-fan,
+.touch-placement-world .commander-tax-controls,
+.touch-placement-world .trait-badge-rail,
+.touch-placement-world .counter-badge-rail {
+  display: none !important;
+}
+
+.touch-placement-world .board-card {
+  animation: none !important;
+  transition: none !important;
+  pointer-events: none !important;
+}
+
+.touch-placement-world .board-card.selected-card {
+  box-shadow: 0 0 0 5px rgba(217,164,65,.92), 0 0 32px rgba(217,164,65,.74), 0 14px 26px rgba(0,0,0,.55);
+}
+
+.touch-placement-world .zone-guide {
+  opacity: .86;
+  border-width: 3px;
+  background: rgba(217,164,65,.10);
+  color: rgba(255,244,218,.96);
+  text-shadow: 0 2px 5px rgba(0,0,0,.9);
+}
+
+.touch-placement-world .slot-preview-dot {
+  border-width: 5px;
+  background: rgba(217,164,65,.20);
+  box-shadow: 0 0 30px rgba(217,164,65,.70), inset 0 0 20px rgba(217,164,65,.24);
+}
+
+.touch-placement-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 36px;
+  height: 36px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  border: 2px solid rgba(255,245,210,.94);
+  box-shadow: 0 0 0 2px rgba(0,0,0,.55), 0 0 20px rgba(217,164,65,.68);
+  pointer-events: none;
+}
+
+.touch-placement-crosshair::before,
+.touch-placement-crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255,245,210,.96);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.45);
+}
+
+.touch-placement-crosshair::before {
+  left: 50%;
+  top: -10px;
+  width: 2px;
+  height: 56px;
+  transform: translateX(-50%);
+}
+
+.touch-placement-crosshair::after {
+  top: 50%;
+  left: -10px;
+  width: 56px;
+  height: 2px;
+  transform: translateY(-50%);
+}
+
+.touch-placement-label {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #f8e6bd;
+  font-size: 11px;
+  font-weight: 1000;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.touch-placement-lens .touch-drag-lens-pointer {
+  position: fixed;
+  right: -48px;
+  bottom: -66px;
+}
+
+.touch-placement-lens > img {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .touch-placement-lens {
+    padding: 7px;
+  }
+
+  .touch-placement-label {
+    height: 21px;
+    font-size: 10px;
+  }
+
+  .touch-placement-crosshair {
+    width: 32px;
+    height: 32px;
+  }
+}
