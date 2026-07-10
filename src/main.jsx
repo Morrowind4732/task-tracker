@@ -3409,10 +3409,10 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   }
 
 
-  function removeLinkedModsForSources(sourceIds) {
-    if (!sourceIds?.length) return;
-    const idSet = new Set(sourceIds);
-    setBoardCards((cards) => cards.map((card) => {
+  function cleanupLinkedModsForSources(cards = [], sourceIds = []) {
+    const idSet = new Set((sourceIds || []).filter(Boolean));
+    if (!idSet.size) return cards;
+    return (cards || []).map((card) => {
       const attachedSourceIds = (card.attachedSourceIds || []).filter((id) => !idSet.has(id));
       return {
         ...card,
@@ -3422,7 +3422,21 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
         equippedTo: idSet.has(card.boardId) || idSet.has(card.equippedTo) ? undefined : card.equippedTo,
         attachedTo: idSet.has(card.boardId) || idSet.has(card.attachedTo) ? undefined : card.attachedTo
       };
-    }));
+    });
+  }
+
+  function sourceIdsLeavingPlay(cards = []) {
+    return (cards || [])
+      .filter((card) => card?.boardId && !isBattlefieldZone(card.zone))
+      .map((card) => card.boardId);
+  }
+
+  function removeLinkedModsForSources(sourceIds, { emitRemote = true, reason = 'source-left-play' } = {}) {
+    const ids = (sourceIds || []).filter(Boolean);
+    if (!ids.length) return;
+    setBoardCards((cards) => cleanupLinkedModsForSources(cards, ids));
+    if (emitRemote) emit({ type: 'linked_mod_cleanup', sourceIds: ids, reason });
+    addGameNotice(`Linked cleanup: removed effects from ${ids.length} source${ids.length === 1 ? '' : 's'} leaving play.`, localSeat);
   }
 
   function pruneBrokenAttachments(cards = []) {
@@ -3702,7 +3716,12 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       return;
     }
     if (event.type === 'move_to_zone') {
-      setBoardCards((cards) => pruneBrokenAttachments(cards.map((card) => event.boardIds.includes(card.boardId) ? { ...card, zone: event.zone, tapped: false } : card)));
+      setBoardCards((cards) => {
+        const movedIds = new Set(event.boardIds || []);
+        const movedOutOfPlay = !isBattlefieldZone(event.zone);
+        const next = pruneBrokenAttachments(cards.map((card) => movedIds.has(card.boardId) ? { ...card, zone: event.zone, tapped: false } : card));
+        return movedOutOfPlay ? cleanupLinkedModsForSources(next, event.boardIds || []) : next;
+      });
       return;
     }
     if (event.type === 'transform_card') {
@@ -3714,12 +3733,17 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       setBoardCards((cards) => {
         const map = new Map(cards.map((card) => [card.boardId, card]));
         event.cards.forEach((card) => map.set(card.boardId, card));
-        return pruneBrokenAttachments(Array.from(map.values()));
+        const next = pruneBrokenAttachments(Array.from(map.values()));
+        return cleanupLinkedModsForSources(next, sourceIdsLeavingPlay(event.cards || []));
       });
       return;
     }
     if (event.type === 'remove_board_cards') {
-      setBoardCards((cards) => pruneBrokenAttachments(cards.filter((card) => !event.boardIds.includes(card.boardId))));
+      setBoardCards((cards) => cleanupLinkedModsForSources(pruneBrokenAttachments(cards.filter((card) => !event.boardIds.includes(card.boardId))), event.boardIds || []));
+      return;
+    }
+    if (event.type === 'linked_mod_cleanup') {
+      setBoardCards((cards) => cleanupLinkedModsForSources(cards, event.sourceIds || []));
       return;
     }
     if (event.type === 'turn_update') {
@@ -4717,9 +4741,10 @@ Reason: ${legality.reason}`);
   function returnBoardCardsToHand(boardIds) {
     const movingCards = boardCards.filter((card) => boardIds.includes(card.boardId)).sort((a, b) => (a.slot - b.slot) || (a.stackIndex - b.stackIndex));
     if (!movingCards.length) return;
-    setBoardCards((cards) => pruneBrokenAttachments(cards.filter((card) => !boardIds.includes(card.boardId))));
+    setBoardCards((cards) => cleanupLinkedModsForSources(pruneBrokenAttachments(cards.filter((card) => !boardIds.includes(card.boardId))), boardIds));
     setHand((cards) => [...cards, ...movingCards.map((item) => item.card)]);
     emit({ type: 'remove_board_cards', boardIds });
+    removeLinkedModsForSources(boardIds, { emitRemote: false, reason: 'returned-to-hand' });
     clearFloatingUi();
   }
 
@@ -4743,8 +4768,9 @@ Reason: ${legality.reason}`);
       nextLibrary = [...payloadCards, ...nextLibrary];
     }
     setLibrary(nextLibrary);
-    setBoardCards((cards) => pruneBrokenAttachments(cards.filter((card) => !boardIds.includes(card.boardId))));
+    setBoardCards((cards) => cleanupLinkedModsForSources(pruneBrokenAttachments(cards.filter((card) => !boardIds.includes(card.boardId))), boardIds));
     emit({ type: 'remove_board_cards', boardIds });
+    removeLinkedModsForSources(boardIds, { emitRemote: false, reason: 'returned-to-library' });
     clearFloatingUi();
   }
 
@@ -5270,7 +5296,7 @@ Reason: ${legality.reason}`);
     const updatedCards = moveInfo?.updatedCards || [];
     if (!updatedCards.length) return;
     emit({ type: 'reposition_cards', cards: updatedCards });
-    if (['graveyard', 'exile', 'library'].includes(zone)) removeLinkedModsForSources(boardIds);
+    if (!isBattlefieldZone(zone)) removeLinkedModsForSources(boardIds, { reason: `moved-to-${zone}` });
     updatedCards.forEach((updated) => {
       const before = moveInfo.movingCards.find((item) => item.boardId === updated.boardId);
       if (!before || before.zone === updated.zone) return;
@@ -8406,29 +8432,50 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
   const targetIds = selection?.boardIds || [];
   const targetCards = boardCards.filter((card) => targetIds.includes(card.boardId));
   const primaryCard = targetCards[0] || null;
+  const activeCard = primaryCard ? getActiveCardForBoard(primaryCard) : null;
   const primaryStats = primaryCard ? getCardStats(primaryCard) : null;
   const activeMods = primaryCard?.mods || [];
-  const [duration, setDuration] = useState('eot');
-  const [trait, setTrait] = useState('');
+  const [duration, setDuration] = useState('permanent');
+  const [customLabel, setCustomLabel] = useState('');
   const [counterType, setCounterType] = useState('+1/+1');
+  const [customCounterName, setCustomCounterName] = useState('');
   const [counterAmount, setCounterAmount] = useState(1);
   const [sourceId, setSourceId] = useState(targetIds[0] || '');
   const [basePower, setBasePower] = useState(primaryStats?.power ?? '');
   const [baseToughness, setBaseToughness] = useState(primaryStats?.toughness ?? '');
   const selectedSourceId = duration === 'linked' ? (sourceId || targetIds[0] || '') : '';
-  const sourceCards = boardCards.filter((card) => isBattlefieldZone(card.zone) || ['command', 'graveyard', 'exile'].includes(card.zone));
+  const sourceCards = boardCards.filter((card) => isBattlefieldZone(card.zone));
+  const printedTraits = primaryCard ? cardBaseTraits(activeCard) : [];
+  const modifierTraitRows = activeMods
+    .filter((mod) => (mod.kind === 'trait' || mod.kind === 'choice') && (mod.trait || mod.label || mod.value))
+    .map((mod) => ({
+      id: mod.id,
+      label: `${mod.trait || mod.label || mod.value}${activeModLabel(mod)}`,
+      source: mod.sourceId,
+      removable: true
+    }));
+  const printedTraitRows = printedTraits.map((label) => ({ id: `printed-${label}`, label, printed: true, removable: false }));
+  const currentAbilityRows = [...printedTraitRows, ...modifierTraitRows];
+
+  useEffect(() => {
+    setBasePower(primaryStats?.power ?? '');
+    setBaseToughness(primaryStats?.toughness ?? '');
+  }, [primaryCard?.boardId, primaryStats?.power, primaryStats?.toughness]);
+
   useEffect(() => {
     if (duration !== 'linked') return;
     if (sourceId && sourceCards.some((card) => card.boardId === sourceId)) return;
     setSourceId(sourceCards[0]?.boardId || targetIds[0] || '');
   }, [duration, sourceId, sourceCards, targetIds]);
+
   const applyPt = (powerDelta, toughnessDelta) => onApply({ kind: 'pt', powerDelta, toughnessDelta, duration, sourceId: selectedSourceId });
   const applyCounter = (powerDelta, toughnessDelta, type = counterType, amountOverride = counterAmount) => {
     const amount = Math.max(1, Number(amountOverride || 1));
-    onApply({ kind: 'counter', counterType: type || '+1/+1', counterAmount: amount, powerDelta: Number(powerDelta || 0) * amount, toughnessDelta: Number(toughnessDelta || 0) * amount, duration: 'permanent', sourceId: selectedSourceId });
+    const cleanType = type === 'custom' ? (customCounterName.trim() || 'custom') : (type || '+1/+1');
+    onApply({ kind: 'counter', counterType: cleanType, counterAmount: amount, powerDelta: Number(powerDelta || 0) * amount, toughnessDelta: Number(toughnessDelta || 0) * amount, duration: 'permanent', sourceId: selectedSourceId });
   };
   const addTrait = () => {
-    const cleaned = trait.trim();
+    const cleaned = customLabel.trim();
     if (!cleaned) return;
     onApply({ kind: 'trait', trait: cleaned, duration, sourceId: selectedSourceId });
   };
@@ -8440,6 +8487,7 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
   const clearTemporary = () => onApply({ action: 'clear_temporary' });
   const clearLinked = () => onApply({ action: 'clear_linked' });
   const clearAll = () => onApply({ action: 'clear_manual_mods' });
+
   return (
     <div className="mini-modal-backdrop" onClick={onClose}>
       <section className="modify-modal mini-modal correction-modal" onClick={(event) => event.stopPropagation()}>
@@ -8460,24 +8508,24 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
 
         <div className="correction-duration-row">
           <span>Duration</span>
-          <button className={duration === 'eot' ? 'active' : ''} onClick={() => setDuration('eot')}>EOT</button>
           <button className={duration === 'permanent' ? 'active' : ''} onClick={() => setDuration('permanent')}>Permanent</button>
+          <button className={duration === 'eot' ? 'active' : ''} onClick={() => setDuration('eot')}>EOT</button>
           <button className={duration === 'linked' ? 'active' : ''} onClick={() => setDuration('linked')}>Linked</button>
         </div>
         {duration === 'linked' && (
           <div className="linked-source-card-picker">
             <div className="linked-source-picker-head">
               <strong>Linked source</strong>
-              <span>Tap the card responsible for this correction.</span>
+              <span>Tap the live card responsible for this correction.</span>
             </div>
-            <div className="linked-source-strip" role="listbox" aria-label="Linked source card choices">
+            <div className="linked-source-strip linked-source-strip-large" role="listbox" aria-label="Linked source card choices">
               {sourceCards.map((card) => {
                 const active = card.boardId === selectedSourceId;
                 return (
                   <button
                     key={card.boardId}
                     type="button"
-                    className={`linked-source-card ${active ? 'active' : ''}`.trim()}
+                    className={`linked-source-card linked-source-card-large ${active ? 'active' : ''}`.trim()}
                     onClick={() => setSourceId(card.boardId)}
                     role="option"
                     aria-selected={active}
@@ -8497,28 +8545,33 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
           <section className="correction-card">
             <div className="correction-card-head">
               <h3>Power / Toughness</h3>
-              <small>Fast temporary buffs/debuffs</small>
+              <small>Adjust with +/- buttons or type exact current P/T and press Set.</small>
             </div>
-            <div className="quick-pt-pad">
-              <button className="plus-action" onClick={() => applyPt(1, 0)}>+1 Power</button>
-              <button className="plus-action" onClick={() => applyPt(0, 1)}>+1 Toughness</button>
-              <button className="plus-action wide" onClick={() => applyPt(1, 1)}>+1 / +1</button>
-              <button className="minus-action" onClick={() => applyPt(-1, 0)}>−1 Power</button>
-              <button className="minus-action" onClick={() => applyPt(0, -1)}>−1 Toughness</button>
-              <button className="minus-action wide" onClick={() => applyPt(-1, -1)}>−1 / −1</button>
-            </div>
-            <div className="base-pt-row">
-              <span>Set base P/T</span>
-              <input value={basePower} onChange={(event) => setBasePower(event.target.value)} placeholder="P" />
-              <input value={baseToughness} onChange={(event) => setBaseToughness(event.target.value)} placeholder="T" />
-              <button className="secondary" onClick={setBaseStats}>Set</button>
+            <div className="pt-adjust-panel">
+              <div className="pt-adjust-column">
+                <button className="plus-action" onClick={() => applyPt(1, 0)}>+1</button>
+                <label>
+                  Power
+                  <input value={basePower} onChange={(event) => setBasePower(event.target.value)} placeholder="P" />
+                </label>
+                <button className="minus-action" onClick={() => applyPt(-1, 0)}>−1</button>
+              </div>
+              <div className="pt-adjust-column">
+                <button className="plus-action" onClick={() => applyPt(0, 1)}>+1</button>
+                <label>
+                  Toughness
+                  <input value={baseToughness} onChange={(event) => setBaseToughness(event.target.value)} placeholder="T" />
+                </label>
+                <button className="minus-action" onClick={() => applyPt(0, -1)}>−1</button>
+              </div>
+              <button className="secondary set-pt-button" onClick={setBaseStats}>Set current P/T</button>
             </div>
           </section>
 
           <section className="correction-card">
             <div className="correction-card-head">
               <h3>Counters</h3>
-              <small>Add missed counters or apply reverse counters</small>
+              <small>Permanent counters for the selected card(s)</small>
             </div>
             <div className="counter-row">
               <select value={counterType} onChange={(event) => setCounterType(event.target.value)}>
@@ -8531,9 +8584,9 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
               </select>
               <input type="number" min="1" value={counterAmount} onChange={(event) => setCounterAmount(event.target.value)} />
             </div>
-            {counterType === 'custom' && <input value={trait} onChange={(event) => setTrait(event.target.value)} placeholder="custom counter name" />}
+            {counterType === 'custom' && <input value={customCounterName} onChange={(event) => setCustomCounterName(event.target.value)} placeholder="custom counter name" />}
             <div className="counter-button-row">
-              <button className="plus-action" onClick={() => counterType === '-1/-1' ? applyCounter(-1, -1, '-1/-1') : counterType === '+1/+1' ? applyCounter(1, 1, '+1/+1') : applyCounter(0, 0, counterType === 'custom' ? trait.trim() || 'custom' : counterType)}>Add counter</button>
+              <button className="plus-action" onClick={() => counterType === '-1/-1' ? applyCounter(-1, -1, '-1/-1') : counterType === '+1/+1' ? applyCounter(1, 1, '+1/+1') : applyCounter(0, 0, counterType)}>Add counter</button>
               <button className="minus-action" onClick={() => applyCounter(-1, -1, '-1/-1')}>Add −1/−1</button>
             </div>
           </section>
@@ -8541,21 +8594,32 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
           <section className="correction-card">
             <div className="correction-card-head">
               <h3>Abilities / labels</h3>
-              <small>Add what the AI missed</small>
+              <small>Current printed and added traits. Remove accidental added traits here.</small>
             </div>
-            <input value={trait} onChange={(event) => setTrait(event.target.value)} placeholder="Flying, Deathtouch, Equipped, Can't block..." />
-            <div className="trait-shortcuts">
-              {['Flying', 'Trample', 'Vigilance', 'Haste', 'Deathtouch', 'Lifelink', 'Reach', 'Menace'].map((label) => (
-                <button key={label} className="secondary" onClick={() => onApply({ kind: 'trait', trait: label, duration, sourceId: selectedSourceId })}>{label}</button>
-              ))}
+            {targetCards.length !== 1 ? (
+              <p className="muted-text">Select one card to audit its current abilities and labels.</p>
+            ) : currentAbilityRows.length ? (
+              <div className="current-ability-list">
+                {currentAbilityRows.map((row) => (
+                  <div key={`${row.id}-${row.label}`} className={`current-ability-row ${row.printed ? 'printed' : 'removable'}`.trim()}>
+                    <span>{row.label}</span>
+                    {row.printed ? <small>Printed</small> : <button className="icon-danger" title="Remove this added trait" onClick={() => removeMod(row.id)}>−</button>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted-text">No printed keywords/types or added ability labels were detected.</p>
+            )}
+            <div className="add-missing-label-row">
+              <input value={customLabel} onChange={(event) => setCustomLabel(event.target.value)} placeholder="Add missing label: Flying, Can't block, Equipped..." />
+              <button className="primary" disabled={!customLabel.trim()} onClick={addTrait}>Add label</button>
             </div>
-            <button className="primary" disabled={!trait.trim()} onClick={addTrait}>Add custom effect</button>
           </section>
 
           <section className="correction-card active-effects-card">
             <div className="correction-card-head">
-              <h3>Current added effects</h3>
-              <small>Remove AI mistakes without touching the card itself</small>
+              <h3>Current tracked effects</h3>
+              <small>All modifier records currently attached to this card</small>
             </div>
             {targetCards.length !== 1 ? (
               <p className="muted-text">Select one card to remove individual effects. Clear buttons still work on the selected group.</p>
@@ -8569,7 +8633,7 @@ function ModifyModal({ boardCards, selection, onApply, onClose }) {
                 ))}
               </div>
             ) : (
-              <p className="muted-text">No added effects or counters are currently tracked on this card.</p>
+              <p className="muted-text">No tracked effects or counters are currently attached to this card.</p>
             )}
             <div className="clear-mod-grid">
               <button className="secondary" onClick={clearTemporary}>Clear EOT</button>
@@ -9020,6 +9084,11 @@ function manaIconName(symbol) {
   return supported.has(name) ? name : null;
 }
 
+function manaIconUrl(icon) {
+  const base = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
+  return `${base}mana/${icon}.svg`;
+}
+
 function manaSymbolColorClass(icon) {
   if (['w'].includes(icon)) return 'mana-symbol-w';
   if (['u'].includes(icon)) return 'mana-symbol-u';
@@ -9047,7 +9116,7 @@ function ManaText({ text, className = '' }) {
             <span className="mana-symbol-letter" aria-hidden="true">{String(match[1]).toUpperCase()}</span>
             <img
               className="mana-symbol-icon"
-              src={`/mana/${icon}.svg`}
+              src={manaIconUrl(icon)}
               alt=""
               aria-hidden="true"
               onError={(event) => {
