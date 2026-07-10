@@ -5412,3 +5412,37 @@ body,
     height: 32px;
   }
 }
+
+
+/* v0.27 mobile HUD panel placement hotfix */
+@media (max-width: 760px) {
+  .life-tracker-panel {
+    top: calc(148px + env(safe-area-inset-top, 0px)) !important;
+    bottom: auto !important;
+    left: 8px !important;
+    z-index: 920;
+  }
+
+  .ai-thought-log {
+    top: calc(148px + env(safe-area-inset-top, 0px)) !important;
+    bottom: auto !important;
+    right: 8px !important;
+    left: auto !important;
+    z-index: 925;
+  }
+
+  .ai-thought-log.collapsed {
+    top: calc(148px + env(safe-area-inset-top, 0px)) !important;
+  }
+}
+
+@media (max-width: 420px) {
+  .life-tracker-panel {
+    top: calc(194px + env(safe-area-inset-top, 0px)) !important;
+  }
+
+  .ai-thought-log,
+  .ai-thought-log.collapsed {
+    top: calc(194px + env(safe-area-inset-top, 0px)) !important;
+  }
+}
