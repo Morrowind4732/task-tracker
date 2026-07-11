@@ -78,6 +78,7 @@ const MANAGED_ZONE_IDS = ['graveyard', 'exile', 'library'];
 const TABLE_SIZE = { width: 3600, height: 2600 };
 const STARTING_LIFE = 40;
 const STARTING_INFECT = 0;
+const OPENING_HAND_SIZE = 7;
 const COMBAT_PHASES = ['main', 'combat-select', 'combat-blockers', 'combat-damage'];
 const PLAYER_MATS = {
   0: { x: 0.22, y: 0.565, w: 0.56, h: 0.335 },
@@ -2577,6 +2578,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const [toasts, setToasts] = useState([]);
   const [stackItems, setStackItems] = useState([]);
   const [responsePrompt, setResponsePrompt] = useState(null);
+  const [mulliganPrompt, setMulliganPrompt] = useState(null);
   const [pendingAiAfterStack, setPendingAiAfterStack] = useState(null);
   const [zoneBrowser, setZoneBrowser] = useState(null);
   const [addCardModalOpen, setAddCardModalOpen] = useState(false);
@@ -2585,6 +2587,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
   const autoAiReviewRef = useRef('');
   const watcherRunRef = useRef(new Set());
   const initialAiStartKeyRef = useRef('');
+  const openingMulliganKeyRef = useRef('');
   const libraryRef = useRef([]);
   const handRef = useRef([]);
   const boardCardsRef = useRef([]);
@@ -2708,12 +2711,22 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
 
   useEffect(() => {
     if (isCompleteGameSaveSnapshot(savedGameState)) return;
-    const playable = (deckInfo?.cards || []).filter((card) => card.name !== deckInfo?.commanderName);
+    if (!localSeat || !deckInfo?.cards?.length) return;
+    const playable = (deckInfo.cards || []).filter((card) => card.name !== deckInfo?.commanderName);
     const shuffled = shuffleCards(playable);
-    setHand(shuffled.slice(0, 7));
-    const nextLibrary = shuffled.slice(7);
+    const openingHand = shuffled.slice(0, OPENING_HAND_SIZE);
+    const nextLibrary = shuffled.slice(OPENING_HAND_SIZE);
+    handRef.current = openingHand;
     libraryRef.current = nextLibrary;
+    setHand(openingHand);
     setLibrary(nextLibrary);
+
+    const promptKey = `${lobbyState?.id || 'fresh-game'}:${localSeat}:${deckInfo?.commanderName || deckInfo?.commander?.name || 'deck'}`;
+    if (lobbyState?.started && openingMulliganKeyRef.current !== promptKey) {
+      openingMulliganKeyRef.current = promptKey;
+      setMulliganPrompt({ id: promptKey, count: 0, handSize: OPENING_HAND_SIZE });
+    }
+
     setBoardCards((cards) => {
       const withoutCommander = cards.filter((card) => !(card.isCommander && card.ownerSeat === localSeat));
       if (!deckInfo?.commander || !localSeat) return withoutCommander;
@@ -2734,7 +2747,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
         }
       ];
     });
-  }, [deckInfo, localSeat, savedGameState]);
+  }, [deckInfo, localSeat, savedGameState, lobbyState?.id, lobbyState?.started]);
 
   useEffect(() => {
     if (!isHost || !debugHasAi) return;
@@ -2743,7 +2756,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       const existingDeck = deckInfoBySeat[seat];
       const seedFromDeck = (result) => {
         const cards = shuffleCards(result.cards.filter((card) => card.name !== result.commanderName));
-        setAiStates((current) => ({ ...current, [seat]: { seat, library: cards.slice(7), hand: cards.slice(0, 7), landPlayed: false } }));
+        setAiStates((current) => ({ ...current, [seat]: { seat, library: cards.slice(OPENING_HAND_SIZE), hand: cards.slice(0, OPENING_HAND_SIZE), landPlayed: false } }));
         setBoardCards((current) => [
           ...current.filter((card) => !(card.isCommander && card.ownerSeat === seat)),
           {
@@ -4016,6 +4029,7 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
 
     setLibrary(nextLibrary);
     setHand(nextHand);
+    setMulliganPrompt(null);
     setBoardCards(saveData.boardCards || []);
     setAiStates(saveData.aiStates || {});
     setLifeTotals(saveData.lifeTotals || Object.fromEntries(SEATS.map((seat) => [seat, { life: STARTING_LIFE, infect: STARTING_INFECT, commander: 0 }])));
@@ -4169,6 +4183,29 @@ function GameTable({ lobbyState, localSeat, isHost, playerId, deckInfo, deckInfo
       x: rect.left + rect.width / 2 + offset,
       y: rect.bottom - 14 - cardHeight / 2 + lowCurve
     };
+  }
+
+  function keepOpeningHand() {
+    setMulliganPrompt(null);
+    addGameNotice('Opening hand kept.', localSeat);
+  }
+
+  function takeFriendlyMulligan() {
+    const currentHand = handRef.current || hand || [];
+    const currentLibrary = libraryRef.current || library || [];
+    const reshuffled = shuffleCards([...currentHand, ...currentLibrary]);
+    const nextHand = reshuffled.slice(0, OPENING_HAND_SIZE);
+    const nextLibrary = reshuffled.slice(OPENING_HAND_SIZE);
+    handRef.current = nextHand;
+    libraryRef.current = nextLibrary;
+    setHand(nextHand);
+    setLibrary(nextLibrary);
+    setMulliganPrompt((current) => ({
+      id: current?.id || safeId('mulligan'),
+      count: Number(current?.count || 0) + 1,
+      handSize: OPENING_HAND_SIZE
+    }));
+    addGameNotice(`Friendly mulligan taken. Drew ${OPENING_HAND_SIZE} new cards.`, localSeat);
   }
 
   function drawCard(animated = true) {
@@ -6801,6 +6838,7 @@ Reason: ${legality.reason}`);
       {winnerSeat && <div className="winner-banner">Player {winnerSeat} wins</div>}
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <StackPanel items={stackItems} responsePrompt={responsePrompt} onPass={passPriority} onHold={holdPriorityForManualResponse} />
+      {mulliganPrompt && <OpeningMulliganPrompt prompt={mulliganPrompt} handCount={hand.length} onKeep={keepOpeningHand} onMulligan={takeFriendlyMulligan} />}
       {debugHasAi && aiThoughtVisible && <AiThoughtLog entries={aiThoughtLog} collapsed={aiThoughtCollapsed} onToggle={() => setAiThoughtCollapsed((value) => !value)} />}
       <LifeTrackers players={players} lifeTotals={lifeTotals} localSeat={localSeat} onAdjust={updateLifeTotal} onSet={setLifeTotalDirect} />
       {devConsoleOpen && <DevConsole command={devCommand} setCommand={setDevCommand} onRun={runDevCommand} onClose={() => setDevConsoleOpen(false)} pendingTarget={pendingAiResetTarget} />}
@@ -6994,6 +7032,27 @@ function AiThoughtLog({ entries = [], collapsed = false, onToggle }) {
   );
 }
 
+
+
+function OpeningMulliganPrompt({ prompt, handCount = 0, onKeep, onMulligan }) {
+  const count = Number(prompt?.count || 0);
+  return (
+    <aside className="stack-panel mulligan-panel" aria-live="assertive">
+      <div className="stack-panel-header">
+        <span>Opening hand</span>
+        <b>{handCount} card{handCount === 1 ? '' : 's'}</b>
+      </div>
+      <div className="priority-prompt mulligan-prompt-copy">
+        <strong>{count ? `Friendly mulligan ${count}` : 'Keep this opening hand?'}</strong>
+        <p>Friendly mulligan: shuffle your hand back into your library, draw {prompt?.handSize || OPENING_HAND_SIZE} new cards, and ask again. No card is put on bottom.</p>
+      </div>
+      <div className="stack-actions mulligan-actions">
+        <button className="secondary" onClick={onMulligan}>Mulligan · draw {prompt?.handSize || OPENING_HAND_SIZE}</button>
+        <button className="primary" onClick={onKeep}>Keep hand</button>
+      </div>
+    </aside>
+  );
+}
 
 function StackPanel({ items = [], responsePrompt = null, onPass, onHold }) {
   const [previewId, setPreviewId] = useState(null);

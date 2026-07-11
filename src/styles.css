@@ -6166,3 +6166,32 @@ body,
 .hidden-emblem-mana {
   overflow: hidden;
 }
+
+
+/* v0.37 friendly opening mulligan prompt */
+.mulligan-panel {
+  border-color: rgba(99, 190, 255, .30);
+  box-shadow: 0 18px 38px rgba(0,0,0,.56), 0 0 0 1px rgba(99,190,255,.10);
+}
+
+.mulligan-panel .stack-panel-header span {
+  color: #cdeeff;
+}
+
+.mulligan-prompt-copy strong {
+  color: #fff4d0;
+}
+
+.mulligan-actions {
+  grid-template-columns: 1fr 1fr;
+}
+
+.mulligan-actions .secondary {
+  border-color: rgba(99,190,255,.28);
+}
+
+@media (max-width: 760px) {
+  .mulligan-actions {
+    grid-template-columns: 1fr;
+  }
+}
